@@ -58,7 +58,7 @@ def resolve_all(c, lane):
 def test_model_gated_lane_needs_closed_mapper(client):
     _, asset_id = setup_asset(client)
     r = client.post("/lanes", json={"asset_id": asset_id, "role": "authz"})
-    assert r.status_code == 422 and "mapper" in r.json()["detail"]
+    assert r.status_code == 422 and "Model" in r.json()["detail"]
 
     mapper = client.post("/lanes", json={"asset_id": asset_id, "role": "mapper"}).json()
     r = client.post("/lanes", json={"asset_id": asset_id, "role": "authz"})
@@ -193,3 +193,36 @@ def test_research_header_rejects_injection(client, bad):
     eng = ready_engagement(client, "inj")
     r = client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "research_header": bad})
     assert r.status_code == 422
+
+
+def test_wstg_pack_engagement_uses_pack_lanes(client):
+    eng = client.post("/engagements", json={"name": "pt", "pack_id": "web-pentest-wstg"}).json()
+    assert eng["engagement_type"] == "pentest"
+    a = client.post(f"/engagements/{eng['id']}/assets", json={"host": "app.example.com"}).json()
+    r = client.post("/lanes", json={"asset_id": a["id"], "role": "athz"})
+    assert r.status_code == 422 and "Information gathering" in r.json()["detail"]
+    info = client.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
+    assert info["items"][0]["key"] == "WSTG-INFO-01"
+    assert "ISO-A.5.9" in info["items"][0]["controls"]
+    assert client.post("/lanes", json={"asset_id": a["id"], "role": "authz"}).status_code == 422
+
+
+def test_unknown_pack_is_rejected(client):
+    assert client.post("/engagements", json={"name": "x", "pack_id": "nope"}).status_code == 422
+
+
+def test_control_coverage_counts_only_receipted_lanes(client):
+    eng = client.post("/engagements", json={"name": "ctl", "pack_id": "web-pentest-wstg"}).json()["id"]
+    a = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
+    info = client.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
+
+    def status(cid):
+        rows = client.get(f"/engagements/{eng}/controls").json()["controls"]
+        return next(r for r in rows if r["id"] == cid)
+
+    resolve_all(client, info)
+    assert status("DORA-ART8")["status"] == "none"       # proven but not receipted
+    client.post(f"/lanes/{info['id']}/close")
+    assert status("DORA-ART8")["status"] == "evidenced"  # info lane is the only DORA-ART8 source
+    assert status("PCI-11.4.1")["status"] == "evidenced"
+    assert status("ISO-A.5.15")["status"] == "none"      # authz/idnt lanes not done

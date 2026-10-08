@@ -59,4 +59,29 @@ call("POST", f"/lanes/{stale['id']}/evidence",
      {"kind": "note", "sha256": hashlib.sha256(b"new subdomain").hexdigest(),
       "summary": "new subdomain found after the receipt was issued"})
 
-print(f"seeded engagement {eng['id']}: {BASE}")
+# A recon-ready lab engagement (the compose "lab" service answers as shop.lab.test).
+lab = call("POST", "/engagements", {"name": "Lab recon"})
+call("PUT", f"/engagements/{lab['id']}/scope", {
+    "include": ["*.lab.test"], "exclude": ["admin.lab.test"], "rate_limit_rps": 2,
+    "research_header": "X-Bug-Bounty: lab-researcher",
+    "research_user_agent": "AttackLedger/0.1 (lab-researcher)"})
+call("POST", f"/engagements/{lab['id']}/attest", {
+    "operator": "lab-operator", "policy_url": "https://example.com/policy", "confirm": True})
+call("POST", f"/engagements/{lab['id']}/assets", {"host": "shop.lab.test"})
+
+# A WSTG pentest so the Controls view has something to show.
+pt = call("POST", "/engagements", {"name": "Client web app", "pack_id": "web-pentest-wstg"})
+app_host = call("POST", f"/engagements/{pt['id']}/assets", {"host": "app.client.test"})
+api_host = call("POST", f"/engagements/{pt['id']}/assets", {"host": "api.client.test"})
+for asset in (app_host, api_host):
+    info = call("POST", "/lanes", {"asset_id": asset["id"], "role": "info"})
+    resolve(info, na_every=5)
+    call("POST", f"/lanes/{info['id']}/close")
+for key in ("conf", "athz", "sess"):
+    lane = call("POST", "/lanes", {"asset_id": app_host["id"], "role": key})
+    resolve(lane, na_every=5)
+    call("POST", f"/lanes/{lane['id']}/close")
+athn = call("POST", "/lanes", {"asset_id": app_host["id"], "role": "athn"})
+resolve(athn, leave_open=3, na_every=5)
+
+print(f"seeded demo engagements: {BASE}")

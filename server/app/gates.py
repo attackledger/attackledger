@@ -8,7 +8,8 @@ import hashlib
 import json
 from enum import Enum
 
-from .models import ItemState, Lane, MODEL_GATED_ROLES, Role
+from .models import ItemState, Lane
+from .packs import LaneDef
 
 
 class LaneStatus(str, Enum):
@@ -24,10 +25,10 @@ class GateError(Exception):
 def manifest(lane: Lane) -> dict:
     return {
         "lane": lane.id,
-        "role": lane.role.value,
+        "role": lane.role,
         "host": lane.asset.host,
         "items": [
-            {"idx": i.idx, "state": i.state.value, "na_reason": i.na_reason}
+            {"idx": i.idx, "key": i.item_key, "state": i.state.value, "na_reason": i.na_reason}
             for i in lane.items
         ],
         "evidence": [
@@ -63,11 +64,11 @@ def lane_status(lane: Lane) -> LaneStatus:
     return LaneStatus.stale
 
 
-def check_can_open(asset, role: Role) -> None:
-    if role not in MODEL_GATED_ROLES:
-        return
-    mapper = next((l for l in asset.lanes if l.role == Role.mapper), None)
-    if mapper is None or lane_status(mapper) != LaneStatus.closed:
-        raise GateError(
-            f"{role.value} lane needs a closed mapper lane (application model) on {asset.host}"
-        )
+def check_can_open(asset, lane_def: LaneDef, pack) -> None:
+    """A lane opens only when every lane it needs is receipted on the same asset."""
+    by_key = {l.role: l for l in asset.lanes}
+    missing = [n for n in lane_def.needs
+               if n not in by_key or lane_status(by_key[n]) != LaneStatus.closed]
+    if missing:
+        names = ", ".join(pack.lane(n).name for n in missing)
+        raise GateError(f"{lane_def.name} needs a receipted {names} lane on {asset.host}")

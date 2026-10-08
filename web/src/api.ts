@@ -14,9 +14,17 @@ export interface CoverageRow {
   roles: Record<string, Cell>;
 }
 
+export interface LaneInfo {
+  key: string;
+  name: string;
+  needs: string[];
+}
+
 export interface Coverage {
   engagement: string;
+  pack: { id: string; name: string };
   roles: string[];
+  lanes: LaneInfo[];
   closed_cells: number;
   total_cells: number;
   assets: CoverageRow[];
@@ -27,10 +35,42 @@ export interface EngagementSummary {
   name: string;
   policy_url: string | null;
   assets: number;
+  pack_id: string;
+  engagement_type: string;
+}
+
+export interface PackSummary {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  engagement_types: string[];
+  lanes: { key: string; name: string; needs: string[]; items: number }[];
+}
+
+export interface ControlRow {
+  id: string;
+  text: string;
+  framework: string;
+  framework_name: string;
+  required: number;
+  evidenced: number;
+  lanes: string[];
+  status: "evidenced" | "partial" | "none";
+}
+
+export interface ControlsReport {
+  engagement: string;
+  pack: string;
+  hosts_in_scope: number;
+  disclaimer: string;
+  controls: ControlRow[];
 }
 
 export interface LaneItem {
   idx: number;
+  key: string;
+  controls: string[];
   text: string;
   state: "open" | "done" | "na";
   na_reason: string | null;
@@ -50,6 +90,7 @@ export interface LaneDetail {
   id: number;
   host: string;
   role: string;
+  role_name: string;
   status: CellStatus;
   unresolved: string[];
   items: LaneItem[];
@@ -117,11 +158,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   engagements: () => call<EngagementSummary[]>("/engagements"),
-  createEngagement: (name: string, policy_url?: string) =>
+  createEngagement: (name: string, pack_id: string) =>
     call<{ id: number }>("/engagements", {
       method: "POST",
-      body: JSON.stringify({ name, policy_url: policy_url || null }),
+      body: JSON.stringify({ name, pack_id }),
     }),
+  packs: () => call<PackSummary[]>("/packs"),
+  controls: (engId: number) => call<ControlsReport>(`/engagements/${engId}/controls`),
   addAsset: (engId: number, host: string, in_scope: boolean) =>
     call<{ id: number }>(`/engagements/${engId}/assets`, {
       method: "POST",

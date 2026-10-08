@@ -1,10 +1,12 @@
 # AttackLedger
 
-**Evidence-first, fail-closed orchestration for AI-assisted offensive security.**
+**Prove what was tested.** An evidence system for offensive security.
 
-AttackLedger is a methodology and tooling framework for running bug-bounty and
-penetration-testing engagements with a team of AI agents (built on Claude Code),
-where every claim about coverage has to be backed by a recorded artifact.
+AttackLedger runs recon and testing engagements (bug bounty, penetration tests,
+internal assessments) and records every test as evidence in a tamper-evident
+ledger. Coverage is a computed result backed by receipts. It can be mapped to the
+controls auditors ask about, such as PCI DSS 11.4, ISO 27001 A.8.8 and DORA
+testing requirements.
 
 The core rule is borrowed from audit practice:
 
@@ -74,7 +76,46 @@ evidence is returned to its agent.
 - Optional: [Caido](https://caido.io) together with [caido-mcp-server](https://github.com/c0tton-fluff/caido-mcp-server)
 - Recon tooling: the usual ProjectDiscovery stack (subfinder, dnsx, httpx, katana, nuclei), plus ffuf/feroxbuster, jq and Python 3
 
-<!-- CONFIG: environment variables — filled in after the code pass -->
+## Quick start
+
+```bash
+docker compose up -d --build        # api, worker, web, postgres, local lab target
+python3 tools/seed_demo.py          # optional demo engagements
+open http://localhost:8080
+```
+
+All ports bind to `127.0.0.1`. The `lab` service is a local practice target that
+answers as `shop.lab.test` inside the compose network.
+
+## Methodology packs and controls
+
+Lanes and checklist items come from **packs** (`packs/*.yaml`), not code:
+
+| Pack | Lanes | Use |
+|---|---|---|
+| `bug-bounty` | recon, model, access control, auth & sessions, business logic, input handling, mobile | Bug bounty programs |
+| `web-pentest-wstg` | one per OWASP WSTG category (97 tests) | Scoped pentests, internal assessments |
+
+Each item maps to controls in `packs/controls.yaml` (PCI DSS v4.0, ISO/IEC
+27001:2022 Annex A, EU DORA). The **Controls** view shows, per control, how many
+mapped items on in-scope hosts are backed by receipted evidence. These mappings
+are indicative and do not amount to a compliance determination.
+
+Packs fail closed. A pack that references an unknown control, has a dependency
+cycle or contains a lane without items will not load, and the API will not start.
+
+## Recon engine
+
+Jobs run in the `worker` container (subfinder, dnsx, httpx). A job is refused
+unless the engagement has:
+
+1. a scope (`*.example.com` covers subdomains only; exclusions always win),
+2. a recorded authorization (operator, policy URL, explicit confirmation),
+3. for jobs that send traffic to the target, the **research header and/or
+   user agent** the program requires.
+
+The worker re-checks scope on every target and on every host a tool reports.
+Redirects are not followed.
 
 ## Rules of engagement
 

@@ -17,20 +17,6 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Role(str, Enum):
-    recon = "recon"
-    mapper = "mapper"
-    authz = "authz"
-    authflow = "authflow"
-    logic = "logic"
-    injection = "injection"
-    mobile = "mobile"
-
-
-# Roles that need a closed mapper lane (an application model) on the same asset.
-MODEL_GATED_ROLES = {Role.authz, Role.authflow, Role.logic, Role.injection}
-
-
 class ItemState(str, Enum):
     open = "open"
     done = "done"
@@ -41,6 +27,9 @@ class Engagement(Base):
     __tablename__ = "engagements"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), unique=True)
+    # Methodology pack (packs/<id>.yaml) that defines this engagement's lanes and items.
+    pack_id: Mapped[str] = mapped_column(String(64), default="bug-bounty")
+    engagement_type: Mapped[str] = mapped_column(String(20), default="bug_bounty")
     policy_url: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     # Scope as written in the program policy. Empty include list = nothing in scope.
@@ -74,7 +63,7 @@ class Lane(Base):
     __table_args__ = (UniqueConstraint("asset_id", "role"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
-    role: Mapped[Role]
+    role: Mapped[str] = mapped_column(String(32))  # lane key from the engagement's pack
     opened_at: Mapped[datetime] = mapped_column(default=utcnow)
     asset: Mapped[Asset] = relationship(back_populates="lanes")
     items: Mapped[list["ChecklistItem"]] = relationship(
@@ -93,7 +82,9 @@ class ChecklistItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     lane_id: Mapped[int] = mapped_column(ForeignKey("lanes.id"))
     idx: Mapped[int]
+    item_key: Mapped[str] = mapped_column(String(64))  # e.g. WSTG-ATHZ-04
     text: Mapped[str] = mapped_column(Text)
+    controls: Mapped[list] = mapped_column(JSON, default=list)
     state: Mapped[ItemState] = mapped_column(default=ItemState.open)
     na_reason: Mapped[str | None] = mapped_column(Text)
     lane: Mapped[Lane] = relationship(back_populates="items")

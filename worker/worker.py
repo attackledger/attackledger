@@ -16,10 +16,10 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select, text  # noqa: E402
 
-from app import scope  # noqa: E402
+from app import packs, scope  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
-from app.models import (Asset, Engagement, Evidence, Job, JobStatus, Lane,  # noqa: E402
-                        Observation, Role)
+from app.models import (Asset, Engagement, Evidence, Job, JobStatus,  # noqa: E402
+                        Observation)
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
@@ -158,9 +158,10 @@ def run(session, job: Job):
     # Record the run as evidence on each touched host's recon lane, if one is open.
     # It is attached to the lane, not to a checklist item: a person or agent still
     # decides which item it proves.
+    recon_lane = packs.get_pack(eng.pack_id).recon_lane
     touched = {o.host for o in session.scalars(select(Observation).where(Observation.job_id == job.id))}
     for host in touched:
-        lane = next((l for l in known[host].lanes if l.role == Role.recon), None) if known[host].id else None
+        lane = next((l for l in known[host].lanes if l.role == recon_lane), None) if known[host].id else None
         if lane:
             session.add(Evidence(lane_id=lane.id, kind="file", sha256=job.output_sha256,
                                  uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}"))

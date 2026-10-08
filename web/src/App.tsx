@@ -1,19 +1,17 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneDetail } from "./api";
+import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneDetail, PackSummary } from "./api";
+import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { ThemeToggle } from "./theme";
 
-const ROLE_NAMES: Record<string, string> = {
-  recon: "Recon",
-  mapper: "Model",
-  authz: "Access control",
-  authflow: "Auth & sessions",
-  logic: "Business logic",
-  injection: "Input handling",
-  mobile: "Mobile",
+const TYPE_NAMES: Record<string, string> = {
+  bug_bounty: "Bug bounty",
+  pentest: "Pentest",
+  internal: "Internal assessment",
 };
 
-const NEEDS_MODEL = new Set(["authz", "authflow", "logic", "injection"]);
+type Tab = "recon" | "ledger" | "controls";
+const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls" };
 
 export function App() {
   const [engagements, setEngagements] = useState<EngagementSummary[] | null>(null);
@@ -21,7 +19,7 @@ export function App() {
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [laneId, setLaneId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<"recon" | "ledger">("recon");
+  const [tab, setTab] = useState<Tab>("recon");
 
   const loadEngagements = useCallback(async () => {
     try {
@@ -76,7 +74,10 @@ export function App() {
                     aria-current={e.id === current ? "page" : undefined}
                     onClick={() => { setCurrent(e.id); setLaneId(null); }}
                   >
-                    <span className="engagement-name">{e.name}</span>
+                    <span className="engagement-name">
+                      {e.name}
+                      <span className="engagement-type">{TYPE_NAMES[e.engagement_type] ?? e.engagement_type}</span>
+                    </span>
                     <span className="count">{e.assets} {e.assets === 1 ? "host" : "hosts"}</span>
                   </button>
                 </li>
@@ -113,7 +114,7 @@ export function App() {
             <header className="eng-head">
               <h2 className="eng-title">{coverage.engagement}</h2>
               <div className="tabs" role="tablist" aria-label="Engagement views">
-                {(["recon", "ledger"] as const).map((t) => (
+                {(["recon", "ledger", "controls"] as const).map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -123,7 +124,7 @@ export function App() {
                     className="tab"
                     onClick={() => setTab(t)}
                   >
-                    {t === "recon" ? "Recon" : "Ledger"}
+                    {TAB_NAMES[t]}
                     {t === "ledger" && (
                       <span className="tab-count">{coverage.closed_cells}/{coverage.total_cells}</span>
                     )}
@@ -132,11 +133,11 @@ export function App() {
               </div>
             </header>
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-              {tab === "recon" ? (
-                <Recon engId={current} onAssetsChanged={loadCoverage} />
-              ) : (
+              {tab === "recon" && <Recon engId={current} onAssetsChanged={loadCoverage} />}
+              {tab === "ledger" && (
                 <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage} />
               )}
+              {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
             </div>
           </>
         )}
@@ -161,12 +162,15 @@ function StampGlyph() {
 
 function NewEngagement({ onCreated }: { onCreated: (id: number) => void }) {
   const [name, setName] = useState("");
+  const [packs, setPacks] = useState<PackSummary[]>([]);
+  const [packId, setPackId] = useState("bug-bounty");
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => { api.packs().then(setPacks).catch(() => {}); }, []);
   async function submit(ev: FormEvent) {
     ev.preventDefault();
     if (!name.trim()) return;
     try {
-      const { id } = await api.createEngagement(name.trim());
+      const { id } = await api.createEngagement(name.trim(), packId);
       setName("");
       setError(null);
       onCreated(id);
@@ -178,7 +182,13 @@ function NewEngagement({ onCreated }: { onCreated: (id: number) => void }) {
     <form className="inline-form" onSubmit={submit}>
       <label htmlFor="new-eng">New engagement</label>
       <div className="field-row">
-        <input id="new-eng" value={name} onChange={(e) => setName(e.target.value)} placeholder="Program name" />
+        <input id="new-eng" value={name} onChange={(e) => setName(e.target.value)} placeholder="Program or client name" />
+      </div>
+      <label htmlFor="new-pack" className="sub-label">Methodology</label>
+      <div className="field-row">
+        <select id="new-pack" value={packId} onChange={(e) => setPackId(e.target.value)}>
+          {packs.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
         <button type="submit" className="btn">Create</button>
       </div>
       {error && <p className="field-error">{error}</p>}
@@ -225,6 +235,10 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
     }
   }
 
+  const laneName = (k: string) => coverage.lanes.find((l) => l.key === k)?.name ?? k;
+  const blockers = (row: CoverageRow, k: string) =>
+    (coverage.lanes.find((l) => l.key === k)?.needs ?? []).filter((n) => row.roles[n]?.status !== "closed");
+
   const pct = coverage.total_cells ? Math.round((coverage.closed_cells / coverage.total_cells) * 100) : 0;
 
   return (
@@ -246,12 +260,16 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
         <p className="empty-row">Add a host below to open its row in the ledger.</p>
       ) : (
         <div className="sheet" role="region" aria-label="Coverage ledger" tabIndex={0}>
-          <table>
+          <table style={{ minWidth: `${12 + coverage.roles.length * 7.5}rem` }}>
+            <colgroup>
+              <col style={{ width: "12rem" }} />
+              {coverage.roles.map((r) => <col key={r} />)}
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col" className="host-col">Host</th>
                 {coverage.roles.map((r) => (
-                  <th scope="col" key={r}>{ROLE_NAMES[r] ?? r}</th>
+                  <th scope="col" key={r}>{laneName(r)}</th>
                 ))}
               </tr>
             </thead>
@@ -274,8 +292,8 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
                       <CellMark
                         cell={row.roles[r]}
                         disabled={!row.in_scope}
-                        label={`${ROLE_NAMES[r]} on ${row.host}`}
-                        locked={NEEDS_MODEL.has(r) && row.roles.mapper?.status !== "closed"}
+                        label={`${laneName(r)} on ${row.host}`}
+                        lockedBy={blockers(row, r).map(laneName)}
                         onClick={() => onOpen(row.asset_id, r, row.roles[r])}
                       />
                     </td>
@@ -321,13 +339,13 @@ function Legend() {
       <div><dt><span className="stamp mini"><span className="stamp-word">RECEIPTED</span></span></dt><dd>Every item proven</dd></div>
       <div><dt><span className="stamp mini void"><span className="stamp-word">VOID</span></span></dt><dd>Changed after its receipt</dd></div>
       <div><dt><span className="mark-open">3 open</span></dt><dd>In progress</dd></div>
-      <div><dt><span className="mark-locked">Needs model</span></dt><dd>Receipt the Model lane first</dd></div>
+      <div><dt><span className="mark-locked">Needs …</span></dt><dd>Receipt the lane it depends on first</dd></div>
     </dl>
   );
 }
 
-function CellMark({ cell, label, locked, disabled, onClick }: {
-  cell: Cell; label: string; locked: boolean; disabled: boolean; onClick: () => void;
+function CellMark({ cell, label, lockedBy, disabled, onClick }: {
+  cell: Cell; label: string; lockedBy: string[]; disabled: boolean; onClick: () => void;
 }) {
   if (disabled) return <span className="cell-blank" aria-label={`${label}: out of scope`} />;
   switch (cell.status) {
@@ -352,8 +370,12 @@ function CellMark({ cell, label, locked, disabled, onClick }: {
         </button>
       );
     default:
-      if (locked)
-        return <span className="cell locked" title="Receipt the Model lane on this host first">Needs model</span>;
+      if (lockedBy.length)
+        return (
+          <span className="cell locked" title={`Receipt ${lockedBy.join(", ")} on this host first`}>
+            Needs {lockedBy.length === 1 ? lockedBy[0].toLowerCase() : `${lockedBy.length} lanes`}
+          </span>
+        );
       return (
         <button className="cell unopened" onClick={onClick} aria-label={`Open ${label}`}>
           Open
@@ -404,7 +426,7 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
       <aside className="folio" role="dialog" aria-modal="true" aria-labelledby="folio-title">
         <header className="folio-head">
           <div>
-            <h2 id="folio-title" className="folio-title">{lane ? ROLE_NAMES[lane.role] ?? lane.role : "Lane"}</h2>
+            <h2 id="folio-title" className="folio-title">{lane ? lane.role_name : "Lane"}</h2>
             {lane && <p className="folio-host">{lane.host}</p>}
           </div>
           <button ref={closeRef} className="btn ghost" onClick={onClose}>Close</button>
@@ -431,12 +453,20 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
                   <li key={i.idx} className={`item ${i.state}`}>
                     <span className="item-mark" aria-hidden="true">{ITEM_MARK[i.state]}</span>
                     <span className="item-idx">{i.idx}</span>
-                    <span className="item-text">{i.text}</span>
+                    <span className="item-text">
+                      <span className="item-key">{i.key}</span>
+                      {i.text}
+                    </span>
                     <span className="item-state">
                       {i.state === "done" && `${ev.length} evidence ${ev.length === 1 ? "entry" : "entries"}`}
                       {i.state === "na" && `Not applicable: ${i.na_reason}`}
                       {i.state === "open" && "Open"}
                     </span>
+                    {i.controls.length > 0 && (
+                      <span className="item-controls">
+                        {i.controls.map((c) => <span key={c} className="tag">{c}</span>)}
+                      </span>
+                    )}
                   </li>
                 );
               })}

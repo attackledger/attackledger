@@ -1,0 +1,41 @@
+id: bug-bounty
+name: Bug bounty
+version: "0.1"
+description: >
+  Role-based lanes for bug bounty programs. Recon and an application model come
+  first; access-control, auth, logic and input lanes open only on a receipted model.
+recon_lane: recon
+engagement_types: [bug_bounty]
+lanes:
+  - key: recon
+    name: Recon
+    items_from: checklists/CHECKLIST_recon.md
+    controls: [ISO-A.5.9, DORA-ART8, PCI-11.3.2]
+  - key: mapper
+    name: Model
+    items_from: checklists/CHECKLIST_mapper.md
+    controls: [ISO-A.5.9, PCI-11.4.1]
+  - key: authz
+    name: Access control
+    needs: [mapper]
+    items_from: checklists/CHECKLIST_authz.md
+    controls: [ISO-A.5.15, PCI-6.2.4, PCI-11.4.3]
+  - key: authflow
+    name: Auth & sessions
+    needs: [mapper]
+    items_from: checklists/CHECKLIST_authflow.md
+    controls: [ISO-A.8.5, PCI-6.2.4, PCI-11.4.3]
+  - key: logic
+    name: Business logic
+    needs: [mapper]
+    items_from: checklists/CHECKLIST_logic.md
+    controls: [ISO-A.8.28, PCI-6.2.4, PCI-11.4.3]
+  - key: injection
+    name: Input handling
+    needs: [mapper]
+    items_from: checklists/CHECKLIST_injection.md
+    controls: [ISO-A.8.28, PCI-6.2.4, PCI-6.4.1, PCI-11.4.3]
+  - key: mobile
+    name: Mobile
+    items_from: checklists/CHECKLIST_mobile.md
+    controls: [ISO-A.8.29, PCI-11.4.3]

@@ -1,0 +1,32 @@
+# Control catalog. Mappings in packs point at these ids.
+# These mappings are indicative: they show which tests produce evidence that is
+# relevant to a control. They are not a compliance determination. Verify against
+# the current text of each standard before relying on them.
+frameworks:
+  pci-dss-4.0:
+    name: PCI DSS v4.0
+    controls:
+      PCI-6.2.4: Software engineering techniques prevent or mitigate common software attacks
+      PCI-6.4.1: Public-facing web applications are protected against attacks
+      PCI-11.3.2: External vulnerability scans are performed
+      PCI-11.4.1: A penetration testing methodology is defined and followed
+      PCI-11.4.3: External penetration testing is performed
+      PCI-11.4.4: Exploitable vulnerabilities found in penetration testing are corrected and verified
+  iso-27001-2022:
+    name: ISO/IEC 27001:2022 Annex A
+    controls:
+      ISO-A.5.9: Inventory of information and other associated assets
+      ISO-A.5.15: Access control
+      ISO-A.8.5: Secure authentication
+      ISO-A.8.8: Management of technical vulnerabilities
+      ISO-A.8.9: Configuration management
+      ISO-A.8.24: Use of cryptography
+      ISO-A.8.28: Secure coding
+      ISO-A.8.29: Security testing in development and acceptance
+  dora:
+    name: EU DORA (Regulation 2022/2554)
+    controls:
+      DORA-ART8: Identification of ICT assets and risks
+      DORA-ART24: General requirements for digital operational resilience testing
+      DORA-ART25: Testing of ICT tools and systems
+      DORA-ART26: Advanced testing based on TLPT

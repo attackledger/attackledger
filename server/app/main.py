@@ -1,20 +1,24 @@
 from contextlib import asynccontextmanager
 
+from datetime import datetime, timezone
+
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from datetime import datetime, timezone
-
-from . import checklists, gates, scope
+from . import gates, packs, scope
 from .db import Base, engine, get_session
 from .models import (Asset, ChecklistItem, Engagement, Evidence, ItemState, Job, JobStatus, Lane,
-                     Observation, Receipt, Role)
+                     Observation, Receipt)
+
+ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    packs.all_packs()  # fail fast on a broken pack
     Base.metadata.create_all(engine)
     yield
 
@@ -25,8 +29,10 @@ app = FastAPI(title="AttackLedger", version="0.1.0", lifespan=lifespan)
 # ---- schemas ---------------------------------------------------------------
 
 class EngagementIn(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     policy_url: str | None = None
+    pack_id: str = "bug-bounty"
+    engagement_type: str | None = None  # defaults to the pack's first type
 
 
 class AssetIn(BaseModel):
@@ -36,7 +42,7 @@ class AssetIn(BaseModel):
 
 class LaneIn(BaseModel):
     asset_id: int
-    role: Role
+    role: str  # lane key from the engagement's pack
 
 
 class EvidenceIn(BaseModel):
@@ -68,15 +74,25 @@ def _item(lane: Lane, idx: int) -> ChecklistItem:
     raise HTTPException(404, f"lane {lane.id} has no item {idx}")
 
 
+def _pack_of(eng: Engagement) -> packs.Pack:
+    try:
+        return packs.get_pack(eng.pack_id)
+    except packs.PackError as e:
+        raise HTTPException(500, str(e))
+
+
 def _lane_view(lane: Lane) -> dict:
+    pack = _pack_of(lane.asset.engagement)
     return {
         "id": lane.id,
         "host": lane.asset.host,
-        "role": lane.role.value,
+        "role": lane.role,
+        "role_name": pack.lane(lane.role).name if lane.role in pack.lane_index else lane.role,
         "status": gates.lane_status(lane).value,
         "unresolved": gates.unresolved(lane),
         "items": [
-            {"idx": i.idx, "text": i.text, "state": i.state.value, "na_reason": i.na_reason}
+            {"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,
+             "na_reason": i.na_reason, "controls": i.controls}
             for i in lane.items
         ],
         "evidence_count": len(lane.evidence),
@@ -103,13 +119,22 @@ def health():
 
 @app.post("/engagements", status_code=201)
 def create_engagement(body: EngagementIn, session: Session = Depends(get_session)):
-    eng = Engagement(name=body.name, policy_url=body.policy_url)
+    try:
+        pack = packs.get_pack(body.pack_id)
+    except packs.PackError as e:
+        raise HTTPException(422, str(e))
+    etype = body.engagement_type or (pack.engagement_types[0] if pack.engagement_types else "pentest")
+    if etype not in ENGAGEMENT_TYPES:
+        raise HTTPException(422, f"unknown engagement type: {etype}")
+    eng = Engagement(name=body.name.strip(), policy_url=body.policy_url, pack_id=pack.id,
+                     engagement_type=etype)
     session.add(eng)
     try:
         session.commit()
     except IntegrityError:
         raise HTTPException(409, "engagement name already exists")
-    return {"id": eng.id, "name": eng.name}
+    return {"id": eng.id, "name": eng.name, "pack_id": eng.pack_id,
+            "engagement_type": eng.engagement_type}
 
 
 @app.post("/engagements/{eng_id}/assets", status_code=201)
@@ -135,13 +160,15 @@ def open_lane(body: LaneIn, session: Session = Depends(get_session)):
     asset = _get(session, Asset, body.asset_id)
     if not asset.in_scope:
         raise HTTPException(422, f"{asset.host} is out of scope")
+    pack = _pack_of(asset.engagement)
     try:
-        gates.check_can_open(asset, body.role)
-        texts = checklists.load_items(body.role)
-    except (gates.GateError, FileNotFoundError, ValueError) as e:
+        lane_def = pack.lane(body.role)
+        gates.check_can_open(asset, lane_def, pack)
+    except (gates.GateError, packs.PackError) as e:
         raise HTTPException(422, str(e))
-    lane = Lane(asset_id=asset.id, role=body.role)
-    lane.items = [ChecklistItem(idx=i, text=t) for i, t in enumerate(texts, start=1)]
+    lane = Lane(asset_id=asset.id, role=lane_def.key)
+    lane.items = [ChecklistItem(idx=n, item_key=it.id, text=it.text, controls=list(it.controls))
+                  for n, it in enumerate(lane_def.items, start=1)]
     session.add(lane)
     try:
         session.commit()
@@ -196,8 +223,8 @@ def close_lane(lane_id: int, session: Session = Depends(get_session)):
 @app.get("/engagements")
 def list_engagements(session: Session = Depends(get_session)):
     engs = session.scalars(select(Engagement).order_by(Engagement.created_at.desc())).all()
-    return [{"id": e.id, "name": e.name, "policy_url": e.policy_url, "assets": len(e.assets)}
-            for e in engs]
+    return [{"id": e.id, "name": e.name, "policy_url": e.policy_url, "assets": len(e.assets),
+             "pack_id": e.pack_id, "engagement_type": e.engagement_type} for e in engs]
 
 
 def _cell(lane: Lane | None) -> dict:
@@ -213,6 +240,8 @@ def _cell(lane: Lane | None) -> dict:
 @app.get("/engagements/{eng_id}/coverage")
 def coverage(eng_id: int, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
+    pack = _pack_of(eng)
+    keys = [l.key for l in pack.lanes]
     rows = []
     for asset in sorted(eng.assets, key=lambda a: a.host):
         by_role = {l.role: l for l in asset.lanes}
@@ -220,12 +249,14 @@ def coverage(eng_id: int, session: Session = Depends(get_session)):
             "asset_id": asset.id,
             "host": asset.host,
             "in_scope": asset.in_scope,
-            "roles": {r.value: _cell(by_role.get(r)) for r in Role},
+            "roles": {k: _cell(by_role.get(k)) for k in keys},
         })
     in_scope = [r for r in rows if r["in_scope"]]
     total = sum(len(r["roles"]) for r in in_scope)
     closed = sum(1 for r in in_scope for c in r["roles"].values() if c["status"] == "closed")
-    return {"engagement": eng.name, "roles": [r.value for r in Role],
+    return {"engagement": eng.name, "pack": {"id": pack.id, "name": pack.name},
+            "roles": keys,
+            "lanes": [{"key": l.key, "name": l.name, "needs": list(l.needs)} for l in pack.lanes],
             "closed_cells": closed, "total_cells": total, "assets": rows}
 
 
@@ -395,3 +426,59 @@ def observations(eng_id: int, session: Session = Depends(get_session)):
         for k, v in o.data.items():
             cur.setdefault(k, v)
     return sorted(latest.values(), key=lambda r: r["host"])
+
+
+# ---- packs & controls ------------------------------------------------------
+
+def _pack_summary(p: packs.Pack) -> dict:
+    return {"id": p.id, "name": p.name, "version": p.version, "description": p.description,
+            "engagement_types": list(p.engagement_types),
+            "lanes": [{"key": l.key, "name": l.name, "needs": list(l.needs), "items": len(l.items)}
+                      for l in p.lanes]}
+
+
+@app.get("/packs")
+def list_packs():
+    return [_pack_summary(p) for p in packs.all_packs().values()]
+
+
+@app.get("/engagements/{eng_id}/controls")
+def control_coverage(eng_id: int, session: Session = Depends(get_session)):
+    """For each control the pack maps to, how much of it is backed by receipted evidence.
+
+    A mapped item on an in-scope host counts as evidenced only when its lane is
+    receipted (closed) and the item is done or N/A with a reason. A control is
+    "evidenced" when every mapped item on every in-scope host is evidenced.
+    """
+    eng = _get(session, Engagement, eng_id)
+    pack = _pack_of(eng)
+    cat = packs.catalog().controls
+    hosts = [a for a in eng.assets if a.in_scope]
+    out: dict[str, dict] = {}
+    for lane_def in pack.lanes:
+        for item in lane_def.items:
+            for cid in item.controls:
+                c = out.setdefault(cid, {**cat[cid], "required": 0, "evidenced": 0, "lanes": set()})
+                c["lanes"].add(lane_def.name)
+                for a in hosts:
+                    c["required"] += 1
+                    lane = next((l for l in a.lanes if l.role == lane_def.key), None)
+                    if lane is None or gates.lane_status(lane) != gates.LaneStatus.closed:
+                        continue
+                    li = next((i for i in lane.items if i.item_key == item.id), None)
+                    if li is not None and li.state in (ItemState.done, ItemState.na):
+                        c["evidenced"] += 1
+    rows = []
+    for c in out.values():
+        c["lanes"] = sorted(c["lanes"])
+        if c["required"] and c["evidenced"] == c["required"]:
+            c["status"] = "evidenced"
+        elif c["evidenced"]:
+            c["status"] = "partial"
+        else:
+            c["status"] = "none"
+        rows.append(c)
+    rows.sort(key=lambda c: (c["framework"], c["id"]))
+    return {"engagement": eng.name, "pack": pack.id, "hosts_in_scope": len(hosts),
+            "disclaimer": "Indicative mapping of tests to controls; not a compliance determination.",
+            "controls": rows}

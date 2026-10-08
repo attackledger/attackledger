@@ -14,5 +14,8 @@ COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY server/app ./app
 COPY worker/worker.py .
+COPY checklists ./checklists
+COPY packs ./packs
+ENV ATTACKLEDGER_HOME=/srv
 USER worker
 CMD ["python", "-u", "worker.py"]
