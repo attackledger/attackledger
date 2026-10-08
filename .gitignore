@@ -1,0 +1,13 @@
+# Engagement data never belongs in this repo
+work/
+engagements/
+briefs/
+targets/
+*.tsv
+logs/
+*.log
+.env
+*.secrets
+.DS_Store
+__pycache__/
+*.pyc
