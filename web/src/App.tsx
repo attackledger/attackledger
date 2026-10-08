@@ -1,5 +1,6 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, Cell, Coverage, EngagementSummary, LaneDetail } from "./api";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneDetail } from "./api";
+import { ThemeToggle } from "./theme";
 
 const ROLE_NAMES: Record<string, string> = {
   recon: "Recon",
@@ -54,36 +55,53 @@ export function App() {
   return (
     <div className="shell">
       <aside className="index">
-        <h1 className="wordmark">AttackLedger</h1>
-        <p className="tagline">Nothing counts as tested until it has a receipt.</p>
-        <nav aria-label="Engagements">
-          <h2 className="index-heading">Engagements</h2>
-          <ul className="engagement-list">
-            {engagements?.map((e) => (
-              <li key={e.id}>
-                <button
-                  className="engagement"
-                  aria-current={e.id === current ? "page" : undefined}
-                  onClick={() => { setCurrent(e.id); setLaneId(null); }}
-                >
-                  <span>{e.name}</span>
-                  <span className="count">{e.assets} {e.assets === 1 ? "host" : "hosts"}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="brand">
+          <StampGlyph />
+          <div>
+            <h1 className="wordmark">AttackLedger</h1>
+            <p className="tagline">Nothing counts as tested until it has a receipt.</p>
+          </div>
+        </div>
+
+        <nav aria-labelledby="eng-heading" className="index-nav">
+          <h2 id="eng-heading" className="index-heading">Engagements</h2>
+          {engagements && engagements.length > 0 && (
+            <ul className="engagement-list">
+              {engagements.map((e) => (
+                <li key={e.id}>
+                  <button
+                    className="engagement"
+                    aria-current={e.id === current ? "page" : undefined}
+                    onClick={() => { setCurrent(e.id); setLaneId(null); }}
+                  >
+                    <span className="engagement-name">{e.name}</span>
+                    <span className="count">{e.assets} {e.assets === 1 ? "host" : "hosts"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           <NewEngagement onCreated={async (id) => { await loadEngagements(); setCurrent(id); }} />
         </nav>
+
+        <div className="index-foot">
+          <ThemeToggle />
+        </div>
       </aside>
 
       <main className="ledger">
-        {notice && <p className="notice" role="alert">{notice}</p>}
+        {notice && (
+          <p className="notice" role="alert">
+            {notice}
+            <button className="link-button" onClick={() => setNotice(null)}>Dismiss</button>
+          </p>
+        )}
         {engagements && engagements.length === 0 && !notice && (
           <section className="empty">
             <h2>Start your first engagement</h2>
             <p>
               Name it after the program you're testing, then add the hosts that are in scope.
-              Each host gets a row; each role gets a column. A cell closes only when every checklist
+              Each host gets a row and each role a column. A cell closes only when every checklist
               item has evidence or a written reason.
             </p>
           </section>
@@ -97,6 +115,16 @@ export function App() {
         <Folio laneId={laneId} onClose={() => setLaneId(null)} onChanged={loadCoverage} />
       )}
     </div>
+  );
+}
+
+function StampGlyph() {
+  return (
+    <svg className="glyph" viewBox="0 0 40 40" aria-hidden="true">
+      <rect x="4" y="4" width="32" height="32" rx="4" fill="none" stroke="currentColor" strokeWidth="2.5" />
+      <rect x="8" y="8" width="24" height="24" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M13 20.5l4.5 4.5L27 15" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -120,11 +148,15 @@ function NewEngagement({ onCreated }: { onCreated: (id: number) => void }) {
       <label htmlFor="new-eng">New engagement</label>
       <div className="field-row">
         <input id="new-eng" value={name} onChange={(e) => setName(e.target.value)} placeholder="Program name" />
-        <button type="submit">Create</button>
+        <button type="submit" className="btn">Create</button>
       </div>
       {error && <p className="field-error">{error}</p>}
     </form>
   );
+}
+
+function isGapRow(row: CoverageRow) {
+  return row.in_scope && Object.values(row.roles).some((c) => c.status !== "closed");
 }
 
 function Matrix({ coverage, engId, onOpen, onAdded }: {
@@ -136,6 +168,18 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
   const [host, setHost] = useState("");
   const [inScope, setInScope] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [gapsOnly, setGapsOnly] = useState(false);
+
+  const rows = gapsOnly ? coverage.assets.filter(isGapRow) : coverage.assets;
+
+  const totals = useMemo(() => {
+    const inScopeRows = coverage.assets.filter((r) => r.in_scope);
+    return coverage.roles.map((r) => ({
+      role: r,
+      closed: inScopeRows.filter((row) => row.roles[r].status === "closed").length,
+      total: inScopeRows.length,
+    }));
+  }, [coverage]);
 
   async function add(ev: FormEvent) {
     ev.preventDefault();
@@ -150,13 +194,21 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
     }
   }
 
+  const pct = coverage.total_cells ? Math.round((coverage.closed_cells / coverage.total_cells) * 100) : 0;
+
   return (
     <section aria-labelledby="ledger-title">
       <header className="ledger-head">
-        <h2 id="ledger-title">{coverage.engagement}</h2>
-        <p className="tally">
-          <strong>{coverage.closed_cells}</strong> of {coverage.total_cells} in-scope cells receipted
-        </p>
+        <div>
+          <h2 id="ledger-title">{coverage.engagement}</h2>
+          <p className="tally">
+            {coverage.closed_cells} of {coverage.total_cells} in-scope cells receipted ({pct}%)
+          </p>
+        </div>
+        <label className="switch">
+          <input type="checkbox" checked={gapsOnly} onChange={(e) => setGapsOnly(e.target.checked)} />
+          <span>Only hosts with gaps</span>
+        </label>
       </header>
 
       {coverage.assets.length === 0 ? (
@@ -173,11 +225,18 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
               </tr>
             </thead>
             <tbody>
-              {coverage.assets.map((row) => (
+              {rows.length === 0 && (
+                <tr>
+                  <td className="all-clear" colSpan={coverage.roles.length + 1}>
+                    Every in-scope host is fully receipted.
+                  </td>
+                </tr>
+              )}
+              {rows.map((row) => (
                 <tr key={row.asset_id} className={row.in_scope ? undefined : "out-of-scope"}>
                   <th scope="row" className="host-col">
-                    {row.host}
-                    {!row.in_scope && <span className="scope-note">out of scope</span>}
+                    <span className="host-name" title={row.host}>{row.host}</span>
+                    {!row.in_scope && <span className="scope-note">Out of scope</span>}
                   </th>
                   {coverage.roles.map((r) => (
                     <td key={r}>
@@ -193,9 +252,21 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row" className="host-col">Totals</th>
+                {totals.map((t) => (
+                  <td key={t.role} className={t.closed === t.total && t.total > 0 ? "total done" : "total"}>
+                    {t.closed}<span className="of">/{t.total}</span>
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
+
+      <Legend />
 
       <form className="inline-form add-host" onSubmit={add}>
         <label htmlFor="new-host">Add a host</label>
@@ -205,11 +276,22 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
             <input type="checkbox" checked={inScope} onChange={(e) => setInScope(e.target.checked)} />
             In scope
           </label>
-          <button type="submit">Add host</button>
+          <button type="submit" className="btn">Add host</button>
         </div>
         {error && <p className="field-error">{error}</p>}
       </form>
     </section>
+  );
+}
+
+function Legend() {
+  return (
+    <dl className="legend" aria-label="What the marks mean">
+      <div><dt><span className="stamp mini"><span className="stamp-word">RECEIPTED</span></span></dt><dd>Every item proven</dd></div>
+      <div><dt><span className="stamp mini void"><span className="stamp-word">VOID</span></span></dt><dd>Changed after its receipt</dd></div>
+      <div><dt><span className="mark-open">3 open</span></dt><dd>In progress</dd></div>
+      <div><dt><span className="mark-locked">Needs model</span></dt><dd>Receipt the Model lane first</dd></div>
+    </dl>
   );
 }
 
@@ -240,11 +322,7 @@ function CellMark({ cell, label, locked, disabled, onClick }: {
       );
     default:
       if (locked)
-        return (
-          <span className="cell locked" title="Receipt the Model lane on this host first">
-            Needs model
-          </span>
-        );
+        return <span className="cell locked" title="Receipt the Model lane on this host first">Needs model</span>;
       return (
         <button className="cell unopened" onClick={onClick} aria-label={`Open ${label}`}>
           Open
@@ -253,16 +331,21 @@ function CellMark({ cell, label, locked, disabled, onClick }: {
   }
 }
 
+const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○" };
+
 function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => void; onChanged: () => void }) {
   const [lane, setLane] = useState<LaneDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setLane(null);
+    setError(null);
     api.lane(laneId).then(setLane).catch((e) => setError(e.message));
   }, [laneId]);
 
   useEffect(() => {
+    closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -278,64 +361,100 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
     }
   }
 
+  const counts = lane && {
+    done: lane.items.filter((i) => i.state === "done").length,
+    na: lane.items.filter((i) => i.state === "na").length,
+    open: lane.items.filter((i) => i.state === "open").length,
+  };
+
   return (
-    <aside className="folio" aria-label="Lane detail">
-      <button className="folio-close" onClick={onClose} aria-label="Close lane detail">Close</button>
-      {!lane ? (
-        <p>{error ?? "Loading lane…"}</p>
-      ) : (
-        <>
-          <h2 className="folio-title">{ROLE_NAMES[lane.role] ?? lane.role}</h2>
-          <p className="folio-host">{lane.host}</p>
-          <StatusLine lane={lane} />
+    <>
+      <div className="scrim" onClick={onClose} aria-hidden="true" />
+      <aside className="folio" role="dialog" aria-modal="true" aria-labelledby="folio-title">
+        <header className="folio-head">
+          <div>
+            <h2 id="folio-title" className="folio-title">{lane ? ROLE_NAMES[lane.role] ?? lane.role : "Lane"}</h2>
+            {lane && <p className="folio-host">{lane.host}</p>}
+          </div>
+          <button ref={closeRef} className="btn ghost" onClick={onClose}>Close</button>
+        </header>
 
-          <h3>Checklist</h3>
-          <ol className="items">
-            {lane.items.map((i) => {
-              const ev = lane.evidence.filter((e) => e.item_idx === i.idx);
-              return (
-                <li key={i.idx} className={`item ${i.state}`}>
-                  <span className="item-text">{i.text}</span>
-                  <span className="item-state">
-                    {i.state === "done" && `${ev.length} evidence`}
-                    {i.state === "na" && `N/A: ${i.na_reason}`}
-                    {i.state === "open" && "open"}
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
+        {!lane ? (
+          <p className="folio-body">{error ?? "Loading lane…"}</p>
+        ) : (
+          <div className="folio-body">
+            <StatusLine lane={lane} />
+            {counts && (
+              <p className="counts">
+                <span className="c-done">{counts.done} with evidence</span>
+                <span className="c-na">{counts.na} not applicable</span>
+                <span className="c-open">{counts.open} open</span>
+              </p>
+            )}
 
-          <h3>Evidence</h3>
-          {lane.evidence.length === 0 ? (
-            <p className="muted">No evidence recorded yet. Agents and the API add entries as they test.</p>
-          ) : (
-            <ul className="evidence">
-              {lane.evidence.map((e) => (
-                <li key={e.id}>
-                  <span className="ev-kind">{e.kind}</span>
-                  <span className="ev-summary">{e.summary}</span>
-                  <code className="ev-hash">{e.sha256.slice(0, 12)}</code>
-                </li>
-              ))}
-            </ul>
-          )}
+            <h3>Checklist</h3>
+            <ol className="items">
+              {lane.items.map((i) => {
+                const ev = lane.evidence.filter((e) => e.item_idx === i.idx);
+                return (
+                  <li key={i.idx} className={`item ${i.state}`}>
+                    <span className="item-mark" aria-hidden="true">{ITEM_MARK[i.state]}</span>
+                    <span className="item-idx">{i.idx}</span>
+                    <span className="item-text">{i.text}</span>
+                    <span className="item-state">
+                      {i.state === "done" && `${ev.length} evidence ${ev.length === 1 ? "entry" : "entries"}`}
+                      {i.state === "na" && `Not applicable: ${i.na_reason}`}
+                      {i.state === "open" && "Open"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
 
-          {error && <p className="field-error" role="alert">{error}</p>}
-          {lane.status !== "closed" && (
-            <button className="primary" onClick={close}>Close lane and issue receipt</button>
-          )}
-        </>
-      )}
-    </aside>
+            <h3>Evidence</h3>
+            {lane.evidence.length === 0 ? (
+              <p className="muted">No evidence recorded yet. Agents and the API add entries as they test.</p>
+            ) : (
+              <ul className="evidence">
+                {lane.evidence.map((e) => (
+                  <li key={e.id}>
+                    <span className="ev-kind">{e.kind}</span>
+                    <span className="ev-summary">
+                      {e.summary}
+                      {e.item_idx != null && <span className="ev-item">Item {e.item_idx}</span>}
+                    </span>
+                    <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {lane && (
+          <footer className="folio-foot">
+            {error && <p className="field-error" role="alert">{error}</p>}
+            {lane.status === "closed" ? (
+              <p className="muted">Receipt issued {new Date(lane.receipt!.created_at).toLocaleString()}</p>
+            ) : (
+              <button className="btn primary" onClick={close}>Close lane and issue receipt</button>
+            )}
+          </footer>
+        )}
+      </aside>
+    </>
   );
 }
 
 function StatusLine({ lane }: { lane: LaneDetail }) {
   if (lane.status === "closed" && lane.receipt)
-    return <p className="status ok">Receipted. Manifest {lane.receipt.sha256.slice(0, 16)}</p>;
+    return (
+      <p className="status ok">
+        Receipted. Manifest <code>{lane.receipt.sha256.slice(0, 16)}</code>
+      </p>
+    );
   if (lane.status === "stale")
-    return <p className="status bad">The ledger changed after the receipt was issued. Review and close again.</p>;
+    return <p className="status bad">The ledger changed after the receipt was issued. Review the new entries and close again.</p>;
   const open = lane.items.filter((i) => i.state === "open").length;
   return <p className="status bad">{open} of {lane.items.length} items still open.</p>;
 }

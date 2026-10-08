@@ -6,6 +6,9 @@ import "@fontsource/zilla-slab/500.css";
 import "@fontsource/zilla-slab/700.css";
 import "./styles.css";
 import { App } from "./App";
+import { applyStoredTheme } from "./theme";
+
+applyStoredTheme();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
