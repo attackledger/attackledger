@@ -143,6 +143,15 @@ export interface ObservationRow {
   source?: string;
 }
 
+export interface ScopeImport {
+  include: string[];
+  exclude: string[];
+  not_imported: { identifier: string; type: string }[];
+  invalid: { identifier: string; reason: string }[];
+  result: { include: string[]; exclude: string[] };
+  applied: boolean;
+}
+
 export interface ReconModule {
   kind: string;
   title: string;
@@ -253,6 +262,8 @@ export const api = {
     }),
   jobs: (engId: number) => call<Job[]>(`/engagements/${engId}/jobs`),
   job: (jobId: number) => call<Job>(`/jobs/${jobId}`),
+  importScope: (engId: number, csv: string, apply: boolean) =>
+    call<ScopeImport>(`/engagements/${engId}/scope/import`, { method: "POST", body: JSON.stringify({ csv, apply }) }),
   runPipeline: (engId: number) =>
     call<{ queued: string[]; skipped: { kind: string; reason: string }[] }>(`/engagements/${engId}/pipeline`, { method: "POST", body: "{}" }),
   runJob: (engId: number, kind: string, targets: string[] = []) =>

@@ -9,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import (executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, triage,
-               urls)
+from . import (executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, scopeimport,
+               triage, urls)
 from . import targets as targeting
 from .db import get_session
 from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
@@ -640,3 +640,35 @@ def patch_lane(lane_id: int, body: LanePatch, session: Session = Depends(get_ses
 def lane_context(lane_id: int, session: Session = Depends(get_session)):
     """What an executor working this lane may read: its items, the rules, and recon for its host only."""
     return executors.lane_context(session, _get(session, Lane, lane_id))
+
+
+# ---- scope import ----------------------------------------------------------
+
+class ScopeImportIn(BaseModel):
+    csv: str = Field(min_length=1, max_length=2_000_000)
+    apply: bool = False          # False: preview only
+    mode: str = Field(default="merge", pattern="^(merge|replace)$")
+
+
+@app.post("/engagements/{eng_id}/scope/import")
+def import_scope(eng_id: int, body: ScopeImportIn, session: Session = Depends(get_session)):
+    """Preview (default) or apply a HackerOne scope CSV. Ineligible assets become excludes."""
+    eng = _get(session, Engagement, eng_id)
+    try:
+        parsed = scopeimport.parse(body.csv)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if body.mode == "merge":
+        inc = sorted((set(eng.scope_include) | set(parsed["include"])) - set(parsed["exclude"]))
+        exc = sorted(set(eng.scope_exclude) | set(parsed["exclude"]))
+    else:
+        inc, exc = parsed["include"], parsed["exclude"]
+    result = {**parsed, "result": {"include": inc, "exclude": exc}, "applied": False}
+    if body.apply:
+        eng.scope_include, eng.scope_exclude = inc, exc
+        for a in eng.assets:            # rules can move hosts out of scope, never into it silently
+            if not scope.in_scope(a.host, inc, exc):
+                a.in_scope = False
+        session.commit()
+        result["applied"] = True
+    return result

@@ -366,3 +366,14 @@ def test_pipeline_refuses_when_nothing_can_run(client):
     eng = client.post("/engagements", json={"name": "pipe-none"}).json()["id"]
     r = client.post(f"/engagements/{eng}/pipeline")
     assert r.status_code == 422 and r.json()["detail"]["error"] == "no step can run"
+
+
+def test_scope_import_previews_then_applies(client):
+    eng = client.post("/engagements", json={"name": "import"}).json()["id"]
+    csv_ = "identifier,asset_type,eligible_for_submission\n*.example.com,WILDCARD,true\nold.example.com,URL,false\n"
+    prev = client.post(f"/engagements/{eng}/scope/import", json={"csv": csv_}).json()
+    assert prev["applied"] is False and client.get(f"/engagements/{eng}/scope").json()["include"] == []
+    done = client.post(f"/engagements/{eng}/scope/import", json={"csv": csv_, "apply": True}).json()
+    assert done["applied"] and done["result"] == {"include": ["*.example.com"], "exclude": ["old.example.com"]}
+    s = client.get(f"/engagements/{eng}/scope").json()
+    assert s["include"] == ["*.example.com"] and s["exclude"] == ["old.example.com"]

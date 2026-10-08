@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, EndpointRow, Job, Lead, ReconModule, Scope, TriageReport } from "./api";
+import { api, EndpointRow, Job, Lead, ReconModule, Scope, ScopeImport, TriageReport } from "./api";
 
 
 const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" } as const;
@@ -465,6 +465,13 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
           </fieldset>
         )}
 
+        <ScopeImporter engId={engId} onApplied={async () => {
+          const s = await api.scope(engId);
+          setInclude(s.include.join("\n"));
+          setExclude(s.exclude.join("\n"));
+          onSaved(s);
+        }} />
+
         <fieldset className="attest">
           <legend>Authorization</legend>
           <div className="roe-grid">
@@ -488,5 +495,58 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
         <button type="submit" className="btn">Save rules</button>
       </form>
     </section>
+  );
+}
+
+
+function ScopeImporter({ engId, onApplied }: { engId: number; onApplied: () => void }) {
+  const [csv, setCsv] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ScopeImport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load(file: File | undefined) {
+    setError(null);
+    setPreview(null);
+    if (!file) return;
+    const text = await file.text();
+    setCsv(text);
+    try { setPreview(await api.importScope(engId, text, false)); } catch (e) { setError((e as Error).message); }
+  }
+
+  async function apply() {
+    if (!csv) return;
+    try {
+      await api.importScope(engId, csv, true);
+      setPreview(null);
+      setCsv(null);
+      onApplied();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="importer">
+      <label className="check">
+        <span>Import a HackerOne scope CSV</span>
+        <input type="file" accept=".csv,text/csv" onChange={(e) => load(e.target.files?.[0])} />
+      </label>
+      <span className="hint">Assets not eligible for submission become exclusions, so a wildcard cannot cover them.</span>
+      {error && <p className="field-error">{error}</p>}
+      {preview && (
+        <div className="import-preview">
+          <p>
+            <strong>{preview.include.length}</strong> in scope, <strong>{preview.exclude.length}</strong> excluded
+            {preview.not_imported.length > 0 && <>, {preview.not_imported.length} not imported (not web assets)</>}
+            {preview.invalid.length > 0 && <>, {preview.invalid.length} invalid</>}.
+          </p>
+          {preview.exclude.length > 0 && <p className="hint">Excluded: {preview.exclude.join(", ")}</p>}
+          {preview.not_imported.length > 0 && (
+            <p className="hint">Not imported: {preview.not_imported.map((x) => `${x.identifier} (${x.type})`).join(", ")}</p>
+          )}
+          <button type="button" className="btn small" onClick={apply}>Add to the rules</button>
+        </div>
+      )}
+    </div>
   );
 }

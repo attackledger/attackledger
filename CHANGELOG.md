@@ -49,6 +49,10 @@ before 1.0, minor versions may change the data model.
 - **M10 dork checklist** (computed, no traffic). For each wildcard root it writes the
   original dork.sh queries as click-ready manual checks.
 
+- **HackerOne scope CSV import**, with a preview before apply. Assets not eligible
+  for submission become **exclusions**, so a wildcard cannot cover them; the original
+  csv_to_scope.py skipped them. Non-web assets (apps, CIDRs) are listed, not imported.
+
 ### Fixed
 - Names that answer NOERROR with no records were counted as resolved, and subdomain
   discovery could add them as assets. Only an A or AAAA record now counts.
