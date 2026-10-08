@@ -24,6 +24,26 @@ services:
       db:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Local practice target. Reachable only inside the compose network as shop.lab.test.
+  lab:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./lab/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      default:
+        aliases: [shop.lab.test]
+
   web:
     build:
       context: web

@@ -57,6 +57,45 @@ export interface LaneDetail {
   receipt: { sha256: string; created_at: string } | null;
 }
 
+export interface Scope {
+  include: string[];
+  exclude: string[];
+  rate_limit_rps: number;
+  policy_url: string | null;
+  research_header: string | null;
+  research_user_agent: string | null;
+  authorized_by: string | null;
+  authorized_at: string | null;
+}
+
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+export interface Job {
+  id: number;
+  kind: string;
+  status: JobStatus;
+  targets: string[];
+  result_count: number;
+  output_sha256: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  log?: string;
+}
+
+export interface ObservationRow {
+  host: string;
+  url?: string;
+  status_code?: number;
+  title?: string;
+  tech?: string[];
+  webserver?: string;
+  a?: string[];
+  cname?: string[];
+  live?: boolean;
+  source?: string;
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     headers: { "content-type": "application/json" },
@@ -68,7 +107,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const msg =
       typeof detail === "string"
         ? detail
-        : detail?.unresolved?.join("\n") ?? `Request failed (${res.status})`;
+        : Array.isArray(detail)
+          ? detail.map((d: { loc?: string[]; msg: string }) => `${d.loc?.slice(-1)[0] ?? "field"}: ${d.msg}`).join("\n")
+          : detail?.unresolved?.join("\n") ?? `Request failed (${res.status})`;
     throw new Error(msg);
   }
   return body as T;
@@ -90,5 +131,19 @@ export const api = {
   openLane: (asset_id: number, role: string) =>
     call<LaneDetail>("/lanes", { method: "POST", body: JSON.stringify({ asset_id, role }) }),
   lane: (laneId: number) => call<LaneDetail>(`/lanes/${laneId}`),
+  scope: (engId: number) => call<Scope>(`/engagements/${engId}/scope`),
+  saveScope: (engId: number, body: Partial<Scope>) =>
+    call<Scope>(`/engagements/${engId}/scope`, { method: "PUT", body: JSON.stringify(body) }),
+  attest: (engId: number, operator: string, policy_url: string) =>
+    call<Scope>(`/engagements/${engId}/attest`, {
+      method: "POST",
+      body: JSON.stringify({ operator, policy_url, confirm: true }),
+    }),
+  jobs: (engId: number) => call<Job[]>(`/engagements/${engId}/jobs`),
+  job: (jobId: number) => call<Job>(`/jobs/${jobId}`),
+  runJob: (engId: number, kind: string, targets: string[] = []) =>
+    call<Job>(`/engagements/${engId}/jobs`, { method: "POST", body: JSON.stringify({ kind, targets }) }),
+  cancelJob: (jobId: number) => call<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
+  observations: (engId: number) => call<ObservationRow[]>(`/engagements/${engId}/observations`),
   closeLane: (laneId: number) => call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST" }),
 };

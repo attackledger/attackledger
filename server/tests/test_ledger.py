@@ -115,3 +115,81 @@ def test_out_of_scope_asset_cannot_open_lane(client):
     a = client.post(f"/engagements/{eng['id']}/assets",
                     json={"host": "cdn.example.net", "in_scope": False}).json()
     assert client.post("/lanes", json={"asset_id": a["id"], "role": "recon"}).status_code == 422
+
+
+def ready_engagement(c, name="prog"):
+    eng = c.post("/engagements", json={"name": name}).json()["id"]
+    c.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com", "example.com"],
+                                             "exclude": ["status.example.com"]})
+    return eng
+
+
+def test_jobs_need_authorization_and_scope(client):
+    eng = client.post("/engagements", json={"name": "noauth"}).json()["id"]
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "subdomains"})
+    assert r.status_code == 422 and "authorization" in r.json()["detail"]
+
+    client.post(f"/engagements/{eng}/attest",
+                json={"operator": "op", "policy_url": "https://example.com/policy", "confirm": True})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "subdomains"})
+    assert r.status_code == 422 and "scope" in r.json()["detail"]
+
+
+def test_attest_requires_confirmation_and_https_policy(client):
+    eng = ready_engagement(client)
+    assert client.post(f"/engagements/{eng}/attest", json={
+        "operator": "op", "policy_url": "https://example.com/p", "confirm": False}).status_code == 422
+    assert client.post(f"/engagements/{eng}/attest", json={
+        "operator": "op", "policy_url": "http://example.com/p", "confirm": True}).status_code == 422
+
+
+def test_job_targets_must_be_in_scope(client):
+    eng = ready_engagement(client)
+    client.post(f"/engagements/{eng}/attest",
+                json={"operator": "op", "policy_url": "https://example.com/p", "confirm": True})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "subdomains"})
+    assert r.status_code == 201 and r.json()["targets"] == ["example.com"]
+
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "subdomains", "targets": ["other.test"]})
+    assert r.status_code == 422
+    client.put(f"/engagements/{eng}/scope", json={
+        "include": ["*.example.com", "example.com"], "exclude": ["status.example.com"],
+        "research_header": "X-Bug-Bounty: researcher1"})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "probe", "targets": ["status.example.com"]})
+    assert r.status_code == 422
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "probe", "targets": ["app.example.com"]})
+    assert r.status_code == 201
+
+
+def test_scope_rules_decide_asset_scope(client):
+    eng = ready_engagement(client)
+    a = client.post(f"/engagements/{eng}/assets", json={"host": "evil.test"}).json()
+    b = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
+    cov = {r["host"]: r["in_scope"] for r in client.get(f"/engagements/{eng}/coverage").json()["assets"]}
+    assert cov == {"evil.test": False, "app.example.com": True}
+
+
+def attested(c, eng):
+    c.post(f"/engagements/{eng}/attest",
+           json={"operator": "op", "policy_url": "https://example.com/p", "confirm": True})
+
+
+def test_probe_requires_research_identification(client):
+    eng = ready_engagement(client, "hdr")
+    attested(client, eng)
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "probe", "targets": ["app.example.com"]})
+    assert r.status_code == 422 and "research header" in r.json()["detail"]
+    # Passive / DNS kinds do not touch the target's web servers.
+    assert client.post(f"/engagements/{eng}/jobs", json={"kind": "subdomains"}).status_code == 201
+
+    client.put(f"/engagements/{eng}/scope", json={
+        "include": ["*.example.com"], "research_header": "X-Bug-Bounty: researcher1"})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "probe", "targets": ["app.example.com"]})
+    assert r.status_code == 201
+
+
+@pytest.mark.parametrize("bad", ["X-Test: a\r\nX-Evil: b", "no-colon-here", "Bad Name: v"])
+def test_research_header_rejects_injection(client, bad):
+    eng = ready_engagement(client, "inj")
+    r = client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "research_header": bad})
+    assert r.status_code == 422

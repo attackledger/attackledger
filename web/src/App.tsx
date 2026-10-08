@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneDetail } from "./api";
+import { Recon } from "./Recon";
 import { ThemeToggle } from "./theme";
 
 const ROLE_NAMES: Record<string, string> = {
@@ -20,6 +21,7 @@ export function App() {
   const [coverage, setCoverage] = useState<Coverage | null>(null);
   const [laneId, setLaneId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [tab, setTab] = useState<"recon" | "ledger">("recon");
 
   const loadEngagements = useCallback(async () => {
     try {
@@ -107,7 +109,36 @@ export function App() {
           </section>
         )}
         {coverage && current != null && (
-          <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage} />
+          <>
+            <header className="eng-head">
+              <h2 className="eng-title">{coverage.engagement}</h2>
+              <div className="tabs" role="tablist" aria-label="Engagement views">
+                {(["recon", "ledger"] as const).map((t) => (
+                  <button
+                    key={t}
+                    role="tab"
+                    id={`tab-${t}`}
+                    aria-selected={tab === t}
+                    aria-controls={`panel-${t}`}
+                    className="tab"
+                    onClick={() => setTab(t)}
+                  >
+                    {t === "recon" ? "Recon" : "Ledger"}
+                    {t === "ledger" && (
+                      <span className="tab-count">{coverage.closed_cells}/{coverage.total_cells}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </header>
+            <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+              {tab === "recon" ? (
+                <Recon engId={current} onAssetsChanged={loadCoverage} />
+              ) : (
+                <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage} />
+              )}
+            </div>
+          </>
         )}
       </main>
 
@@ -200,7 +231,7 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
     <section aria-labelledby="ledger-title">
       <header className="ledger-head">
         <div>
-          <h2 id="ledger-title">{coverage.engagement}</h2>
+          <h3 id="ledger-title" className="sr-only">Coverage ledger</h3>
           <p className="tally">
             {coverage.closed_cells} of {coverage.total_cells} in-scope cells receipted ({pct}%)
           </p>
