@@ -213,3 +213,41 @@ def test_noerror_without_records_is_not_resolved(session, monkeypatch):
     monkeypatch.setattr(worker.Run, "tool_lines", lambda self, name, cmd, inp: iter(lines[name]))
     out = worker.resolve_hosts(r, ["real.example.com", "ghost.example.com"])
     assert list(out) == ["real.example.com"]
+
+
+@pytest.fixture()
+def nuclei_exclude(tmp_path, monkeypatch):
+    f = tmp_path / "exclude.txt"
+    f.write_text("/opt/nuclei-templates/http/x.yaml\n")
+    monkeypatch.setattr(worker, "NUCLEI_EXCLUDE_FILE", str(f))
+    return f
+
+
+def test_nuclei_refuses_without_exclusion_list(monkeypatch):
+    monkeypatch.setattr(worker, "NUCLEI_EXCLUDE_FILE", "/nonexistent")
+    with pytest.raises(RuntimeError, match="exclusion list"):
+        worker.nuclei_cmd(eng("X-Bug-Bounty: r1"))
+
+
+def test_nuclei_command_is_safe_by_construction(nuclei_exclude):
+    c = worker.nuclei_cmd(eng("X-Bug-Bounty: r1", rps=3), worker._tpl("exposures"))
+    assert "-ni" in c and "-dr" in c                     # no OOB callbacks, no redirects
+    assert c[c.index("-et") + 1] == str(nuclei_exclude)  # raw/unsafe + OOB-literal templates excluded
+    for t in ("dos", "fuzz", "intrusive", "default-login", "credential-stuffing", "token-spray"):
+        assert t in c[c.index("-etags") + 1].split(",")
+    assert c[c.index("-rl") + 1] == "3" and "X-Bug-Bounty: r1" in c
+    assert c[c.index("-severity") + 1] == "medium,high,critical"
+    paths = [c[i + 1] for i, x in enumerate(c) if x == "-t"]
+    for p in paths:
+        for banned in ("default-logins", "credential-stuffing", "token-spray", "fuzzing"):
+            assert f"/{banned}/" not in p
+
+
+def test_nuclei_refuses_without_identification():
+    with pytest.raises(RuntimeError, match="research header"):
+        worker.nuclei_cmd(eng())
+
+
+def test_nuclei_template_paths_exist_in_the_pinned_layout():
+    # The original pipeline used http/cve/ (no such directory); the templates use http/cves/.
+    assert worker._tpl("cves")[0].endswith("/http/cves/")

@@ -9,6 +9,7 @@ Job kinds mirror the original pipeline's modules:
   crawl       M4  katana over golden hosts, same-host only, destructive paths skipped
   archive     M4  gau + waybackurls (passive archives)
   jsanalyze   M8  JS files: endpoints, GraphQL operations, sourcemaps, secret candidates
+  nuclei      M7  known issues: takeovers, exposures, stack-matched templates, golden-host CVEs
 
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
@@ -17,6 +18,7 @@ before storing it. Nothing outside the engagement's scope rules is recorded.
 import hashlib
 import json
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -33,6 +35,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
+from app import triage  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observation  # noqa: E402
 
@@ -466,8 +469,106 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
     return analysed
 
 
+NUCLEI_TEMPLATES = os.environ.get("WORKER_NUCLEI_TEMPLATES", "/opt/nuclei-templates")
+# Never run these, whatever a template's own tags say.
+NUCLEI_EXCLUDE_TAGS = "dos,fuzz,fuzzing,intrusive,bruteforce,brute-force,default-login,credential-stuffing,token-spray"
+NUCLEI_SEVERITY = "medium,high,critical"
+NUCLEI_EXCLUDE_FILE = os.environ.get("WORKER_NUCLEI_EXCLUDE", "/opt/nuclei-exclude.txt")
+
+
+def nuclei_cmd(eng, templates: list[str] | None = None, tags: list[str] | None = None,
+               severity: str | None = NUCLEI_SEVERITY) -> list[str]:
+    flags = require_identification(eng)
+    if not os.path.isfile(NUCLEI_EXCLUDE_FILE) or os.path.getsize(NUCLEI_EXCLUDE_FILE) == 0:
+        # Fail closed: without the exclusion list, raw and out-of-band templates would run.
+        raise RuntimeError(f"nuclei exclusion list missing ({NUCLEI_EXCLUDE_FILE}); refusing to scan")
+    cmd = [tool("nuclei"), "-silent", "-jsonl", "-nc", "-duc",
+           "-et", NUCLEI_EXCLUDE_FILE,  # raw/unsafe and out-of-band templates (see Dockerfile)
+           "-ni",                       # no interactsh: no out-of-band callbacks to third parties
+           "-dr",                       # follow no redirects, whatever a template asks for
+           "-etags", NUCLEI_EXCLUDE_TAGS,
+           "-rl", str(eng.rate_limit_rps), "-c", str(min(5, eng.rate_limit_rps)), "-bs", "5",
+           "-retries", "1", "-timeout", "8", *flags]
+    for t in templates or [os.path.join(NUCLEI_TEMPLATES, "http")]:
+        cmd += ["-t", t]
+    if tags:
+        cmd += ["-tags", ",".join(tags)]
+    if severity:
+        cmd += ["-severity", severity]
+    return cmd
+
+
+def _tpl(*dirs: str) -> list[str]:
+    return [os.path.join(NUCLEI_TEMPLATES, "http", d) + "/" for d in dirs]
+
+
+def nuclei_plan(session, eng, urls_: list[str]) -> dict:
+    """Clusters (status, title, server, stack) -> one representative URL; stack tags; golden URLs."""
+    probes = targeting.probes_by_host(session, eng.id)
+    by_url = {p.get("url"): p for ps in probes.values() for p in ps if p.get("url")}
+    reps, seen = [], set()
+    tags: dict[str, set] = defaultdict(set)
+    for u in urls_:
+        p = by_url.get(u, {})
+        stack = tuple(sorted(triage._tech_name(t) for t in (p.get("tech") or [])))
+        key = (p.get("status_code"), (p.get("title") or "").strip().lower(), p.get("webserver"), stack)
+        for t in stack:
+            if t and not triage._BORING.match(t):
+                tags[u].add(re.sub(r"[^a-z0-9-]", "", t))
+        if key in seen and p:
+            continue
+        seen.add(key)
+        reps.append(u)
+    golden_hosts = {r["host"] for r in targeting.ranked(session, eng) if r["golden"]}
+    return {"reps": set(reps), "tags": tags,
+            "golden": {u for u in urls_ if urls.host_of(u) in golden_hosts}}
+
+
+def run_nuclei(r: Run, urls_: list[str]) -> int:
+    if not hasattr(r, "nuclei_plan"):
+        r.nuclei_plan = nuclei_plan(r.session, r.eng, r.job.targets)
+        r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
+        r.log(f"{len(r.job.targets)} live service(s), {len(r.nuclei_plan['reps'])} cluster representative(s), "
+              f"{len(r.nuclei_plan['golden'])} on golden hosts")
+    plan = r.nuclei_plan
+    urls_ = [u for u in urls_ if r.in_scope(urls.host_of(u))]
+    reps = [u for u in urls_ if u in plan["reps"]]
+    golden = [u for u in reps if u in plan["golden"]]
+    stack_tags = sorted({t for u in reps for t in plan["tags"].get(u, ())})
+
+    passes = [("takeovers", nuclei_cmd(r.eng, _tpl("takeovers"), severity=None), urls_)]
+    if reps:
+        passes.append(("generic", nuclei_cmd(r.eng, _tpl("exposures", "misconfiguration")), reps))
+    if reps and stack_tags:
+        passes.append(("stack", nuclei_cmd(r.eng, tags=stack_tags), reps))
+    if golden:
+        passes.append(("golden", nuclei_cmd(r.eng, _tpl("exposed-panels", "vulnerabilities", "cves")), golden))
+
+    found = 0
+    for name, cmd, inputs in passes:
+        for line in r.tool_lines(f"nuclei-{name}", cmd, inputs):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            where = rec.get("matched-at") or rec.get("url") or rec.get("host") or ""
+            host = urls.host_of(where) if "://" in where else where.split(":")[0]
+            if not r.in_scope(host):
+                continue
+            info = rec.get("info") or {}
+            tid = rec.get("template-id", "?")
+            found += add_lead(r, host, where, "nuclei", f"{info.get('name') or tid}",
+                              severity=str(info.get("severity", "")).lower(),
+                              detail={"template": tid, "matched_at": where, "matcher": rec.get("matcher-name"),
+                                      "tags": info.get("tags"), "pass": name,
+                                      "extracted": (rec.get("extracted-results") or [])[:5]},
+                              key=f"{tid}|{where}|{rec.get('matcher-name')}")
+    return found
+
+
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
-           "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze}
+           "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze,
+           "nuclei": run_nuclei}
 def check_registry() -> None:
     """The worker and the module registry must describe the same job kinds."""
     missing = set(modules.BY_KIND) - set(RUNNERS)

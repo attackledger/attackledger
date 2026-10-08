@@ -354,6 +354,7 @@ def test_pipeline_queues_steps_that_pass_their_gates(client):
     assert r.status_code == 201
     body = r.json()
     assert body["queued"] == ["subdomains", "resolve", "archive"]        # passive + DNS only
+    assert "off for this engagement" in {x["kind"]: x["reason"] for x in body["skipped"]}["nuclei"]
     reasons = {s["kind"]: s["reason"] for s in body["skipped"]}
     assert "off for this engagement" in reasons["ports"]
     assert "research header" in reasons["probe"]

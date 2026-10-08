@@ -203,6 +203,22 @@ options considered and who decided.
   taken from the highest-scoring hosts first instead of alphabetically.
 - **Decided by:** Murat Kabak, who asked for it after the architecture work.
 
+### D-020 · What nuclei may never run (2026-10-08, made autonomously, review pending)
+- **Decision:** On top of the tag exclusions, AttackLedger excludes nuclei templates
+  by **content** at build time: raw/unsafe requests, hard-coded out-of-band hosts
+  (oast.*, interact.sh) and interactsh URLs, and digest authentication. Templates for
+  default logins, credential stuffing, token spraying and fuzzing are never selected.
+  The original pipeline's DAST pass is not ported.
+- **Evidence:** a scan against a raw socket logger showed that unsafe templates and the
+  digest-auth template sent requests without the research header, and that static OOB
+  hosts could make a vulnerable target call a third party. After the exclusions,
+  8,899 of 8,899 requests carried the identification.
+- **Also found:** the original pipeline's golden pass uses `-t http/cve/`. The
+  templates directory is `http/cves/`, so that pass likely ran no CVE templates. The
+  original was not changed; this needs Murat's attention.
+- **Made by:** Claude, overnight under Murat's standing permission ("you may do
+  everything"). **Review:** pending, Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

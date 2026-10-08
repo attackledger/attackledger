@@ -148,6 +148,7 @@ container. Steps:
 | Crawl golden hosts | katana: same host only, JS parsing, logout/delete paths never followed | target |
 | Collect archived URLs | gau, waybackurls | passive |
 | Analyse JavaScript | endpoints, GraphQL operations, sourcemaps, secret candidates (REAL / PUBLIC / NOISE) | target |
+| Scan for known issues | nuclei: takeovers (all hosts), exposures/misconfig/stack templates (one per cluster), panels/vulns/CVEs (golden) | target, **opt-in** |
 
 The engagement's *requests per second* value is a hard ceiling for every step that
 sends traffic, port scanning included. There is no multiplier.

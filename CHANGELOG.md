@@ -13,6 +13,22 @@ before 1.0, minor versions may change the data model.
   API and the worker.
 - `docs/ROADMAP.md`.
 
+- **M7 nuclei module (opt-in)**, pinned to nuclei v3.11.1 and nuclei-templates v10.4.9.
+  It mirrors the original pipeline: takeover checks on every live service; exposures,
+  misconfigurations and stack-tagged templates on one representative per cluster; and
+  exposed panels, vulnerabilities and CVEs on golden hosts, all at medium severity and
+  up. It never runs dos, fuzz, intrusive, brute-force, default-login,
+  credential-stuffing or token-spray templates.
+- **Templates excluded by content** at image build (834 of them): raw/unsafe requests,
+  hard-coded out-of-band hosts and digest authentication. Measured against a raw
+  socket logger, the full scan sent 8,899 of 8,899 requests with the research
+  identification. Without the exclusions, 3 template classes dropped it or called
+  third parties. nuclei runs with `-ni -dr` and refuses to run if the exclusion list
+  is missing.
+- Pinned, SHA-256-verified downloads for feroxbuster v2.13.1, nuclei-templates and
+  the SecLists `common.txt` wordlist. Arjun 2.2.7 is installed in the worker for
+  upcoming modules.
+
 ### Fixed
 - Names that answer NOERROR with no records were counted as resolved, and subdomain
   discovery could add them as assets. Only an A or AAAA record now counts.

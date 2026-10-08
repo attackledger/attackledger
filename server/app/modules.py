@@ -82,6 +82,14 @@ MODULES: tuple[Module, ...] = (
            "secret candidates; secrets are stored masked and are never tested.",
            input="urls", traffic="target", http=True, after=("crawl", "archive"), produces=("endpoints", "leads"),
            pipeline="M8", max_targets=250),
+    Module("nuclei", "Scan for known issues",
+           "nuclei over live web services: takeover checks on every host; exposures, misconfigurations and "
+           "templates matching the detected stack on one host per cluster; panels, vulnerabilities and CVEs "
+           "on golden hosts. Medium severity and up. Never runs DoS, fuzzing, brute-force or default-login "
+           "templates, follows no redirects and makes no out-of-band callbacks.",
+           input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("leads",),
+           pipeline="M7", caution="Automated vulnerability scanning: many programs forbid it or require "
+                                  "a lower rate. Enable only if the policy allows scanners."),
 )
 
 BY_KIND: dict[str, Module] = {m.kind: m for m in MODULES}

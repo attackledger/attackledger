@@ -66,9 +66,15 @@ def _jsanalyze(session, eng):
     return by_host_score(session, eng, in_scope_endpoints(session, eng, js=True))
 
 
+def live_urls(session, eng: Engagement) -> list[str]:
+    """Every live web service, highest-scoring hosts first."""
+    return [u for r in ranked(session, eng) for u in r["urls"]]
+
+
 SELECTORS: dict[str, Callable] = {
     "crawl": golden_urls,
     "jsanalyze": _jsanalyze,
+    "nuclei": live_urls,
 }
 
 

@@ -238,7 +238,7 @@ function GoldenTargets({ report }: { report: TriageReport }) {
   );
 }
 
-const LEAD_KIND = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap" };
+const LEAD_KIND: Record<string, string> = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap", nuclei: "Scanner finding" };
 
 function Leads({ engId, version }: { engId: number; version: number }) {
   const [rows, setRows] = useState<Lead[]>([]);
@@ -272,7 +272,7 @@ function Leads({ engId, version }: { engId: number; version: number }) {
                     {l.detail.preview && <code className="lead-preview">{l.detail.preview}</code>}
                   </span>
                   <span className="lead-badge">
-                    {l.bucket === "real" && <span className="sev">{l.severity}</span>}
+                    {(l.bucket === "real" || l.kind === "nuclei") && l.severity && <span className="sev">{l.severity}</span>}
                     {l.bucket === "public" && <span className="muted">Public by design</span>}
                   </span>
                   <button className="btn ghost small" aria-expanded={open === l.id}
@@ -286,6 +286,8 @@ function Leads({ engId, version }: { engId: number; version: number }) {
                     <div><dt>Found in</dt><dd><a href={l.source_url} target="_blank" rel="noreferrer noopener">{l.source_url}</a></dd></div>
                     {l.detail.value_sha256 && <div><dt>Value SHA-256</dt><dd><code>{l.detail.value_sha256}</code></dd></div>}
                     {l.detail.map_url && <div><dt>Map</dt><dd>{l.detail.map_url}</dd></div>}
+                    {l.detail.template && <div><dt>Template</dt><dd><code>{l.detail.template}</code> ({l.detail.pass} pass)</dd></div>}
+                    {l.detail.matched_at && <div><dt>Matched at</dt><dd>{l.detail.matched_at}</dd></div>}
                     {l.detail.sources && l.detail.sources.length > 0 && (
                       <div><dt>Sources</dt><dd className="lead-sources">{l.detail.sources.join("\n")}</dd></div>
                     )}

@@ -183,11 +183,12 @@ export interface Lead {
   id: number;
   host: string;
   source_url: string;
-  kind: "secret" | "graphql" | "sourcemap";
+  kind: "secret" | "graphql" | "sourcemap" | "nuclei";
   title: string;
   bucket: string;
   severity: string;
-  detail: { preview?: string; value_sha256?: string; map_url?: string; sources?: string[]; sources_content?: boolean; inline?: boolean };
+  detail: { preview?: string; value_sha256?: string; map_url?: string; sources?: string[]; sources_content?: boolean;
+            inline?: boolean; template?: string; matched_at?: string; pass?: string };
 }
 
 export interface TriageReport {
