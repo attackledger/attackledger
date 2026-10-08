@@ -89,6 +89,19 @@ does not have.
 - The report embeds everything needed to rebuild every receipt and walk the chain
   offline, using only the Python standard library.
 
+### Computed modules
+
+`paramclass` (M6) and `dorks` (M10) have traffic class `passive` and send no request at
+all. They derive leads from what earlier modules stored. A lab test confirms that zero
+requests reach the target.
+
+### Authentication
+
+`ATTACKLEDGER_API_TOKEN` turns on token authentication for every route except
+`/health` and login, using a bearer header or an HttpOnly, SameSite=Strict cookie that
+holds an HMAC of the token. `/health` reports `auth_required`. An API without a token
+must stay on localhost.
+
 ## Invariants worth keeping
 
 - Unknown is out of scope. Exclusions win. A wildcard does not cover its apex.
@@ -101,3 +114,7 @@ does not have.
   is ever shown as `done`.
 - Only a person issues a receipt.
 - Secrets are evidence, not inventory: masked, hashed and never tested.
+- Third-party scanners are trusted only after measurement. A raw socket logger checks
+  that every request carries the research identification (nuclei: 8,899/8,899), and the
+  target's log checks that the per-second peak stays at the limit (feroxbuster 20/20,
+  Arjun 10/10).

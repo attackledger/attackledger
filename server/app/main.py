@@ -27,7 +27,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.4.1", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.5.0", lifespan=lifespan)
 app.middleware("http")(auth.middleware)
 
 

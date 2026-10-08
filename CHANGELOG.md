@@ -3,7 +3,10 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
-## [Unreleased]
+## [0.5.0] - 2026-10-09
+
+Recon completed: every module of the original pipeline that can run safely, plus
+the pipeline runner, scope import and API authentication.
 
 ### Added
 - **Run pipeline.** One action queues every step that passes its gates, in registry

@@ -233,6 +233,20 @@ options considered and who decided.
   budgets run at once (up to 3× the program limit). The original was not changed.
 - **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
 
+### D-022 · Operator-token authentication now, user accounts later (2026-10-09, made autonomously, review pending)
+- **Decision:** A single operator token (`ATTACKLEDGER_API_TOKEN`) guards the API as a
+  bearer header or an HMAC session cookie (HttpOnly, SameSite=Strict). It stays off by
+  default for local use, and `/health` says when it is off.
+- **Why now:** it is the minimum before the API leaves localhost (VPS, demo). Real
+  multi-user accounts remain on the roadmap, and with them authenticated receipt signers.
+- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+
+### D-023 · Scope import turns ineligible assets into exclusions (2026-10-09, made autonomously, review pending)
+- **Decision:** In a HackerOne CSV, an asset with `eligible_for_submission=false` becomes
+  an exclude rule. The original csv_to_scope.py skipped it, which leaves it covered by a
+  wildcard.
+- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

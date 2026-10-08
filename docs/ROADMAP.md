@@ -1,22 +1,22 @@
 # Roadmap
 
-Status as of 2026-10-08. The changelog records what shipped and the decision
+Status as of 2026-10-09. The changelog records what shipped and the decision
 record records why. This file lists what comes next.
 
-## v0.5: finish recon
+## v0.5: finish recon (shipped in 0.5.0, apart from M9 and authenticated recon)
 
-- [ ] **M7 nuclei:** technology-matched templates plus takeover checks. Opt-in, with
+- [x] **M7 nuclei:** technology-matched templates plus takeover checks. Opt-in, with
       host clustering as in the original pipeline.
-- [ ] **M3 feroxbuster:** content discovery on golden hosts. Opt-in, with time and
+- [x] **M3 feroxbuster:** content discovery on golden hosts. Opt-in, with time and
       host caps.
-- [ ] **M5 arjun:** hidden-parameter discovery on a capped set of dynamic endpoints.
+- [x] **M5 arjun:** hidden-parameter discovery on a capped set of dynamic endpoints.
       Opt-in.
-- [ ] **M6 gf routing:** classify parameters (xss, ssrf, sqli, lfi, redirect, idor, …)
+- [x] **M6 gf routing:** classify parameters (xss, ssrf, sqli, lfi, redirect, idor, …)
       into leads for the hunt lanes.
-- [ ] **M10 dork checklist:** the manual Google-dork list, generated per engagement.
-- [ ] **Run pipeline:** queue every applicable step in dependency order. Targets are
+- [x] **M10 dork checklist:** the manual Google-dork list, generated per engagement.
+- [x] **Run pipeline:** queue every applicable step in dependency order. Targets are
       resolved when each step runs.
-- [ ] **Scope import:** HackerOne scope CSV to include/exclude rules.
+- [x] **Scope import:** HackerOne scope CSV to include/exclude rules.
 - [ ] **M9 cloud and infra:** cloud_enum and s3scanner (later).
 - [ ] **Authenticated recon:** crawl with the operator's own test session (later).
 
@@ -31,8 +31,8 @@ record records why. This file lists what comes next.
 
 ## v0.7: ready to publish
 
-- [ ] User accounts and authentication. Required before the API leaves localhost and
-      for receipt signatures to be real identities.
+- [x] Operator-token authentication (v0.5.0).
+- [ ] Multi-user accounts, so that receipt signatures become authenticated identities.
 - [ ] Live site at attackledger.com: landing page, docs and a read-only demo.
 - [ ] Make the repository public after a fresh full-history scan, then pin it on the
       profile.
