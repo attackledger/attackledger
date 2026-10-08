@@ -183,14 +183,25 @@ options considered and who decided.
 - **Decided by:** Murat Kabak ("let's set up an architecture first, then fill it in").
   Claude proposed the registry and the executor contract.
 
-### D-018 · Who issues receipts (2026-10-08) — PROPOSED, awaiting decision
-- **Proposal:** Executors, agents included, may attach evidence and mark items, but
-  only a person closes a lane and issues its receipt.
-- **Why proposed:** A receipt is the claim "this was tested"; keeping a human
-  signature on it is what makes the coverage statement credible to an auditor.
-- **Alternative:** Let agents close lanes, with a mandatory human review step before
+### D-018 · Only a person issues receipts (2026-10-08)
+- **Decision:** Executors, agents included, may attach evidence and mark items, but
+  only a person closes a lane. Closing requires the signer's name and an explicit
+  "I reviewed this lane's evidence". The signer is stored on the receipt and shown in
   the report.
-- **Proposed by:** Claude. **Decision:** pending, Murat Kabak.
+- **Why:** A receipt is the claim "this was tested". A human signature on it is what
+  makes the coverage statement credible to an auditor.
+- **Alternative considered:** agents close lanes, with a human review step before
+  the report.
+- **Limit:** until the API has user accounts, the signature is an attestation, not
+  an authenticated identity.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak (option A, "only a person closes").
+
+### D-019 · Per-run caps never drop work silently (2026-10-08)
+- **Decision:** A module may declare `max_targets` in the registry (JavaScript
+  analysis: 250, as in the original js_analyze.py). Targets beyond it are recorded
+  as remaining and the run is `partial`, resumable with *Run remaining*. JS files are
+  taken from the highest-scoring hosts first instead of alphabetically.
+- **Decided by:** Murat Kabak, who asked for it after the architecture work.
 
 ## Adding entries
 

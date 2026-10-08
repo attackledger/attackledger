@@ -82,8 +82,10 @@ does not have.
 
 - Evidence is append-only and chained per engagement:
   `chain_hash = sha256(prev_hash + record)`.
-- A receipt is the hash of a lane's manifest (items and evidence). Any later change
-  makes it stale (shown as VOID).
+- A receipt is the hash of a lane's manifest (items and evidence), **signed by the
+  person who reviewed and closed the lane** (D-018). Any later change makes it stale
+  (shown as VOID). Only people close lanes; executors cannot. Until the API has user
+  accounts, the signature is an attestation, not an authenticated identity.
 - The report embeds everything needed to rebuild every receipt and walk the chain
   offline, using only the Python standard library.
 
@@ -94,6 +96,8 @@ does not have.
 - No HTTP leaves the worker without the research identification, and redirects are
   not followed.
 - The rate limit is a ceiling for every traffic-sending step.
-- A failure that produced nothing is `failed`, and a run cut short is `partial`.
-  Neither is ever shown as `done`.
+- A failure that produced nothing is `failed`. A run cut short, by the time limit or
+  by a module's `max_targets`, is `partial` and lists what it did not reach. Neither
+  is ever shown as `done`.
+- Only a person issues a receipt.
 - Secrets are evidence, not inventory: masked, hashed and never tested.

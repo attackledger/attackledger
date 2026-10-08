@@ -16,12 +16,15 @@ verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
 
 
+SIGN = {"closed_by": "test reviewer", "reviewed": True}
+
+
 def build(c):
     eng = c.post("/engagements", json={"name": "Report test", "pack_id": "web-pentest-wstg"}).json()["id"]
     a = c.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
     info = c.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
     resolve_all(c, info)
-    c.post(f"/lanes/{info['id']}/close")
+    c.post(f"/lanes/{info['id']}/close", json=SIGN)
     conf = c.post("/lanes", json={"asset_id": a["id"], "role": "conf"}).json()
     c.post(f"/lanes/{conf['id']}/evidence", json={
         "item_idx": 1, "kind": "note", "sha256": h("x"),
@@ -113,3 +116,11 @@ def test_api_evidence_is_chained(client):
     assert [e["seq"] for e in ev] == list(range(1, len(ev) + 1))
     assert ev[0]["prev_hash"] == verify.GENESIS
     assert all(ev[i]["prev_hash"] == ev[i - 1]["chain_hash"] for i in range(1, len(ev)))
+
+
+def test_report_carries_the_receipt_signer(client):
+    eng, info_id = build(client)
+    r = client.get(f"/engagements/{eng}/report").json()
+    lane = next(l for l in r["lanes"] if l["lane_id"] == info_id)
+    assert lane["receipt"]["closed_by"] == "test reviewer"
+    assert "test reviewer" in client.get(f"/engagements/{eng}/report.html").text

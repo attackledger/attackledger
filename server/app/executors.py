@@ -13,7 +13,8 @@ Write side (what an executor may do):
   - append evidence to the lane (ledger.append_evidence; hash-chained),
   - mark an item done (only with evidence) or N/A (only with a reason),
   - record a lead for another lane.
-  An executor never issues a receipt. Closing a lane is a separate step (see D-017).
+  An executor never issues a receipt. Only a person closes a lane, signing the
+  receipt with their name after reviewing the evidence (D-018).
 
 Executors
   manual  a person, through the UI or API (always available)

@@ -106,6 +106,8 @@ def check_receipts(r: dict) -> tuple[list[str], list[str]]:
                 problems.append(f"{label}: receipt does not match its items and evidence")
             if any(i["state"] == "open" for i in lane["items"]):
                 problems.append(f"{label}: reported as receipted with open items")
+            if not (rc.get("closed_by") or "").strip():
+                notes.append(f"{label}: receipt has no signer (issued before signatures were required)")
         elif lane["status"] == "stale":
             notes.append(f"{label}: receipt is void (the ledger changed after it was issued)")
     return problems, notes

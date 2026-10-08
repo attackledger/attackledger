@@ -96,7 +96,7 @@ export interface LaneDetail {
   unresolved: string[];
   items: LaneItem[];
   evidence: EvidenceEntry[];
-  receipt: { sha256: string; created_at: string } | null;
+  receipt: { sha256: string; closed_by: string | null; created_at: string } | null;
 }
 
 export interface Scope {
@@ -266,5 +266,6 @@ export const api = {
     p.set("offset", String(opts.offset ?? 0));
     return call<{ total: number; items: EndpointRow[] }>(`/engagements/${engId}/endpoints?${p}`);
   },
-  closeLane: (laneId: number) => call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST" }),
+  closeLane: (laneId: number, closed_by: string, reviewed: boolean) =>
+    call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST", body: JSON.stringify({ closed_by, reviewed }) }),
 };

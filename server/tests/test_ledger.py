@@ -36,6 +36,9 @@ def client():
     app.dependency_overrides.clear()
 
 
+SIGN = {"closed_by": "test reviewer", "reviewed": True}
+
+
 def h(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -65,7 +68,7 @@ def test_model_gated_lane_needs_closed_mapper(client):
     assert r.status_code == 422  # mapper open, not closed
 
     resolve_all(client, mapper)
-    assert client.post(f"/lanes/{mapper['id']}/close").status_code == 200
+    assert client.post(f"/lanes/{mapper['id']}/close", json=SIGN).status_code == 200
     assert client.post("/lanes", json={"asset_id": asset_id, "role": "authz"}).status_code == 201
 
 
@@ -81,7 +84,7 @@ def test_done_requires_evidence_and_na_requires_reason(client):
 def test_close_fails_while_items_open(client):
     _, asset_id = setup_asset(client)
     lane = client.post("/lanes", json={"asset_id": asset_id, "role": "recon"}).json()
-    r = client.post(f"/lanes/{lane['id']}/close")
+    r = client.post(f"/lanes/{lane['id']}/close", json=SIGN)
     assert r.status_code == 422
     assert client.get(f"/lanes/{lane['id']}").json()["status"] == "open"
 
@@ -90,7 +93,7 @@ def test_receipt_goes_stale_when_ledger_changes(client):
     _, asset_id = setup_asset(client)
     lane = client.post("/lanes", json={"asset_id": asset_id, "role": "recon"}).json()
     resolve_all(client, lane)
-    assert client.post(f"/lanes/{lane['id']}/close").json()["status"] == "closed"
+    assert client.post(f"/lanes/{lane['id']}/close", json=SIGN).json()["status"] == "closed"
 
     client.post(f"/lanes/{lane['id']}/evidence",
                 json={"kind": "note", "sha256": h("late"), "summary": "added after close"})
@@ -101,7 +104,7 @@ def test_coverage_counts_only_closed_cells(client):
     eng_id, asset_id = setup_asset(client)
     lane = client.post("/lanes", json={"asset_id": asset_id, "role": "recon"}).json()
     resolve_all(client, lane)
-    client.post(f"/lanes/{lane['id']}/close")
+    client.post(f"/lanes/{lane['id']}/close", json=SIGN)
     cov = client.get(f"/engagements/{eng_id}/coverage").json()
     assert cov["closed_cells"] == 1 and cov["total_cells"] == 7
     assert cov["assets"][0]["roles"]["mapper"]["status"] == "not_opened"
@@ -222,7 +225,7 @@ def test_control_coverage_counts_only_receipted_lanes(client):
 
     resolve_all(client, info)
     assert status("DORA-ART8")["status"] == "none"       # proven but not receipted
-    client.post(f"/lanes/{info['id']}/close")
+    client.post(f"/lanes/{info['id']}/close", json=SIGN)
     assert status("DORA-ART8")["status"] == "evidenced"  # info lane is the only DORA-ART8 source
     assert status("PCI-11.4.1")["status"] == "evidenced"
     assert status("ISO-A.5.15")["status"] == "none"      # authz/idnt lanes not done
@@ -330,3 +333,16 @@ def test_executors_and_lane_context(client, monkeypatch):
     assert ctx["rules"]["research_header"] == "X-Bug-Bounty: r1" and ctx["rules"]["authorized"]
     assert len(ctx["items"]) == len(lane["items"])
     assert set(ctx["recon"]) == {"observations", "endpoints", "leads"}
+
+
+def test_receipt_needs_a_signer_and_review(client):
+    _, asset_id = setup_asset(client)
+    lane = client.post("/lanes", json={"asset_id": asset_id, "role": "recon"}).json()
+    resolve_all(client, lane)
+    assert client.post(f"/lanes/{lane['id']}/close").status_code == 422                     # no signer
+    assert client.post(f"/lanes/{lane['id']}/close",
+                       json={"closed_by": "m", "reviewed": False}).status_code == 422       # not reviewed
+    assert client.post(f"/lanes/{lane['id']}/close",
+                       json={"closed_by": "  ", "reviewed": True}).status_code == 422       # blank signer
+    r = client.post(f"/lanes/{lane['id']}/close", json={"closed_by": "Murat Kabak", "reviewed": True}).json()
+    assert r["status"] == "closed" and r["receipt"]["closed_by"] == "Murat Kabak"

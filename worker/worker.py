@@ -48,7 +48,6 @@ CRAWL_OUT_OF_SCOPE = (r"logout|log-out|signout|sign-out|/delete|/destroy|/remove
                       r"/close-account|/unsubscribe")
 
 
-JS_MAX_FILES = 250
 JS_MAX_BYTES = 5 * 1024 * 1024
 JS_TIMEOUT = 15
 
@@ -405,7 +404,7 @@ def add_lead(r: Run, host: str, source_url: str, kind: str, title: str, bucket: 
 def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
     get = fetcher(r.eng)
     r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
-    js_urls = [u for u in js_urls if r.in_scope(urls.host_of(u))][:JS_MAX_FILES]
+    js_urls = [u for u in js_urls if r.in_scope(urls.host_of(u))]   # the per-run cap lives in the registry
     endpoints: dict[str, set] = defaultdict(set)
     analysed = leads = noise = 0
     failures: dict[str, int] = defaultdict(int)
@@ -480,6 +479,10 @@ def run(session, job: Job) -> "Run":
     except jobgates.GateError as e:
         raise RuntimeError(str(e))
     targets, _ = jobgates.split_targets(eng, m, job.targets)
+    over_limit: list[str] = []
+    if m.max_targets and len(targets) > m.max_targets:
+        # Never drop silently: what does not fit is listed as remaining.
+        targets, over_limit = targets[:m.max_targets], targets[m.max_targets:]
     if len(targets) != len(job.targets):
         job.log += f"skipped {len(job.targets) - len(targets)} target(s) outside scope\n"
     if not targets:
@@ -498,7 +501,9 @@ def run(session, job: Job) -> "Run":
         done += chunk                      # a batch counts only once it finished
         job.targets_done = len(done)
         session.commit()
-    remaining = [t for t in targets if t not in set(done)]
+    if over_limit and not stopped:
+        stopped = "target limit"
+    remaining = [t for t in targets if t not in set(done)] + over_limit
     job.remaining_targets = remaining or None
     job.targets_done = len(done)
     job.output_sha256 = r.digest.hexdigest()
@@ -557,7 +562,7 @@ def main():
                 session.refresh(job, ["status"])
                 if job.status == JobStatus.cancelled:
                     pass
-                elif r.stopped == "timed out":
+                elif r.stopped:                       # time limit or target limit
                     job.status = JobStatus.partial   # never "done" with targets left
                 else:
                     job.status = JobStatus.done

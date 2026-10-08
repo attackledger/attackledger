@@ -409,9 +409,16 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const [signer, setSigner] = useState(() => {
+    try { return localStorage.getItem("attackledger-signer") ?? ""; } catch { return ""; }
+  });
+  const [reviewed, setReviewed] = useState(false);
+
   async function close() {
     try {
-      setLane(await api.closeLane(laneId));
+      try { localStorage.setItem("attackledger-signer", signer.trim()); } catch { /* ignore */ }
+      setLane(await api.closeLane(laneId, signer.trim(), reviewed));
+      setReviewed(false);
       setError(null);
       onChanged();
     } catch (e) {
@@ -510,9 +517,24 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
           <footer className="folio-foot">
             {error && <p className="field-error" role="alert">{error}</p>}
             {lane.status === "closed" ? (
-              <p className="muted">Receipt issued {new Date(lane.receipt!.created_at).toLocaleString()}</p>
+              <p className="muted">
+                Receipt signed by {lane.receipt!.closed_by ?? "an unknown reviewer"},{" "}
+                {new Date(lane.receipt!.created_at).toLocaleString()}
+              </p>
             ) : (
-              <button className="btn primary" onClick={close}>Close lane and issue receipt</button>
+              <div className="sign">
+                <label className="sign-name">
+                  Your name, as it appears on the receipt
+                  <input value={signer} onChange={(e) => setSigner(e.target.value)} placeholder="Full name" />
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
+                  I reviewed this lane's evidence. Only a person closes a lane.
+                </label>
+                <button className="btn primary" disabled={!signer.trim() || !reviewed} onClick={close}>
+                  Sign and close lane
+                </button>
+              </div>
             )}
           </footer>
         )}

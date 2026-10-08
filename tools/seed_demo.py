@@ -9,6 +9,7 @@ import sys
 import urllib.error
 import urllib.request
 
+SIGN = {"closed_by": "demo reviewer", "reviewed": True}
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
 
 
@@ -47,14 +48,14 @@ call("POST", f"/engagements/{eng['id']}/assets", {"host": "cdn.lab.test", "in_sc
 for role in ("recon", "mapper"):
     lane = call("POST", "/lanes", {"asset_id": shop["id"], "role": role})
     resolve(lane)
-    call("POST", f"/lanes/{lane['id']}/close")
+    call("POST", f"/lanes/{lane['id']}/close", SIGN)
 
 authz = call("POST", "/lanes", {"asset_id": shop["id"], "role": "authz"})
 resolve(authz, leave_open=5)
 
 stale = call("POST", "/lanes", {"asset_id": api["id"], "role": "recon"})
 resolve(stale)
-call("POST", f"/lanes/{stale['id']}/close")
+call("POST", f"/lanes/{stale['id']}/close", SIGN)
 call("POST", f"/lanes/{stale['id']}/evidence",
      {"kind": "note", "sha256": hashlib.sha256(b"new subdomain").hexdigest(),
       "summary": "new subdomain found after the receipt was issued"})
@@ -76,11 +77,11 @@ api_host = call("POST", f"/engagements/{pt['id']}/assets", {"host": "api.client.
 for asset in (app_host, api_host):
     info = call("POST", "/lanes", {"asset_id": asset["id"], "role": "info"})
     resolve(info, na_every=5)
-    call("POST", f"/lanes/{info['id']}/close")
+    call("POST", f"/lanes/{info['id']}/close", SIGN)
 for key in ("conf", "athz", "sess"):
     lane = call("POST", "/lanes", {"asset_id": app_host["id"], "role": key})
     resolve(lane, na_every=5)
-    call("POST", f"/lanes/{lane['id']}/close")
+    call("POST", f"/lanes/{lane['id']}/close", SIGN)
 athn = call("POST", "/lanes", {"asset_id": app_host["id"], "role": "athn"})
 resolve(athn, leave_open=3, na_every=5)
 

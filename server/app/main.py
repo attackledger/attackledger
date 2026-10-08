@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.4.1", lifespan=lifespan)
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -106,6 +106,7 @@ def _lane_view(lane: Lane) -> dict:
         ],
         "receipt": (
             {"sha256": lane.receipts[-1].manifest_sha256,
+             "closed_by": lane.receipts[-1].closed_by,
              "created_at": lane.receipts[-1].created_at.isoformat()}
             if lane.receipts else None
         ),
@@ -208,13 +209,25 @@ def update_item(lane_id: int, idx: int, body: ItemUpdate, session: Session = Dep
     return _lane_view(lane)
 
 
+class CloseIn(BaseModel):
+    closed_by: str = Field(min_length=1, max_length=200)   # the person signing the receipt
+    reviewed: bool                                         # "I reviewed this lane's evidence"
+
+
 @app.post("/lanes/{lane_id}/close")
-def close_lane(lane_id: int, session: Session = Depends(get_session)):
+def close_lane(lane_id: int, body: CloseIn, session: Session = Depends(get_session)):
+    """Issue a receipt. Only a person does this (D-018): executors, agents included,
+    attach evidence and mark items, but the receipt carries a human signature."""
     lane = _get(session, Lane, lane_id)
+    if not body.reviewed:
+        raise HTTPException(422, "confirm that you reviewed this lane's evidence before closing it")
+    if not body.closed_by.strip():
+        raise HTTPException(422, "a receipt needs the name of the person signing it")
     problems = gates.unresolved(lane)
     if problems:
         raise HTTPException(422, {"error": "lane cannot close", "unresolved": problems})
-    receipt = Receipt(lane_id=lane.id, manifest_sha256=gates.manifest_hash(lane))
+    receipt = Receipt(lane_id=lane.id, manifest_sha256=gates.manifest_hash(lane),
+                      closed_by=body.closed_by.strip())
     session.add(receipt)
     session.commit()
     session.refresh(lane)
@@ -391,8 +404,10 @@ def _default_targets(session: Session, eng: Engagement, m: modules.Module) -> li
     if kind == "jsanalyze":
         js = session.scalars(select(Endpoint.url).where(Endpoint.engagement_id == eng.id,
                                                         Endpoint.is_js.is_(True))).all()
-        return sorted(u for u in js if scope.in_scope(urls.host_of(u) or "", eng.scope_include,
-                                                      eng.scope_exclude))[:250]
+        js = [u for u in js if scope.in_scope(urls.host_of(u) or "", eng.scope_include, eng.scope_exclude)]
+        # Highest-scoring hosts first, so a per-run cap spends itself where it matters.
+        score = {r["host"]: r["score"] for r in _ranked(session, eng)}
+        return sorted(js, key=lambda u: (-score.get(urls.host_of(u) or "", -1), u))
     if kind == "crawl":
         ranked = _ranked(session, eng)
         golden = [r for r in ranked if r["golden"]] or ranked

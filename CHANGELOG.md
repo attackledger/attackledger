@@ -3,6 +3,20 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [0.4.1] - 2026-10-08
+
+### Changed
+- **Only a person issues receipts (D-018).** Closing a lane requires the signer's
+  name and a review confirmation. The signer is stored on the receipt (migration
+  `0007`), shown in the lane and in the report, and the verifier notes unsigned
+  receipts.
+
+### Fixed
+- JavaScript analysis no longer drops files beyond 250 silently. The registry's
+  `max_targets` caps a run, the overflow is listed as remaining, and the run is
+  `partial` and resumable. Files from the highest-scoring hosts go first.
+- An all-whitespace signer name is rejected.
+
 ## [0.4.0] - 2026-10-08
 
 Architecture release: the shape every later module and the hunt agents plug into.

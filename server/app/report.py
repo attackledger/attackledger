@@ -42,6 +42,7 @@ def build(session, eng: Engagement, controls: dict) -> dict:
                           for i in lane.items],
                 "evidence_ids": [e.id for e in lane.evidence],
                 "receipt": ({"manifest_sha256": lane.receipts[-1].manifest_sha256,
+                             "closed_by": lane.receipts[-1].closed_by,
                              "issued_at": _iso(lane.receipts[-1].created_at)} if lane.receipts else None),
             })
 
@@ -149,7 +150,7 @@ def render_html(r: dict) -> str:
 <h2>Coverage statement</h2>
 <p>Of {_n(s['lanes_possible'], 'possible lane', 'possible lanes')} ({_n(s['hosts_in_scope'], 'in-scope host', 'in-scope hosts')} × {s['lanes_per_host']} lanes),
 {s['lanes_opened']} {'was' if s['lanes_opened'] == 1 else 'were'} opened and <strong>{s['lanes_receipted']} {'is' if s['lanes_receipted'] == 1 else 'are'} receipted</strong>: every checklist item has evidence
-or a written reason, and the receipt matches the ledger.
+or a written reason, the receipt matches the ledger, and a person reviewed and signed it.
 {'No receipts are void.' if not s['lanes_stale'] else _n(s['lanes_stale'], 'receipt is', 'receipts are') + ' void because the ledger changed after issue.'}
 Lanes that were not opened were not tested.</p>
 """]
@@ -163,14 +164,15 @@ Lanes that were not opened were not tested.</p>
         if not hl:
             parts.append('<p class="muted">No lanes opened.</p>')
             continue
-        parts.append("<table><thead><tr><th>Lane</th><th>Status</th><th>Items</th><th>Receipt</th></tr></thead><tbody>")
+        parts.append("<table><thead><tr><th>Lane</th><th>Status</th><th>Items</th><th>Receipt</th><th>Signed by</th></tr></thead><tbody>")
         for l in hl:
             done = sum(1 for i in l["items"] if i["state"] == "done")
             na = sum(1 for i in l["items"] if i["state"] == "na")
             cls = "ok" if l["status"] == "closed" else "bad"
             rc = f"<code>{_e(l['receipt']['manifest_sha256'][:16])}</code>" if l["receipt"] else '<span class="muted">none</span>'
             parts.append(f"<tr><td>{_e(l['name'])}</td><td class='{cls}'>{_STATUS[l['status']]}</td>"
-                         f"<td>{done} with evidence, {na} not applicable, {len(l['items']) - done - na} open</td><td>{rc}</td></tr>")
+                         f"<td>{done} with evidence, {na} not applicable, {len(l['items']) - done - na} open</td><td>{rc}</td>"
+                         f"<td>{_e((l['receipt'] or {}).get('closed_by') or '')}</td></tr>")
         parts.append("</tbody></table>")
 
     parts.append("<h2>Control evidence</h2>")

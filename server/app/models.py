@@ -118,6 +118,8 @@ class Receipt(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     lane_id: Mapped[int] = mapped_column(ForeignKey("lanes.id"))
     manifest_sha256: Mapped[str] = mapped_column(String(64))
+    # The person who reviewed the lane and closed it. Executors never issue receipts (D-018).
+    closed_by: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     lane: Mapped[Lane] = relationship(back_populates="receipts")
 

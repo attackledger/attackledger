@@ -99,7 +99,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
                     <p className={`step-last ${last.status}`}>
                       Last run: {last.status}
                       {last.status === "done" && `, ${last.result_count} ${last.result_count === 1 ? "result" : "results"}`}
-                      {last.status === "partial" && `: stopped at the time limit, ${last.remaining} of ${last.targets.length} targets not run`}
+                      {last.status === "partial" && `: stopped early (time or per-run limit), ${last.remaining} target${last.remaining === 1 ? "" : "s"} not run yet`}
                     </p>
                   )}
                 </div>

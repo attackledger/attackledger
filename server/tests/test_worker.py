@@ -166,3 +166,16 @@ def test_worker_rechecks_gates_at_run_time(session):
     job = make_job(session, ["a.example.com"], kind="ports")   # port scanning not enabled
     with pytest.raises(RuntimeError, match="off for this engagement"):
         worker.run(session, job)
+
+
+def test_target_limit_lists_the_overflow_as_remaining(session, monkeypatch):
+    urls_ = [f"https://app.example.com/js/{i:03d}.js" for i in range(260)]
+    job = make_job(session, urls_, kind="jsanalyze")
+    job.engagement.research_header = "X-Bug-Bounty: r1"
+    session.commit()
+    seen = []
+    monkeypatch.setitem(worker.RUNNERS, "jsanalyze", lambda r, chunk: seen.extend(chunk) or len(chunk))
+    r = worker.run(session, job)
+    assert r.stopped == "target limit"
+    assert len(seen) == 250 and job.targets_done == 250
+    assert job.remaining_targets == urls_[250:]          # nothing dropped silently

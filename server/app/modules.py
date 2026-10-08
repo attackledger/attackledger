@@ -19,6 +19,8 @@ Fields
   opt_in     must be enabled per engagement because many programs forbid it
   after      kinds whose output this module normally consumes (ordering hint for the UI)
   produces   which tables it writes: observations, endpoints, leads
+  max_targets  per-run ceiling; targets beyond it are listed as remaining and the run is
+               partial, never silently dropped
   pipeline   original pipeline module it corresponds to
 """
 from dataclasses import dataclass, field
@@ -40,6 +42,7 @@ class Module:
     produces: tuple[str, ...] = ()
     pipeline: str = ""
     caution: str = ""  # shown next to the opt-in switch
+    max_targets: int | None = None
 
     def __post_init__(self):
         assert self.input in INPUTS, self.kind
@@ -75,10 +78,10 @@ MODULES: tuple[Module, ...] = (
            "Historical URLs from public archives (gau, Wayback Machine); nothing is sent to the target.",
            input="roots", traffic="passive", produces=("endpoints",), pipeline="M4"),
     Module("jsanalyze", "Analyse JavaScript",
-           "Downloads in-scope JS files (up to 250) and extracts endpoints, GraphQL operations, sourcemaps and "
+           "Downloads in-scope JS files, highest-scoring hosts first (250 per run; the rest can be resumed), and extracts endpoints, GraphQL operations, sourcemaps and "
            "secret candidates; secrets are stored masked and are never tested.",
            input="urls", traffic="target", http=True, after=("crawl", "archive"), produces=("endpoints", "leads"),
-           pipeline="M8"),
+           pipeline="M8", max_targets=250),
 )
 
 BY_KIND: dict[str, Module] = {m.kind: m for m in MODULES}
@@ -94,4 +97,4 @@ def as_dict(m: Module) -> dict:
     return {"kind": m.kind, "title": m.title, "summary": m.summary, "input": m.input,
             "traffic": m.traffic, "http": m.http, "opt_in": m.opt_in, "after": list(m.after),
             "produces": list(m.produces), "pipeline": m.pipeline, "caution": m.caution,
-            "needs_identification": m.needs_identification}
+            "needs_identification": m.needs_identification, "max_targets": m.max_targets}
