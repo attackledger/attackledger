@@ -127,6 +127,7 @@ class JobStatus(str, Enum):
     done = "done"
     failed = "failed"
     cancelled = "cancelled"
+    partial = "partial"   # stopped at the time limit; remaining_targets lists what was not run
 
 
 class Job(Base):
@@ -140,6 +141,10 @@ class Job(Base):
     log: Mapped[str] = mapped_column(Text, default="")
     result_count: Mapped[int] = mapped_column(default=0)
     output_sha256: Mapped[str | None] = mapped_column(String(64))
+    # Targets run in batches; a batch counts only when it finished. Anything not
+    # finished is listed in remaining_targets, so a stopped job never looks complete.
+    targets_done: Mapped[int] = mapped_column(default=0, server_default="0")
+    remaining_targets: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]

@@ -600,6 +600,8 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .chip.done { color: var(--stamp); }
 .chip.running, .chip.queued { color: var(--ink); }
 .chip.failed, .chip.cancelled { color: var(--red); }
+.chip.partial { color: var(--red); border-style: dashed; }
+.step-last.partial { color: var(--red); }
 @media (prefers-reduced-motion: no-preference) {
   .chip.running { animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.45; } }

@@ -112,6 +112,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
                     <p className={`step-last ${last.status}`}>
                       Last run: {last.status}
                       {last.status === "done" && `, ${last.result_count} ${last.result_count === 1 ? "result" : "results"}`}
+                      {last.status === "partial" && `: stopped at the time limit, ${last.remaining} of ${last.targets.length} targets not run`}
                     </p>
                   )}
                 </div>
@@ -143,9 +144,20 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
                 <div className="job-row">
                   <span className={`chip ${j.status}`}>{j.status}</span>
                   <span className="job-kind">{STEPS.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
-                  <span className="muted">{j.targets.length} target{j.targets.length === 1 ? "" : "s"}</span>
+                  <span className="muted">
+                    {j.status === "partial" || (j.status === "cancelled" && j.remaining)
+                      ? `${j.targets_done} of ${j.targets.length} targets run`
+                      : `${j.targets.length} target${j.targets.length === 1 ? "" : "s"}`}
+                  </span>
                   <span className="muted job-time">{new Date(j.created_at).toLocaleTimeString()}</span>
                   <span className="job-actions">
+                    {j.remaining > 0 && (j.status === "partial" || j.status === "cancelled") && (
+                      <button className="btn small" onClick={async () => {
+                        try { await api.resumeJob(j.id); await refresh(); } catch (e) { setError((e as Error).message); }
+                      }}>
+                        Run remaining {j.remaining}
+                      </button>
+                    )}
                     {(j.status === "queued" || j.status === "running") && (
                       <button className="btn ghost small" onClick={async () => { await api.cancelJob(j.id); refresh(); }}>
                         Cancel

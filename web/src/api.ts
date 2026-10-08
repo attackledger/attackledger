@@ -111,7 +111,7 @@ export interface Scope {
   authorized_at: string | null;
 }
 
-export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "partial";
 
 export interface Job {
   id: number;
@@ -120,6 +120,8 @@ export interface Job {
   targets: string[];
   result_count: number;
   output_sha256: string | null;
+  targets_done: number;
+  remaining: number;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -227,6 +229,7 @@ export const api = {
   job: (jobId: number) => call<Job>(`/jobs/${jobId}`),
   runJob: (engId: number, kind: string, targets: string[] = []) =>
     call<Job>(`/engagements/${engId}/jobs`, { method: "POST", body: JSON.stringify({ kind, targets }) }),
+  resumeJob: (jobId: number) => call<Job>(`/jobs/${jobId}/resume`, { method: "POST" }),
   cancelJob: (jobId: number) => call<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   observations: (engId: number) => call<ObservationRow[]>(`/engagements/${engId}/observations`),
   leads: (engId: number) => call<Lead[]>(`/engagements/${engId}/leads`),

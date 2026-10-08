@@ -89,3 +89,70 @@ def test_no_step_exceeds_the_engagement_rate_limit(rps):
         for _, c in worker.commands(kind, e):
             flag = "-rate" if "-rate" in c else "-rl"
             assert int(c[c.index(flag) + 1]) <= rps, (kind, c)
+
+
+# ---- batching, time limit and partial runs -----------------------------------
+
+from datetime import datetime, timezone
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app import db
+from app.models import Engagement, Job, JobStatus
+
+
+@pytest.fixture()
+def session():
+    eng_ = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.Base.metadata.create_all(eng_)
+    s = sessionmaker(bind=eng_, expire_on_commit=False)()
+    yield s
+    s.close()
+
+
+def make_job(s, targets, kind="resolve"):
+    e = Engagement(name="t", scope_include=["*.example.com"], scope_exclude=[],
+                   authorized_by="op", authorized_at=datetime.now(timezone.utc))
+    s.add(e)
+    s.commit()
+    j = Job(engagement_id=e.id, kind=kind, targets=targets, status=JobStatus.running)
+    s.add(j)
+    s.commit()
+    return j
+
+
+def test_watchdog_stops_a_silent_tool(session, monkeypatch):
+    monkeypatch.setattr(worker, "JOB_TIMEOUT", 1)
+    r = worker.Run(session, make_job(session, ["a.example.com"]))
+    t0 = __import__("time").monotonic()
+    with pytest.raises(worker.Cancelled, match="timed out"):
+        list(r.tool_lines("sleep", ["sleep", "30"], []))
+    assert __import__("time").monotonic() - t0 < 5
+
+
+def test_time_limit_marks_remaining_targets(session, monkeypatch):
+    targets = [f"h{i}.example.com" for i in range(7)]
+    job = make_job(session, targets)
+    calls = []
+
+    def fake_runner(r, chunk):
+        calls.append(chunk)
+        if len(calls) == 3:
+            raise worker.Cancelled("timed out")
+        return len(chunk)
+
+    monkeypatch.setattr(worker, "CHUNK_SIZE", 3)
+    monkeypatch.setitem(worker.RUNNERS, "resolve", fake_runner)
+    r = worker.run(session, job)
+    assert r.stopped == "timed out"
+    assert job.targets_done == 6 and job.result_count == 6
+    assert job.remaining_targets == ["h6.example.com"]   # the interrupted batch is not counted
+
+
+def test_complete_run_has_no_remaining_targets(session, monkeypatch):
+    job = make_job(session, ["a.example.com", "b.example.com"])
+    monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: len(chunk))
+    r = worker.run(session, job)
+    assert r.stopped is None and job.targets_done == 2 and job.remaining_targets is None

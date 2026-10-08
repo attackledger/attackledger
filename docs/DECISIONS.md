@@ -164,6 +164,15 @@ options considered and who decided.
 - **Proposed by:** Claude, extending the "do not use the key, only report it" rule in
   Murat's secret triage notes. **Decided by:** Murat Kabak.
 
+### D-016 · An interrupted run is never "done" (2026-10-08)
+- **Decision:** A run that hits the time limit is `partial` and lists exactly which
+  targets were not run. Targets run in batches so the list is exact rather than
+  estimated, and the operator can run the remainder.
+- **Context:** With the rate limit enforced, port scanning a large program takes
+  longer than the 30-minute limit. Marking such a run "done" would overstate coverage.
+- **Decided by:** Murat Kabak, who asked for the fix. Claude proposed batching and
+  the watchdog.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

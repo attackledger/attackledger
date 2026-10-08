@@ -20,6 +20,7 @@ import os
 import ssl
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -36,6 +37,8 @@ from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observ
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
+# Targets run in batches so a stopped job knows exactly which targets were not run.
+CHUNK_SIZE = max(1, int(os.environ.get("WORKER_CHUNK_SIZE", "20")))
 TOOLS = os.environ.get("WORKER_TOOLS_DIR", "/opt/pd/bin")
 # Optional DNS resolvers for dnsx/naabu (comma-separated). Unset: the tools' defaults.
 RESOLVERS = os.environ.get("WORKER_RESOLVERS", "").strip()
@@ -157,16 +160,21 @@ class Run:
         self.started = time.monotonic()
         self.known = {a.host: a for a in self.eng.assets}
         self.failed_tools: list[str] = []
+        self.stopped: str | None = None
+        self.fetch_failures = 0
 
     def log(self, line: str) -> None:
         self.job.log = (self.job.log + line + "\n")[-20000:]
         self.session.commit()
 
+    def remaining_time(self) -> float:
+        return JOB_TIMEOUT - (time.monotonic() - self.started)
+
     def check_stop(self) -> None:
         self.session.refresh(self.job, ["status"])
         if self.job.status == JobStatus.cancelled:
             raise Cancelled("cancelled")
-        if time.monotonic() - self.started > JOB_TIMEOUT:
+        if self.remaining_time() <= 0:
             raise Cancelled("timed out")
 
     def tool_lines(self, name: str, cmd: list[str], stdin_lines: list[str]):
@@ -175,6 +183,15 @@ class Run:
                                 stderr=subprocess.PIPE, text=True)
         proc.stdin.write("\n".join(stdin_lines) + "\n")
         proc.stdin.close()
+        # Enforce the time limit even when a tool prints nothing for a long time.
+        timed_out = threading.Event()
+
+        def _expire():
+            timed_out.set()
+            proc.kill()
+        watchdog = threading.Timer(max(self.remaining_time(), 0), _expire)
+        watchdog.daemon = True
+        watchdog.start()
         try:
             for n, line in enumerate(proc.stdout, start=1):
                 self.digest.update(f"{name}\t{line}".encode())
@@ -186,7 +203,10 @@ class Run:
             proc.kill()
             raise
         finally:
+            watchdog.cancel()
             proc.wait()
+        if timed_out.is_set():
+            raise Cancelled("timed out")
         err = proc.stderr.read().strip()
         if err:
             self.log(err[-2000:])
@@ -435,11 +455,10 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
             r.check_stop()
     added = store_endpoints(r, endpoints) if endpoints else 0
     if failures:
+        r.fetch_failures += sum(failures.values())
         r.log("fetch failures: " + ", ".join(f"{k} ×{v}" for k, v in sorted(failures.items())))
     r.log(f"{analysed} file(s) analysed, {leads} new lead(s), {noise} noise match(es) ignored, "
           f"{added} new endpoint(s)")
-    if js_urls and analysed == 0:
-        raise RuntimeError("no JavaScript file could be fetched; see the log for reasons")
     return analysed
 
 
@@ -471,19 +490,32 @@ def run(session, job: Job) -> None:
         raise RuntimeError("no in-scope targets")
 
     r = Run(session, job)
-    try:
-        kept = RUNNERS[job.kind](r, targets)
-    except Cancelled as e:
-        r.log(f"stopped: {e}")
-        kept = None
-    session.commit()
+    kept, done, stopped = 0, [], None
+    chunks = [targets[i:i + CHUNK_SIZE] for i in range(0, len(targets), CHUNK_SIZE)]
+    for chunk in chunks:
+        try:
+            r.check_stop()
+            kept += RUNNERS[job.kind](r, chunk)
+        except Cancelled as e:
+            stopped = str(e)
+            break
+        done += chunk                      # a batch counts only once it finished
+        job.targets_done = len(done)
+        session.commit()
+    remaining = [t for t in targets if t not in set(done)]
+    job.remaining_targets = remaining or None
+    job.targets_done = len(done)
     job.output_sha256 = r.digest.hexdigest()
-    if kept is not None:
-        job.result_count = kept
+    job.result_count = kept
     session.commit()
-    if kept == 0 and r.failed_tools:
-        # A tool error that produced nothing is a failure, not an empty result.
-        raise RuntimeError(f"{', '.join(r.failed_tools)} failed and nothing was found; see the log")
+    if stopped:
+        r.log(f"stopped ({stopped}) after {len(done)} of {len(targets)} target(s); "
+              f"{len(remaining)} not run")
+    r.stopped = stopped
+    if not stopped and kept == 0 and (r.failed_tools or r.fetch_failures):
+        # A tool or fetch error that produced nothing is a failure, not an empty result.
+        what = ", ".join(sorted(set(r.failed_tools))) or "every fetch"
+        raise RuntimeError(f"{what} failed and nothing was found; see the log")
 
     # Record the run as evidence on each touched host's recon lane, if one is open.
     # It is attached to the lane, not to a checklist item: a person or agent still
@@ -499,6 +531,7 @@ def run(session, job: Job) -> None:
             ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256,
                                    uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}")
     session.commit()
+    return r
 
 
 def claim(session):
@@ -523,9 +556,13 @@ def main():
                 continue
             print(f"job {job.id} {job.kind}", flush=True)
             try:
-                run(session, job)
+                r = run(session, job)
                 session.refresh(job, ["status"])
-                if job.status != JobStatus.cancelled:
+                if job.status == JobStatus.cancelled:
+                    pass
+                elif r.stopped == "timed out":
+                    job.status = JobStatus.partial   # never "done" with targets left
+                else:
                     job.status = JobStatus.done
             except Exception as e:  # report, never crash the loop
                 session.rollback()

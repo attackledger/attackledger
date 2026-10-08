@@ -3,6 +3,19 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [0.3.2] - 2026-10-08
+
+### Fixed
+- **A run stopped at the time limit no longer shows as `done`.** It is now
+  `partial`, and the remaining targets are listed exactly. Targets run in batches
+  (`WORKER_CHUNK_SIZE`, default 20), and a batch counts only once it finished.
+- The time limit is enforced by a watchdog, so a tool that prints nothing (such as a
+  slow port scan) is still stopped on time.
+- **Run remaining** starts a new run for the targets a partial or cancelled run did
+  not reach, and every gate is checked again. Cancelling a queued run keeps all of
+  its targets resumable.
+- Migration `0004` adds the `partial` status, `targets_done` and `remaining_targets`.
+
 ## [0.3.1] - 2026-10-08
 
 ### Security

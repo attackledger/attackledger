@@ -154,7 +154,9 @@ tested against any service. JS fetches follow no redirects.
 Crawl and archive output is cleaned in the same way as `uro`: static files are
 dropped and URLs that differ only in parameter values are collapsed. Only
 in-scope URLs are kept. A job whose tool fails without producing anything is
-marked failed, not done.
+marked failed, not done. A job stopped at the time limit (`WORKER_JOB_TIMEOUT`, default 30 min) is
+marked **partial**, lists the targets it did not reach and can be resumed with
+*Run remaining*.
 
 A job is refused unless the engagement has:
 

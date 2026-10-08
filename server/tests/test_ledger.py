@@ -278,3 +278,21 @@ def test_jsanalyze_needs_identification_and_js_files(client):
                                                       "targets": ["https://cdn.evil.test/a.js"]})
     assert r.status_code == 422
     assert client.get(f"/engagements/{eng}/leads").json() == []
+
+
+def test_resume_only_for_runs_with_remaining_targets(client):
+    eng = recon_ready(client, "resume")
+    client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"})
+    job = client.post(f"/engagements/{eng}/jobs", json={"kind": "resolve"}).json()
+    assert job["targets_done"] == 0 and job["remaining"] == 0
+    assert client.post(f"/jobs/{job['id']}/resume").status_code == 422
+
+
+def test_cancelling_a_queued_run_keeps_all_targets_resumable(client):
+    eng = recon_ready(client, "cancel-queued")
+    client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"})
+    job = client.post(f"/engagements/{eng}/jobs", json={"kind": "resolve"}).json()
+    c = client.post(f"/jobs/{job['id']}/cancel").json()
+    assert c["status"] == "cancelled" and c["remaining"] == 1
+    r = client.post(f"/jobs/{job['id']}/resume")
+    assert r.status_code == 201 and r.json()["targets"] == ["app.example.com"]

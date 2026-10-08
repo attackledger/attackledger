@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.3.1", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.3.2", lifespan=lifespan)
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -357,6 +357,7 @@ class JobIn(BaseModel):
 def _job_view(j: Job, with_log: bool = False) -> dict:
     v = {"id": j.id, "kind": j.kind, "status": j.status.value, "targets": j.targets,
          "result_count": j.result_count, "output_sha256": j.output_sha256,
+         "targets_done": j.targets_done, "remaining": len(j.remaining_targets or []),
          "created_at": j.created_at.isoformat(),
          "started_at": j.started_at.isoformat() if j.started_at else None,
          "finished_at": j.finished_at.isoformat() if j.finished_at else None}
@@ -459,10 +460,21 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
     return _job_view(_get(session, Job, job_id), with_log=True)
 
 
+@app.post("/jobs/{job_id}/resume", status_code=201)
+def resume_job(job_id: int, session: Session = Depends(get_session)):
+    """Run the targets a stopped job did not reach. Every gate is checked again."""
+    job = _get(session, Job, job_id)
+    if job.status not in (JobStatus.partial, JobStatus.cancelled) or not job.remaining_targets:
+        raise HTTPException(422, "this run has no remaining targets")
+    return create_job(job.engagement_id, JobIn(kind=job.kind, targets=job.remaining_targets), session)
+
+
 @app.post("/jobs/{job_id}/cancel")
 def cancel_job(job_id: int, session: Session = Depends(get_session)):
     job = _get(session, Job, job_id)
     if job.status in (JobStatus.queued, JobStatus.running):
+        if job.status == JobStatus.queued:
+            job.remaining_targets = list(job.targets)   # never ran: every target is still open
         job.status = JobStatus.cancelled
         job.finished_at = datetime.now(timezone.utc)
         session.commit()
