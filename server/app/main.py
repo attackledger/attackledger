@@ -9,7 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, triage, urls
+from . import (executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, triage,
+               urls)
+from . import targets as targeting
 from .db import get_session
 from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
                      Lane, Lead, Observation, Receipt)
@@ -358,61 +360,13 @@ def _job_view(j: Job, with_log: bool = False) -> dict:
     v = {"id": j.id, "kind": j.kind, "status": j.status.value, "targets": j.targets,
          "result_count": j.result_count, "output_sha256": j.output_sha256,
          "targets_done": j.targets_done, "remaining": len(j.remaining_targets or []),
+         "deferred": j.deferred,
          "created_at": j.created_at.isoformat(),
          "started_at": j.started_at.isoformat() if j.started_at else None,
          "finished_at": j.finished_at.isoformat() if j.finished_at else None}
     if with_log:
         v["log"] = j.log
     return v
-
-
-def _probes_by_host(session: Session, eng_id: int) -> dict[str, list[dict]]:
-    rows = session.scalars(select(Observation).where(Observation.engagement_id == eng_id)
-                           .order_by(Observation.id.desc())).all()
-    latest_job: dict[str, int] = {}
-    out: dict[str, list[dict]] = {}
-    for o in rows:
-        if not o.data.get("live"):
-            continue
-        # Keep only the newest probe run per host (all its ports).
-        if latest_job.setdefault(o.host, o.job_id) != o.job_id:
-            continue
-        out.setdefault(o.host, []).append(o.data)
-    return out
-
-
-def _ranked(session: Session, eng: Engagement) -> list[dict]:
-    probes = {h: p for h, p in _probes_by_host(session, eng.id).items()
-              if scope.in_scope(h, eng.scope_include, eng.scope_exclude)}
-    rows = triage.rank(probes)
-    for r in rows:
-        r["urls"] = sorted({p["url"] for p in probes[r["host"]] if p.get("url")})
-    return rows
-
-
-# Hints when a module has nothing to run on, keyed by kind.
-_NO_TARGET_HINT = {
-    "crawl": "run 'Find live web servers' first",
-    "jsanalyze": "crawl golden hosts or collect archived URLs first",
-}
-
-
-def _default_targets(session: Session, eng: Engagement, m: modules.Module) -> list[str]:
-    kind = m.kind
-    if m.input == "roots":
-        return sorted(jobgates.roots(eng))
-    if kind == "jsanalyze":
-        js = session.scalars(select(Endpoint.url).where(Endpoint.engagement_id == eng.id,
-                                                        Endpoint.is_js.is_(True))).all()
-        js = [u for u in js if scope.in_scope(urls.host_of(u) or "", eng.scope_include, eng.scope_exclude)]
-        # Highest-scoring hosts first, so a per-run cap spends itself where it matters.
-        score = {r["host"]: r["score"] for r in _ranked(session, eng)}
-        return sorted(js, key=lambda u: (-score.get(urls.host_of(u) or "", -1), u))
-    if kind == "crawl":
-        ranked = _ranked(session, eng)
-        golden = [r for r in ranked if r["golden"]] or ranked
-        return sorted({u for r in golden for u in r["urls"]})
-    return sorted(a.host for a in eng.assets if a.in_scope)
 
 
 @app.get("/modules")
@@ -428,9 +382,9 @@ def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)
         m = jobgates.check_engagement(eng, body.kind)
     except jobgates.GateError as e:
         raise HTTPException(422, str(e))
-    targets = jobgates.normalize_targets(m, body.targets) or _default_targets(session, eng, m)
+    targets = jobgates.normalize_targets(m, body.targets) or targeting.default_targets(session, eng, m)
     if not targets:
-        hint = _NO_TARGET_HINT.get(m.kind) or (
+        hint = targeting.NO_TARGET_HINT.get(m.kind) or (
             "add a wildcard scope rule such as *.example.com" if m.input == "roots"
             else "add in-scope hosts or a wildcard scope rule first")
         raise HTTPException(422, f"no targets: {hint}")
@@ -441,6 +395,37 @@ def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)
     session.add(job)
     session.commit()
     return _job_view(job)
+
+
+class PipelineIn(BaseModel):
+    kinds: list[str] | None = None   # default: every module in registry order
+
+
+@app.post("/engagements/{eng_id}/pipeline", status_code=201)
+def run_pipeline(eng_id: int, body: PipelineIn | None = None, session: Session = Depends(get_session)):
+    """Queue every step that passes its gates, in registry order. Each step resolves
+    its targets when it starts, from what the steps before it produced."""
+    eng = _get(session, Engagement, eng_id)
+    wanted = (body.kinds if body and body.kinds else [m.kind for m in modules.MODULES])
+    unknown = [k for k in wanted if k not in modules.BY_KIND]
+    if unknown:
+        raise HTTPException(422, f"unknown module: {', '.join(unknown)}")
+    queued, skipped = [], []
+    for m in modules.MODULES:                       # registry order is pipeline order
+        if m.kind not in wanted:
+            continue
+        try:
+            jobgates.check_engagement(eng, m.kind)
+        except jobgates.GateError as e:
+            skipped.append({"kind": m.kind, "reason": str(e)})
+            continue
+        job = Job(engagement_id=eng.id, kind=m.kind, targets=[], deferred=True)
+        session.add(job)
+        queued.append(m.kind)
+    if not queued:
+        raise HTTPException(422, {"error": "no step can run", "skipped": skipped})
+    session.commit()
+    return {"queued": queued, "skipped": skipped}
 
 
 @app.get("/engagements/{eng_id}/jobs")
@@ -581,7 +566,7 @@ def report_html(eng_id: int, download: bool = False, session: Session = Depends(
 @app.get("/engagements/{eng_id}/triage")
 def triage_view(eng_id: int, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
-    rows = _ranked(session, eng)
+    rows = targeting.ranked(session, eng)
     counts = {}
     for e in session.scalars(select(Endpoint).where(Endpoint.engagement_id == eng_id)):
         c = counts.setdefault(e.host, [0, 0])

@@ -346,3 +346,22 @@ def test_receipt_needs_a_signer_and_review(client):
                        json={"closed_by": "  ", "reviewed": True}).status_code == 422       # blank signer
     r = client.post(f"/lanes/{lane['id']}/close", json={"closed_by": "Murat Kabak", "reviewed": True}).json()
     assert r["status"] == "closed" and r["receipt"]["closed_by"] == "Murat Kabak"
+
+
+def test_pipeline_queues_steps_that_pass_their_gates(client):
+    eng = recon_ready(client, "pipe")
+    r = client.post(f"/engagements/{eng}/pipeline")
+    assert r.status_code == 201
+    body = r.json()
+    assert body["queued"] == ["subdomains", "resolve", "archive"]        # passive + DNS only
+    reasons = {s["kind"]: s["reason"] for s in body["skipped"]}
+    assert "off for this engagement" in reasons["ports"]
+    assert "research header" in reasons["probe"]
+    jobs = client.get(f"/engagements/{eng}/jobs").json()
+    assert all(j["deferred"] and j["targets"] == [] for j in jobs)
+
+
+def test_pipeline_refuses_when_nothing_can_run(client):
+    eng = client.post("/engagements", json={"name": "pipe-none"}).json()["id"]
+    r = client.post(f"/engagements/{eng}/pipeline")
+    assert r.status_code == 422 and r.json()["detail"]["error"] == "no step can run"

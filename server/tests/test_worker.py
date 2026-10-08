@@ -179,3 +179,37 @@ def test_target_limit_lists_the_overflow_as_remaining(session, monkeypatch):
     assert r.stopped == "target limit"
     assert len(seen) == 250 and job.targets_done == 250
     assert job.remaining_targets == urls_[250:]          # nothing dropped silently
+
+
+def test_deferred_job_resolves_targets_at_run_time(session, monkeypatch):
+    job = make_job(session, [], kind="resolve")
+    job.deferred = True
+    from app.models import Asset
+    session.add(Asset(engagement_id=job.engagement_id, host="app.example.com", in_scope=True))
+    session.commit()
+    seen = []
+    monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: seen.extend(chunk) or len(chunk))
+    worker.run(session, job)
+    assert job.targets == ["app.example.com"] and seen == ["app.example.com"]
+
+
+def test_deferred_job_with_nothing_to_do_is_skipped(session):
+    job = make_job(session, [], kind="crawl")
+    job.deferred = True
+    job.engagement.research_header = "X-Bug-Bounty: r1"
+    session.commit()
+    r = worker.run(session, job)
+    assert r.skipped and "nothing to run" in job.log
+
+
+def test_noerror_without_records_is_not_resolved(session, monkeypatch):
+    job = make_job(session, ["real.example.com", "ghost.example.com"])
+    r = worker.Run(session, job)
+    lines = {
+        "dnsx": ['{"host":"real.example.com","a":["192.0.2.1"],"status_code":"NOERROR"}',
+                 '{"host":"ghost.example.com","status_code":"NOERROR"}'],
+        "dnsx-cname": ['{"host":"ghost.example.com","cname":["x.example.net"]}'],
+    }
+    monkeypatch.setattr(worker.Run, "tool_lines", lambda self, name, cmd, inp: iter(lines[name]))
+    out = worker.resolve_hosts(r, ["real.example.com", "ghost.example.com"])
+    assert list(out) == ["real.example.com"]

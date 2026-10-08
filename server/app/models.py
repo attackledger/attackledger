@@ -7,7 +7,7 @@ and latest receipt (see gates.py).
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -146,6 +146,9 @@ class Job(Base):
     output_sha256: Mapped[str | None] = mapped_column(String(64))
     # Targets run in batches; a batch counts only when it finished. Anything not
     # finished is listed in remaining_targets, so a stopped job never looks complete.
+    # A deferred job (pipeline run) resolves its targets when it starts, from the
+    # output of the steps queued before it.
+    deferred: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     targets_done: Mapped[int] = mapped_column(default=0, server_default="0")
     remaining_targets: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

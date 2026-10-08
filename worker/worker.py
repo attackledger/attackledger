@@ -32,6 +32,7 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 from sqlalchemy import select  # noqa: E402
 
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
+from app import targets as targeting  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observation  # noqa: E402
 
@@ -161,6 +162,7 @@ class Run:
         self.failed_tools: list[str] = []
         self.stopped: str | None = None
         self.fetch_failures = 0
+        self.skipped = False
 
     def log(self, line: str) -> None:
         self.job.log = (self.job.log + line + "\n")[-20000:]
@@ -264,7 +266,10 @@ def resolve_hosts(r: Run, hosts: list[str]) -> dict[str, dict]:
             if not r.in_scope(host):
                 continue
             if name == "dnsx":
-                out[host] = {"a": rec.get("a", []), "aaaa": rec.get("aaaa", []), "cname": []}
+                # Some resolvers answer NOERROR with no records for names that do not exist,
+                # and dnsx still prints a line. Only an address means "resolves".
+                if rec.get("a") or rec.get("aaaa"):
+                    out[host] = {"a": rec.get("a", []), "aaaa": rec.get("aaaa", []), "cname": []}
             elif host in out:
                 out[host]["cname"] = rec.get("cname", [])
     return out
@@ -478,6 +483,17 @@ def run(session, job: Job) -> "Run":
         m = jobgates.check_engagement(eng, job.kind)
     except jobgates.GateError as e:
         raise RuntimeError(str(e))
+    if job.deferred and not job.targets:
+        # Pipeline step: pick targets now, from what the earlier steps produced.
+        job.targets = jobgates.normalize_targets(m, targeting.default_targets(session, eng, m))
+        session.commit()
+        if not job.targets:
+            hint = targeting.NO_TARGET_HINT.get(m.kind, "earlier steps produced nothing to work on")
+            job.log += f"nothing to run: {hint}\n"
+            session.commit()
+            r = Run(session, job)
+            r.skipped = True
+            return r
     targets, _ = jobgates.split_targets(eng, m, job.targets)
     over_limit: list[str] = []
     if m.max_targets and len(targets) > m.max_targets:

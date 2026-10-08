@@ -123,6 +123,7 @@ export interface Job {
   output_sha256: string | null;
   targets_done: number;
   remaining: number;
+  deferred: boolean;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -215,7 +216,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
         ? detail
         : Array.isArray(detail)
           ? detail.map((d: { loc?: string[]; msg: string }) => `${d.loc?.slice(-1)[0] ?? "field"}: ${d.msg}`).join("\n")
-          : detail?.unresolved?.join("\n") ?? `Request failed (${res.status})`;
+          : detail?.unresolved?.join("\n")
+            ?? (detail?.skipped ? `${detail.error}: ` + detail.skipped.map((x: { kind: string; reason: string }) => `${x.kind}: ${x.reason}`).join("; ") : undefined)
+            ?? `Request failed (${res.status})`;
     throw new Error(msg);
   }
   return body as T;
@@ -249,6 +252,8 @@ export const api = {
     }),
   jobs: (engId: number) => call<Job[]>(`/engagements/${engId}/jobs`),
   job: (jobId: number) => call<Job>(`/jobs/${jobId}`),
+  runPipeline: (engId: number) =>
+    call<{ queued: string[]; skipped: { kind: string; reason: string }[] }>(`/engagements/${engId}/pipeline`, { method: "POST", body: "{}" }),
   runJob: (engId: number, kind: string, targets: string[] = []) =>
     call<Job>(`/engagements/${engId}/jobs`, { method: "POST", body: JSON.stringify({ kind, targets }) }),
   resumeJob: (jobId: number) => call<Job>(`/jobs/${jobId}/resume`, { method: "POST" }),

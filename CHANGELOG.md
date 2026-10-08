@@ -3,6 +3,20 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [Unreleased]
+
+### Added
+- **Run pipeline.** One action queues every step that passes its gates, in registry
+  order, and reports the skipped ones with their reasons. Each step resolves its
+  targets when it starts, from what the earlier steps produced (deferred jobs,
+  migration `0008`). Default target selection moved to `targets.py`, shared by the
+  API and the worker.
+- `docs/ROADMAP.md`.
+
+### Fixed
+- Names that answer NOERROR with no records were counted as resolved, and subdomain
+  discovery could add them as assets. Only an A or AAAA record now counts.
+
 ## [0.4.1] - 2026-10-08
 
 ### Changed

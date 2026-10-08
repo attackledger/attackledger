@@ -66,6 +66,21 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
     return null;
   }
 
+  const [pipeMsg, setPipeMsg] = useState<string | null>(null);
+  async function runAll() {
+    setError(null);
+    setPipeMsg(null);
+    try {
+      const r = await api.runPipeline(engId);
+      setPipeMsg(`Queued ${r.queued.length} step${r.queued.length === 1 ? "" : "s"}` +
+        (r.skipped.length ? `; skipped ${r.skipped.map((s) => mods.find((m) => m.kind === s.kind)?.title ?? s.kind).join(", ")}` : "") +
+        ". Each step picks its targets when it starts.");
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function run(kind: string) {
     setError(null);
     try {
@@ -81,7 +96,14 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
       <RulesOfEngagement engId={engId} scope={scope} mods={mods} onSaved={(s) => { setScope(s); onAssetsChanged(); }} />
 
       <section aria-labelledby="pipeline-title" className="panel">
-        <h3 id="pipeline-title" className="panel-title">Recon pipeline</h3>
+        <div className="panel-head">
+          <h3 id="pipeline-title" className="panel-title">Recon pipeline</h3>
+          <button className="btn" disabled={!authorized || !hasScope || active} onClick={runAll}
+                  title="Queue every step that passes its gates, in order">
+            {active ? "Running…" : "Run pipeline"}
+          </button>
+        </div>
+        {pipeMsg && <p className="saved" role="status">{pipeMsg}</p>}
         <ol className="steps">
           {mods.map((s) => {
             const why = blocker(s.kind);
