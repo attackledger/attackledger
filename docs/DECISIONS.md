@@ -9,8 +9,10 @@ Owner and decision maker: **Murat Kabak**.
 
 ## Origin of the material
 
-The methodology in this repository predates the code. Between August and October
-2026, Murat Kabak developed a private bug-bounty practice. Its methodology included:
+The methodology in this repository predates the code. It comes from Murat Kabak's
+hands-on bug-bounty work, which he has done since 2022. Between August and
+October 2026 he wrote that experience down as a private, agent-driven practice. The
+written form included:
 
 - the **role pipeline**: recon, mapper, authz, authflow, logic, injection and mobile,
   one role per host lane, with the application model as a hard gate,
