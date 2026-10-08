@@ -3,12 +3,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import gates, packs, scope
+from . import gates, ledger, packs, report, scope
 from .db import Base, engine, get_session
 from .models import (Asset, ChecklistItem, Engagement, Evidence, ItemState, Job, JobStatus, Lane,
                      Observation, Receipt)
@@ -186,9 +187,8 @@ def get_lane(lane_id: int, session: Session = Depends(get_session)):
 def add_evidence(lane_id: int, body: EvidenceIn, session: Session = Depends(get_session)):
     lane = _get(session, Lane, lane_id)
     item_id = _item(lane, body.item_idx).id if body.item_idx is not None else None
-    ev = Evidence(lane_id=lane.id, item_id=item_id, kind=body.kind, sha256=body.sha256,
-                  uri=body.uri, summary=body.summary)
-    session.add(ev)
+    ev = ledger.append_evidence(session, lane, kind=body.kind, sha256_hex=body.sha256,
+                                summary=body.summary, uri=body.uri, item_id=item_id)
     session.commit()
     return {"id": ev.id}
 
@@ -482,3 +482,35 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
     return {"engagement": eng.name, "pack": pack.id, "hosts_in_scope": len(hosts),
             "disclaimer": "Indicative mapping of tests to controls; not a compliance determination.",
             "controls": rows}
+
+
+# ---- audit report ----------------------------------------------------------
+
+def _report(eng_id: int, session: Session) -> dict:
+    eng = _get(session, Engagement, eng_id)
+    return report.build(session, eng, control_coverage(eng_id, session))
+
+
+def _filename(eng: dict, ext: str) -> str:
+    slug = "".join(ch if ch.isalnum() else "-" for ch in eng["name"].lower()).strip("-")[:60] or "engagement"
+    return f"attackledger-{slug}-{eng['id']}.{ext}"
+
+
+@app.get("/engagements/{eng_id}/report")
+def report_json(eng_id: int, download: bool = False, session: Session = Depends(get_session)):
+    r = _report(eng_id, session)
+    headers = {"Content-Disposition": f'attachment; filename="{_filename(r["engagement"], "json")}"'} if download else {}
+    return JSONResponse(r, headers=headers)
+
+
+@app.get("/engagements/{eng_id}/report.html")
+def report_html(eng_id: int, download: bool = False, session: Session = Depends(get_session)):
+    r = _report(eng_id, session)
+    headers = {
+        # The report is a static document: no scripts run and nothing is fetched.
+        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{_filename(r["engagement"], "html")}"'
+    return HTMLResponse(report.render_html(r), headers=headers)

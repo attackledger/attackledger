@@ -16,10 +16,9 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select, text  # noqa: E402
 
-from app import packs, scope  # noqa: E402
+from app import ledger, packs, scope  # noqa: E402
 from app.db import Base, SessionLocal, engine  # noqa: E402
-from app.models import (Asset, Engagement, Evidence, Job, JobStatus,  # noqa: E402
-                        Observation)
+from app.models import Asset, Engagement, Job, JobStatus, Observation  # noqa: E402
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
@@ -163,8 +162,8 @@ def run(session, job: Job):
     for host in touched:
         lane = next((l for l in known[host].lanes if l.role == recon_lane), None) if known[host].id else None
         if lane:
-            session.add(Evidence(lane_id=lane.id, kind="file", sha256=job.output_sha256,
-                                 uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}"))
+            ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256,
+                                   uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}")
     session.commit()
     if proc.returncode not in (0, None) and not cancelled(session, job):
         raise RuntimeError(f"tool exited with code {proc.returncode}")

@@ -677,3 +677,30 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .sheet .host-col { position: sticky; left: 0; z-index: 1; background: var(--sheet); }
 .sheet thead .host-col, .sheet tfoot .host-col { background: var(--sheet-head); }
 .out-of-scope > .host-col { background: var(--sheet); }
+
+/* ---- report ------------------------------------------------------------- */
+
+.report { display: grid; gap: 1.25rem; max-width: 64rem; }
+.report-hero { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1.25rem 2rem; border-left: 4px double var(--red); }
+.report-hero > div:first-child { flex: 1 1 26rem; }
+.report-lede { margin: 0 0 0.75rem; max-width: 62ch; }
+.report-lede strong { color: var(--stamp); font-size: var(--step-1); }
+.report-actions { display: flex; flex-direction: column; gap: 0.5rem; min-width: 13rem; }
+.report-actions .btn { text-align: center; text-decoration: none; }
+a.btn.ghost { color: var(--text); }
+
+.facts { display: grid; gap: 0.5rem; margin: 0 0 1rem; }
+.facts div { display: grid; grid-template-columns: 11rem 1fr; gap: 1rem; padding: 0.45rem 0; border-top: 1px solid var(--rule); }
+.facts dt { color: var(--text-soft); font-size: var(--step--1); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts code { font-size: var(--step--2); }
+.cmd {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--bg-index);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font: 0.8rem / 1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  overflow-x: auto;
+}
+@media (max-width: 640px) { .facts div { grid-template-columns: 1fr; gap: 0.15rem; } }

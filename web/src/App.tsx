@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneDetail, PackSummary } from "./api";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
+import { Report } from "./Report";
 import { ThemeToggle } from "./theme";
 
 const TYPE_NAMES: Record<string, string> = {
@@ -10,8 +11,8 @@ const TYPE_NAMES: Record<string, string> = {
   internal: "Internal assessment",
 };
 
-type Tab = "recon" | "ledger" | "controls";
-const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls" };
+type Tab = "recon" | "ledger" | "controls" | "report";
+const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report" };
 
 export function App() {
   const [engagements, setEngagements] = useState<EngagementSummary[] | null>(null);
@@ -114,7 +115,7 @@ export function App() {
             <header className="eng-head">
               <h2 className="eng-title">{coverage.engagement}</h2>
               <div className="tabs" role="tablist" aria-label="Engagement views">
-                {(["recon", "ledger", "controls"] as const).map((t) => (
+                {(["recon", "ledger", "controls", "report"] as const).map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -138,6 +139,7 @@ export function App() {
                 <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage} />
               )}
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
+              {tab === "report" && <Report engId={current} />}
             </div>
           </>
         )}

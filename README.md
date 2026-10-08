@@ -104,6 +104,31 @@ are indicative and do not amount to a compliance determination.
 Packs fail closed. A pack that references an unknown control, has a dependency
 cycle or contains a lane without items will not load, and the API will not start.
 
+## Audit report
+
+Every engagement exports a coverage report (**Report** tab, or
+`GET /engagements/{id}/report` and `/report.html`). It contains the scope,
+the recorded authorization, every lane and item, the evidence, the recon runs
+and the control mapping. It is also verifiable offline:
+
+```bash
+python3 tools/verify_report.py attackledger-report.html
+```
+
+The verifier uses only the Python standard library and shares no code with
+AttackLedger. It performs three checks:
+
+1. **Body hash.** The report body matches its recorded SHA-256.
+2. **Evidence chain.** Each evidence entry is linked to the previous one
+   (`chain_hash = sha256(prev_hash + record)`). Editing, deleting or
+   reordering an entry breaks the chain.
+3. **Receipts.** Every lane reported as receipted is checked against a manifest
+   rebuilt from the report's own items and evidence. This means that rewriting
+   the whole chain and the body hash is still detected.
+
+The HTML report is served with `default-src 'none'`. No script runs in it and
+nothing is fetched. All evidence text is escaped.
+
 ## Recon engine
 
 Jobs run in the `worker` container (subfinder, dnsx, httpx). A job is refused

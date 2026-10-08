@@ -91,8 +91,14 @@ class ChecklistItem(Base):
 
 
 class Evidence(Base):
+    """Append-only. Linked into a per-engagement hash chain (see ledger.py)."""
     __tablename__ = "evidence"
+    __table_args__ = (UniqueConstraint("engagement_id", "seq"),)
     id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    seq: Mapped[int]
+    prev_hash: Mapped[str] = mapped_column(String(64))
+    chain_hash: Mapped[str] = mapped_column(String(64))
     lane_id: Mapped[int] = mapped_column(ForeignKey("lanes.id"))
     item_id: Mapped[int | None] = mapped_column(ForeignKey("checklist_items.id"))
     kind: Mapped[str] = mapped_column(String(40))  # request, response, file, note
