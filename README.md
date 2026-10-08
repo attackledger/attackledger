@@ -150,6 +150,8 @@ container. Steps:
 | Analyse JavaScript | endpoints, GraphQL operations, sourcemaps, secret candidates (REAL / PUBLIC / NOISE) | target |
 | Discover content | feroxbuster on golden hosts, one scan at a time, baseline check, no recursion | target, **opt-in** |
 | Discover hidden parameters | Arjun on dynamic endpoints, one thread, fixed delay | target, **opt-in** |
+| Route parameters | gf-style classes → the hunt lane that tests them | none (computed) |
+| Dork checklist | click-ready Google dorks per root (manual) | none (computed) |
 | Scan for known issues | nuclei: takeovers (all hosts), exposures/misconfig/stack templates (one per cluster), panels/vulns/CVEs (golden) | target, **opt-in** |
 
 The engagement's *requests per second* value is a hard ceiling for every step that

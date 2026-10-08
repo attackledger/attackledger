@@ -96,6 +96,15 @@ MODULES: tuple[Module, ...] = (
            input="urls", traffic="target", http=True, opt_in=True, after=("crawl", "archive", "content"),
            produces=("leads",), pipeline="M5", max_targets=20,
            caution="Sends hundreds of requests per endpoint. Enable only if the program allows it."),
+    Module("paramclass", "Route parameters to hunt lanes",
+           "Sorts every known parameter (from URLs and hidden-parameter discovery) into gf-style classes, "
+           "ssrf, redirect, idor, sqli, lfi, xss and rce, and points each at the lane that tests it. Nothing is sent.",
+           input="urls", traffic="passive", after=("crawl", "archive", "params"), produces=("leads",),
+           pipeline="M6"),
+    Module("dorks", "Dork checklist",
+           "Writes click-ready Google dorks for each wildcard root as manual checks. Dorks cannot be "
+           "automated, so nothing is sent.",
+           input="roots", traffic="passive", produces=("leads",), pipeline="M10"),
     Module("nuclei", "Scan for known issues",
            "nuclei over live web services: takeover checks on every host; exposures, misconfigurations and "
            "templates matching the detected stack on one host per cluster; panels, vulnerabilities and CVEs "

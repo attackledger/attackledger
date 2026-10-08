@@ -71,6 +71,13 @@ def live_urls(session, eng: Engagement) -> list[str]:
     return [u for r in ranked(session, eng) for u in r["urls"]]
 
 
+def _param_lead_urls(session, eng: Engagement) -> set[str]:
+    from .models import Lead
+    return {l.source_url for l in session.scalars(select(Lead).where(Lead.engagement_id == eng.id,
+                                                                     Lead.kind == "parameter"))
+            if scope.in_scope(urls.host_of(l.source_url) or "", eng.scope_include, eng.scope_exclude)}
+
+
 DYNAMIC_EXT = {"php", "asp", "aspx", "jsp", "jspx", "do", "action", "cgi", "pl", "cfm"}
 
 
@@ -91,6 +98,8 @@ SELECTORS: dict[str, Callable] = {
     "nuclei": live_urls,
     "content": golden_urls,
     "params": dynamic_endpoints,
+    "paramclass": lambda session, eng: sorted({u for u in in_scope_endpoints(session, eng, js=False) if "?" in u}
+                                              | _param_lead_urls(session, eng)),
 }
 
 

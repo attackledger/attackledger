@@ -12,6 +12,8 @@ Job kinds mirror the original pipeline's modules:
   nuclei      M7  known issues: takeovers, exposures, stack-matched templates, golden-host CVEs
   content     M3  feroxbuster content discovery on golden hosts, after a baseline check
   params      M5  Arjun hidden-parameter discovery on dynamic endpoints
+  paramclass  M6  route parameters to hunt lanes by gf-style class (computed, no traffic)
+  dorks       M10 Google-dork checklist per wildcard root (computed, no traffic)
 
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
@@ -37,7 +39,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
-from app import triage  # noqa: E402
+from app import passive, triage  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observation  # noqa: E402
 
@@ -676,9 +678,44 @@ def run_params(r: Run, urls_: list[str]) -> int:
     return found
 
 
+def run_paramclass(r: Run, urls_: list[str]) -> int:
+    """Computed: no request leaves the worker."""
+    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
+    hidden = {l.source_url: (l.detail or {}).get("params", [])
+              for l in r.session.scalars(select(Lead).where(Lead.engagement_id == r.eng.id, Lead.kind == "parameter"))}
+    params = {}
+    for u in urls_:
+        if r.in_scope(urls.host_of(u)):
+            params[u] = sorted(set(passive.params_of(u)) | set(hidden.get(u, [])))
+    rows = passive.route(params)
+    r.digest.update(json.dumps(rows, sort_keys=True).encode())
+    found = 0
+    for row in rows:
+        found += add_lead(r, row["host"], row["urls"][0], "param-class",
+                          f"{row['class']}-prone parameter: {row['param']}",
+                          detail={"class": row["class"], "param": row["param"], "lane": row["lane"],
+                                  "urls": row["urls"]},
+                          key=f"{row['class']}|{row['param']}")
+    r.log(f"{len(params)} URL(s) with parameters, {len(rows)} routed parameter(s), {found} new lead(s)")
+    return found
+
+
+def run_dorks(r: Run, roots: list[str]) -> int:
+    """Computed: no request leaves the worker. The operator runs the dorks by hand."""
+    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
+    found = 0
+    for root in roots:
+        for d in passive.dorks_for(root):
+            r.digest.update(d["query"].encode())
+            found += add_lead(r, root, d["url"], "dork", d["title"], detail={"query": d["query"], "url": d["url"]},
+                              key=d["query"])
+    return found
+
+
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
            "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze,
-           "nuclei": run_nuclei, "content": run_content, "params": run_params}
+           "nuclei": run_nuclei, "content": run_content, "params": run_params,
+           "paramclass": run_paramclass, "dorks": run_dorks}
 def check_registry() -> None:
     """The worker and the module registry must describe the same job kinds."""
     missing = set(modules.BY_KIND) - set(RUNNERS)

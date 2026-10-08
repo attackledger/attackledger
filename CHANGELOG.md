@@ -43,6 +43,12 @@ before 1.0, minor versions may change the data model.
   Measured: 1,332 requests, all identified, with a peak of exactly the 10/s limit. With
   several threads, `--rate-limit` alone reached 17/s.
 
+- **M6 parameter routing** (computed, no traffic). Parameters from URLs and Arjun are
+  sorted into gf-style classes (ssrf, redirect, idor, sqli, lfi, xss, rce), and each
+  becomes a lead that names the hunt lane testing it.
+- **M10 dork checklist** (computed, no traffic). For each wildcard root it writes the
+  original dork.sh queries as click-ready manual checks.
+
 ### Fixed
 - Names that answer NOERROR with no records were counted as resolved, and subdomain
   discovery could add them as assets. Only an A or AAAA record now counts.
