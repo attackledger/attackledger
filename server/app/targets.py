@@ -71,11 +71,26 @@ def live_urls(session, eng: Engagement) -> list[str]:
     return [u for r in ranked(session, eng) for u in r["urls"]]
 
 
+DYNAMIC_EXT = {"php", "asp", "aspx", "jsp", "jspx", "do", "action", "cgi", "pl", "cfm"}
+
+
+def dynamic_endpoints(session, eng: Engagement) -> list[str]:
+    """Endpoints that take input: a query string, a script extension or an API path.
+    One URL per path (query values do not matter to parameter discovery)."""
+    picked: dict[str, str] = {}
+    for u in in_scope_endpoints(session, eng, js=False):
+        base = u.split("?", 1)[0]
+        if "?" in u or urls.extension(urls.urlsplit(u).path) in DYNAMIC_EXT or "/api/" in base:
+            picked.setdefault(base, base)
+    return by_host_score(session, eng, sorted(picked.values()))
+
+
 SELECTORS: dict[str, Callable] = {
     "crawl": golden_urls,
     "jsanalyze": _jsanalyze,
     "nuclei": live_urls,
     "content": golden_urls,
+    "params": dynamic_endpoints,
 }
 
 

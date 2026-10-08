@@ -90,6 +90,12 @@ MODULES: tuple[Module, ...] = (
            pipeline="M3", max_targets=10,
            caution="Brute-forces paths: thousands of requests per host. Enable only if the program allows "
                    "content discovery."),
+    Module("params", "Discover hidden parameters",
+           "Arjun on dynamic endpoints (query strings, script extensions, API paths), up to 20 per run, "
+           "highest-scoring hosts first. Records the parameters each endpoint accepts as leads.",
+           input="urls", traffic="target", http=True, opt_in=True, after=("crawl", "archive", "content"),
+           produces=("leads",), pipeline="M5", max_targets=20,
+           caution="Sends hundreds of requests per endpoint. Enable only if the program allows it."),
     Module("nuclei", "Scan for known issues",
            "nuclei over live web services: takeover checks on every host; exposures, misconfigurations and "
            "templates matching the detected stack on one host per cluster; panels, vulnerabilities and CVEs "

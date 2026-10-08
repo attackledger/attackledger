@@ -11,6 +11,7 @@ Job kinds mirror the original pipeline's modules:
   jsanalyze   M8  JS files: endpoints, GraphQL operations, sourcemaps, secret candidates
   nuclei      M7  known issues: takeovers, exposures, stack-matched templates, golden-host CVEs
   content     M3  feroxbuster content discovery on golden hosts, after a baseline check
+  params      M5  Arjun hidden-parameter discovery on dynamic endpoints
 
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
@@ -632,9 +633,52 @@ def run_content(r: Run, urls_: list[str]) -> int:
     return store_endpoints(r, seen)
 
 
+ARJUN_PATH = os.environ.get("WORKER_ARJUN_PATH", "/opt/arjun")
+
+
+def arjun_cmd(eng, url: str, out_file: str) -> list[str]:
+    flags = require_identification(eng)
+    headers = "\n".join(v for i, v in enumerate(flags) if i % 2 == 1)
+    # Arjun lives in its own directory so its dependencies never shadow the worker's.
+    launcher = (f"import sys, runpy; sys.path.insert(0, {ARJUN_PATH!r}); "
+                "sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__')")
+    return [sys.executable, "-c", launcher, "-u", url, "-o", out_file, "-m", "GET",
+            # One thread with a fixed delay: --rate-limit alone let bursts through with
+            # several threads (measured 17/s at a limit of 10).
+            "--rate-limit", str(eng.rate_limit_rps), "-t", "1", "-d", f"{1 / max(eng.rate_limit_rps, 1):.3f}",
+            "--headers", headers]
+
+
+def run_params(r: Run, urls_: list[str]) -> int:
+    import tempfile
+    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
+    found = 0
+    for u in urls_:
+        if not r.in_scope(urls.host_of(u)):
+            continue
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "arjun.json")
+            for _ in r.tool_lines("arjun", arjun_cmd(r.eng, u, out), []):
+                pass
+            try:
+                data = json.load(open(out)) if os.path.exists(out) else {}
+            except ValueError:
+                data = {}
+        r.digest.update(f"arjun\t{u}\t{json.dumps(data, sort_keys=True)}\n".encode())
+        for url, res in (data or {}).items():
+            params = sorted(set((res or {}).get("params") or []))
+            host = urls.host_of(url)
+            if params and r.in_scope(host):
+                found += add_lead(r, host, url, "parameter", f"{len(params)} hidden parameter(s): "
+                                  + ", ".join(params[:8]) + ("…" if len(params) > 8 else ""),
+                                  detail={"params": params, "method": (res or {}).get("method", "GET")},
+                                  key=",".join(params))
+    return found
+
+
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
            "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze,
-           "nuclei": run_nuclei, "content": run_content}
+           "nuclei": run_nuclei, "content": run_content, "params": run_params}
 def check_registry() -> None:
     """The worker and the module registry must describe the same job kinds."""
     missing = set(modules.BY_KIND) - set(RUNNERS)

@@ -238,7 +238,7 @@ function GoldenTargets({ report }: { report: TriageReport }) {
   );
 }
 
-const LEAD_KIND: Record<string, string> = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap", nuclei: "Scanner finding" };
+const LEAD_KIND: Record<string, string> = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap", nuclei: "Scanner finding", parameter: "Hidden parameters", "param-class": "Parameter pattern", dork: "Manual check" };
 
 function Leads({ engId, version }: { engId: number; version: number }) {
   const [rows, setRows] = useState<Lead[]>([]);

@@ -36,6 +36,13 @@ before 1.0, minor versions may change the data model.
   requests logout or delete paths. Measured: 9,504 requests, all identified, with
   a peak of exactly the 20/s limit.
 
+- **M5 parameter discovery (opt-in).** Arjun 2.2.7 runs on dynamic endpoints (query
+  strings, script extensions, API paths), up to 20 per run, highest-scoring hosts
+  first. Each endpoint's accepted parameters are recorded as a lead. It runs isolated
+  from the worker's own dependencies, with one thread and a fixed delay.
+  Measured: 1,332 requests, all identified, with a peak of exactly the 10/s limit. With
+  several threads, `--rate-limit` alone reached 17/s.
+
 ### Fixed
 - Names that answer NOERROR with no records were counted as resolved, and subdomain
   discovery could add them as assets. Only an A or AAAA record now counts.

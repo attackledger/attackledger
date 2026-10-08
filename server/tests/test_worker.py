@@ -271,3 +271,12 @@ def test_content_baseline_skips_catch_all_hosts():
     assert worker.baseline_status(lambda u: "403", "https://a.example.com/") == ("403", "403")
     codes = iter(["404", "404"])
     assert worker.baseline_status(lambda u: next(codes), "https://a.example.com/") == ("404", "404")
+
+
+def test_arjun_command_identifies_and_rate_limits():
+    c = worker.arjun_cmd(eng("X-Bug-Bounty: r1", "AL (r1)", rps=3), "https://a.example.com/p.php", "/tmp/o.json")
+    assert c[c.index("--rate-limit") + 1] == "3" and c[c.index("-t") + 1] == "1"
+    assert c[c.index("-d") + 1] == "0.333"
+    assert c[c.index("--headers") + 1] == "X-Bug-Bounty: r1\nUser-Agent: AL (r1)"
+    with pytest.raises(RuntimeError, match="research header"):
+        worker.arjun_cmd(eng(), "https://a.example.com/", "/tmp/o.json")

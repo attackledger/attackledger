@@ -183,7 +183,7 @@ export interface Lead {
   id: number;
   host: string;
   source_url: string;
-  kind: "secret" | "graphql" | "sourcemap" | "nuclei";
+  kind: string;
   title: string;
   bucket: string;
   severity: string;
