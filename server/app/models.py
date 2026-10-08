@@ -7,7 +7,7 @@ and latest receipt (see gates.py).
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -43,6 +43,9 @@ class Engagement(Base):
     # "X-HackerOne-Research: <handle>" and/or a User-Agent containing the handle.
     research_header: Mapped[str | None] = mapped_column(String(300))
     research_user_agent: Mapped[str | None] = mapped_column(String(300))
+    # Many programs forbid port scanning; it stays off until the operator enables it.
+    allow_port_scan: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    crawl_depth: Mapped[int] = mapped_column(default=3, server_default="3")
     assets: Mapped[list["Asset"]] = relationship(back_populates="engagement")
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
@@ -151,4 +154,20 @@ class Observation(Base):
     engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
     host: Mapped[str] = mapped_column(String(255))
     data: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Endpoint(Base):
+    """A URL seen by a crawl or an archive source. Only in-scope hosts are stored."""
+    __tablename__ = "endpoints"
+    # Unique on a hash: archive URLs can exceed the size of a btree index entry.
+    __table_args__ = (UniqueConstraint("engagement_id", "url_sha256"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
+    host: Mapped[str] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(Text)
+    url_sha256: Mapped[str] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(32))  # katana, gau, wayback
+    is_js: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -131,8 +131,25 @@ nothing is fetched. All evidence text is escaped.
 
 ## Recon engine
 
-Jobs run in the `worker` container (subfinder, dnsx, httpx). A job is refused
-unless the engagement has:
+The pipeline follows the author's own recon process and runs in the `worker`
+container. Steps:
+
+| Step | Tools | Traffic |
+|---|---|---|
+| Find subdomains | subfinder (all sources), assetfinder, crt.sh, then DNS | passive + DNS |
+| Resolve hosts | dnsx (A/AAAA, then CNAME) | DNS |
+| Scan ports | naabu top 100, connect scan, port 25 skipped | target, **opt-in per engagement** |
+| Find live web servers | httpx: status, title, stack, CDN, per open port | target |
+| Golden targets | scoring: AUTH +4, TITLE +4, APPTECH +2, ODDPORT/KEYWORD/200 +1 | computed |
+| Crawl golden hosts | katana: same host only, JS parsing, logout/delete paths never followed | target |
+| Collect archived URLs | gau, waybackurls | passive |
+
+Crawl and archive output is cleaned in the same way as `uro`: static files are
+dropped and URLs that differ only in parameter values are collapsed. Only
+in-scope URLs are kept. A job whose tool fails without producing anything is
+marked failed, not done.
+
+A job is refused unless the engagement has:
 
 1. a scope (`*.example.com` covers subdomains only; exclusions always win),
 2. a recorded authorization (operator, policy URL, explicit confirmation),

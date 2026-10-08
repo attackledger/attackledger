@@ -1,8 +1,9 @@
 """Database migrations (Alembic), run by the API at startup.
 
-A database created before migrations existed has the tables but no
-alembic_version. It is stamped at the first revision only if its schema matches
-the models exactly. Otherwise startup fails and nothing is touched.
+A database that has tables but no alembic_version (created with create_all
+before migrations existed) is stamped at the current head only if its schema
+matches the current models exactly. Otherwise startup fails and nothing is
+touched.
 """
 import time
 from pathlib import Path
@@ -17,9 +18,6 @@ from sqlalchemy import inspect
 from .db import Base, engine
 
 INI = Path(__file__).resolve().parents[1] / "alembic.ini"
-BASELINE = "0001"
-
-
 class MigrationError(RuntimeError):
     pass
 
@@ -51,7 +49,7 @@ def upgrade_head() -> None:
                 f"existing database predates migrations and does not match the models "
                 f"({len(diff)} difference(s)); refusing to stamp it. Back it up and migrate by hand."
             )
-        command.stamp(_config(), BASELINE)
+        command.stamp(_config(), "head")
     command.upgrade(_config(), "head")
 
 

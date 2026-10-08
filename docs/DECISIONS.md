@@ -135,6 +135,20 @@ options considered and who decided.
 - **Proposed by:** Claude (the release order). **Decided by:** Murat Kabak, who
   put the product before the trademark ("ship the product first").
 
+### D-013 · Recon mirrors the author's own pipeline (2026-10-08)
+- **Decision:** The recon engine reproduces the stages of Murat's
+  `run_pipeline.sh`: multi-source discovery with ownership filtering, ports and
+  probing, golden-target scoring with the original weights, keyword list and
+  boring-tech list, and crawl plus archive URLs with uro-style clean-up. It does
+  not aim for parity with ars0n-framework.
+- **Context:** Murat judged the first recon engine too thin and asked that it
+  reflect his own pipeline.
+- **Proposed by:** Claude, on two points: the split into batches (discovery,
+  triage and endpoints first; JS analysis, content discovery, parameters and
+  nuclei later, each as an explicit opt-in) and applying the crawl
+  "never follow logout/delete" filter to every crawl, not only authenticated ones.
+  **Decided by:** Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

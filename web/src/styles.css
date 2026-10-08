@@ -704,3 +704,33 @@ a.btn.ghost { color: var(--text); }
   overflow-x: auto;
 }
 @media (max-width: 640px) { .facts div { grid-template-columns: 1fr; gap: 0.15rem; } }
+
+/* ---- recon v0.3 --------------------------------------------------------- */
+
+.traffic { display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; font: 400 var(--step--2) / 1.4 var(--body); vertical-align: 0.1em; border: 1px solid currentColor; }
+.traffic.passive { color: var(--stamp); }
+.traffic.dns { color: var(--text-soft); }
+.traffic.target { color: var(--red); }
+
+.roe-toggle { margin-top: 1rem; }
+
+.triage td, .triage th { vertical-align: middle; }
+.triage tr.golden > * { background: color-mix(in srgb, var(--stamp-wash) 70%, transparent); }
+.score { display: inline-block; min-width: 1.8rem; text-align: center; font: 700 var(--step-0) / 1.6 var(--slab); border-radius: var(--radius); border: 2px solid var(--rule-strong); }
+.triage tr.golden .score { border: 3px double var(--stamp); color: var(--stamp); }
+.sig { display: inline-block; margin: 0 0.2rem 0.15rem 0; padding: 0 0.35rem; font-size: var(--step--2); border-radius: 2px; border: 1px solid var(--rule-strong); color: var(--text-soft); cursor: help; }
+.sig-AUTH, .sig-TITLE { color: var(--ink); border-color: var(--ink); font-weight: 700; }
+.sig-WAF { color: var(--red); border-color: var(--red); }
+
+.ep-filters { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin-bottom: 0.75rem; }
+.ep-filters input:not([type="checkbox"]) {
+  flex: 1 1 16rem; padding: 0.45rem 0.6rem; background: var(--surface); color: var(--text);
+  border: 1px solid var(--rule); border-radius: var(--radius); font: var(--step--1) / 1.4 var(--body);
+}
+.ep-list { list-style: none; margin: 0; padding: 0; max-height: 26rem; overflow-y: auto; border-top: 1px solid var(--rule); }
+.ep-list li { display: grid; grid-template-columns: 4.5rem 1fr; gap: 0.75rem; padding: 0.35rem 0; border-bottom: 1px solid var(--rule); font-size: var(--step--1); }
+.ep-src { color: var(--text-faint); font-size: var(--step--2); padding-top: 0.15rem; overflow: hidden; text-overflow: ellipsis; }
+.ep-src.js { color: var(--ink); font-weight: 700; }
+.ep-url { color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.ep-url:hover { color: var(--ink); text-decoration: underline; }
+.pager { display: flex; gap: 0.75rem; align-items: center; justify-content: flex-end; margin-top: 0.75rem; }

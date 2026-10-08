@@ -105,6 +105,8 @@ export interface Scope {
   policy_url: string | null;
   research_header: string | null;
   research_user_agent: string | null;
+  allow_port_scan: boolean;
+  crawl_depth: number;
   authorized_by: string | null;
   authorized_at: string | null;
 }
@@ -135,6 +137,33 @@ export interface ObservationRow {
   cname?: string[];
   live?: boolean;
   source?: string;
+}
+
+export interface TriageHost {
+  host: string;
+  score: number;
+  signals: string[];
+  golden: boolean;
+  statuses: string[];
+  ports: string[];
+  titles: string[];
+  tech: string[];
+  urls: string[];
+  endpoints: number;
+  js: number;
+}
+
+export interface TriageReport {
+  golden_min_score: number;
+  weights: Record<string, number>;
+  hosts: TriageHost[];
+}
+
+export interface EndpointRow {
+  host: string;
+  url: string;
+  source: string;
+  js: boolean;
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -188,5 +217,14 @@ export const api = {
     call<Job>(`/engagements/${engId}/jobs`, { method: "POST", body: JSON.stringify({ kind, targets }) }),
   cancelJob: (jobId: number) => call<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   observations: (engId: number) => call<ObservationRow[]>(`/engagements/${engId}/observations`),
+  triage: (engId: number) => call<TriageReport>(`/engagements/${engId}/triage`),
+  endpoints: (engId: number, opts: { js?: boolean; q?: string; offset?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.js !== undefined) p.set("js", String(opts.js));
+    if (opts.q) p.set("q", opts.q);
+    p.set("limit", "100");
+    p.set("offset", String(opts.offset ?? 0));
+    return call<{ total: number; items: EndpointRow[] }>(`/engagements/${engId}/endpoints?${p}`);
+  },
   closeLane: (laneId: number) => call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST" }),
 };

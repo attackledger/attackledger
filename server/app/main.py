@@ -9,10 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import gates, ledger, migrate, packs, report, scope
+from . import gates, ledger, migrate, packs, report, scope, triage, urls
 from .db import get_session
-from .models import (Asset, ChecklistItem, Engagement, Evidence, ItemState, Job, JobStatus, Lane,
-                     Observation, Receipt)
+from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
+                     Lane, Observation, Receipt)
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 
@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.3.0", lifespan=lifespan)
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -269,10 +269,12 @@ class ScopeIn(BaseModel):
     # "Name: value", one header. No CR/LF, so it cannot smuggle extra headers.
     research_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,64}: [^\r\n]{1,200}$")
     research_user_agent: str | None = Field(default=None, pattern=r"^[^\r\n]{1,300}$")
+    allow_port_scan: bool = False
+    crawl_depth: int = Field(default=3, ge=1, le=5)
 
 
-# Job kinds that send requests to the target itself (not DNS or passive sources).
-TARGET_TRAFFIC_KINDS = {"probe"}
+# Job kinds that send HTTP requests to the target itself (not DNS or passive sources).
+TARGET_TRAFFIC_KINDS = {"probe", "crawl"}
 
 
 def identification_missing(eng: Engagement) -> bool:
@@ -290,6 +292,7 @@ def _scope_view(eng: Engagement) -> dict:
         "include": eng.scope_include, "exclude": eng.scope_exclude,
         "rate_limit_rps": eng.rate_limit_rps, "policy_url": eng.policy_url,
         "research_header": eng.research_header, "research_user_agent": eng.research_user_agent,
+        "allow_port_scan": eng.allow_port_scan, "crawl_depth": eng.crawl_depth,
         "authorized_by": eng.authorized_by,
         "authorized_at": eng.authorized_at.isoformat() if eng.authorized_at else None,
     }
@@ -311,6 +314,7 @@ def put_scope(eng_id: int, body: ScopeIn, session: Session = Depends(get_session
     eng.scope_include, eng.scope_exclude, eng.rate_limit_rps = inc, exc, body.rate_limit_rps
     eng.research_header = (body.research_header or "").strip() or None
     eng.research_user_agent = (body.research_user_agent or "").strip() or None
+    eng.allow_port_scan, eng.crawl_depth = body.allow_port_scan, body.crawl_depth
     # Re-evaluate existing assets: rules can move hosts out of scope, never into it silently.
     for a in eng.assets:
         if not scope.in_scope(a.host, inc, exc):
@@ -333,10 +337,15 @@ def attest(eng_id: int, body: AttestIn, session: Session = Depends(get_session))
 # ---- jobs ------------------------------------------------------------------
 
 JOB_KINDS = {
-    "subdomains": "Find subdomains of the in-scope wildcard roots",
+    "subdomains": "Find subdomains of the in-scope wildcard roots (subfinder, assetfinder, crt.sh)",
     "resolve": "Resolve in-scope hosts to IP addresses",
-    "probe": "Check which in-scope hosts serve HTTP(S) and fingerprint them",
+    "ports": "Scan the top 100 TCP ports of in-scope hosts (only if the program allows it)",
+    "probe": "Fingerprint the web services of in-scope hosts",
+    "crawl": "Crawl golden hosts for endpoints and JavaScript",
+    "archive": "Collect historical URLs from public archives",
 }
+ROOT_KINDS = {"subdomains", "archive"}
+URL_KINDS = {"crawl"}
 
 
 class JobIn(BaseModel):
@@ -355,9 +364,37 @@ def _job_view(j: Job, with_log: bool = False) -> dict:
     return v
 
 
-def _default_targets(eng: Engagement, kind: str) -> list[str]:
-    if kind == "subdomains":
+def _probes_by_host(session: Session, eng_id: int) -> dict[str, list[dict]]:
+    rows = session.scalars(select(Observation).where(Observation.engagement_id == eng_id)
+                           .order_by(Observation.id.desc())).all()
+    latest_job: dict[str, int] = {}
+    out: dict[str, list[dict]] = {}
+    for o in rows:
+        if not o.data.get("live"):
+            continue
+        # Keep only the newest probe run per host (all its ports).
+        if latest_job.setdefault(o.host, o.job_id) != o.job_id:
+            continue
+        out.setdefault(o.host, []).append(o.data)
+    return out
+
+
+def _ranked(session: Session, eng: Engagement) -> list[dict]:
+    probes = {h: p for h, p in _probes_by_host(session, eng.id).items()
+              if scope.in_scope(h, eng.scope_include, eng.scope_exclude)}
+    rows = triage.rank(probes)
+    for r in rows:
+        r["urls"] = sorted({p["url"] for p in probes[r["host"]] if p.get("url")})
+    return rows
+
+
+def _default_targets(session: Session, eng: Engagement, kind: str) -> list[str]:
+    if kind in ROOT_KINDS:
         return sorted({p[2:] for p in eng.scope_include if p.startswith("*.")})
+    if kind == "crawl":
+        ranked = _ranked(session, eng)
+        golden = [r for r in ranked if r["golden"]] or ranked
+        return sorted({u for r in golden for u in r["urls"]})
     return sorted(a.host for a in eng.assets if a.in_scope)
 
 
@@ -378,12 +415,22 @@ def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)
     if body.kind in TARGET_TRAFFIC_KINDS and identification_missing(eng):
         raise HTTPException(422, "set the research header or user agent the program requires "
                                  "before sending traffic to its hosts")
-    targets = [t.strip().lower() for t in body.targets if t.strip()] or _default_targets(eng, body.kind)
+    if body.kind == "ports" and not eng.allow_port_scan:
+        raise HTTPException(422, "port scanning is off for this engagement; enable it only if the "
+                                 "program policy allows it")
+    targets = [t.strip() for t in body.targets if t.strip()] or _default_targets(session, eng, body.kind)
+    if body.kind not in URL_KINDS:
+        targets = [t.lower() for t in targets]
     if not targets:
-        raise HTTPException(422, "no targets: add in-scope hosts or a wildcard scope rule first")
-    if body.kind == "subdomains":
+        hint = {"crawl": "run 'Find live web servers' first",
+                "archive": "add a wildcard scope rule such as *.example.com"}.get(body.kind, "add in-scope hosts or a wildcard scope rule first")
+        raise HTTPException(422, f"no targets: {hint}")
+    if body.kind in ROOT_KINDS:
         roots = {p[2:] for p in eng.scope_include if p.startswith("*.")}
         bad = [t for t in targets if t not in roots]
+    elif body.kind in URL_KINDS:
+        bad = [t for t in targets
+               if not scope.in_scope(urls.host_of(t) or "", eng.scope_include, eng.scope_exclude)]
     else:
         bad = [t for t in targets if not scope.in_scope(t, eng.scope_include, eng.scope_exclude)]
     if bad:
@@ -514,3 +561,36 @@ def report_html(eng_id: int, download: bool = False, session: Session = Depends(
     if download:
         headers["Content-Disposition"] = f'attachment; filename="{_filename(r["engagement"], "html")}"'
     return HTMLResponse(report.render_html(r), headers=headers)
+
+
+# ---- triage & endpoints ----------------------------------------------------
+
+@app.get("/engagements/{eng_id}/triage")
+def triage_view(eng_id: int, session: Session = Depends(get_session)):
+    eng = _get(session, Engagement, eng_id)
+    rows = _ranked(session, eng)
+    counts = {}
+    for e in session.scalars(select(Endpoint).where(Endpoint.engagement_id == eng_id)):
+        c = counts.setdefault(e.host, [0, 0])
+        c[0] += 1
+        c[1] += int(e.is_js)
+    for r in rows:
+        r["endpoints"], r["js"] = counts.get(r["host"], [0, 0])
+    return {"golden_min_score": triage.GOLDEN_MIN_SCORE, "weights": triage.WEIGHTS, "hosts": rows}
+
+
+@app.get("/engagements/{eng_id}/endpoints")
+def endpoints(eng_id: int, host: str | None = None, js: bool | None = None, q: str | None = None,
+              limit: int = 200, offset: int = 0, session: Session = Depends(get_session)):
+    _get(session, Engagement, eng_id)
+    stmt = select(Endpoint).where(Endpoint.engagement_id == eng_id)
+    if host:
+        stmt = stmt.where(Endpoint.host == host.lower())
+    if js is not None:
+        stmt = stmt.where(Endpoint.is_js == js)
+    if q:
+        stmt = stmt.where(Endpoint.url.contains(q))
+    total = len(session.scalars(stmt).all())
+    rows = session.scalars(stmt.order_by(Endpoint.host, Endpoint.url).offset(offset).limit(min(limit, 1000))).all()
+    return {"total": total, "items": [{"host": e.host, "url": e.url, "source": e.source, "js": e.is_js}
+                                      for e in rows]}

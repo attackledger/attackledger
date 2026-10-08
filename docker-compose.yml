@@ -29,6 +29,8 @@ services:
       context: .
       dockerfile: worker/Dockerfile
     environment:
+      # Docker's embedded DNS: resolves the local lab target and forwards everything else.
+      WORKER_RESOLVERS: 127.0.0.11
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
     depends_on:
       db:

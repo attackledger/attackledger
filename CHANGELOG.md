@@ -3,6 +3,32 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [0.3.0] - 2026-10-08
+
+### Added
+- **Recon pipeline modelled on the author's own process.**
+  - Multi-source subdomain discovery (subfinder `-all`, assetfinder, crt.sh), filtered
+    to scope before resolution.
+  - Port scanning (naabu top 100, connect scan). Off by default, enabled per engagement.
+  - Richer probing per open port, with CDN and CNAME data.
+  - **Golden-target scoring**, ported from the original pipeline.
+  - Crawling of golden hosts with katana. It stays on the same host and never
+    follows logout, delete or revoke paths.
+  - Archived URLs from gau and waybackurls.
+  - Endpoint store with uro-style clean-up and JavaScript flagging.
+- UI: a six-step pipeline with traffic labels, a Golden targets table, and an
+  Endpoints browser with search and a JS-only filter.
+- Migration `0002`: the endpoints table plus `allow_port_scan` and `crawl_depth`.
+
+### Changed
+- DNS resolution runs in two passes (A/AAAA, then CNAME). Some resolvers made dnsx
+  drop hosts without a CNAME when all three were requested together.
+- A pre-migration database is stamped at head, and only when its schema matches
+  the models.
+
+### Fixed
+- A job whose tool fails without producing anything is now `failed` instead of `done`.
+
 ## [0.2.0] - 2026-10-08
 
 ### Added

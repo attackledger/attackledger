@@ -226,3 +226,41 @@ def test_control_coverage_counts_only_receipted_lanes(client):
     assert status("DORA-ART8")["status"] == "evidenced"  # info lane is the only DORA-ART8 source
     assert status("PCI-11.4.1")["status"] == "evidenced"
     assert status("ISO-A.5.15")["status"] == "none"      # authz/idnt lanes not done
+
+
+def recon_ready(c, name, **extra):
+    eng = c.post("/engagements", json={"name": name}).json()["id"]
+    c.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], **extra})
+    attested(c, eng)
+    return eng
+
+
+def test_ports_need_explicit_permission(client):
+    eng = recon_ready(client, "ports-off")
+    client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "ports"})
+    assert r.status_code == 422 and "port scanning is off" in r.json()["detail"]
+    client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "allow_port_scan": True})
+    assert client.post(f"/engagements/{eng}/jobs", json={"kind": "ports"}).status_code == 201
+
+
+def test_crawl_needs_identification_and_probe_results(client):
+    eng = recon_ready(client, "crawl")
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "crawl"})
+    assert r.status_code == 422 and "research header" in r.json()["detail"]
+    client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"],
+                                                  "research_header": "X-Bug-Bounty: r1"})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "crawl"})
+    assert r.status_code == 422 and "live web servers" in r.json()["detail"]
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "crawl", "targets": ["https://evil.test/"]})
+    assert r.status_code == 422 and "out of scope" in r.json()["detail"]
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "crawl", "targets": ["https://app.example.com/"]})
+    assert r.status_code == 201
+
+
+def test_archive_targets_wildcard_roots(client):
+    eng = recon_ready(client, "archive")
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "archive"})
+    assert r.status_code == 201 and r.json()["targets"] == ["example.com"]
+    assert client.get(f"/engagements/{eng}/triage").json()["hosts"] == []
+    assert client.get(f"/engagements/{eng}/endpoints").json() == {"total": 0, "items": []}
