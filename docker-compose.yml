@@ -18,6 +18,8 @@ services:
       dockerfile: server/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
+      # Set to require a token on every API call (strongly recommended beyond localhost).
+      ATTACKLEDGER_API_TOKEN: ${ATTACKLEDGER_API_TOKEN:-}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

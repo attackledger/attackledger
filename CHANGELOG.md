@@ -53,7 +53,16 @@ before 1.0, minor versions may change the data model.
   for submission become **exclusions**, so a wildcard cannot cover them; the original
   csv_to_scope.py skipped them. Non-web assets (apps, CIDRs) are listed, not imported.
 
+- **API authentication.** Set `ATTACKLEDGER_API_TOKEN` to require a token on every
+  route except `/health` and login. The token works as a bearer header or as an
+  HttpOnly, SameSite=Strict session cookie that holds an HMAC of the token, never the
+  token itself, and is compared in constant time. The UI shows a sign-in screen when
+  needed. `/health` reports whether auth is on.
+- ESLint with `react-hooks/rules-of-hooks` in CI.
+
 ### Fixed
+- The Recon view crashed after the Run pipeline button was added: a hook was declared
+  after an early return. The new lint rule catches this class of bug.
 - Names that answer NOERROR with no records were counted as resolved, and subdomain
   discovery could add them as assets. Only an A or AAAA record now counts.
 

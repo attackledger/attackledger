@@ -1,3 +1,4 @@
+import hmac
 from contextlib import asynccontextmanager
 
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import (executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, scopeimport,
+from . import (auth, executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, scopeimport,
                triage, urls)
 from . import targets as targeting
 from .db import get_session
@@ -27,6 +28,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="AttackLedger", version="0.4.1", lifespan=lifespan)
+app.middleware("http")(auth.middleware)
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -119,7 +121,32 @@ def _lane_view(lane: Lane) -> dict:
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    # Says whether the API requires a token: an open API must not leave localhost.
+    return {"ok": True, "auth_required": auth.token() is not None}
+
+
+class LoginIn(BaseModel):
+    token: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/auth/login")
+def login(body: LoginIn):
+    tok = auth.token()
+    if tok is None:
+        return {"ok": True, "auth_required": False}
+    if not hmac.compare_digest(body.token.strip(), tok):
+        raise HTTPException(401, "wrong token")
+    resp = JSONResponse({"ok": True, "auth_required": True})
+    resp.set_cookie(auth.COOKIE, auth.session_value(tok), httponly=True, samesite="strict",
+                    secure=False, max_age=12 * 3600, path="/")
+    return resp
+
+
+@app.post("/auth/logout")
+def logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE, path="/")
+    return resp
 
 
 @app.post("/engagements", status_code=201)

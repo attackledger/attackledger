@@ -88,7 +88,8 @@ python3 tools/seed_demo.py          # optional demo engagements
 open http://localhost:8080
 ```
 
-All ports bind to `127.0.0.1`. The `lab` service is a local practice target that
+All ports bind to `127.0.0.1`. To require a token (do this before exposing the API
+anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`. The `lab` service is a local practice target that
 answers as `shop.lab.test` inside the compose network.
 
 ## Methodology packs and controls

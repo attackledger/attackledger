@@ -31,4 +31,5 @@ jobs:
         with:
           node-version: "20"
       - run: npm ci --no-audit --no-fund
+      - run: npm run lint
       - run: npm run build

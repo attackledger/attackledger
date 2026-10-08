@@ -23,6 +23,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
   const [jobs, setJobs] = useState<Job[]>([]);
   const [triage, setTriage] = useState<TriageReport | null>(null);
   const [mods, setMods] = useState<ReconModule[]>([]);
+  const [pipeMsg, setPipeMsg] = useState<string | null>(null);   // all hooks before any early return
   useEffect(() => { api.modules().then(setMods).catch(() => {}); }, []);
   const [openLog, setOpenLog] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +67,6 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
     return null;
   }
 
-  const [pipeMsg, setPipeMsg] = useState<string | null>(null);
   async function runAll() {
     setError(null);
     setPipeMsg(null);

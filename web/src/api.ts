@@ -219,6 +219,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   const body = await res.json().catch(() => null);
+  if (res.status === 401 && !path.startsWith("/auth/")) {
+    window.dispatchEvent(new Event("attackledger:auth-required"));
+  }
   if (!res.ok) {
     const detail = body?.detail;
     const msg =
@@ -235,6 +238,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login: (token: string) => call<{ ok: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
+  logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
   createEngagement: (name: string, pack_id: string) =>
     call<{ id: number }>("/engagements", {

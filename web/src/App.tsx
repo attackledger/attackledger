@@ -15,6 +15,40 @@ type Tab = "recon" | "ledger" | "controls" | "report";
 const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report" };
 
 export function App() {
+  const [needLogin, setNeedLogin] = useState(false);
+  useEffect(() => {
+    const on = () => setNeedLogin(true);
+    window.addEventListener("attackledger:auth-required", on);
+    return () => window.removeEventListener("attackledger:auth-required", on);
+  }, []);
+  if (needLogin) return <Login onDone={() => { setNeedLogin(false); window.location.reload(); }} />;
+  return <Workspace />;
+}
+
+function Login({ onDone }: { onDone: () => void }) {
+  const [token, setToken] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  async function submit(ev: FormEvent) {
+    ev.preventDefault();
+    try { await api.login(token); onDone(); } catch (e) { setError((e as Error).message); }
+  }
+  return (
+    <main className="login">
+      <form className="panel login-card" onSubmit={submit}>
+        <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
+        <p className="muted">This ledger requires the operator token.</p>
+        <label className="sign-name">
+          API token
+          <input type="password" autoComplete="current-password" value={token} onChange={(e) => setToken(e.target.value)} autoFocus />
+        </label>
+        {error && <p className="field-error">{error}</p>}
+        <button className="btn primary" disabled={!token}>Sign in</button>
+      </form>
+    </main>
+  );
+}
+
+function Workspace() {
   const [engagements, setEngagements] = useState<EngagementSummary[] | null>(null);
   const [current, setCurrent] = useState<number | null>(null);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
