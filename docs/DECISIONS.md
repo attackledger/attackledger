@@ -128,6 +128,13 @@ options considered and who decided.
   credible. Legal advice is to be sought before selling commercial licenses.
 - **Decided by:** Murat Kabak.
 
+### D-012 · Ship the product first; migrations before features (2026-10-08)
+- **Decision:** Postpone the trademark filing and finish the product first. Release
+  order: v0.2 database migrations, v0.3 hunt agents, v0.4 live site and public
+  repository.
+- **Proposed by:** Claude (the release order). **Decided by:** Murat Kabak, who
+  put the product before the trademark ("ship the product first").
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

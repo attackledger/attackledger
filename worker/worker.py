@@ -16,8 +16,8 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select, text  # noqa: E402
 
-from app import ledger, packs, scope  # noqa: E402
-from app.db import Base, SessionLocal, engine  # noqa: E402
+from app import ledger, migrate, packs, scope  # noqa: E402
+from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Engagement, Job, JobStatus, Observation  # noqa: E402
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
@@ -170,7 +170,7 @@ def run(session, job: Job):
 
 
 def main():
-    Base.metadata.create_all(engine)
+    migrate.wait_for_head()  # the API owns migrations
     print("worker ready", flush=True)
     while True:
         with SessionLocal() as session:

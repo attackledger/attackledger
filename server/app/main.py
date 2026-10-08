@@ -9,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import gates, ledger, packs, report, scope
-from .db import Base, engine, get_session
+from . import gates, ledger, migrate, packs, report, scope
+from .db import get_session
 from .models import (Asset, ChecklistItem, Engagement, Evidence, ItemState, Job, JobStatus, Lane,
                      Observation, Receipt)
 
@@ -20,11 +20,11 @@ ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     packs.all_packs()  # fail fast on a broken pack
-    Base.metadata.create_all(engine)
+    migrate.upgrade_head()
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.2.0", lifespan=lifespan)
 
 
 # ---- schemas ---------------------------------------------------------------

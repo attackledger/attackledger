@@ -142,6 +142,20 @@ unless the engagement has:
 The worker re-checks scope on every target and on every host a tool reports.
 Redirects are not followed.
 
+## Database migrations
+
+The API applies Alembic migrations at startup. The worker waits until the database
+reaches the latest revision. A database created before v0.2 is stamped at the
+first revision only if its schema matches the models exactly. If it does not,
+the API refuses to start and leaves the data alone.
+
+```bash
+# after changing server/app/models.py
+cd server && DATABASE_URL=... alembic revision --autogenerate -m "describe the change"
+```
+
+A test fails if a model change ships without its migration.
+
 ## Rules of engagement
 
 AttackLedger is for **authorized testing only**: programs whose scope you are

@@ -13,6 +13,8 @@ WORKDIR /srv
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY server/app ./app
+COPY server/alembic.ini ./alembic.ini
+COPY server/migrations ./migrations
 COPY worker/worker.py .
 COPY checklists ./checklists
 COPY packs ./packs

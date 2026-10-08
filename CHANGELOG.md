@@ -3,6 +3,22 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [0.2.0] - 2026-10-08
+
+### Added
+- **Database migrations (Alembic).** The API migrates at startup and the worker
+  waits for the latest revision. Databases created before migrations are stamped
+  only when their schema matches the models; otherwise startup is refused.
+- Tests cover a fresh migrate, downgrade followed by upgrade, stamping a
+  pre-migration database, refusing one that has drifted, and drift between the
+  models and the migrations.
+- `docs/DECISIONS.md`: a decision record of who proposed and who decided each
+  product choice.
+
+### Fixed
+- The downgrade now removes the Postgres enum types, so downgrading and then
+  upgrading works.
+
 ## [0.1.0] - 2026-10-08
 
 First tracked release.
@@ -25,6 +41,5 @@ First tracked release.
   open-finding fingerprints, personal paths and secrets.
 
 ### Known limitations
-- No database migrations yet. Schema changes require a fresh database.
 - Reports are not signed. Verification proves internal consistency, not authorship.
 - No authentication on the API. Bind to localhost only (the default).
