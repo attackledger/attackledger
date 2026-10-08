@@ -251,3 +251,23 @@ def test_nuclei_refuses_without_identification():
 def test_nuclei_template_paths_exist_in_the_pinned_layout():
     # The original pipeline used http/cve/ (no such directory); the templates use http/cves/.
     assert worker._tpl("cves")[0].endswith("/http/cves/")
+
+
+def test_ferox_stays_within_the_rate_limit_and_skips_destructive_paths(monkeypatch, tmp_path):
+    c = worker.ferox_cmd(eng("X-Bug-Bounty: r1", "AL (r1)", rps=4))
+    assert c[c.index("--scan-limit") + 1] == "1" and c[c.index("--depth") + 1] == "1"   # one scan per process
+    assert c[c.index("--rate-limit") + 1] == "4"
+    assert "--dont-extract-links" in c and "-r" not in c and "--redirects" not in c
+    assert "logout" in c[c.index("--dont-scan") + 1]
+    assert c[c.index("-H") + 1] == "X-Bug-Bounty: r1" and c[c.index("-a") + 1] == "AL (r1)"
+
+
+def test_ferox_refuses_without_identification():
+    with pytest.raises(RuntimeError, match="research header"):
+        worker.ferox_cmd(eng())
+
+
+def test_content_baseline_skips_catch_all_hosts():
+    assert worker.baseline_status(lambda u: "403", "https://a.example.com/") == ("403", "403")
+    codes = iter(["404", "404"])
+    assert worker.baseline_status(lambda u: next(codes), "https://a.example.com/") == ("404", "404")

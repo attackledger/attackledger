@@ -75,6 +75,7 @@ SELECTORS: dict[str, Callable] = {
     "crawl": golden_urls,
     "jsanalyze": _jsanalyze,
     "nuclei": live_urls,
+    "content": golden_urls,
 }
 
 

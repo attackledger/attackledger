@@ -10,6 +10,7 @@ Job kinds mirror the original pipeline's modules:
   archive     M4  gau + waybackurls (passive archives)
   jsanalyze   M8  JS files: endpoints, GraphQL operations, sourcemaps, secret candidates
   nuclei      M7  known issues: takeovers, exposures, stack-matched templates, golden-host CVEs
+  content     M3  feroxbuster content discovery on golden hosts, after a baseline check
 
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
@@ -566,9 +567,74 @@ def run_nuclei(r: Run, urls_: list[str]) -> int:
     return found
 
 
+CONTENT_WORDLIST = os.environ.get("WORKER_CONTENT_WORDLIST", "/opt/wordlists/common.txt")
+CONTENT_TIME_LIMIT = os.environ.get("WORKER_CONTENT_TIME_LIMIT", "10m")
+
+
+def ferox_cmd(eng) -> list[str]:
+    flags = require_identification(eng)
+    headers = [v for i, v in enumerate(flags) if i % 2 == 1]
+    cmd = [tool("feroxbuster"), "--stdin", "--silent", "--json", "-k", "--no-state",
+           "-w", CONTENT_WORDLIST,
+           # One scan per process. --rate-limit is per scan, and every new scan (each recursed
+           # directory) starts with a full budget, so recursion bursts above the limit at the
+           # hand-over (measured: 29/s at a limit of 20). Depth 1, one URL at a time, stays at it.
+           "--depth", "1", "--scan-limit", "1", "--rate-limit", str(eng.rate_limit_rps),
+           "-t", str(min(10, eng.rate_limit_rps)),
+           "--time-limit", CONTENT_TIME_LIMIT, "--auto-tune",
+           "--filter-status", "404", "500", "502", "503",
+           "--dont-extract-links",                      # only wordlist paths under the given URL
+           "--dont-scan", CRAWL_OUT_OF_SCOPE]           # never logout/delete/revoke
+    for h in headers:
+        if h.lower().startswith("user-agent:"):
+            cmd += ["-a", h.split(":", 1)[1].strip()]
+        else:
+            cmd += ["-H", h]
+    return cmd
+
+
+def baseline_status(get_status, url: str) -> tuple[str, str]:
+    """Two random non-existent paths: if both answer the same non-404 code, the host
+    answers everything that way and content discovery would only produce noise."""
+    a = get_status(url.rstrip("/") + f"/zzq-al-{os.urandom(4).hex()}")
+    b = get_status(url.rstrip("/") + f"/xnf-al-{os.urandom(4).hex()}/{os.urandom(2).hex()}")
+    return a, b
+
+
+def run_content(r: Run, urls_: list[str]) -> int:
+    get = fetcher(r.eng)
+
+    def status(u: str) -> str:
+        body, why = get(u)
+        return "200" if body is not None else (why.split()[1] if why.startswith("HTTP ") else "000")
+
+    keep = []
+    for u in urls_:
+        if not r.in_scope(urls.host_of(u)):
+            continue
+        a, b = baseline_status(status, u)
+        if a == b and a not in ("404", "000"):
+            r.log(f"skipped {u}: every path answers {a}")
+            continue
+        keep.append(u)
+    if not keep:
+        return 0
+    seen: dict[str, set] = defaultdict(set)
+    for u in keep:
+        time.sleep(1.5)   # let the previous budget drain before the next scan starts
+        for line in r.tool_lines("feroxbuster", ferox_cmd(r.eng), [u]):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("type") == "response" and rec.get("url"):
+                seen[rec["url"]].add("ferox")
+    return store_endpoints(r, seen)
+
+
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
            "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze,
-           "nuclei": run_nuclei}
+           "nuclei": run_nuclei, "content": run_content}
 def check_registry() -> None:
     """The worker and the module registry must describe the same job kinds."""
     missing = set(modules.BY_KIND) - set(RUNNERS)

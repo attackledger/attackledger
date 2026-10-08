@@ -29,6 +29,13 @@ before 1.0, minor versions may change the data model.
   the SecLists `common.txt` wordlist. Arjun 2.2.7 is installed in the worker for
   upcoming modules.
 
+- **M3 content discovery (opt-in).** feroxbuster runs on golden hosts, up to 10 per
+  run, one URL and one scan at a time, with the common.txt wordlist. Hosts that answer
+  every path the same way are skipped after a baseline check, which carries the
+  research identification. It never follows redirects or extracted links and never
+  requests logout or delete paths. Measured: 9,504 requests, all identified, with
+  a peak of exactly the 20/s limit.
+
 ### Fixed
 - Names that answer NOERROR with no records were counted as resolved, and subdomain
   discovery could add them as assets. Only an A or AAAA record now counts.

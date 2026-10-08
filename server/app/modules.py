@@ -82,6 +82,14 @@ MODULES: tuple[Module, ...] = (
            "secret candidates; secrets are stored masked and are never tested.",
            input="urls", traffic="target", http=True, after=("crawl", "archive"), produces=("endpoints", "leads"),
            pipeline="M8", max_targets=250),
+    Module("content", "Discover content",
+           "feroxbuster over golden hosts (up to 10 per run), one at a time, common.txt wordlist, no recursion. Skips hosts that "
+           "answer every path the same way, never follows redirects or extracted links, never requests "
+           "logout, delete or similar paths, and stays within the rate limit in total.",
+           input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("endpoints",),
+           pipeline="M3", max_targets=10,
+           caution="Brute-forces paths: thousands of requests per host. Enable only if the program allows "
+                   "content discovery."),
     Module("nuclei", "Scan for known issues",
            "nuclei over live web services: takeover checks on every host; exposures, misconfigurations and "
            "templates matching the detected stack on one host per cluster; panels, vulnerabilities and CVEs "

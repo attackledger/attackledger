@@ -219,6 +219,20 @@ options considered and who decided.
 - **Made by:** Claude, overnight under Murat's standing permission ("you may do
   everything"). **Review:** pending, Murat Kabak.
 
+### D-021 · Content discovery without recursion (2026-10-08, made autonomously, review pending)
+- **Decision:** feroxbuster runs at depth 1, one URL per process with a pause between
+  them, instead of depth 2 with recursion.
+- **Evidence:** feroxbuster's rate limit is per scan, and each recursed directory starts
+  a new scan with a full budget. At the hand-over the total reached 29/s against a
+  20/s limit. One scan per process stayed at the limit, with a peak of exactly 20/s
+  over 9,504 requests.
+- **Trade-off:** subdirectories are not explored automatically. A follow-up run can
+  target discovered directories.
+- **Also found in the original pipeline:** its ferox baseline probes use curl
+  **without** the research header, and `--scan-limit 3` lets three per-directory
+  budgets run at once (up to 3× the program limit). The original was not changed.
+- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or
