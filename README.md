@@ -98,4 +98,18 @@ Murat Kabak · contact: murat@attackledger.com
 
 ## License
 
-MIT. See `LICENSE`.
+AttackLedger is dual-licensed:
+
+- **Open source:** [GNU AGPL-3.0](LICENSE). It is free to use, modify and self-host. If you
+  offer a modified version to others over a network (for example as a hosted
+  service), you must publish your source under the same license.
+- **Commercial:** for embedding AttackLedger in a proprietary product or offering
+  it as a service without the AGPL obligations, contact murat@attackledger.com.
+
+Copyright (C) 2026 Murat Kabak.
+
+## Contributing
+
+Contributions are welcome. To keep dual licensing possible, contributors are
+asked to sign a Contributor License Agreement (CLA) before a pull request is
+merged.
