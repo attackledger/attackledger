@@ -3,6 +3,29 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [0.3.1] - 2026-10-08
+
+### Security
+- **Port scanning now honours the engagement rate limit.** naabu ran at ten times
+  the requests-per-second value, carried over from the original pipeline. The
+  value is now a hard ceiling for every step that sends traffic, a test checks this
+  for every tool, and the shipped `recon/run_pipeline.sh` was corrected the same way.
+
+### Added
+- **JavaScript analysis (module 8)**, ported from the original `js_analyze.py` and
+  `secret_triage.py`. It covers endpoints (LinkFinder regex, own host only), GraphQL
+  operations, sourcemaps (fetched only when in scope) and secret candidates in REAL,
+  PUBLIC and NOISE buckets, with REAL checked first. Secrets are stored masked and
+  hashed and are never tested.
+- **Leads.** A new `leads` table (migration `0003`), an API endpoint and a UI panel.
+  Hosts in Golden targets show their lead count.
+
+### Fixed
+- JS fetch failures were swallowed. They are now logged with their reason, and a
+  run that fetches nothing fails.
+- Protocol-relative URLs in JS could resolve to another host.
+- `recon/secret_triage.py` referenced a bucket name left over from translation.
+
 ## [0.3.0] - 2026-10-08
 
 ### Added

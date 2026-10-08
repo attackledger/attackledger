@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, EndpointRow, Job, Scope, TriageReport } from "./api";
+import { api, EndpointRow, Job, Lead, Scope, TriageReport } from "./api";
 
 type Step = { kind: string; title: string; body: string; traffic: "passive" | "dns" | "target" };
 
@@ -16,6 +16,8 @@ const STEPS: Step[] = [
     body: "Crawls the highest-scoring hosts on the same host only, parsing JavaScript. Logout, delete and similar paths are never followed." },
   { kind: "archive", title: "Collect archived URLs", traffic: "passive",
     body: "Historical URLs from public archives (gau, Wayback Machine). Nothing is sent to the target." },
+  { kind: "jsanalyze", title: "Analyse JavaScript", traffic: "target",
+    body: "Downloads in-scope JS files (up to 250) and extracts endpoints, GraphQL operations, sourcemaps and secret candidates. Secrets are stored masked and are never tested." },
 ];
 
 const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" };
@@ -73,8 +75,8 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
     if (!authorized) return "Record your authorization first";
     if ((kind === "subdomains" || kind === "archive") && !hasWildcard) return "Needs a wildcard rule such as *.example.com";
     if (kind === "ports" && !scope!.allow_port_scan) return "Port scanning is off in the rules";
-    if ((kind === "probe" || kind === "crawl") && !identified) return "Set the research header or user agent first";
     if (kind === "crawl" && liveHosts === 0) return "Find live web servers first";
+    if ((kind === "probe" || kind === "crawl" || kind === "jsanalyze") && !identified) return "Set the research header or user agent first";
     return null;
   }
 
@@ -127,6 +129,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
       </section>
 
       {triage && <GoldenTargets report={triage} />}
+      <Leads engId={engId} version={jobs.filter((j) => j.status === "done").length} />
       <Endpoints engId={engId} version={jobs.length} />
 
       <section aria-labelledby="jobs-title" className="panel">
@@ -187,6 +190,7 @@ function GoldenTargets({ report }: { report: TriageReport }) {
                 <th scope="col">Title</th>
                 <th scope="col">Stack</th>
                 <th scope="col">Endpoints</th>
+                <th scope="col">Leads</th>
               </tr>
             </thead>
             <tbody>
@@ -202,11 +206,74 @@ function GoldenTargets({ report }: { report: TriageReport }) {
                   <td className="clip" title={h.titles.join(" / ")}>{h.titles[0] ?? ""}</td>
                   <td>{h.tech.slice(0, 3).map((t) => <span key={t} className="tag">{t}</span>)}</td>
                   <td>{h.endpoints ? `${h.endpoints}${h.js ? ` (${h.js} JS)` : ""}` : <span className="muted">—</span>}</td>
+                  <td>{h.leads ? <strong>{h.leads}</strong> : <span className="muted">—</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+    </section>
+  );
+}
+
+const LEAD_KIND = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap" };
+
+function Leads({ engId, version }: { engId: number; version: number }) {
+  const [rows, setRows] = useState<Lead[]>([]);
+  const [open, setOpen] = useState<number | null>(null);
+  useEffect(() => { api.leads(engId).then(setRows).catch(() => {}); }, [engId, version]);
+  const real = rows.filter((l) => l.kind === "secret" && l.bucket === "real").length;
+
+  return (
+    <section aria-labelledby="leads-title" className="panel">
+      <div className="panel-head">
+        <h3 id="leads-title" className="panel-title">Leads</h3>
+        <span className="muted">
+          {rows.length} total{real ? `, ${real} secret ${real === 1 ? "candidate" : "candidates"} to review` : ""}
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="muted">Analyse JavaScript to collect leads. They are what the hunt lanes start from.</p>
+      ) : (
+        <>
+          <p className="disclaimer">
+            Secret candidates are shown masked and have not been tested. Do not use them. Confirm the owner, check
+            the program policy, and report.
+          </p>
+          <ul className="leads">
+            {rows.map((l) => (
+              <li key={l.id} className={`lead ${l.kind} ${l.bucket}`}>
+                <div className="lead-row">
+                  <span className="lead-kind">{LEAD_KIND[l.kind] ?? l.kind}</span>
+                  <span className="lead-title">
+                    {l.title}
+                    {l.detail.preview && <code className="lead-preview">{l.detail.preview}</code>}
+                  </span>
+                  <span className="lead-badge">
+                    {l.bucket === "real" && <span className="sev">{l.severity}</span>}
+                    {l.bucket === "public" && <span className="muted">Public by design</span>}
+                  </span>
+                  <button className="btn ghost small" aria-expanded={open === l.id}
+                          onClick={() => setOpen(open === l.id ? null : l.id)}>
+                    {open === l.id ? "Hide" : "Details"}
+                  </button>
+                </div>
+                {open === l.id && (
+                  <dl className="lead-detail">
+                    <div><dt>Host</dt><dd>{l.host}</dd></div>
+                    <div><dt>Found in</dt><dd><a href={l.source_url} target="_blank" rel="noreferrer noopener">{l.source_url}</a></dd></div>
+                    {l.detail.value_sha256 && <div><dt>Value SHA-256</dt><dd><code>{l.detail.value_sha256}</code></dd></div>}
+                    {l.detail.map_url && <div><dt>Map</dt><dd>{l.detail.map_url}</dd></div>}
+                    {l.detail.sources && l.detail.sources.length > 0 && (
+                      <div><dt>Sources</dt><dd className="lead-sources">{l.detail.sources.join("\n")}</dd></div>
+                    )}
+                  </dl>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
@@ -353,6 +420,7 @@ function RulesOfEngagement({ engId, scope, onSaved }: { engId: number; scope: Sc
           <label className="narrow">
             Requests per second
             <input type="number" min={1} max={50} value={rps} onChange={(e) => setRps(Number(e.target.value))} />
+            <span className="hint">A hard ceiling for every step that sends traffic, port scanning included. Use the program's limit.</span>
           </label>
           <label className="narrow">
             Crawl depth

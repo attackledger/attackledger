@@ -171,3 +171,22 @@ class Endpoint(Base):
     source: Mapped[str] = mapped_column(String(32))  # katana, gau, wayback
     is_js: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class Lead(Base):
+    """Something recon noticed that a hunt lane should look at (secret candidate,
+    GraphQL operation, sourcemap). Secrets are stored masked and hashed only."""
+    __tablename__ = "leads"
+    __table_args__ = (UniqueConstraint("engagement_id", "fingerprint"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
+    host: Mapped[str] = mapped_column(String(255))
+    source_url: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(32))       # secret, graphql, sourcemap
+    title: Mapped[str] = mapped_column(String(300))
+    bucket: Mapped[str] = mapped_column(String(16), default="")   # real, public (secrets)
+    severity: Mapped[str] = mapped_column(String(16), default="")
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)

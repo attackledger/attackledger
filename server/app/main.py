@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from . import gates, ledger, migrate, packs, report, scope, triage, urls
 from .db import get_session
 from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
-                     Lane, Observation, Receipt)
+                     Lane, Lead, Observation, Receipt)
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 
@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.3.1", lifespan=lifespan)
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -274,7 +274,7 @@ class ScopeIn(BaseModel):
 
 
 # Job kinds that send HTTP requests to the target itself (not DNS or passive sources).
-TARGET_TRAFFIC_KINDS = {"probe", "crawl"}
+TARGET_TRAFFIC_KINDS = {"probe", "crawl", "jsanalyze"}
 
 
 def identification_missing(eng: Engagement) -> bool:
@@ -343,9 +343,10 @@ JOB_KINDS = {
     "probe": "Fingerprint the web services of in-scope hosts",
     "crawl": "Crawl golden hosts for endpoints and JavaScript",
     "archive": "Collect historical URLs from public archives",
+    "jsanalyze": "Analyse JavaScript files for endpoints, GraphQL operations, sourcemaps and secrets",
 }
 ROOT_KINDS = {"subdomains", "archive"}
-URL_KINDS = {"crawl"}
+URL_KINDS = {"crawl", "jsanalyze"}
 
 
 class JobIn(BaseModel):
@@ -391,6 +392,11 @@ def _ranked(session: Session, eng: Engagement) -> list[dict]:
 def _default_targets(session: Session, eng: Engagement, kind: str) -> list[str]:
     if kind in ROOT_KINDS:
         return sorted({p[2:] for p in eng.scope_include if p.startswith("*.")})
+    if kind == "jsanalyze":
+        js = session.scalars(select(Endpoint.url).where(Endpoint.engagement_id == eng.id,
+                                                        Endpoint.is_js.is_(True))).all()
+        return sorted(u for u in js if scope.in_scope(urls.host_of(u) or "", eng.scope_include,
+                                                      eng.scope_exclude))[:250]
     if kind == "crawl":
         ranked = _ranked(session, eng)
         golden = [r for r in ranked if r["golden"]] or ranked
@@ -423,6 +429,7 @@ def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)
         targets = [t.lower() for t in targets]
     if not targets:
         hint = {"crawl": "run 'Find live web servers' first",
+                "jsanalyze": "crawl golden hosts or collect archived URLs first",
                 "archive": "add a wildcard scope rule such as *.example.com"}.get(body.kind, "add in-scope hosts or a wildcard scope rule first")
         raise HTTPException(422, f"no targets: {hint}")
     if body.kind in ROOT_KINDS:
@@ -574,8 +581,12 @@ def triage_view(eng_id: int, session: Session = Depends(get_session)):
         c = counts.setdefault(e.host, [0, 0])
         c[0] += 1
         c[1] += int(e.is_js)
+    lead_counts: dict[str, int] = {}
+    for l in session.scalars(select(Lead).where(Lead.engagement_id == eng_id)):
+        lead_counts[l.host] = lead_counts.get(l.host, 0) + 1
     for r in rows:
         r["endpoints"], r["js"] = counts.get(r["host"], [0, 0])
+        r["leads"] = lead_counts.get(r["host"], 0)
     return {"golden_min_score": triage.GOLDEN_MIN_SCORE, "weights": triage.WEIGHTS, "hosts": rows}
 
 
@@ -594,3 +605,16 @@ def endpoints(eng_id: int, host: str | None = None, js: bool | None = None, q: s
     rows = session.scalars(stmt.order_by(Endpoint.host, Endpoint.url).offset(offset).limit(min(limit, 1000))).all()
     return {"total": total, "items": [{"host": e.host, "url": e.url, "source": e.source, "js": e.is_js}
                                       for e in rows]}
+
+
+@app.get("/engagements/{eng_id}/leads")
+def leads(eng_id: int, kind: str | None = None, session: Session = Depends(get_session)):
+    _get(session, Engagement, eng_id)
+    stmt = select(Lead).where(Lead.engagement_id == eng_id)
+    if kind:
+        stmt = stmt.where(Lead.kind == kind)
+    order = {"real": 0, "": 1, "public": 2}
+    rows = sorted(session.scalars(stmt).all(),
+                  key=lambda l: (order.get(l.bucket, 1), l.kind, l.host, l.title))
+    return [{"id": l.id, "host": l.host, "source_url": l.source_url, "kind": l.kind, "title": l.title,
+             "bucket": l.bucket, "severity": l.severity, "detail": l.detail} for l in rows]

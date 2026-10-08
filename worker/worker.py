@@ -8,6 +8,7 @@ Job kinds mirror the original pipeline's modules:
   probe       M2  HTTP(S) fingerprint per host and open port
   crawl       M4  katana over golden hosts, same-host only, destructive paths skipped
   archive     M4  gau + waybackurls (passive archives)
+  jsanalyze   M8  JS files: endpoints, GraphQL operations, sourcemaps, secret candidates
 
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
@@ -16,9 +17,11 @@ before storing it. Nothing outside the engagement's scope rules is recorded.
 import hashlib
 import json
 import os
+import ssl
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -27,9 +30,9 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select  # noqa: E402
 
-from app import ledger, migrate, packs, scope, urls  # noqa: E402
+from app import jsanalysis, ledger, migrate, packs, scope, urls  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
-from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Observation  # noqa: E402
+from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observation  # noqa: E402
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
@@ -42,8 +45,20 @@ CRAWL_OUT_OF_SCOPE = (r"logout|log-out|signout|sign-out|/delete|/destroy|/remove
                       r"/close-account|/unsubscribe")
 
 
+JS_MAX_FILES = 250
+JS_MAX_BYTES = 5 * 1024 * 1024
+JS_TIMEOUT = 15
+
+
 class Cancelled(Exception):
     pass
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: a redirect could lead outside scope."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def tool(name: str) -> str:
@@ -85,9 +100,10 @@ def commands(kind: str, eng) -> list[tuple[str, list[str]]]:
     if kind == "ports":
         if not eng.allow_port_scan:
             raise RuntimeError("port scanning is not allowed for this engagement")
-        # Connect scan (no raw sockets), port 25 excluded, rate scaled like the original pipeline.
+        # Connect scan (no raw sockets), port 25 excluded. The engagement's requests-per-second
+        # limit is a hard ceiling for every step, port scanning included: no multiplier.
         return [("naabu", [tool("naabu"), "-silent", "-json", "-top-ports", "100", "-exclude-ports", "25",
-                           "-scan-type", "c", "-rate", str(eng.rate_limit_rps * 10), "-c", "25",
+                           "-scan-type", "c", "-rate", rps, "-c", str(min(25, eng.rate_limit_rps)),
                            *resolvers])]
     if kind == "probe":
         flags = require_identification(eng)
@@ -326,10 +342,111 @@ def run_archive(r: Run, roots: list[str]) -> int:
     return store_endpoints(r, seen)
 
 
+def fetcher(eng):
+    """A GET function that sends the research identification and follows no redirects."""
+    flags = require_identification(eng)
+    headers = {flags[i + 1].split(":", 1)[0].strip(): flags[i + 1].split(":", 1)[1].strip()
+               for i in range(0, len(flags), 2)}
+    headers.setdefault("User-Agent", "AttackLedger")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False          # targets often have odd certificates; we only read public files
+    ctx.verify_mode = ssl.CERT_NONE
+    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+    delay = 1.0 / max(eng.rate_limit_rps, 1)
+
+    def get(url: str) -> tuple[bytes | None, str]:
+        """(body, "") on a 200; (None, reason) otherwise. Failures are reported, never hidden."""
+        time.sleep(delay)
+        try:
+            with opener.open(urllib.request.Request(url, headers=headers), timeout=JS_TIMEOUT) as resp:
+                if resp.status != 200:
+                    return None, f"HTTP {resp.status}"
+                return resp.read(JS_MAX_BYTES), ""
+        except urllib.error.HTTPError as e:
+            return None, f"HTTP {e.code}" + (" (redirect not followed)" if 300 <= e.code < 400 else "")
+        except Exception as e:
+            reason = getattr(e, "reason", e)
+            return None, type(reason).__name__ if not str(reason) else str(reason)[:120]
+    return get
+
+
+def add_lead(r: Run, host: str, source_url: str, kind: str, title: str, bucket: str = "",
+             severity: str = "", detail: dict | None = None, key: str = "") -> bool:
+    fp = hashlib.sha256(f"{kind}|{host}|{title}|{key}".encode()).hexdigest()
+    if fp in r.lead_fps:
+        return False
+    r.lead_fps.add(fp)
+    r.session.add(Lead(engagement_id=r.eng.id, job_id=r.job.id, host=host, source_url=source_url,
+                       kind=kind, title=title[:300], bucket=bucket, severity=severity,
+                       detail=detail or {}, fingerprint=fp))
+    return True
+
+
+def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
+    get = fetcher(r.eng)
+    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
+    js_urls = [u for u in js_urls if r.in_scope(urls.host_of(u))][:JS_MAX_FILES]
+    endpoints: dict[str, set] = defaultdict(set)
+    analysed = leads = noise = 0
+    failures: dict[str, int] = defaultdict(int)
+    r.log(f"analysing {len(js_urls)} JavaScript file(s)")
+    for n, url in enumerate(js_urls, start=1):
+        body, why = get(url)
+        if body is None:
+            failures[why] += 1
+            if sum(failures.values()) <= 5:
+                r.log(f"could not fetch {url}: {why}")
+            continue
+        analysed += 1
+        r.digest.update(f"js\t{url}\t{hashlib.sha256(body).hexdigest()}\n".encode())
+        text = body.decode("utf-8", "replace")
+        host = urls.host_of(url)
+
+        for ep in jsanalysis.extract_endpoints(text, url):
+            endpoints[ep].add("js")
+        for op in jsanalysis.graphql_operations(text):
+            leads += add_lead(r, host, url, "graphql", op)
+        for s in jsanalysis.scan_secrets(text):
+            if s["bucket"] == "noise":
+                noise += 1
+                continue
+            leads += add_lead(r, host, url, "secret", s["kind"], s["bucket"], s["severity"],
+                              {"preview": s["preview"], "value_sha256": s["value_sha256"]}, s["value_sha256"])
+
+        ref = jsanalysis.sourcemap_ref(text, url)
+        if ref == "inline":
+            leads += add_lead(r, host, url, "sourcemap", "Inline sourcemap (source embedded in the file)",
+                              detail={"inline": True})
+        elif ref and r.in_scope(urls.host_of(ref)):
+            raw, _ = get(ref)
+            try:
+                m = json.loads(raw.decode("utf-8", "replace")) if raw else None
+            except ValueError:
+                m = None
+            if isinstance(m, dict):
+                srcs = [str(x) for x in (m.get("sources") or [])]
+                leads += add_lead(r, host, url, "sourcemap",
+                                  f"Sourcemap with {len(srcs)} source file(s)"
+                                  + (" and embedded source" if m.get("sourcesContent") else ""),
+                                  detail={"map_url": ref, "sources": srcs[:50],
+                                          "sources_content": bool(m.get("sourcesContent"))})
+        if n % 10 == 0:
+            r.session.commit()
+            r.check_stop()
+    added = store_endpoints(r, endpoints) if endpoints else 0
+    if failures:
+        r.log("fetch failures: " + ", ".join(f"{k} ×{v}" for k, v in sorted(failures.items())))
+    r.log(f"{analysed} file(s) analysed, {leads} new lead(s), {noise} noise match(es) ignored, "
+          f"{added} new endpoint(s)")
+    if js_urls and analysed == 0:
+        raise RuntimeError("no JavaScript file could be fetched; see the log for reasons")
+    return analysed
+
+
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
-           "probe": run_probe, "crawl": run_crawl, "archive": run_archive}
+           "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze}
 ROOT_KINDS = {"subdomains", "archive"}  # targets are wildcard roots, not hosts
-URL_KINDS = {"crawl"}                   # targets are URLs
+URL_KINDS = {"crawl", "jsanalyze"}      # targets are URLs
 
 
 def allowed_targets(job: Job) -> list[str]:
@@ -374,6 +491,7 @@ def run(session, job: Job) -> None:
     recon_lane = packs.get_pack(eng.pack_id).recon_lane
     touched = {o.host for o in session.scalars(select(Observation).where(Observation.job_id == job.id))}
     touched |= set(session.scalars(select(Endpoint.host).where(Endpoint.job_id == job.id)))
+    touched |= set(session.scalars(select(Lead.host).where(Lead.job_id == job.id)))
     for host in touched:
         asset = r.known.get(host)
         lane = next((l for l in asset.lanes if l.role == recon_lane), None) if asset and asset.id else None

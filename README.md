@@ -143,6 +143,13 @@ container. Steps:
 | Golden targets | scoring: AUTH +4, TITLE +4, APPTECH +2, ODDPORT/KEYWORD/200 +1 | computed |
 | Crawl golden hosts | katana: same host only, JS parsing, logout/delete paths never followed | target |
 | Collect archived URLs | gau, waybackurls | passive |
+| Analyse JavaScript | endpoints, GraphQL operations, sourcemaps, secret candidates (REAL / PUBLIC / NOISE) | target |
+
+The engagement's *requests per second* value is a hard ceiling for every step that
+sends traffic, port scanning included. There is no multiplier.
+
+Secret candidates are stored **masked and hashed**, never in full, and are never
+tested against any service. JS fetches follow no redirects.
 
 Crawl and archive output is cleaned in the same way as `uro`: static files are
 dropped and URLs that differ only in parameter values are collapsed. Only

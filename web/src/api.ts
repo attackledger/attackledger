@@ -151,6 +151,18 @@ export interface TriageHost {
   urls: string[];
   endpoints: number;
   js: number;
+  leads: number;
+}
+
+export interface Lead {
+  id: number;
+  host: string;
+  source_url: string;
+  kind: "secret" | "graphql" | "sourcemap";
+  title: string;
+  bucket: string;
+  severity: string;
+  detail: { preview?: string; value_sha256?: string; map_url?: string; sources?: string[]; sources_content?: boolean; inline?: boolean };
 }
 
 export interface TriageReport {
@@ -217,6 +229,7 @@ export const api = {
     call<Job>(`/engagements/${engId}/jobs`, { method: "POST", body: JSON.stringify({ kind, targets }) }),
   cancelJob: (jobId: number) => call<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   observations: (engId: number) => call<ObservationRow[]>(`/engagements/${engId}/observations`),
+  leads: (engId: number) => call<Lead[]>(`/engagements/${engId}/leads`),
   triage: (engId: number) => call<TriageReport>(`/engagements/${engId}/triage`),
   endpoints: (engId: number, opts: { js?: boolean; q?: string; offset?: number } = {}) => {
     const p = new URLSearchParams();

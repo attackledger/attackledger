@@ -149,6 +149,21 @@ options considered and who decided.
   "never follow logout/delete" filter to every crawl, not only authenticated ones.
   **Decided by:** Murat Kabak.
 
+### D-014 · One rate limit, no multipliers (2026-10-08)
+- **Decision:** The engagement's requests-per-second value is a hard ceiling for
+  every step that sends traffic, port scanning included. The ×10 port-scan
+  multiplier inherited from the original pipeline is removed.
+- **Context:** Some programs cap total traffic, for example 5 requests per second.
+  A hidden multiplier would break that rule without the operator noticing.
+- **Decided by:** Murat Kabak, who asked for the fix. Claude chose a single
+  ceiling over a separate port-scan field, so the limit lives in one place.
+
+### D-015 · Secrets are evidence, not inventory (2026-10-08)
+- **Decision:** Secret candidates found in recon are stored as a masked preview, a
+  SHA-256 and their location, never in full, and AttackLedger never tests them.
+- **Proposed by:** Claude, extending the "do not use the key, only report it" rule in
+  Murat's secret triage notes. **Decided by:** Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

@@ -96,7 +96,8 @@ if [ ${#HEADER_ARGS[@]} -eq 0 ]; then
     echo "[!] WARNING: neither RESEARCH_HEADER nor RESEARCH_USER_AGENT is set. Test traffic will go out unidentified."
 fi
 echo "[+] Rate limit: ${RATE_LIMIT} req/s (httpx/katana/nuclei) -- adjust to the program's rules."
-NAABU_RATE=$((RATE_LIMIT * 10))
+# The program's rate limit is a ceiling for port scanning too (it was RATE_LIMIT * 10).
+NAABU_RATE=$RATE_LIMIT
 NAABU_CONCURRENCY=$RATE_LIMIT
 [ "$NAABU_CONCURRENCY" -gt 25 ] && NAABU_CONCURRENCY=25
 # v13: nuclei bulk-size = hosts in parallel per template. RATE_LIMIT/10 keeps ~10 req/s per host

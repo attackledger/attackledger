@@ -118,7 +118,7 @@ def main(paths):
     print("\n=== UNKNOWN -- CHECK MANUALLY (classifier did not recognize) ===")
     for it in buckets["UNKNOWN"][:25]:
         print(f"  {'✅VER ' if it['ver'] else '     '}{it['det'] or '?':<22} {it['raw'][:80]}")
-    if len(buckets["UNKNOWN"])>25: print(f"  ... +{len(buckets['BILINMIYOR'])-25} lines")
+    if len(buckets["UNKNOWN"])>25: print(f"  ... +{len(buckets['UNKNOWN'])-25} lines")
 
     pub=collections.Counter(i["why"] for i in buckets["PUBLIC"])
     if pub:

@@ -264,3 +264,17 @@ def test_archive_targets_wildcard_roots(client):
     assert r.status_code == 201 and r.json()["targets"] == ["example.com"]
     assert client.get(f"/engagements/{eng}/triage").json()["hosts"] == []
     assert client.get(f"/engagements/{eng}/endpoints").json() == {"total": 0, "items": []}
+
+
+def test_jsanalyze_needs_identification_and_js_files(client):
+    eng = recon_ready(client, "js")
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "jsanalyze"})
+    assert r.status_code == 422 and "research header" in r.json()["detail"]
+    client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"],
+                                                  "research_header": "X-Bug-Bounty: r1"})
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "jsanalyze"})
+    assert r.status_code == 422 and "crawl golden hosts" in r.json()["detail"]
+    r = client.post(f"/engagements/{eng}/jobs", json={"kind": "jsanalyze",
+                                                      "targets": ["https://cdn.evil.test/a.js"]})
+    assert r.status_code == 422
+    assert client.get(f"/engagements/{eng}/leads").json() == []

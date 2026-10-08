@@ -46,7 +46,8 @@ def test_port_scan_needs_engagement_permission_and_skips_smtp():
         worker.commands("ports", eng())
     c = cmd("ports", eng(ports=True, rps=3))
     assert c[c.index("-exclude-ports") + 1] == "25" and c[c.index("-scan-type") + 1] == "c"
-    assert c[c.index("-rate") + 1] == "30"
+    assert c[c.index("-rate") + 1] == "3"       # the engagement limit, never a multiple of it
+    assert c[c.index("-c") + 1] == "3"
 
 
 def test_passive_kinds_need_no_identification():
@@ -69,3 +70,22 @@ def test_resolvers_are_passed_to_dns_tools(monkeypatch):
     assert cmd("resolve", eng())[cmd("resolve", eng()).index("-r") + 1] == "127.0.0.11"
     c = cmd("ports", eng(ports=True))
     assert c[c.index("-r") + 1] == "127.0.0.11"
+
+
+def test_js_fetcher_requires_identification():
+    with pytest.raises(RuntimeError, match="research header"):
+        worker.fetcher(eng())
+
+
+def test_js_fetcher_refuses_redirects():
+    handler = worker._NoRedirect()
+    assert handler.redirect_request(None, None, 302, "Found", {}, "https://evil.test/") is None
+
+
+@pytest.mark.parametrize("rps", [1, 5, 50])
+def test_no_step_exceeds_the_engagement_rate_limit(rps):
+    e = eng("X-Bug-Bounty: r1", ports=True, rps=rps)
+    for kind in ("resolve", "ports", "probe", "crawl"):
+        for _, c in worker.commands(kind, e):
+            flag = "-rate" if "-rate" in c else "-rl"
+            assert int(c[c.index(flag) + 1]) <= rps, (kind, c)

@@ -734,3 +734,21 @@ a.btn.ghost { color: var(--text); }
 .ep-url { color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
 .ep-url:hover { color: var(--ink); text-decoration: underline; }
 .pager { display: flex; gap: 0.75rem; align-items: center; justify-content: flex-end; margin-top: 0.75rem; }
+
+/* ---- leads -------------------------------------------------------------- */
+
+.leads { list-style: none; margin: 0.75rem 0 0; padding: 0; }
+.lead { border-top: 1px solid var(--rule); padding: 0.55rem 0; }
+.lead-row { display: grid; grid-template-columns: 10rem 1fr auto auto; gap: 0.75rem; align-items: center; font-size: var(--step--1); }
+.lead-kind { color: var(--text-soft); font-size: var(--step--2); }
+.lead.secret.real { box-shadow: inset 3px 0 0 var(--red); padding-left: 0.6rem; }
+.lead.secret.public .lead-title { color: var(--text-soft); }
+.lead-title { overflow-wrap: anywhere; }
+.lead-preview { margin-left: 0.5rem; padding: 0.05rem 0.35rem; background: var(--bg-index); border-radius: 2px; font-size: var(--step--2); }
+.sev { color: var(--red); font-weight: 700; text-transform: capitalize; font-size: var(--step--2); }
+.lead-detail { display: grid; gap: 0.3rem; margin: 0.6rem 0 0.2rem; font-size: var(--step--1); }
+.lead-detail div { display: grid; grid-template-columns: 9rem 1fr; gap: 0.75rem; }
+.lead-detail dt { color: var(--text-soft); }
+.lead-detail dd { margin: 0; overflow-wrap: anywhere; }
+.lead-sources { white-space: pre-line; font-size: var(--step--2); }
+@media (max-width: 640px) { .lead-row { grid-template-columns: 1fr auto; } .lead-kind { grid-column: 1 / -1; } }
