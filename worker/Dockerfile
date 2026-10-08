@@ -52,7 +52,8 @@ RUN set -eux; mkdir -p /opt/wordlists; \
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libpcap0.8 \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --create-home --uid 10001 worker
+ && useradd --create-home --uid 10001 worker \
+ && mkdir -p /data/blobs && chown worker /data/blobs   # evidence blobs volume
 # Absolute paths on purpose: the Python "httpx" package installs a CLI with the same name.
 COPY --from=tools /go/bin/ /opt/pd/bin/
 COPY --from=nuclei /go/bin/nuclei /opt/pd/bin/nuclei

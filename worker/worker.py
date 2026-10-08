@@ -14,6 +14,7 @@ Job kinds mirror the original pipeline's modules:
   params      M5  Arjun hidden-parameter discovery on dynamic endpoints
   paramclass  M6  route parameters to hunt lanes by gf-style class (computed, no traffic)
   dorks       M10 Google-dork checklist per wildcard root (computed, no traffic)
+  agent           a Claude agent working one hunt lane through agenttools (v0.6)
 
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
@@ -39,9 +40,9 @@ from sqlalchemy import select  # noqa: E402
 
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
-from app import passive, triage  # noqa: E402
+from app import agentloop, agenttools, passive, triage  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
-from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observation  # noqa: E402
+from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lane, Lead, Observation  # noqa: E402
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
@@ -799,6 +800,55 @@ def run(session, job: Job) -> "Run":
     return r
 
 
+# Agent outcomes that leave work undone: the job is partial, never done.
+AGENT_PARTIAL = {"ended", "turn_limit", "cancelled"}
+
+
+def anthropic_client():
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError("ANTHROPIC_API_KEY is not set for the worker")
+    import anthropic
+    return anthropic.Anthropic()
+
+
+def run_agent(session, job: Job, client=None) -> "Run":
+    """An agent run on one lane. Gates are checked again here (agenttools.check_lane):
+    the engagement may have changed since the run was queued."""
+    lane = session.get(Lane, job.lane_id) if job.lane_id else None
+    if lane is None:
+        raise RuntimeError("the lane for this agent run no longer exists")
+    if lane.executor != "agent":
+        raise RuntimeError("this lane's executor is no longer the Claude agent")
+    limits = (job.result or {}).get("limits", {})
+    r = Run(session, job)
+
+    def should_stop() -> bool:
+        session.refresh(job, ["status"])
+        return job.status == JobStatus.cancelled or r.remaining_time() <= 0
+
+    try:
+        res = agentloop.run(session, lane, job.id, client or anthropic_client(),
+                            max_turns=limits.get("max_turns", 40), max_requests=limits.get("max_requests", 200),
+                            should_stop=should_stop, log=r.log)
+    except agenttools.RunRefused as e:
+        raise RuntimeError(str(e))
+    session.refresh(job, ["status"])
+    if res.status == "cancelled" and job.status != JobStatus.cancelled:
+        res.status, res.detail = "timed_out", "stopped at the worker time limit"
+    job.result = {"limits": limits, **res.as_dict()}
+    job.result_count = res.evidence_added
+    job.targets_done = 1 if res.status == "finished" else 0
+    session.commit()
+    r.log(f"agent {res.status}: {res.turns} turn(s), {res.requests} request(s), "
+          f"{res.evidence_added} evidence, {res.items_marked} item(s) marked, "
+          f"~${res.cost_usd:.2f} estimated" + (f"; {res.detail}" if res.detail else ""))
+    if res.status == "refused":
+        raise RuntimeError(f"the model {res.detail}; nothing further was run")
+    if res.status in AGENT_PARTIAL | {"timed_out"}:
+        r.stopped = res.status
+    return r
+
+
 def claim(session):
     stmt = select(Job).where(Job.status == JobStatus.queued).order_by(Job.id).limit(1)
     if engine.dialect.name == "postgresql":
@@ -822,7 +872,7 @@ def main():
                 continue
             print(f"job {job.id} {job.kind}", flush=True)
             try:
-                r = run(session, job)
+                r = run_agent(session, job) if job.kind == "agent" else run(session, job)
                 session.refresh(job, ["status"])
                 if job.status == JobStatus.cancelled:
                     pass

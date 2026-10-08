@@ -247,6 +247,34 @@ options considered and who decided.
   wildcard.
 - **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
 
+### D-024 · Agents send read-only requests only, for now (2026-10-09, made autonomously, review pending)
+- **Decision:** In v0.6 the agent's HTTP tool allows GET, HEAD and OPTIONS. POST, PUT,
+  PATCH and DELETE are refused before anything is sent.
+- **Why:** a state-changing request on a live program can create, modify or delete
+  real data. The recon side of AttackLedger never writes either. Writes need a
+  separate, reviewed design: per-engagement opt-in, the operator's own test accounts
+  and a per-request preview or allow-list.
+- **Cost:** most authorization, logic and injection checks need writes, so in these
+  lanes the agent will leave items open and say why. That is intended.
+- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+
+### D-025 · Agent loop on the Messages API, not the Agent SDK (2026-10-09, made autonomously, review pending)
+- **Decision:** The agent executor is a manual tool-use loop over the Messages API
+  (`anthropic` Python SDK 1.12.1), instead of the Claude Agent SDK named in the roadmap.
+- **Why:** the Agent SDK brings built-in file, shell and web tools. Here the agent must
+  have exactly five gated tools and nothing else. A manual loop also lets the worker
+  stop between turns (cancel, time limit) and commit evidence after every turn.
+- **Settings:** `claude-opus-5-5`, adaptive thinking at effort `high`, top-level
+  prompt caching, and server-side refusal fallback (`fallbacks: "default"`). The
+  conversation is append-only. A refusal stops the run and fails the job.
+- **Not yet tested against the live API:** no API key was available. The loop is
+  tested with a scripted fake model (shape-compatible responses) and the real
+  transport against the local lab. The first live run should be on the lab.
+- **Security work and classifiers:** offensive-security prompts can trigger the cyber
+  safety classifier. If refusals block legitimate testing, apply to Anthropic's Cyber
+  Verification Program.
+- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

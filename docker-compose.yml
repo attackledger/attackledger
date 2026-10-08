@@ -20,6 +20,10 @@ services:
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
       # Set to require a token on every API call (strongly recommended beyond localhost).
       ATTACKLEDGER_API_TOKEN: ${ATTACKLEDGER_API_TOKEN:-}
+      # "1" when ANTHROPIC_API_KEY is set. The key itself stays in the worker.
+      ATTACKLEDGER_AGENTS_ENABLED: ${ANTHROPIC_API_KEY:+1}
+    volumes:
+      - blobs:/data/blobs
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -34,6 +38,10 @@ services:
       # Docker's embedded DNS: resolves the local lab target and forwards everything else.
       WORKER_RESOLVERS: 127.0.0.11
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
+      # Optional: enables Claude agents on hunt lanes (v0.6). Put it in .env, never in this file.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - blobs:/data/blobs
     depends_on:
       db:
         condition: service_healthy
@@ -58,3 +66,4 @@ services:
 
 volumes:
   dbdata:
+  blobs:     # raw evidence (agent HTTP exchanges, notes), content-addressed

@@ -765,6 +765,22 @@ a.btn.ghost { color: var(--text); }
 .optin-row .hint { display: block; }
 .worked-by { margin: 0.6rem 0 0; font-size: var(--step--1); }
 
+.executor { margin-top: 1.5rem; }
+.executor-choice { display: grid; gap: 0.4rem; }
+.executor-option { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.55rem 0.7rem; border: 1px solid var(--rule); border-radius: var(--radius); font-size: var(--step--1); cursor: pointer; }
+.executor-option.on { border-color: var(--ink); }
+.executor-option input { margin-top: 0.2rem; accent-color: var(--ink); }
+.executor-option .hint { display: block; color: var(--text-soft); }
+.executor-option:has(input:disabled) { cursor: not-allowed; opacity: 0.7; }
+.agent-runs { margin-top: 0.9rem; display: grid; gap: 0.5rem; }
+.agent-start { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; }
+.agent-start label { display: grid; gap: 0.2rem; font-size: var(--step--2); color: var(--text-soft); }
+.agent-start input { width: 5.5rem; padding: 0.35rem 0.5rem; background: var(--bg); color: var(--text); border: 1px solid var(--rule); border-radius: var(--radius); font: var(--step--1) / 1.3 var(--body); }
+.agent-runs > .hint { margin: 0; font-size: var(--step--2); color: var(--text-faint); }
+.agent-summary { margin: 0.35rem 0 0; font-size: var(--step--1); }
+.ev-ref { display: grid; justify-items: end; gap: 0.15rem; font-size: var(--step--2); }
+.ev-ref a { color: var(--ink); }
+
 .sign { display: grid; gap: 0.6rem; }
 .sign-name { display: grid; gap: 0.3rem; font-size: var(--step--1); color: var(--text-soft); }
 .sign-name input { padding: 0.5rem 0.65rem; background: var(--bg); color: var(--text); border: 1px solid var(--rule); border-radius: var(--radius); font: var(--step-0) / 1.3 var(--body); }

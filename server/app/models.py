@@ -151,6 +151,9 @@ class Job(Base):
     deferred: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     targets_done: Mapped[int] = mapped_column(default=0, server_default="0")
     remaining_targets: Mapped[list | None] = mapped_column(JSON)
+    # An agent run (kind "agent") works one lane; result holds its limits, outcome and token use.
+    lane_id: Mapped[int | None] = mapped_column(ForeignKey("lanes.id"))
+    result: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]

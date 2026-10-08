@@ -22,12 +22,16 @@ record records why. This file lists what comes next.
 
 ## v0.6: hunt agents
 
-- [ ] Agent executor (Claude Agent SDK). It reads `/lanes/{id}/context` and writes
-      only through the executor contract, never issuing a receipt (D-018).
-- [ ] Agent tools gated by scope, rate limit and research identification.
-- [ ] Agent runs as jobs, with a log, cancel, partial status and token cost.
-- [ ] A review screen for agent evidence before the human signs the lane.
-- Needs an Anthropic Console API key.
+- [x] Agent executor: a Messages API tool-use loop (D-025). It reads the lane context
+      and writes only through the executor contract, never issuing a receipt (D-018).
+- [x] Agent tools gated by lane host, scope, read-only methods (D-024), rate limit,
+      request budget and research identification.
+- [x] Agent runs as jobs, with a log, cancel, partial status and a token cost estimate.
+- [x] Raw exchanges kept in a blob store and viewable from each evidence entry.
+- [ ] **First live run on the lab** (needs an Anthropic API key in `.env`).
+- [ ] A fuller review screen: side-by-side request and response, per-item diff.
+- [ ] Write requests for agents: opt-in per engagement, own test accounts, preview.
+- [ ] Stale-job recovery: jobs left `running` by a worker crash are marked failed.
 
 ## v0.7: ready to publish
 

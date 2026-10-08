@@ -18,7 +18,9 @@ Write side (what an executor may do):
 
 Executors
   manual  a person, through the UI or API (always available)
-  agent   a Claude agent, from v0.4; available only when ANTHROPIC_API_KEY is set
+  agent   a Claude agent (agentloop + agenttools). The API key lives in the worker only;
+          the API learns that agents are enabled from ATTACKLEDGER_AGENTS_ENABLED=1,
+          which docker-compose sets when ANTHROPIC_API_KEY is set.
 """
 import os
 from dataclasses import dataclass
@@ -41,9 +43,9 @@ class Executor:
 
 class _Agent(Executor):
     def available(self) -> tuple[bool, str]:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            return False, "Set ANTHROPIC_API_KEY for the worker to enable agents."
-        return False, "Agent execution arrives in v0.4."
+        if os.environ.get("ATTACKLEDGER_AGENTS_ENABLED") != "1":
+            return False, "Set ANTHROPIC_API_KEY (in .env, for the worker) to enable agents."
+        return True, ""
 
 
 EXECUTORS: dict[str, Executor] = {

@@ -152,7 +152,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
               <li key={j.id} className="job">
                 <div className="job-row">
                   <span className={`chip ${j.status}`}>{j.status}</span>
-                  <span className="job-kind">{mods.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
+                  <span className="job-kind">{j.kind === "agent" ? "Claude agent" : mods.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
                   <span className="muted">
                     {j.status === "partial" || (j.status === "cancelled" && j.remaining)
                       ? `${j.targets_done} of ${j.targets.length} targets run`
@@ -357,7 +357,7 @@ function Endpoints({ engId, version }: { engId: number; version: number }) {
   );
 }
 
-function JobLog({ jobId, live }: { jobId: number; live: boolean }) {
+export function JobLog({ jobId, live }: { jobId: number; live: boolean }) {
   const [job, setJob] = useState<Job | null>(null);
   useEffect(() => {
     let stop = false;

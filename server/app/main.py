@@ -4,14 +4,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import (auth, executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, scopeimport,
-               triage, urls)
+from . import (agenttools, auth, blobs, executors, gates, jobgates, ledger, migrate, modules, packs, report,
+               scope, scopeimport, triage, urls)
 from . import targets as targeting
 from .db import get_session
 from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
@@ -27,7 +27,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.6.0.dev0", lifespan=lifespan)
 app.middleware("http")(auth.middleware)
 
 
@@ -387,7 +387,7 @@ def _job_view(j: Job, with_log: bool = False) -> dict:
     v = {"id": j.id, "kind": j.kind, "status": j.status.value, "targets": j.targets,
          "result_count": j.result_count, "output_sha256": j.output_sha256,
          "targets_done": j.targets_done, "remaining": len(j.remaining_targets or []),
-         "deferred": j.deferred,
+         "deferred": j.deferred, "lane_id": j.lane_id, "result": j.result,
          "created_at": j.created_at.isoformat(),
          "started_at": j.started_at.isoformat() if j.started_at else None,
          "finished_at": j.finished_at.isoformat() if j.finished_at else None}
@@ -470,6 +470,8 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
 def resume_job(job_id: int, session: Session = Depends(get_session)):
     """Run the targets a stopped job did not reach. Every gate is checked again."""
     job = _get(session, Job, job_id)
+    if job.kind == "agent":
+        raise HTTPException(422, "an agent run is not resumed; start a new run on the lane")
     if job.status not in (JobStatus.partial, JobStatus.cancelled) or not job.remaining_targets:
         raise HTTPException(422, "this run has no remaining targets")
     return create_job(job.engagement_id, JobIn(kind=job.kind, targets=job.remaining_targets), session)
@@ -479,7 +481,7 @@ def resume_job(job_id: int, session: Session = Depends(get_session)):
 def cancel_job(job_id: int, session: Session = Depends(get_session)):
     job = _get(session, Job, job_id)
     if job.status in (JobStatus.queued, JobStatus.running):
-        if job.status == JobStatus.queued:
+        if job.status == JobStatus.queued and job.kind != "agent":
             job.remaining_targets = list(job.targets)   # never ran: every target is still open
         job.status = JobStatus.cancelled
         job.finished_at = datetime.now(timezone.utc)
@@ -667,6 +669,61 @@ def patch_lane(lane_id: int, body: LanePatch, session: Session = Depends(get_ses
 def lane_context(lane_id: int, session: Session = Depends(get_session)):
     """What an executor working this lane may read: its items, the rules, and recon for its host only."""
     return executors.lane_context(session, _get(session, Lane, lane_id))
+
+
+class AgentRunIn(BaseModel):
+    max_turns: int = Field(default=40, ge=1, le=100)
+    max_requests: int = Field(default=200, ge=1, le=1000)
+
+
+@app.post("/lanes/{lane_id}/agent-runs", status_code=201)
+def start_agent_run(lane_id: int, body: AgentRunIn | None = None, session: Session = Depends(get_session)):
+    """Queue a Claude agent on this lane. It attaches evidence and marks items; it never
+    closes the lane (D-018). Every gate is checked again when the worker starts it."""
+    lane = _get(session, Lane, lane_id)
+    body = body or AgentRunIn()
+    ok, why = executors.EXECUTORS["agent"].available()
+    if not ok:
+        raise HTTPException(422, why)
+    if lane.executor != "agent":
+        raise HTTPException(422, "set this lane's executor to the Claude agent first")
+    try:
+        agenttools.check_lane(lane)
+    except agenttools.RunRefused as e:
+        raise HTTPException(422, str(e))
+    busy = session.scalar(select(Job.id).where(Job.lane_id == lane.id, Job.kind == "agent",
+                                               Job.status.in_([JobStatus.queued, JobStatus.running])))
+    if busy is not None:
+        raise HTTPException(409, f"an agent run is already queued or running on this lane (job {busy})")
+    job = Job(engagement_id=lane.asset.engagement_id, kind="agent", lane_id=lane.id,
+              targets=[lane.asset.host],
+              result={"limits": {"max_turns": body.max_turns, "max_requests": body.max_requests}})
+    session.add(job)
+    session.commit()
+    return _job_view(job)
+
+
+@app.get("/lanes/{lane_id}/agent-runs")
+def list_agent_runs(lane_id: int, session: Session = Depends(get_session)):
+    _get(session, Lane, lane_id)
+    jobs = session.scalars(select(Job).where(Job.lane_id == lane_id, Job.kind == "agent")
+                           .order_by(Job.id.desc()).limit(20)).all()
+    return [_job_view(j, with_log=True) for j in jobs]
+
+
+@app.get("/blobs/{digest}")
+def get_blob(digest: str, session: Session = Depends(get_session)):
+    """The raw bytes behind an evidence hash (an agent's HTTP exchange or note), for review.
+    Only blobs that evidence refers to are served."""
+    if session.scalar(select(Evidence.id).where(Evidence.sha256 == digest).limit(1)) is None:
+        raise HTTPException(404, "no evidence refers to this hash")
+    data = blobs.get(digest)
+    if data is None:
+        raise HTTPException(404, "the bytes for this hash are not in the blob store")
+    # Target content: served as inert text, never rendered.
+    return Response(data, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Security-Policy": "default-src 'none'; sandbox",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 # ---- scope import ----------------------------------------------------------

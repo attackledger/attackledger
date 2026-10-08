@@ -3,6 +3,38 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [Unreleased] - 0.6.0
+
+Hunt agents: a Claude agent can work a lane within the lane's rules. Not yet run
+against the live API (no key was available); tested with a scripted model and the
+local lab.
+
+### Added
+- **Agent runs** (`POST /lanes/{id}/agent-runs`): a job of kind `agent` on one lane,
+  with turn and request limits, cancel, partial status and a token cost estimate.
+  Migration `0009` adds `jobs.lane_id` and `jobs.result`.
+- **Gated agent tools** (`agenttools.py`): `http_request`, `add_evidence`,
+  `mark_item`, `record_lead`, `finish`. Lane host and scope only, read-only methods
+  (D-024), identification always sent, no redirects, rate-limited, budgeted. No
+  tool can close a lane.
+- **Agent loop** (`agentloop.py`) on the Messages API with `claude-opus-5-5`,
+  adaptive thinking, prompt caching and server-side refusal fallback (D-025).
+- **Blob store** for raw evidence, shared by API and worker, and `GET /blobs/{sha256}`
+  (sandboxed plain text, only for hashes that evidence cites).
+- **UI:** choose the lane's executor, start and follow agent runs, see why a run
+  failed, and open the raw exchange behind each agent evidence entry.
+- Lab: `/go` redirects to an `.invalid` host, to check that tools never follow it.
+- 44 tests for the agent layer, including the gates, a scripted end-to-end run and
+  the API. Positive controls: removing the host check, the pacing, the reserved
+  headers or the identification precedence each makes a test fail.
+
+### Verified on the lab
+- Real transport: 5 of 5 requests carried the research header and user agent; a 302
+  came back with its Location and was not followed; 2 rps gave 0.51 s spacing.
+- End to end through the worker on Postgres: evidence chained and verified offline
+  by `tools/verify_report.py`; a request to `example.com` was refused and never sent;
+  the lane stayed unreceipted.
+
 ## [0.5.0] - 2026-10-09
 
 Recon completed: every module of the original pipeline that can run safely, plus

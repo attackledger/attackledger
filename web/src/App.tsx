@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneContext, LaneDetail, PackSummary } from "./api";
+import { Executor } from "./Agent";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
@@ -539,11 +540,18 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
                       {e.summary}
                       {e.item_idx != null && <span className="ev-item">Item {e.item_idx}</span>}
                     </span>
-                    <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>
+                    <span className="ev-ref">
+                      <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>
+                      {e.summary.startsWith("[agent] ") && (
+                        <a href={`/api/blobs/${e.sha256}`} target="_blank" rel="noopener noreferrer">View raw</a>
+                      )}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
+
+            <Executor lane={lane} onLaneChanged={(l) => { setLane(l); onChanged(); }} />
           </div>
         )}
 

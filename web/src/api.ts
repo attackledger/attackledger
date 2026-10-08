@@ -124,10 +124,33 @@ export interface Job {
   targets_done: number;
   remaining: number;
   deferred: boolean;
+  lane_id: number | null;
+  result: AgentResult | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
   log?: string;
+}
+
+export interface AgentResult {
+  limits?: { max_turns?: number; max_requests?: number };
+  status?: "finished" | "ended" | "turn_limit" | "cancelled" | "refused" | "timed_out";
+  turns?: number;
+  requests?: number;
+  evidence_added?: number;
+  items_marked?: number;
+  leads_added?: number;
+  summary?: string;
+  detail?: string;
+  cost_usd_estimate?: number;
+}
+
+export interface ExecutorInfo {
+  key: string;
+  title: string;
+  summary: string;
+  available: boolean;
+  unavailable_reason: string;
 }
 
 export interface ObservationRow {
@@ -288,6 +311,12 @@ export const api = {
     p.set("offset", String(opts.offset ?? 0));
     return call<{ total: number; items: EndpointRow[] }>(`/engagements/${engId}/endpoints?${p}`);
   },
+  executors: () => call<ExecutorInfo[]>("/executors"),
+  setExecutor: (laneId: number, executor: string) =>
+    call<LaneDetail>(`/lanes/${laneId}`, { method: "PATCH", body: JSON.stringify({ executor }) }),
+  agentRuns: (laneId: number) => call<Job[]>(`/lanes/${laneId}/agent-runs`),
+  startAgentRun: (laneId: number, max_turns: number, max_requests: number) =>
+    call<Job>(`/lanes/${laneId}/agent-runs`, { method: "POST", body: JSON.stringify({ max_turns, max_requests }) }),
   closeLane: (laneId: number, closed_by: string, reviewed: boolean) =>
     call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST", body: JSON.stringify({ closed_by, reviewed }) }),
 };

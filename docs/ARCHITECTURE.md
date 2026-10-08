@@ -74,9 +74,34 @@ is never `done`.
   a reason), and leads for other lanes.
 - **Never:** issue a receipt or act outside the context's scope and rules.
 
-The manual executor is a person using the UI or API. The agent executor (v0.4)
-must use exactly the same write paths. It gets no shortcut that a person
-does not have.
+The manual executor is a person using the UI or API. The agent executor uses
+exactly the same write paths and gets no shortcut that a person does not have.
+
+### Agent runs (v0.6)
+
+An agent run is a job of kind `agent` tied to one lane (`jobs.lane_id`, migration
+`0009`). The worker runs a manual tool-use loop over the Messages API
+(`agentloop.py`, model `claude-opus-5-5`, adaptive thinking, server-side refusal
+fallback). Every tool call goes through `agenttools.Toolbox`:
+
+| Tool | Gate |
+|---|---|
+| `http_request` | Lane host only, inside the scope rules; GET, HEAD and OPTIONS only (D-024); research identification always sent and not overridable; no redirects; spaced to the rate limit; request budget per run |
+| `add_evidence` | Cites exchanges from this run only (or a note); hash-chained; marked `[agent]` |
+| `mark_item` | Open items only; done needs evidence on the item, N/A needs a reason |
+| `record_lead` | Lane host only; deduplicated |
+| `finish` | Ends the run with a summary for the reviewer |
+
+There is no tool that closes a lane. Each exchange is stored in the content-addressed
+blob store (`blobs.py`, volume shared by API and worker), so an evidence hash can be
+opened and checked (`GET /blobs/{sha256}`, served as sandboxed plain text, only for
+hashes that evidence cites). Target content is framed as untrusted data in the
+prompt and in every tool result. The gates are checked when the run is queued and
+again when it starts. A run that ends without `finish`, at the turn limit or at the
+time limit is `partial`, never `done`; a model refusal fails the job.
+
+The Anthropic API key is set on the worker only. The API learns that agents are
+enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
 
 ### Evidence and receipts
 

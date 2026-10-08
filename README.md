@@ -178,6 +178,21 @@ A job is refused unless the engagement has:
 The worker re-checks scope on every target and on every host a tool reports.
 Redirects are not followed.
 
+## Hunt agents (v0.6, preview)
+
+A lane can be worked by a Claude agent. Put `ANTHROPIC_API_KEY=...` in `.env` (it is
+passed to the worker only), set the lane's executor to *Claude agent* and start a run
+from the lane. The agent:
+
+- sends **read-only** requests (GET, HEAD, OPTIONS) to the lane's host only, with the
+  research identification, no redirects and within the rate limit;
+- attaches the exchanges it made as evidence (each one viewable as raw bytes), marks
+  items done or N/A, and records leads;
+- **cannot close the lane.** You review the evidence and sign the receipt.
+
+Runs stop at a turn limit, a request budget and the worker time limit. The run shows a
+token cost estimate. The loop has not yet run against the live API: try it on the lab first.
+
 ## Database migrations
 
 The API applies Alembic migrations at startup. The worker waits until the database
