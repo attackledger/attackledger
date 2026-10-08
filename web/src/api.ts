@@ -91,6 +91,7 @@ export interface LaneDetail {
   host: string;
   role: string;
   role_name: string;
+  executor: string;
   status: CellStatus;
   unresolved: string[];
   items: LaneItem[];
@@ -105,7 +106,7 @@ export interface Scope {
   policy_url: string | null;
   research_header: string | null;
   research_user_agent: string | null;
-  allow_port_scan: boolean;
+  enabled_modules: string[];
   crawl_depth: number;
   authorized_by: string | null;
   authorized_at: string | null;
@@ -139,6 +140,27 @@ export interface ObservationRow {
   cname?: string[];
   live?: boolean;
   source?: string;
+}
+
+export interface ReconModule {
+  kind: string;
+  title: string;
+  summary: string;
+  input: "roots" | "hosts" | "urls";
+  traffic: "passive" | "dns" | "target";
+  http: boolean;
+  opt_in: boolean;
+  after: string[];
+  produces: string[];
+  pipeline: string;
+  caution: string;
+  needs_identification: boolean;
+}
+
+export interface LaneContext {
+  host: string;
+  lane: { executor: string };
+  recon: { observations: unknown[]; endpoints: unknown[]; leads: unknown[] };
 }
 
 export interface TriageHost {
@@ -232,6 +254,8 @@ export const api = {
   resumeJob: (jobId: number) => call<Job>(`/jobs/${jobId}/resume`, { method: "POST" }),
   cancelJob: (jobId: number) => call<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
   observations: (engId: number) => call<ObservationRow[]>(`/engagements/${engId}/observations`),
+  modules: () => call<ReconModule[]>("/modules"),
+  laneContext: (laneId: number) => call<LaneContext>(`/lanes/${laneId}/context`),
   leads: (engId: number) => call<Lead[]>(`/engagements/${engId}/leads`),
   triage: (engId: number) => call<TriageReport>(`/engagements/${engId}/triage`),
   endpoints: (engId: number, opts: { js?: boolean; q?: string; offset?: number } = {}) => {

@@ -1,26 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, EndpointRow, Job, Lead, Scope, TriageReport } from "./api";
+import { api, EndpointRow, Job, Lead, ReconModule, Scope, TriageReport } from "./api";
 
-type Step = { kind: string; title: string; body: string; traffic: "passive" | "dns" | "target" };
 
-const STEPS: Step[] = [
-  { kind: "subdomains", title: "Find subdomains", traffic: "passive",
-    body: "subfinder (all sources), assetfinder and certificate transparency for each wildcard in scope. Names outside scope are dropped before anything is resolved." },
-  { kind: "resolve", title: "Resolve hosts", traffic: "dns",
-    body: "A, AAAA and CNAME records for in-scope hosts." },
-  { kind: "ports", title: "Scan ports", traffic: "target",
-    body: "Top 100 TCP ports per host (connect scan, port 25 skipped). Off unless the program allows port scanning." },
-  { kind: "probe", title: "Find live web servers", traffic: "target",
-    body: "One request per host and open port, with your research identification. Records status, title, stack and CDN, and scores each host." },
-  { kind: "crawl", title: "Crawl golden hosts", traffic: "target",
-    body: "Crawls the highest-scoring hosts on the same host only, parsing JavaScript. Logout, delete and similar paths are never followed." },
-  { kind: "archive", title: "Collect archived URLs", traffic: "passive",
-    body: "Historical URLs from public archives (gau, Wayback Machine). Nothing is sent to the target." },
-  { kind: "jsanalyze", title: "Analyse JavaScript", traffic: "target",
-    body: "Downloads in-scope JS files (up to 250) and extracts endpoints, GraphQL operations, sourcemaps and secret candidates. Secrets are stored masked and are never tested." },
-];
-
-const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" };
+const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" } as const;
 
 const SIGNAL_HINT: Record<string, string> = {
   AUTH: "401, or 403 that is not a WAF page",
@@ -40,6 +22,8 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
   const [scope, setScope] = useState<Scope | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [triage, setTriage] = useState<TriageReport | null>(null);
+  const [mods, setMods] = useState<ReconModule[]>([]);
+  useEffect(() => { api.modules().then(setMods).catch(() => {}); }, []);
   const [openLog, setOpenLog] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,10 +57,12 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
   function blocker(kind: string): string | null {
     if (!hasScope) return "Define the scope first";
     if (!authorized) return "Record your authorization first";
-    if ((kind === "subdomains" || kind === "archive") && !hasWildcard) return "Needs a wildcard rule such as *.example.com";
-    if (kind === "ports" && !scope!.allow_port_scan) return "Port scanning is off in the rules";
+    const m = mods.find((x) => x.kind === kind);
+    if (!m) return "Unknown module";
+    if (m.input === "roots" && !hasWildcard) return "Needs a wildcard rule such as *.example.com";
+    if (m.opt_in && !scope!.enabled_modules.includes(kind)) return "Off in the rules: enable it only if the program allows it";
+    if (m.needs_identification && !identified) return "Set the research header or user agent first";
     if (kind === "crawl" && liveHosts === 0) return "Find live web servers first";
-    if ((kind === "probe" || kind === "crawl" || kind === "jsanalyze") && !identified) return "Set the research header or user agent first";
     return null;
   }
 
@@ -92,12 +78,12 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
 
   return (
     <div className="recon">
-      <RulesOfEngagement engId={engId} scope={scope} onSaved={(s) => { setScope(s); onAssetsChanged(); }} />
+      <RulesOfEngagement engId={engId} scope={scope} mods={mods} onSaved={(s) => { setScope(s); onAssetsChanged(); }} />
 
       <section aria-labelledby="pipeline-title" className="panel">
         <h3 id="pipeline-title" className="panel-title">Recon pipeline</h3>
         <ol className="steps">
-          {STEPS.map((s) => {
+          {mods.map((s) => {
             const why = blocker(s.kind);
             const last = jobs.find((j) => j.kind === s.kind);
             const busy = last && (last.status === "queued" || last.status === "running");
@@ -106,8 +92,9 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
                 <div className="step-text">
                   <h4>
                     {s.title} <span className={`traffic ${s.traffic}`}>{TRAFFIC_LABEL[s.traffic]}</span>
+                    {s.opt_in && <span className="traffic optin">Opt-in</span>}
                   </h4>
-                  <p>{s.body}</p>
+                  <p>{s.summary}</p>
                   {last && (
                     <p className={`step-last ${last.status}`}>
                       Last run: {last.status}
@@ -143,7 +130,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
               <li key={j.id} className="job">
                 <div className="job-row">
                   <span className={`chip ${j.status}`}>{j.status}</span>
-                  <span className="job-kind">{STEPS.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
+                  <span className="job-kind">{mods.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
                   <span className="muted">
                     {j.status === "partial" || (j.status === "cancelled" && j.remaining)
                       ? `${j.targets_done} of ${j.targets.length} targets run`
@@ -364,13 +351,15 @@ function JobLog({ jobId, live }: { jobId: number; live: boolean }) {
   );
 }
 
-function RulesOfEngagement({ engId, scope, onSaved }: { engId: number; scope: Scope; onSaved: (s: Scope) => void }) {
+function RulesOfEngagement({ engId, scope, mods, onSaved }: {
+  engId: number; scope: Scope; mods: ReconModule[]; onSaved: (s: Scope) => void;
+}) {
   const [include, setInclude] = useState(scope.include.join("\n"));
   const [exclude, setExclude] = useState(scope.exclude.join("\n"));
   const [rps, setRps] = useState(scope.rate_limit_rps);
   const [header, setHeader] = useState(scope.research_header ?? "");
   const [ua, setUa] = useState(scope.research_user_agent ?? "");
-  const [ports, setPorts] = useState(scope.allow_port_scan);
+  const [enabled, setEnabled] = useState<string[]>(scope.enabled_modules);
   const [depth, setDepth] = useState(scope.crawl_depth);
   const [operator, setOperator] = useState(scope.authorized_by ?? "");
   const [policy, setPolicy] = useState(scope.policy_url ?? "");
@@ -386,7 +375,7 @@ function RulesOfEngagement({ engId, scope, onSaved }: { engId: number; scope: Sc
       let s = await api.saveScope(engId, {
         include: lines(include), exclude: lines(exclude), rate_limit_rps: rps,
         research_header: header.trim() || null, research_user_agent: ua.trim() || null,
-        allow_port_scan: ports, crawl_depth: depth,
+        enabled_modules: enabled, crawl_depth: depth,
       });
       if (confirm) s = await api.attest(engId, operator, policy);
       setConfirm(false);
@@ -439,10 +428,18 @@ function RulesOfEngagement({ engId, scope, onSaved }: { engId: number; scope: Sc
             <input type="number" min={1} max={5} value={depth} onChange={(e) => setDepth(Number(e.target.value))} />
           </label>
         </div>
-        <label className="check roe-toggle">
-          <input type="checkbox" checked={ports} onChange={(e) => setPorts(e.target.checked)} />
-          The program allows port scanning
-        </label>
+        {mods.some((m) => m.opt_in) && (
+          <fieldset className="optins">
+            <legend>Modules the program allows</legend>
+            {mods.filter((m) => m.opt_in).map((m) => (
+              <label key={m.kind} className="check optin-row">
+                <input type="checkbox" checked={enabled.includes(m.kind)}
+                       onChange={(e) => setEnabled(e.target.checked ? [...enabled, m.kind] : enabled.filter((k) => k !== m.kind))} />
+                <span><strong>{m.title}</strong>{m.caution && <span className="hint"> {m.caution}</span>}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
 
         <fieldset className="attest">
           <legend>Authorization</legend>

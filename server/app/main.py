@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import gates, ledger, migrate, packs, report, scope, triage, urls
+from . import executors, gates, jobgates, ledger, migrate, modules, packs, report, scope, triage, urls
 from .db import get_session
 from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
                      Lane, Lead, Observation, Receipt)
@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.3.2", lifespan=lifespan)
+app = FastAPI(title="AttackLedger", version="0.4.0", lifespan=lifespan)
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -89,6 +89,7 @@ def _lane_view(lane: Lane) -> dict:
         "host": lane.asset.host,
         "role": lane.role,
         "role_name": pack.lane(lane.role).name if lane.role in pack.lane_index else lane.role,
+        "executor": lane.executor,
         "status": gates.lane_status(lane).value,
         "unresolved": gates.unresolved(lane),
         "items": [
@@ -269,16 +270,9 @@ class ScopeIn(BaseModel):
     # "Name: value", one header. No CR/LF, so it cannot smuggle extra headers.
     research_header: str | None = Field(default=None, pattern=r"^[A-Za-z0-9-]{1,64}: [^\r\n]{1,200}$")
     research_user_agent: str | None = Field(default=None, pattern=r"^[^\r\n]{1,300}$")
-    allow_port_scan: bool = False
+    enabled_modules: list[str] | None = None   # opt-in module kinds the program allows
+    allow_port_scan: bool | None = None         # deprecated alias for enabled_modules ["ports"]
     crawl_depth: int = Field(default=3, ge=1, le=5)
-
-
-# Job kinds that send HTTP requests to the target itself (not DNS or passive sources).
-TARGET_TRAFFIC_KINDS = {"probe", "crawl", "jsanalyze"}
-
-
-def identification_missing(eng: Engagement) -> bool:
-    return not (eng.research_header or eng.research_user_agent)
 
 
 class AttestIn(BaseModel):
@@ -292,7 +286,7 @@ def _scope_view(eng: Engagement) -> dict:
         "include": eng.scope_include, "exclude": eng.scope_exclude,
         "rate_limit_rps": eng.rate_limit_rps, "policy_url": eng.policy_url,
         "research_header": eng.research_header, "research_user_agent": eng.research_user_agent,
-        "allow_port_scan": eng.allow_port_scan, "crawl_depth": eng.crawl_depth,
+        "enabled_modules": sorted(eng.enabled_modules or []), "crawl_depth": eng.crawl_depth,
         "authorized_by": eng.authorized_by,
         "authorized_at": eng.authorized_at.isoformat() if eng.authorized_at else None,
     }
@@ -314,7 +308,13 @@ def put_scope(eng_id: int, body: ScopeIn, session: Session = Depends(get_session
     eng.scope_include, eng.scope_exclude, eng.rate_limit_rps = inc, exc, body.rate_limit_rps
     eng.research_header = (body.research_header or "").strip() or None
     eng.research_user_agent = (body.research_user_agent or "").strip() or None
-    eng.allow_port_scan, eng.crawl_depth = body.allow_port_scan, body.crawl_depth
+    enabled = set(body.enabled_modules if body.enabled_modules is not None else (eng.enabled_modules or []))
+    if body.allow_port_scan is not None:
+        enabled = (enabled | {"ports"}) if body.allow_port_scan else (enabled - {"ports"})
+    unknown = enabled - modules.OPT_IN_KINDS
+    if unknown:
+        raise HTTPException(422, f"not an opt-in module: {', '.join(sorted(unknown))}")
+    eng.enabled_modules, eng.crawl_depth = sorted(enabled), body.crawl_depth
     # Re-evaluate existing assets: rules can move hosts out of scope, never into it silently.
     for a in eng.assets:
         if not scope.in_scope(a.host, inc, exc):
@@ -335,19 +335,6 @@ def attest(eng_id: int, body: AttestIn, session: Session = Depends(get_session))
 
 
 # ---- jobs ------------------------------------------------------------------
-
-JOB_KINDS = {
-    "subdomains": "Find subdomains of the in-scope wildcard roots (subfinder, assetfinder, crt.sh)",
-    "resolve": "Resolve in-scope hosts to IP addresses",
-    "ports": "Scan the top 100 TCP ports of in-scope hosts (only if the program allows it)",
-    "probe": "Fingerprint the web services of in-scope hosts",
-    "crawl": "Crawl golden hosts for endpoints and JavaScript",
-    "archive": "Collect historical URLs from public archives",
-    "jsanalyze": "Analyse JavaScript files for endpoints, GraphQL operations, sourcemaps and secrets",
-}
-ROOT_KINDS = {"subdomains", "archive"}
-URL_KINDS = {"crawl", "jsanalyze"}
-
 
 class JobIn(BaseModel):
     kind: str
@@ -390,9 +377,17 @@ def _ranked(session: Session, eng: Engagement) -> list[dict]:
     return rows
 
 
-def _default_targets(session: Session, eng: Engagement, kind: str) -> list[str]:
-    if kind in ROOT_KINDS:
-        return sorted({p[2:] for p in eng.scope_include if p.startswith("*.")})
+# Hints when a module has nothing to run on, keyed by kind.
+_NO_TARGET_HINT = {
+    "crawl": "run 'Find live web servers' first",
+    "jsanalyze": "crawl golden hosts or collect archived URLs first",
+}
+
+
+def _default_targets(session: Session, eng: Engagement, m: modules.Module) -> list[str]:
+    kind = m.kind
+    if m.input == "roots":
+        return sorted(jobgates.roots(eng))
     if kind == "jsanalyze":
         js = session.scalars(select(Endpoint.url).where(Endpoint.engagement_id == eng.id,
                                                         Endpoint.is_js.is_(True))).all()
@@ -405,42 +400,26 @@ def _default_targets(session: Session, eng: Engagement, kind: str) -> list[str]:
     return sorted(a.host for a in eng.assets if a.in_scope)
 
 
-@app.get("/jobs/kinds")
-def job_kinds():
-    return JOB_KINDS
+@app.get("/modules")
+def list_modules():
+    """The recon pipeline as the UI renders it, straight from the registry."""
+    return [modules.as_dict(m) for m in modules.MODULES]
 
 
 @app.post("/engagements/{eng_id}/jobs", status_code=201)
 def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
-    if body.kind not in JOB_KINDS:
-        raise HTTPException(422, f"unknown job kind: {body.kind}")
-    if eng.authorized_at is None:
-        raise HTTPException(422, "record your authorization for this program before running jobs")
-    if not eng.scope_include:
-        raise HTTPException(422, "define the program scope before running jobs")
-    if body.kind in TARGET_TRAFFIC_KINDS and identification_missing(eng):
-        raise HTTPException(422, "set the research header or user agent the program requires "
-                                 "before sending traffic to its hosts")
-    if body.kind == "ports" and not eng.allow_port_scan:
-        raise HTTPException(422, "port scanning is off for this engagement; enable it only if the "
-                                 "program policy allows it")
-    targets = [t.strip() for t in body.targets if t.strip()] or _default_targets(session, eng, body.kind)
-    if body.kind not in URL_KINDS:
-        targets = [t.lower() for t in targets]
+    try:
+        m = jobgates.check_engagement(eng, body.kind)
+    except jobgates.GateError as e:
+        raise HTTPException(422, str(e))
+    targets = jobgates.normalize_targets(m, body.targets) or _default_targets(session, eng, m)
     if not targets:
-        hint = {"crawl": "run 'Find live web servers' first",
-                "jsanalyze": "crawl golden hosts or collect archived URLs first",
-                "archive": "add a wildcard scope rule such as *.example.com"}.get(body.kind, "add in-scope hosts or a wildcard scope rule first")
+        hint = _NO_TARGET_HINT.get(m.kind) or (
+            "add a wildcard scope rule such as *.example.com" if m.input == "roots"
+            else "add in-scope hosts or a wildcard scope rule first")
         raise HTTPException(422, f"no targets: {hint}")
-    if body.kind in ROOT_KINDS:
-        roots = {p[2:] for p in eng.scope_include if p.startswith("*.")}
-        bad = [t for t in targets if t not in roots]
-    elif body.kind in URL_KINDS:
-        bad = [t for t in targets
-               if not scope.in_scope(urls.host_of(t) or "", eng.scope_include, eng.scope_exclude)]
-    else:
-        bad = [t for t in targets if not scope.in_scope(t, eng.scope_include, eng.scope_exclude)]
+    _, bad = jobgates.split_targets(eng, m, targets)
     if bad:
         raise HTTPException(422, f"out of scope: {', '.join(bad[:10])}")
     job = Job(engagement_id=eng.id, kind=body.kind, targets=targets)
@@ -630,3 +609,34 @@ def leads(eng_id: int, kind: str | None = None, session: Session = Depends(get_s
                   key=lambda l: (order.get(l.bucket, 1), l.kind, l.host, l.title))
     return [{"id": l.id, "host": l.host, "source_url": l.source_url, "kind": l.kind, "title": l.title,
              "bucket": l.bucket, "severity": l.severity, "detail": l.detail} for l in rows]
+
+
+# ---- hunt executors ----------------------------------------------------------
+
+class LanePatch(BaseModel):
+    executor: str
+
+
+@app.get("/executors")
+def list_executors():
+    return [executors.as_dict(e) for e in executors.EXECUTORS.values()]
+
+
+@app.patch("/lanes/{lane_id}")
+def patch_lane(lane_id: int, body: LanePatch, session: Session = Depends(get_session)):
+    lane = _get(session, Lane, lane_id)
+    ex = executors.EXECUTORS.get(body.executor)
+    if ex is None:
+        raise HTTPException(422, f"unknown executor: {body.executor}")
+    ok, why = ex.available()
+    if not ok:
+        raise HTTPException(422, why)
+    lane.executor = ex.key
+    session.commit()
+    return _lane_view(lane)
+
+
+@app.get("/lanes/{lane_id}/context")
+def lane_context(lane_id: int, session: Session = Depends(get_session)):
+    """What an executor working this lane may read: its items, the rules, and recon for its host only."""
+    return executors.lane_context(session, _get(session, Lane, lane_id))

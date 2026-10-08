@@ -173,6 +173,25 @@ options considered and who decided.
 - **Decided by:** Murat Kabak, who asked for the fix. Claude proposed batching and
   the watchdog.
 
+### D-017 · Architecture before more modules (2026-10-08)
+- **Decision:** Before finishing recon, introduce a module registry (one definition
+  per job kind, from which gates, worker dispatch and UI derive) and a hunt executor
+  contract (shared lane context and write paths for people and agents), documented in
+  `docs/ARCHITECTURE.md`.
+- **Context:** Adding a module touched five places, and missing one of them was a
+  real risk. Hunt agents would have multiplied that.
+- **Decided by:** Murat Kabak ("let's set up an architecture first, then fill it in").
+  Claude proposed the registry and the executor contract.
+
+### D-018 · Who issues receipts (2026-10-08) — PROPOSED, awaiting decision
+- **Proposal:** Executors, agents included, may attach evidence and mark items, but
+  only a person closes a lane and issues its receipt.
+- **Why proposed:** A receipt is the claim "this was tested"; keeping a human
+  signature on it is what makes the coverage statement credible to an auditor.
+- **Alternative:** Let agents close lanes, with a mandatory human review step before
+  the report.
+- **Proposed by:** Claude. **Decision:** pending, Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

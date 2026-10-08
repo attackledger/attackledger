@@ -54,6 +54,10 @@ An orchestrator, which itself does not hunt, opens lanes, briefs agents
 from templates, caps concurrency and triages what comes back. A finding without
 evidence is returned to its agent.
 
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the layers, the contracts for
+adding a recon module or a hunt executor, and the invariants. The decisions behind
+them are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## Repository layout
 
 | Path | Contents |

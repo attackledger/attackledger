@@ -754,3 +754,13 @@ a.btn.ghost { color: var(--text); }
 .lead-detail dd { margin: 0; overflow-wrap: anywhere; }
 .lead-sources { white-space: pre-line; font-size: var(--step--2); }
 @media (max-width: 640px) { .lead-row { grid-template-columns: 1fr auto; } .lead-kind { grid-column: 1 / -1; } }
+
+
+/* ---- architecture: opt-ins, executor ------------------------------------- */
+
+.traffic.optin { color: var(--ink); border-style: dashed; }
+.optins { margin: 1rem 0 0; padding: 0.8rem 1rem; border: 1px solid var(--rule); border-radius: var(--radius); display: grid; gap: 0.5rem; }
+.optins legend { padding: 0 0.4rem; font: 500 var(--step-0) / 1 var(--slab); }
+.optin-row { align-items: flex-start !important; }
+.optin-row .hint { display: block; }
+.worked-by { margin: 0.6rem 0 0; font-size: var(--step--1); }

@@ -239,7 +239,7 @@ def test_ports_need_explicit_permission(client):
     eng = recon_ready(client, "ports-off")
     client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"})
     r = client.post(f"/engagements/{eng}/jobs", json={"kind": "ports"})
-    assert r.status_code == 422 and "port scanning is off" in r.json()["detail"]
+    assert r.status_code == 422 and "scan ports is off" in r.json()["detail"]
     client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "allow_port_scan": True})
     assert client.post(f"/engagements/{eng}/jobs", json={"kind": "ports"}).status_code == 201
 
@@ -296,3 +296,37 @@ def test_cancelling_a_queued_run_keeps_all_targets_resumable(client):
     assert c["status"] == "cancelled" and c["remaining"] == 1
     r = client.post(f"/jobs/{job['id']}/resume")
     assert r.status_code == 201 and r.json()["targets"] == ["app.example.com"]
+
+
+def test_modules_endpoint_lists_registry(client):
+    mods = {m["kind"]: m for m in client.get("/modules").json()}
+    assert mods["ports"]["opt_in"] and mods["ports"]["traffic"] == "target"
+    assert mods["subdomains"]["traffic"] == "passive" and not mods["subdomains"]["needs_identification"]
+
+
+def test_only_opt_in_modules_can_be_enabled(client):
+    eng = recon_ready(client, "optin")
+    r = client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "enabled_modules": ["probe"]})
+    assert r.status_code == 422 and "not an opt-in module" in r.json()["detail"]
+    r = client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "enabled_modules": ["ports"]})
+    assert r.json()["enabled_modules"] == ["ports"]
+
+
+def test_executors_and_lane_context(client, monkeypatch):
+    eng = recon_ready(client, "ctx", research_header="X-Bug-Bounty: r1")
+    a = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
+    lane = client.post("/lanes", json={"asset_id": a["id"], "role": "recon"}).json()
+    assert lane["executor"] == "manual"
+
+    ex = {e["key"]: e for e in client.get("/executors").json()}
+    assert ex["manual"]["available"] and not ex["agent"]["available"]
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    r = client.patch(f"/lanes/{lane['id']}", json={"executor": "agent"})
+    assert r.status_code == 422 and "ANTHROPIC_API_KEY" in r.json()["detail"]
+    assert client.patch(f"/lanes/{lane['id']}", json={"executor": "nope"}).status_code == 422
+
+    ctx = client.get(f"/lanes/{lane['id']}/context").json()
+    assert ctx["host"] == "app.example.com" and ctx["lane"]["role"] == "recon"
+    assert ctx["rules"]["research_header"] == "X-Bug-Bounty: r1" and ctx["rules"]["authorized"]
+    assert len(ctx["items"]) == len(lane["items"])
+    assert set(ctx["recon"]) == {"observations", "endpoints", "leads"}

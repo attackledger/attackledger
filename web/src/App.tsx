@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneDetail, PackSummary } from "./api";
+import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneContext, LaneDetail, PackSummary } from "./api";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
@@ -390,13 +390,16 @@ const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○" 
 
 function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => void; onChanged: () => void }) {
   const [lane, setLane] = useState<LaneDetail | null>(null);
+  const [ctx, setCtx] = useState<LaneContext | null>(null);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setLane(null);
+    setCtx(null);
     setError(null);
     api.lane(laneId).then(setLane).catch((e) => setError(e.message));
+    api.laneContext(laneId).then(setCtx).catch(() => {});
   }, [laneId]);
 
   useEffect(() => {
@@ -439,6 +442,15 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
         ) : (
           <div className="folio-body">
             <StatusLine lane={lane} />
+            <p className="worked-by">
+              Worked by <strong>{lane.executor === "agent" ? "a Claude agent" : "you (manual)"}</strong>
+              {ctx && (
+                <span className="muted">
+                  {" "}· recon for {ctx.host}: {ctx.recon.endpoints.length} endpoints, {ctx.recon.leads.length} leads,{" "}
+                  {ctx.recon.observations.length} observations
+                </span>
+              )}
+            </p>
             {counts && (
               <p className="counts">
                 <span className="c-done">{counts.done} with evidence</span>

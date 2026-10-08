@@ -31,7 +31,7 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select  # noqa: E402
 
-from app import jsanalysis, ledger, migrate, packs, scope, urls  # noqa: E402
+from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lead, Observation  # noqa: E402
 
@@ -101,7 +101,7 @@ def commands(kind: str, eng) -> list[tuple[str, list[str]]]:
         return [("dnsx", [tool("dnsx"), "-silent", "-json", "-a", "-aaaa", *resolvers, "-rl", rps]),
                 ("dnsx-cname", [tool("dnsx"), "-silent", "-json", "-cname", *resolvers, "-rl", rps])]
     if kind == "ports":
-        if not eng.allow_port_scan:
+        if "ports" not in (eng.enabled_modules or []):
             raise RuntimeError("port scanning is not allowed for this engagement")
         # Connect scan (no raw sockets), port 25 excluded. The engagement's requests-per-second
         # limit is a hard ceiling for every step, port scanning included: no multiplier.
@@ -464,26 +464,22 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
 
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
            "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze}
-ROOT_KINDS = {"subdomains", "archive"}  # targets are wildcard roots, not hosts
-URL_KINDS = {"crawl", "jsanalyze"}      # targets are URLs
+def check_registry() -> None:
+    """The worker and the module registry must describe the same job kinds."""
+    missing = set(modules.BY_KIND) - set(RUNNERS)
+    extra = set(RUNNERS) - set(modules.BY_KIND)
+    if missing or extra:
+        raise SystemExit(f"module registry and worker disagree: no runner for {sorted(missing)}, "
+                         f"runner without module {sorted(extra)}")
 
 
-def allowed_targets(job: Job) -> list[str]:
-    eng = job.engagement
-    inc, exc = eng.scope_include, eng.scope_exclude
-    if job.kind in ROOT_KINDS:
-        roots = {p[2:] for p in inc if p.startswith("*.")}
-        return [t for t in job.targets if t in roots]
-    if job.kind in URL_KINDS:
-        return [t for t in job.targets if scope.in_scope(urls.host_of(t) or "", inc, exc)]
-    return [t for t in job.targets if scope.in_scope(t, inc, exc)]
-
-
-def run(session, job: Job) -> None:
+def run(session, job: Job) -> "Run":
     eng: Engagement = job.engagement
-    if eng.authorized_at is None or not eng.scope_include:
-        raise RuntimeError("engagement is not authorized or has no scope")
-    targets = allowed_targets(job)
+    try:  # the engagement may have changed since the job was queued
+        m = jobgates.check_engagement(eng, job.kind)
+    except jobgates.GateError as e:
+        raise RuntimeError(str(e))
+    targets, _ = jobgates.split_targets(eng, m, job.targets)
     if len(targets) != len(job.targets):
         job.log += f"skipped {len(job.targets) - len(targets)} target(s) outside scope\n"
     if not targets:
@@ -546,6 +542,7 @@ def claim(session):
 
 
 def main():
+    check_registry()
     migrate.wait_for_head()  # the API owns migrations
     print("worker ready", flush=True)
     while True:

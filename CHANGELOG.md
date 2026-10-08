@@ -3,6 +3,28 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
+## [0.4.0] - 2026-10-08
+
+Architecture release: the shape every later module and the hunt agents plug into.
+
+### Added
+- **Module registry** (`modules.py`): each recon job kind is defined once, with its
+  input type, traffic class, HTTP flag, opt-in flag and outputs. API gates, worker
+  dispatch and UI steps are derived from it (`GET /modules`), and the worker refuses
+  to start if its runners and the registry disagree.
+- **Shared job gates** (`jobgates.py`), applied when a job is queued and again when
+  it runs.
+- **Opt-in modules per engagement** (`enabled_modules`, migration `0005`). This
+  replaces `allow_port_scan`, and existing settings carry over.
+- **Hunt executors** (`executors.py`, migration `0006`). A lane has an executor,
+  manual or agent; the agent arrives in v0.4.x/v0.5. `GET /lanes/{id}/context` returns
+  what an executor may read, limited to the lane's host.
+- `docs/ARCHITECTURE.md`: layers, contracts and invariants.
+
+### Changed
+- Research identification is required for modules that send **HTTP**. Port
+  scanning is target traffic but carries no headers; it is gated by opt-in instead.
+
 ## [0.3.2] - 2026-10-08
 
 ### Fixed

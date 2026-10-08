@@ -14,7 +14,7 @@ spec.loader.exec_module(worker)
 
 def eng(header=None, ua=None, rps=5, ports=False, depth=3):
     return SimpleNamespace(research_header=header, research_user_agent=ua, rate_limit_rps=rps,
-                           allow_port_scan=ports, crawl_depth=depth)
+                           enabled_modules=["ports"] if ports else [], crawl_depth=depth)
 
 
 def cmd(kind, e):
@@ -156,3 +156,13 @@ def test_complete_run_has_no_remaining_targets(session, monkeypatch):
     monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: len(chunk))
     r = worker.run(session, job)
     assert r.stopped is None and job.targets_done == 2 and job.remaining_targets is None
+
+
+def test_worker_runners_match_the_module_registry():
+    worker.check_registry()   # raises SystemExit on any mismatch
+
+
+def test_worker_rechecks_gates_at_run_time(session):
+    job = make_job(session, ["a.example.com"], kind="ports")   # port scanning not enabled
+    with pytest.raises(RuntimeError, match="off for this engagement"):
+        worker.run(session, job)
