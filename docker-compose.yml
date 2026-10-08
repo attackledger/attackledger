@@ -24,5 +24,13 @@ services:
       db:
         condition: service_healthy
 
+  web:
+    build:
+      context: web
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+
 volumes:
   dbdata:

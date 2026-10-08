@@ -104,7 +104,10 @@ def test_coverage_counts_only_closed_cells(client):
     client.post(f"/lanes/{lane['id']}/close")
     cov = client.get(f"/engagements/{eng_id}/coverage").json()
     assert cov["closed_cells"] == 1 and cov["total_cells"] == 7
-    assert cov["assets"][0]["roles"]["mapper"] == "not_opened"
+    assert cov["assets"][0]["roles"]["mapper"]["status"] == "not_opened"
+    recon = cov["assets"][0]["roles"]["recon"]
+    assert recon["status"] == "closed" and len(recon["receipt"]) == 8
+    assert client.get("/engagements").json()[0]["assets"] == 1
 
 
 def test_out_of_scope_asset_cannot_open_lane(client):

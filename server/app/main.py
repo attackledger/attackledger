@@ -77,6 +77,17 @@ def _lane_view(lane: Lane) -> dict:
             for i in lane.items
         ],
         "evidence_count": len(lane.evidence),
+        "evidence": [
+            {"id": e.id, "item_idx": next((i.idx for i in lane.items if i.id == e.item_id), None),
+             "kind": e.kind, "sha256": e.sha256, "uri": e.uri, "summary": e.summary,
+             "created_at": e.created_at.isoformat()}
+            for e in lane.evidence
+        ],
+        "receipt": (
+            {"sha256": lane.receipts[-1].manifest_sha256,
+             "created_at": lane.receipts[-1].created_at.isoformat()}
+            if lane.receipts else None
+        ),
     }
 
 
@@ -173,17 +184,37 @@ def close_lane(lane_id: int, session: Session = Depends(get_session)):
     return {"receipt": receipt.manifest_sha256, **_lane_view(lane)}
 
 
+@app.get("/engagements")
+def list_engagements(session: Session = Depends(get_session)):
+    engs = session.scalars(select(Engagement).order_by(Engagement.created_at.desc())).all()
+    return [{"id": e.id, "name": e.name, "policy_url": e.policy_url, "assets": len(e.assets)}
+            for e in engs]
+
+
+def _cell(lane: Lane | None) -> dict:
+    if lane is None:
+        return {"status": "not_opened"}
+    status = gates.lane_status(lane).value
+    cell = {"status": status, "lane_id": lane.id, "unresolved": len(gates.unresolved(lane))}
+    if lane.receipts:
+        cell["receipt"] = lane.receipts[-1].manifest_sha256[:8]
+    return cell
+
+
 @app.get("/engagements/{eng_id}/coverage")
 def coverage(eng_id: int, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
     rows = []
     for asset in sorted(eng.assets, key=lambda a: a.host):
-        by_role = {l.role: gates.lane_status(l).value for l in asset.lanes}
+        by_role = {l.role: l for l in asset.lanes}
         rows.append({
+            "asset_id": asset.id,
             "host": asset.host,
             "in_scope": asset.in_scope,
-            "roles": {r.value: by_role.get(r, "not_opened") for r in Role},
+            "roles": {r.value: _cell(by_role.get(r)) for r in Role},
         })
-    total = sum(1 for r in rows for s in r["roles"].values() if r["in_scope"])
-    closed = sum(1 for r in rows for s in r["roles"].values() if r["in_scope"] and s == "closed")
-    return {"engagement": eng.name, "closed_cells": closed, "total_cells": total, "assets": rows}
+    in_scope = [r for r in rows if r["in_scope"]]
+    total = sum(len(r["roles"]) for r in in_scope)
+    closed = sum(1 for r in in_scope for c in r["roles"].values() if c["status"] == "closed")
+    return {"engagement": eng.name, "roles": [r.value for r in Role],
+            "closed_cells": closed, "total_cells": total, "assets": rows}

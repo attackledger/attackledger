@@ -17,13 +17,13 @@ fi
 echo "[gate] 1/3 denylist scan (targets + open-finding fingerprints)"
 for f in "$DENY" "$FDENY"; do
   [ -s "$f" ] || { echo "[gate] FAIL: missing $f (fail-closed)"; fail=1; continue; }
-  if grep -rnIiE -f "$f" --exclude-dir=.git "$ROOT"; then
+  if grep -rnIiE -f "$f" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist "$ROOT"; then
     echo "[gate] FAIL: denylisted strings present ($f)"; fail=1
   fi
 done
 
 echo "[gate] 2/3 absolute personal paths"
-if grep -rnIE '/Users/[A-Za-z0-9_]+|/home/[A-Za-z0-9_]+' --exclude-dir=.git --exclude=release_gate.sh "$ROOT"; then
+if grep -rnIE '/Users/[A-Za-z0-9_]+|/home/[A-Za-z0-9_]+' --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude=release_gate.sh "$ROOT"; then
   echo "[gate] FAIL: absolute user paths present"; fail=1
 fi
 
@@ -31,7 +31,7 @@ echo "[gate] 3/3 secret scan (trufflehog)"
 if ! command -v trufflehog >/dev/null; then
   echo "[gate] FAIL: trufflehog not installed (fail-closed)"; fail=1
 else
-  out="$(trufflehog filesystem "$ROOT" --exclude-paths=<(printf '\\.git/\n') --no-update --json 2>/dev/null || true)"
+  out="$(trufflehog filesystem "$ROOT" --exclude-paths=<(printf '\\.git/\nnode_modules/\ndist/\n') --no-update --json 2>/dev/null || true)"
   if [ -n "$out" ]; then
     printf '%s\n' "$out" | jq -r '"\(.SourceMetadata.Data.Filesystem.file):\(.SourceMetadata.Data.Filesystem.line) \(.DetectorName) verified=\(.Verified)"'
     echo "[gate] FAIL: trufflehog findings"; fail=1
