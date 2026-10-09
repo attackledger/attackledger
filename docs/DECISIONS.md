@@ -594,6 +594,21 @@ options considered and who decided.
   removes the need for a shared operator token to bootstrap.
 - **Made by:** Claude, for MVP item 6, under Murat's overnight permission. To be reviewed.
 
+### D-046 · The browser verifier is a port of verify_report.py (2026-10-09, made autonomously)
+- **Decision:** the browser verifier is a line-for-line port of `verify_report.py`, not a
+  reimplementation.
+  - It reads JSON as Python does and uses WebCrypto for the cryptography.
+  - Where the browser lacks Ed25519, it falls back to the script's own Ed25519 code.
+    Small-order points always use that code.
+  - The public page is one self-contained file under `default-src 'none';
+    connect-src 'none'` and Trusted Types, set in a meta tag and in the header.
+  - Any change to `verify_report.py` needs the same change in `web/src/verify_report.ts`
+    and a case in `tools/verifier_equivalence/cases.json`, and `run.sh` must report 0
+    differences.
+- **Why:** an auditor must get the same answer from the page as from the script; two
+  independent implementations would drift.
+- **Made by:** Claude, for MVP item 5, under Murat's overnight permission. To be reviewed.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

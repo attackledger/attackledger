@@ -10,6 +10,15 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Public verifier page** (`/verify`, D-042, D-046). Drop a report on
+  attackledger.com/verify and every `verify_report.py` check runs in the browser, with
+  the same verdicts and messages. Nothing is uploaded: `connect-src 'none'`, everything
+  inline, Trusted Types.
+- **The Verify tab checks everything**: the chain, receipts, signatures, key log, change
+  history and RFC 3161 timestamps. It uses the same module as the public page
+  (`web/src/verify_report.ts`, replacing `receipts.ts`).
+- **Equivalence tests** (`tools/verifier_equivalence/run.sh`): 67 reports and 107
+  building-block cases compared line for line with `verify_report.py`; 0 differences.
 - **Install and operations**:
   - `docs/INSTALL.md`, tested end to end from the document.
   - A production override with Caddy HTTPS (`deploy/`).
