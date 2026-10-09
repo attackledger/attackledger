@@ -258,7 +258,8 @@ def _prepare_agent(session, job: Job) -> dict:
 @router.post("/worker/claim")
 def claim(body: ClaimIn | None = None, session: Session = Depends(get_session)):
     """The next job, gated and prepared, or {"job": null}. A job that fails its gates or has
-    nothing to do is ended here, with the reason in its log, and the next one is taken."""
+    nothing to do is ended here, with the reason in its log, and the next one is taken. Only
+    the worker token's organization's jobs are taken (authz scopes the session to it)."""
     job_id = body.job_id if body else None
     for _ in range(50):
         taken = _take(session, job_id)
@@ -278,7 +279,7 @@ def claim(body: ClaimIn | None = None, session: Session = Depends(get_session)):
             _end(session, job, JobStatus.failed, f"error: {type(e).__name__}: {str(e)[:300]}")
             raise
         return {"job": {"id": job.id, "kind": job.kind, "token": token, "gateway_secret": secret,
-                        "engagement": engagement_rules(eng), **extra}}
+                        "organization_id": job.organization_id, "engagement": engagement_rules(eng), **extra}}
     return {"job": None}
 
 

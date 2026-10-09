@@ -165,6 +165,7 @@ class Rules:
     research_header: str | None
     research_user_agent: str | None
     redact: bool = True
+    organization_id: int | None = None   # the job's (D-042); the API answers only for its own
 
     @classmethod
     def from_api(cls, d: dict) -> "Rules":
@@ -172,7 +173,8 @@ class Rules:
                    traffic=str(d["traffic"]), include=tuple(d.get("include") or ()),
                    exclude=tuple(d.get("exclude") or ()), rate_limit_rps=max(1, int(d["rate_limit_rps"])),
                    research_header=d.get("research_header") or None,
-                   research_user_agent=d.get("research_user_agent") or None, redact=bool(d.get("redact", True)))
+                   research_user_agent=d.get("research_user_agent") or None, redact=bool(d.get("redact", True)),
+                   organization_id=int(d["organization_id"]) if d.get("organization_id") is not None else None)
 
     def identification(self) -> list[tuple[str, str]]:
         """The headers every target request carries (D-008). Empty: no target traffic at all."""

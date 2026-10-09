@@ -1,7 +1,11 @@
 """Append-only, hash-chained log of administrative changes (D-037).
 
 Scope and rules, authorization records, engagement settings, roles and people: every
-change appends one entry, in the same transaction as the change, for the whole deployment:
+change appends one entry, in the same transaction as the change, to its organization's log.
+Each organization has its own chain, from the same genesis value with its own head (D-042,
+docs/ORGANIZATIONS.md), so a report never carries another organization's entries or head. The
+record has no organization field: a self-hosted install's chain, the default organization's,
+is the chain it always had, and reports issued before 0022 verify unchanged.
 
     record_sha256 = sha256(canonical(record))
     entry_hash    = sha256(prev_hash + record_sha256)
@@ -20,8 +24,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_, select, text
 
-from . import ledger
-from .models import AuditEntry, Engagement, Membership, User
+from . import ledger, orgscope
+from .models import AuditEntry, Engagement, Membership, Organization, User
 
 GENESIS = ledger.GENESIS
 ACTORS = {
@@ -90,11 +94,13 @@ def append(session, *, actor: dict, action: str, change: dict, engagement_id: in
     """Add one entry. The caller commits, together with the change it records."""
     if action not in ACTIONS or actor.get("kind") not in ACTORS:
         raise ValueError(f"unknown audit action {action!r} or actor {actor.get('kind')!r}")
-    # One chain for the deployment, as in keylog.append: serialize appends; seq is unique too.
+    # The organization's chain, as in keylog.append: serialize its appends; (organization, seq)
+    # is unique too, so a writer that slipped past the lock fails instead of forking the chain.
+    org = orgscope.owner(session, (Engagement, engagement_id), (User, subject_id), (User, actor.get("user_id")))
     if session.bind.dialect.name == "postgresql":
-        session.execute(text("SELECT pg_advisory_xact_lock(7037)"))
-    last = session.scalars(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)).first()
-    e = AuditEntry(seq=(last.seq + 1) if last else 1, at=at or now_text(), actor_kind=actor["kind"],
+        session.execute(text("SELECT pg_advisory_xact_lock(7037, :org)"), {"org": org})
+    last = _last(session, org)
+    e = AuditEntry(organization_id=org, seq=(last.seq + 1) if last else 1, at=at or now_text(), actor_kind=actor["kind"],
                    actor_user_id=actor.get("user_id"), actor_name=actor.get("name") or "",
                    actor_email=actor.get("email"), action=action, engagement_id=engagement_id,
                    subject_id=subject_id, change=ledger.canonical(change),
@@ -106,10 +112,34 @@ def append(session, *, actor: dict, action: str, change: dict, engagement_id: in
     return e
 
 
-def verify(session) -> list[str]:
-    """Walk the whole log from the genesis value."""
+def _last(session, org: int) -> AuditEntry | None:
+    return session.scalars(select(AuditEntry).where(AuditEntry.organization_id == org)
+                           .order_by(AuditEntry.seq.desc()).limit(1)).first()
+
+
+def chains(session, organization_id: int | None = None) -> list[int]:
+    """Whose chains to walk: the one named, the session's, or (the operator) every one."""
+    if organization_id is not None:
+        return [organization_id]
+    if orgscope.current(session) is not None:
+        return [orgscope.current(session)]
+    with orgscope.unscoped(session):
+        return list(session.scalars(select(Organization.id).order_by(Organization.id)))
+
+
+def verify(session, organization_id: int | None = None) -> list[str]:
+    """Walk each organization's log from the genesis value (see chains)."""
+    orgs = chains(session, organization_id)
+    out = []
+    for org in orgs:
+        out += [f"organization {org}: {p}" if len(orgs) > 1 else p for p in _verify(session, org)]
+    return out
+
+
+def _verify(session, org: int) -> list[str]:
     problems, prev = [], GENESIS
-    for n, e in enumerate(session.scalars(select(AuditEntry).order_by(AuditEntry.seq)), start=1):
+    rows = session.scalars(select(AuditEntry).where(AuditEntry.organization_id == org).order_by(AuditEntry.seq))
+    for n, e in enumerate(rows, start=1):
         if e.seq != n:
             problems.append(f"audit log entry {e.seq} out of order (expected {n})")
         if e.prev_hash != prev:
@@ -185,21 +215,26 @@ def for_engagement(session, eng_id: int, people: set[int]) -> list[AuditEntry]:
     return list(session.scalars(q.order_by(AuditEntry.seq)))
 
 
-def head(session) -> dict:
-    last = session.scalars(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)).first()
+def head(session, organization_id: int | None = None) -> dict:
+    """The head of one organization's chain: the session's, or the default one's."""
+    org = organization_id or orgscope.current(session) or orgscope.default_id(session)
+    last = _last(session, org)
     return {"seq": last.seq if last else 0, "entry_hash": last.entry_hash if last else GENESIS}
 
 
 def for_report(session, eng_id: int, people: set[int]) -> dict | None:
     """The engagement's entries and its people's, with the links from the first of them to
-    the head (hashes only), so a reader can check that they are in the chain and in order."""
-    entries = for_engagement(session, eng_id, people)
+    the head of its organization's chain (hashes only), so a reader can check that they are in
+    the chain and in order."""
+    org = session.get(Engagement, eng_id).organization_id
+    entries = [e for e in for_engagement(session, eng_id, people) if e.organization_id == org]
     if not entries:
         return None
-    links = session.scalars(select(AuditEntry).where(AuditEntry.seq >= entries[0].seq).order_by(AuditEntry.seq))
+    links = session.scalars(select(AuditEntry).where(AuditEntry.organization_id == org,
+                                                     AuditEntry.seq >= entries[0].seq).order_by(AuditEntry.seq))
     return {
         "genesis": GENESIS,
-        "head": head(session),
+        "head": head(session, org),
         "links": [{"seq": e.seq, "prev_hash": e.prev_hash, "record_sha256": e.record_sha256,
                    "entry_hash": e.entry_hash} for e in links],
         "entries": [record(e) for e in entries],

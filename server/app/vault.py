@@ -428,6 +428,15 @@ def finish_deletion(session, eng) -> dict:
 
 
 def _legacy_only_here(session, eng_id: int) -> list[str]:
+    from . import orgscope
+
+    # The plaintext store is shared by the whole deployment, so whether another engagement still
+    # cites a blob is asked of every organization's, not only the caller's (orgscope.py).
+    with orgscope.unscoped(session):
+        return _legacy(session, eng_id)
+
+
+def _legacy(session, eng_id: int) -> list[str]:
     from sqlalchemy import select
 
     from .models import Engagement, Evidence

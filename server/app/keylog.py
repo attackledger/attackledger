@@ -1,6 +1,9 @@
 """Append-only, hash-chained log of signing keys (D-036).
 
-Every key registration and revocation appends one entry, for the whole deployment:
+Every key registration and revocation appends one entry to the log of the person's
+organization (each has its own chain from the same genesis value, D-042,
+docs/ORGANIZATIONS.md; the record has no organization field, so the default organization's
+chain is the one a self-hosted install always had):
 
     record_sha256 = sha256(canonical(record))
     entry_hash    = sha256(prev_hash + record_sha256)
@@ -18,8 +21,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select, text
 
-from . import ledger
-from .models import KeyLogEntry, SigningKey, User
+from . import ledger, orgscope
+from .models import KeyLogEntry, Organization, SigningKey, User
 
 GENESIS = ledger.GENESIS
 EVENTS = ("registered", "revoked")
@@ -49,12 +52,13 @@ def entry_hash(prev_hash: str, record_sha256: str) -> str:
 def append(session, *, user: User, key: SigningKey, event: str, via: str, at: str | None = None) -> KeyLogEntry:
     if event not in EVENTS or via not in VIA:
         raise ValueError(f"unknown key log event {event!r} or origin {via!r}")
-    # One chain for the deployment: serialize appends. seq is unique as well, so a second
-    # writer that slipped past the lock fails instead of forking the chain.
+    # One chain per organization: serialize its appends. (organization, seq) is unique as well,
+    # so a second writer that slipped past the lock fails instead of forking the chain.
+    org = orgscope.owner(session, (User, user.id))
     if session.bind.dialect.name == "postgresql":
-        session.execute(text("SELECT pg_advisory_xact_lock(7036)"))
-    last = session.scalars(select(KeyLogEntry).order_by(KeyLogEntry.seq.desc()).limit(1)).first()
-    e = KeyLogEntry(seq=(last.seq + 1) if last else 1, user_id=user.id, user_name=user.name,
+        session.execute(text("SELECT pg_advisory_xact_lock(7036, :org)"), {"org": org})
+    last = _last(session, org)
+    e = KeyLogEntry(organization_id=org, seq=(last.seq + 1) if last else 1, user_id=user.id, user_name=user.name,
                     key_fingerprint=key.fingerprint, algorithm=key.algorithm, event=event,
                     at=at or now_text(), via=via, prev_hash=last.entry_hash if last else GENESIS)
     e.record_sha256 = ledger.sha256(ledger.canonical(record(e)))
@@ -64,10 +68,31 @@ def append(session, *, user: User, key: SigningKey, event: str, via: str, at: st
     return e
 
 
-def verify(session) -> list[str]:
-    """Walk the whole log from the genesis value."""
+def _last(session, org: int) -> KeyLogEntry | None:
+    return session.scalars(select(KeyLogEntry).where(KeyLogEntry.organization_id == org)
+                           .order_by(KeyLogEntry.seq.desc()).limit(1)).first()
+
+
+def verify(session, organization_id: int | None = None) -> list[str]:
+    """Walk each organization's log from the genesis value: the one named, the session's, or
+    (the operator) every one."""
+    if organization_id is not None:
+        orgs = [organization_id]
+    elif orgscope.current(session) is not None:
+        orgs = [orgscope.current(session)]
+    else:
+        with orgscope.unscoped(session):
+            orgs = list(session.scalars(select(Organization.id).order_by(Organization.id)))
+    out = []
+    for org in orgs:
+        out += [f"organization {org}: {p}" if len(orgs) > 1 else p for p in _verify(session, org)]
+    return out
+
+
+def _verify(session, org: int) -> list[str]:
     problems, prev = [], GENESIS
-    for n, e in enumerate(session.scalars(select(KeyLogEntry).order_by(KeyLogEntry.seq)), start=1):
+    rows = session.scalars(select(KeyLogEntry).where(KeyLogEntry.organization_id == org).order_by(KeyLogEntry.seq))
+    for n, e in enumerate(rows, start=1):
         if e.seq != n:
             problems.append(f"key log entry {e.seq} out of order (expected {n})")
         if e.prev_hash != prev:
@@ -90,16 +115,20 @@ def since(session, user_id: int, when: datetime | None) -> list[KeyLogEntry]:
     return [e for e in rows if datetime.fromisoformat(e.at) >= cut]
 
 
-def for_report(session, fingerprints: set[str]) -> dict | None:
+def for_report(session, fingerprints: set[str], organization_id: int) -> dict | None:
     """The history of the keys that signed a report, and the links from its first entry to
-    the head, so a reader can check that the entries are in the chain and in order."""
+    the head of the organization's chain, so a reader can check that the entries are in the
+    chain and in order."""
     if not fingerprints:
         return None
-    entries = list(session.scalars(select(KeyLogEntry).where(KeyLogEntry.key_fingerprint.in_(sorted(fingerprints)))
+    org = organization_id
+    entries = list(session.scalars(select(KeyLogEntry).where(KeyLogEntry.organization_id == org,
+                                                             KeyLogEntry.key_fingerprint.in_(sorted(fingerprints)))
                                    .order_by(KeyLogEntry.seq)))
-    last = session.scalars(select(KeyLogEntry).order_by(KeyLogEntry.seq.desc()).limit(1)).first()
+    last = _last(session, org)
     links = [] if not entries else list(session.scalars(
-        select(KeyLogEntry).where(KeyLogEntry.seq >= entries[0].seq).order_by(KeyLogEntry.seq)))
+        select(KeyLogEntry).where(KeyLogEntry.organization_id == org, KeyLogEntry.seq >= entries[0].seq)
+        .order_by(KeyLogEntry.seq)))
     return {
         "genesis": GENESIS,
         "head": {"seq": last.seq if last else 0, "entry_hash": last.entry_hash if last else GENESIS},

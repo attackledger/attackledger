@@ -6,6 +6,10 @@
   docker compose exec -it api python -m app.people key-log
   docker compose exec -it api python -m app.people audit-log
 
+A self-hosted install has one organization and never names it. With more than one (made with
+python -m app.orgs), --org names the organization a person is created in, and the one meant
+when an email has an account in more than one; the logs are listed and checked per organization.
+
 The password is read from the terminal (not echoed) or, for scripts, from the
 ATTACKLEDGER_NEW_PASSWORD environment variable. It is never taken as an argument,
 so it does not end up in shell history or process lists.
@@ -25,7 +29,7 @@ import sys
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from . import auditlog, auth, keylog
+from . import auditlog, auth, keylog, orgs, orgscope
 from .db import SessionLocal
 from .models import AuditEntry, KeyLogEntry, SigningKey, User, utcnow
 
@@ -44,21 +48,37 @@ def _password() -> str | None:
     return password
 
 
-def _user(s, email: str) -> User | None:
-    user = s.scalar(select(User).where(User.email == email.strip().lower()))
-    if user is None:
+def _user(s, email: str, org_ref: str | None = None) -> User | None:
+    q = select(User).where(User.email == email.strip().lower())
+    if org_ref is not None:
+        org = orgs.find(s, org_ref)
+        if org is None:
+            print(f"no organization {org_ref!r}", file=sys.stderr)
+            return None
+        q = q.where(User.organization_id == org.id)
+    users = s.scalars(q).all()
+    if not users:
         print(f"nobody with the email {email}", file=sys.stderr)
-    return user
+        return None
+    if len(users) > 1:
+        print(f"{email} has an account in organizations {', '.join(str(u.organization_id) for u in users)}; "
+              "name one with --org", file=sys.stderr)
+        return None
+    return users[0]
 
 
 def create(s, args) -> int:
-    if not auth.people_exist(s) and not args.owner:
+    org = orgs.find(s, args.org)
+    if org is None:
+        print(f"no organization {args.org!r}", file=sys.stderr)
+        return 1
+    if not s.scalar(select(User.id).where(User.organization_id == org.id).limit(1)) and not args.owner:
         print("the first person must be an owner (--owner)", file=sys.stderr)
         return 2
     password = _password()
     if password is None:
         return 2
-    user = User(email=args.email.strip().lower(), name=args.name.strip(),
+    user = User(organization_id=org.id, email=args.email.strip().lower(), name=args.name.strip(),
                 password_hash=auth.hash_password(password), is_owner=args.owner)
     s.add(user)
     try:
@@ -75,7 +95,7 @@ def create(s, args) -> int:
 
 
 def set_password(s, args) -> int:
-    user = _user(s, args.email)
+    user = _user(s, args.email, args.org)
     if user is None:
         return 1
     password = _password()
@@ -93,7 +113,7 @@ def set_password(s, args) -> int:
 
 
 def revoke_key(s, args) -> int:
-    user = _user(s, args.email)
+    user = _user(s, args.email, args.org)
     if user is None:
         return 1
     fp = args.fingerprint.strip().lower()
@@ -114,9 +134,14 @@ def revoke_key(s, args) -> int:
     return 0
 
 
+def _org_label(s, e) -> str:
+    """Each organization has its own chains; the column appears once there is more than one."""
+    return f"org {e.organization_id}  " if orgscope.count(s) > 1 else ""
+
+
 def key_log(s, _args) -> int:
-    for e in s.scalars(select(KeyLogEntry).order_by(KeyLogEntry.seq)):
-        print(f"{e.seq:>5}  {e.at}  {e.event:<10} {e.key_fingerprint[:16]}  {e.algorithm:<10} "
+    for e in s.scalars(select(KeyLogEntry).order_by(KeyLogEntry.organization_id, KeyLogEntry.seq)):
+        print(f"{_org_label(s, e)}{e.seq:>5}  {e.at}  {e.event:<10} {e.key_fingerprint[:16]}  {e.algorithm:<10} "
               f"{e.user_name} (id {e.user_id}), {keylog.VIA.get(e.via, e.via)}")
     problems = keylog.verify(s)
     for p in problems:
@@ -126,10 +151,10 @@ def key_log(s, _args) -> int:
 
 
 def audit_log(s, _args) -> int:
-    for e in s.scalars(select(AuditEntry).order_by(AuditEntry.seq)):
+    for e in s.scalars(select(AuditEntry).order_by(AuditEntry.organization_id, AuditEntry.seq)):
         rec = auditlog.record(e)
         where = f"engagement {e.engagement_id}  " if e.engagement_id is not None else ""
-        print(f"{e.seq:>5}  {e.at}  {e.action:<24} {where}{auditlog.actor_label(rec['actor'])}: {auditlog.describe(rec)}")
+        print(f"{_org_label(s, e)}{e.seq:>5}  {e.at}  {e.action:<24} {where}{auditlog.actor_label(rec['actor'])}: {auditlog.describe(rec)}")
     problems = auditlog.verify(s)
     for p in problems:
         print(f"FAIL  {p}", file=sys.stderr)
@@ -144,10 +169,13 @@ def main(argv: list[str]) -> int:
     c.add_argument("--email", required=True)
     c.add_argument("--name", required=True)
     c.add_argument("--owner", action="store_true")
+    c.add_argument("--org", help="the organization's id or exact name (default: the default organization)")
     p = sub.add_parser("set-password", help="reset a forgotten password and sign the person out")
     p.add_argument("--email", required=True)
+    p.add_argument("--org", help="the organization, when the email has an account in more than one")
     r = sub.add_parser("revoke-key", help="revoke one of a person's signing keys")
     r.add_argument("--email", required=True)
+    r.add_argument("--org", help="the organization, when the email has an account in more than one")
     r.add_argument("--fingerprint", required=True, help="the fingerprint or its first 8+ characters")
     sub.add_parser("key-log", help="list every key registration and revocation and check the chain")
     sub.add_parser("audit-log", help="list every administrative change and check the chain")
