@@ -3,11 +3,23 @@
 All notable changes are listed here. Versions follow [Semantic Versioning](https://semver.org/);
 before 1.0, minor versions may change the data model.
 
-## [Unreleased] - 0.6.0
+## [Unreleased]
 
-Hunt agents: a Claude agent can work a lane within the lane's rules. Not yet run
-against the live API (no key was available); tested with a scripted model and the
-local lab.
+## [0.7.0] - 2026-10-09
+
+The MVP for a design partner (docs/MVP.md). It covers:
+- a traffic gateway for all target traffic, and a worker with no route to the internet
+  or the database;
+- encryption at rest with retention;
+- evidence import from HAR, Burp and Caido;
+- a public in-browser verifier;
+- a tested install with backup and restore.
+
+Version 0.6.0 was never released on its own; its changes, which first brought hunt agents
+(a Claude agent can work a lane within the lane's rules), are included here. The agent loop
+on the Messages API has still not run against the live API (no key was available). It is
+tested with a scripted model and the local lab, and was driven from Claude Code for the
+demo (D-031).
 
 ### Added
 - **Caido pull** (`tools/caido_pull.py`, D-035). It reads HTTP history from your own Caido's
@@ -199,6 +211,13 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Changed
+- **Demo**:
+  - "Client web app" shows the Import tab. It has a HAR and a Burp export made from the
+    lab (out-of-scope and duplicate rows refused), WSTG mappings with suggestions, a
+    dismissed entry with its reason, and redacted requests and responses.
+  - "Client web app" has a retention date, shown on the History tab.
+  - "Client portal 2025" shows deleted content and a report that still verifies.
+  - Lanes are worked in parallel next to a receipted Information gathering lane.
 - **The worker no longer touches the database** (D-042, docs/WORKER_API.md, migration
   0020). It has no database credentials, database network, master key, blob store or
   Anthropic key.
@@ -278,6 +297,8 @@ local lab.
     fits on phones.
 
 ### Fixed
+- **Web**: a dismissal reason no longer shows a double full stop, and an out-of-scope host
+  no longer widens the ledger page at 390 px.
 - **The release gate refused every git worktree**: a worktree's `.git` is a file holding an
   absolute path, which the personal-path check matched. It is now skipped like the `.git`
   directory; nothing committed is skipped.

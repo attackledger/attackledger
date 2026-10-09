@@ -304,13 +304,22 @@ def test_changing_a_summary_breaks_summary_sha256(api, tmp_path, capsys):
     assert any("unknown chain record version" in p for p in verify.check_chain(t))
 
 
+# Reports published before chain record v2: copies of the site's sample and demo reports as
+# they were then. The site's current reports (chain v2) are checked by the test below.
 @pytest.mark.parametrize("path", sorted(str(p.relative_to(ROOT)) for p in
-                                        [ROOT / "site" / "sample-report.json", *(ROOT / "site" / "demo" / "reports").glob("*.json")]))
+                                        (ROOT / "server" / "tests" / "data" / "legacy-reports").glob("*.json")))
 def test_old_fixture_reports_still_verify(path, tmp_path, capsys):
     report = json.loads((ROOT / path).read_text())
     assert all("v" not in e for e in report["evidence"])       # made before chain v2
     code, out = run_verifier(tmp_path, report, capsys)
     assert code == 0 and "Verified." in out and "content unavailable" not in out
+
+
+@pytest.mark.parametrize("path", sorted(str(p.relative_to(ROOT)) for p in
+                                        [ROOT / "site" / "sample-report.json", *(ROOT / "site" / "demo" / "reports").glob("*.json")]))
+def test_published_site_reports_verify(path, tmp_path, capsys):
+    code, out = run_verifier(tmp_path, json.loads((ROOT / path).read_text()), capsys)
+    assert code == 0 and "Verified." in out
 
 
 # ---- deleting content ----------------------------------------------------------------------------

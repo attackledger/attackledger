@@ -362,9 +362,10 @@ assumes and enforces:
 
 ## Status
 
-`v0.6.0`, not yet released (see [`CHANGELOG.md`](CHANGELOG.md)). Before 1.0, minor
-versions may change the data model; migrations upgrade existing databases. Hunt
-agents are a preview and have not yet run against the live API. Expect rough edges.
+`v0.7.0`, the MVP for a design partner (see [`CHANGELOG.md`](CHANGELOG.md) and
+[`docs/MVP.md`](docs/MVP.md)). Before 1.0, minor versions may change the data model;
+migrations upgrade existing databases. Hunt agents are a preview and have not yet run
+against the live API. Expect rough edges.
 
 ## Author
 
