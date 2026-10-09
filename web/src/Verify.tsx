@@ -1,13 +1,28 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
 import { DEMO, demoUrl } from "./demo";
-import { checkReport, ed25519Supported, tamperCheck, type Outcome, type ReceiptCheck, type ReportForVerify } from "./receipts";
+import { cliText, decodeFile, ed25519Native, pageWording, selfTest, verifyReport, type CheckResult, type Outcome } from "./verify_report";
 
-const OUTCOME: Record<Outcome, { word: string; mark: string; cls: string }> = {
-  pass: { word: "Signature verifies", mark: "✓", cls: "ok" },
-  fail: { word: "Signature fails", mark: "✕", cls: "bad" },
-  unsigned: { word: "Name only, not signed", mark: "—", cls: "plain" },
-  unsupported: { word: "Not checked in this browser", mark: "?", cls: "plain" },
+// The same module as the public verifier page (attackledger.com/verify): a port of
+// tools/verify_report.py that makes every one of its checks, compared with it line for line by
+// tools/verifier_equivalence/.
+
+interface Lane {
+  lane_id: number;
+  host: string;
+  name: string;
+  status: string;
+  receipt: {
+    manifest_sha256: string;
+    closed_by: string | null;
+    closed_by_email?: string | null;
+    issued_at?: string;
+    signature?: { algorithm: string; key_fingerprint: string; payload: string } | null;
+    timestamp?: { time: string; tsa?: string | null } | null;
+  } | null;
+}
+
+const BADGE: Record<CheckResult["verdict"], { cls: string; label: string }> = {
+  PASS: { cls: "ok", label: "Passed" }, FAIL: { cls: "bad", label: "Failed" }, SKIP: { cls: "plain", label: "Skipped" },
 };
 
 // Downloaded side by side (the demo and the site) the root is passed explicitly; in the repository
@@ -26,75 +41,78 @@ function when(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { timeZoneName: "short" });
 }
 
-/** A client's or auditor's check of the receipts: who signed, with which key, and whether it verifies. */
-export function Verify({ engId }: { engId: number }) {
-  const [report, setReport] = useState<ReportForVerify | null>(null);
-  const [checks, setChecks] = useState<ReceiptCheck[] | null>(null);
-  const [edOk, setEdOk] = useState<boolean | null>(null);
-  const [selfTest, setSelfTest] = useState<boolean | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function signerOf(lane: Lane): { name: string | null; email: string | null } {
+  try {
+    const p = JSON.parse(lane.receipt?.signature?.payload ?? "null") as { signer?: { name?: string; email?: string } } | null;
+    if (p?.signer) return { name: p.signer.name ?? null, email: p.signer.email ?? null };
+  } catch { /* the verifier reports an unreadable payload */ }
+  return { name: lane.receipt?.closed_by ?? null, email: lane.receipt?.closed_by_email ?? null };
+}
 
-  useEffect(() => {
-    let live = true;
-    setReport(null);
-    setChecks(null);
-    setSelfTest(null);
-    setError(null);
-    api.report<ReportForVerify>(engId).then(async (r) => {
-      if (!live) return;
-      setReport(r);
-      if (!globalThis.crypto?.subtle) {
-        setError("This page is not served over HTTPS, so the browser offers no WebCrypto to check signatures. "
-                 + "Use the offline verifier below.");
-        return;
-      }
-      const [cs, ed] = await Promise.all([checkReport(r), ed25519Supported()]);
-      if (!live) return;
-      setChecks(cs);
-      setEdOk(ed);
-      const first = cs.find((c) => c.outcome === "pass");
-      if (first) tamperCheck(r, first).then((ok) => live && setSelfTest(ok)).catch(() => live && setSelfTest(false));
-    }).catch((e) => live && setError((e as Error).message));
-    return () => { live = false; };
-  }, [engId]);
+/** A client's or auditor's check of the report: every check verify_report.py makes, in the browser. */
+export function Verify({ engId }: { engId: number }) {
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [lanes, setLanes] = useState<Lane[]>([]);
+  const [edNative, setEdNative] = useState<boolean | null>(null);
+  const [self, setSelf] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Same origin and no Content-Disposition, so the download is saved as report.json, the name the command uses.
   const json = DEMO ? demoUrl(`reports/${engId}.json`) : `/api/engagements/${engId}/report`;
-  const signed = checks?.filter((c) => c.outcome !== "unsigned") ?? [];
-  const passed = checks?.filter((c) => c.outcome === "pass").length ?? 0;
-  const failed = checks?.filter((c) => c.outcome === "fail").length ?? 0;
-  const voids = report?.lanes.filter((l) => l.status === "stale").length ?? 0;
+
+  useEffect(() => {
+    let live = true;
+    setOutcome(null);
+    setSelf(null);
+    setError(null);
+    (async () => {
+      if (!globalThis.crypto?.subtle) {
+        throw new Error("This page is not served over HTTPS, so the browser offers no WebCrypto to check the report. "
+                        + "Use the offline verifier below.");
+      }
+      // The report as served, byte for byte: its hashes are over the exact text.
+      const res = await fetch(json);
+      if (!res.ok) throw new Error(res.status === 403 ? "Your role on this engagement does not allow this." : `The report could not be loaded (${res.status}).`);
+      const text = decodeFile(new Uint8Array(await res.arrayBuffer()));
+      const o = await verifyReport(text, "report.json");
+      if (!live) return;
+      setOutcome(o);
+      try {
+        setLanes((JSON.parse(text) as { lanes: Lane[] }).lanes.filter((l) => l.receipt && l.status === "closed"));
+      } catch {
+        setLanes([]);
+      }
+      setEdNative(await ed25519Native());
+      if (o.results.find((c) => c.name === "Receipt signatures")?.verdict === "PASS") {
+        const ok = await selfTest(text, "report.json").catch(() => false);
+        if (live) setSelf(ok);
+      }
+    })().catch((e) => live && setError((e as Error).message));
+    return () => { live = false; };
+  }, [engId, json]);
+
+  const failed = outcome?.results.filter((c) => c.verdict === "FAIL") ?? [];
 
   return (
     <div className="report verify">
       <section className="panel report-hero" aria-labelledby="verify-title">
         <div>
-          <h3 id="verify-title" className="panel-title">Verify the receipts</h3>
+          <h3 id="verify-title" className="panel-title">Verify the report</h3>
           <p className="report-lede">
-            Each receipted lane is signed by its reviewer with a key that only they hold. This page checks every
-            signature in your browser against the public key carried in the report. It is a quick look: the offline
-            verifier is the authoritative check.
+            This checks the report in your browser exactly as the offline verifier does: the body hash, the evidence
+            chain, every receipt against its items and evidence, signatures, the key log, the change history and the
+            timestamps, with the same verdicts. The same check is public at attackledger.com/verify, so a client can
+            run it without this app.
           </p>
-          {checks && (
-            <p className={`status ${failed ? "bad" : "ok"}`} role="status">
-              {checks.length === 0
-                ? "No lane is receipted yet, so there is nothing to verify."
-                : <>
-                    {passed} of {signed.length} {signed.length === 1 ? "signature verifies" : "signatures verify"}
-                    {failed > 0 && <>, {failed} {failed === 1 ? "fails" : "fail"}</>}
-                    {checks.length > signed.length && <>; {checks.length - signed.length} of {checks.length} receipts carry a name only</>}.
-                    {voids > 0 && <> {voids} {voids === 1 ? "receipt is" : "receipts are"} void and not counted.</>}
-                  </>}
-            </p>
-          )}
-          {edOk === false && (
-            <p className="notice-inline">
-              This browser cannot check Ed25519 signatures: its WebCrypto has no Ed25519. ECDSA P-256 signatures are
-              still checked here; run the offline verifier for the rest.
+          {outcome && (
+            <p className={`status ${outcome.status === "verified" ? "ok" : "bad"}`} role="status">
+              {outcome.status === "verified" ? "Verified: no check failed."
+                : outcome.status === "failed" ? `Verification failed: ${failed.map((c) => c.name).join(", ")}.`
+                : `The report could not be checked: ${outcome.message}`}
             </p>
           )}
           {error && <p className="field-error" role="alert">{error}</p>}
-          {!report && !error && <p className="muted">Loading the report…</p>}
+          {!outcome && !error && <p className="muted">Checking the report…</p>}
         </div>
         <div className="report-actions">
           <a className="btn" href={json} download="report.json">Download report JSON</a>
@@ -103,86 +121,110 @@ export function Verify({ engId }: { engId: number }) {
         </div>
       </section>
 
-      {checks && checks.length > 0 && (
+      {outcome && outcome.results.length > 0 && (
+        <section className="panel" aria-labelledby="checks-title">
+          <h3 id="checks-title" className="panel-title">Checks</h3>
+          <ul className="verify-list">
+            {outcome.results.map((c) => {
+              const notes = outcome.notes.filter((n) => n.check === c.name);
+              return (
+                <li key={c.name} className={`verify-item ${BADGE[c.verdict].cls}`}>
+                  <div className="verify-head">
+                    <strong>{c.name}</strong>
+                    <span className={`verify-outcome ${BADGE[c.verdict].cls}`} aria-label={BADGE[c.verdict].label}>{c.verdict}</span>
+                  </div>
+                  {c.skip && <p className="hint">Skipped: {c.skip}. There was nothing for this check to check.</p>}
+                  {c.problems.length > 0 && <ul className="verify-problems bad">{c.problems.map((p) => <li key={p}>{pageWording(p)}</li>)}</ul>}
+                  {notes.length > 0 && <ul className="verify-problems">{notes.map((n) => <li key={n.text}>{n.text}</li>)}</ul>}
+                </li>
+              );
+            })}
+          </ul>
+          {self !== null && (
+            <p className="hint">
+              {self
+                ? "Self-test: a copy of this report with one changed signature byte fails the signature check here, as it should."
+                : "Self-test failed: a tampered copy did not fail. Do not rely on this page; use the offline verifier."}
+            </p>
+          )}
+          {edNative === false && (
+            <p className="hint">This browser has no Ed25519 in WebCrypto, so Ed25519 signatures are checked with the verifier's own code.</p>
+          )}
+          <details className="verify-cli">
+            <summary>The result as verify_report.py prints it</summary>
+            <pre className="cmd" tabIndex={0} aria-label="Verifier output">{cliText(outcome)}</pre>
+          </details>
+        </section>
+      )}
+
+      {lanes.length > 0 && outcome && (
         <section className="panel" aria-labelledby="receipts-title">
           <h3 id="receipts-title" className="panel-title">Receipts</h3>
           <ul className="verify-list">
-            {checks.map((c) => <ReceiptRow key={c.lane.lane_id} c={c} />)}
+            {lanes.map((l) => <ReceiptRow key={l.lane_id} lane={l} outcome={outcome} />)}
           </ul>
-          {selfTest !== null && (
-            <p className="hint">
-              {selfTest
-                ? "Self-test: a copy of a receipt with one changed signature byte, and one with another manifest, both fail here, as they should."
-                : "Self-test failed: a tampered copy of a receipt did not fail. Do not rely on this page; use the offline verifier."}
-            </p>
-          )}
         </section>
       )}
 
       <section className="panel" aria-labelledby="offline-title">
-        <h3 id="offline-title" className="panel-title">The authoritative check, offline</h3>
+        <h3 id="offline-title" className="panel-title">The same check, offline</h3>
         <p className="muted">
           <code>verify_report.py</code> ({DEMO ? "download it above" : <>in the AttackLedger repository, <code>tools/verify_report.py</code>, with the
-          DigiCert root in <code>tools/tsa-roots/</code></>}) needs only Python and no AttackLedger install. It rebuilds every receipt from
-          its items and evidence, walks the evidence chain, recomputes the report body hash, checks each signature and
-          checks each RFC 3161 timestamp token, including the timestamp authority's certificate chain up to the root
-          you trust. {DEMO ? <>Save the report JSON as <code>report.json</code> next to the script and the root, and run:</>
-                           : <>Save the report JSON as <code>report.json</code> in the repository folder and run:</>}
+          DigiCert root in <code>tools/tsa-roots/</code></>}) needs only Python and no AttackLedger install, and makes the
+          checks above. {DEMO ? <>Save the report JSON as <code>report.json</code> next to the script and the root, and run:</>
+                              : <>Save the report JSON as <code>report.json</code> in the repository folder and run:</>}
         </p>
         <pre className="cmd" tabIndex={0} aria-label="Command">{COMMAND}</pre>
         <p className="muted">
-          Timestamp tokens, the key log and the change history are not checked in the browser. A signature proves the
-          key holder signed; to tie a key to a person, compare its fingerprint with the one the signer gives you.
+          A signature proves the key holder signed; to tie a key to a person, compare its fingerprint with the one the
+          signer gives you.
         </p>
       </section>
     </div>
   );
 }
 
-function ReceiptRow({ c }: { c: ReceiptCheck }) {
-  const rc = c.lane.receipt!;
+function ReceiptRow({ lane, outcome }: { lane: Lane; outcome: Outcome }) {
+  const rc = lane.receipt!;
   const sig = rc.signature;
-  const o = OUTCOME[c.outcome];
-  const fp = c.fingerprint ?? sig?.key_fingerprint ?? null;
+  const label = `${lane.host} / ${lane.name}: `;
+  const mine = outcome.results.flatMap((c) => c.problems).filter((p) => p.startsWith(label)).map((p) => p.slice(label.length));
+  const word = mine.length ? { cls: "bad", mark: "✕", text: "Fails a check" }
+    : sig ? { cls: "ok", mark: "✓", text: "Signature verifies" } : { cls: "plain", mark: "—", text: "Name only, not signed" };
+  const signer = signerOf(lane);
   return (
-    <li className={`verify-item ${o.cls}`}>
+    <li className={`verify-item ${word.cls}`}>
       <div className="verify-head">
         <span className="verify-lane">
-          <strong>{c.lane.host}</strong>
-          <span className="muted"> · {c.lane.name}</span>
+          <strong>{lane.host}</strong>
+          <span className="muted"> · {lane.name}</span>
         </span>
-        <span className={`verify-outcome ${o.cls}`}>
-          <span aria-hidden="true">{o.mark}</span> {o.word}
+        <span className={`verify-outcome ${word.cls}`}>
+          <span aria-hidden="true">{word.mark}</span> {word.text}
         </span>
       </div>
       <dl className="facts verify-facts">
         <div>
           <dt>Signer</dt>
           <dd>
-            {c.signer ?? rc.closed_by ?? "Unknown"}
-            {(c.signerEmail ?? rc.closed_by_email) && <> ({c.signerEmail ?? rc.closed_by_email})</>}
+            {signer.name ?? "Unknown"}{signer.email && <> ({signer.email})</>}
             {!sig && " (a name, not a cryptographic signature)"}
           </dd>
         </div>
         {sig && <div><dt>Algorithm</dt><dd>{sig.algorithm}</dd></div>}
-        {fp && <div><dt>Key fingerprint</dt><dd><code>{fp}</code></dd></div>}
+        {sig && <div><dt>Key fingerprint</dt><dd><code>{sig.key_fingerprint}</code></dd></div>}
         <div><dt>Manifest</dt><dd><code>{rc.manifest_sha256}</code></dd></div>
         <div><dt>Issued</dt><dd>{when(rc.issued_at)}</dd></div>
         <div>
           <dt>Timestamp</dt>
           <dd>
             {rc.timestamp
-              ? <>Present: {when(rc.timestamp.time)}{tsaHost(rc.timestamp.tsa) && <> by {tsaHost(rc.timestamp.tsa)}</>}.
-                  <span className="hint"> The token is checked by verify_report.py, not here.</span></>
+              ? <>{when(rc.timestamp.time)}{tsaHost(rc.timestamp.tsa) && <> by {tsaHost(rc.timestamp.tsa)}</>}</>
               : <span className="muted">None</span>}
           </dd>
         </div>
       </dl>
-      {c.problems.length > 0 && (
-        <ul className={c.outcome === "fail" ? "verify-problems bad" : "verify-problems"}>
-          {c.problems.map((p) => <li key={p}>{p}</li>)}
-        </ul>
-      )}
+      {mine.length > 0 && <ul className="verify-problems bad">{mine.map((p) => <li key={p}>{pageWording(p)}</li>)}</ul>}
     </li>
   );
 }

@@ -835,6 +835,8 @@ a.btn.ghost { color: var(--text); }
 .verify-facts div { grid-template-columns: 9rem 1fr; padding: 0.3rem 0; }
 .verify-problems { margin: 0 0 0.75rem; padding-left: 1.2rem; font-size: var(--step--1); }
 .verify-problems.bad { color: var(--red); }
+.verify-cli { margin-top: 0.75rem; }
+.verify-cli summary { cursor: pointer; color: var(--ink); font-size: var(--step--1); }
 .readonly-note { margin: 0 0 1rem; font-size: var(--step--1); color: var(--text-soft); }
 .cell.plain { cursor: default; color: var(--text-faint); font-size: var(--step--1); }
 
