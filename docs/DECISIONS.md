@@ -368,6 +368,32 @@ options considered and who decided.
   This is still not a cryptographic signature: that is step 2 (D-027).
 - **Proposed and built by:** Claude, at Murat's request ("complete what is missing").
 
+### D-033 · Signed receipts (2026-10-09, step 2a of the target architecture)
+- **Decision:** a reviewer closes a lane by signing the receipt with a key held only in
+  their browser. WebCrypto creates it as non-extractable and keeps it in IndexedDB:
+  Ed25519 where the browser supports it, otherwise ECDSA P-256 with SHA-256. The server
+  stores only the public key, registered to the person (`signing_keys`, migration `0011`).
+- **What is signed:** canonical JSON (`attackledger-receipt-v2`) issued by the server
+  for one lane and one key: engagement, lane, manifest hash, chain head, signer, key
+  fingerprint and issue time. The server accepts it only in canonical form, only if it
+  still matches the lane's current manifest and chain head, and only within 10 minutes
+  of issue; then it checks the signature.
+- **Report format 2:** each signed receipt carries the payload, the signature and the
+  public key. `verify_report.py` checks them offline with its own Ed25519 (RFC 8032)
+  and P-256 code (standard library only), and checks that the payload names the same
+  manifest, lane and key as the receipt and a chain head the report contains. Format 1
+  reports still verify.
+- **Engagement switch:** *require signatures* refuses unsigned closes. Without it, a close
+  with only a name is still allowed and labelled as not a cryptographic signature.
+- **Lost or replaced keys:** a key can be revoked and a new one registered. Old
+  signatures stay valid, because the report carries the key that made them.
+- **Not yet:** timestamps (step 2b). Until then the signed issue time is the server's
+  clock, not an independent one.
+- **Verified:** tests for the RFC 8032 vector, cross-checks against `cryptography`,
+  refusals and tampering (manifest, payload, key, age); a browser close on the local lab
+  signed with Ed25519, the verifier passed it and failed it after one name was changed.
+- **Proposed and built by:** Claude, at Murat's request (D-027).
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

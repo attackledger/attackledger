@@ -25,6 +25,7 @@ export interface LaneInfo {
 export interface Coverage {
   engagement: string;
   separation_of_duties?: boolean;
+  require_signatures?: boolean;
   pack: { id: string; name: string };
   roles: string[];
   lanes: LaneInfo[];
@@ -100,7 +101,8 @@ export interface LaneDetail {
   unresolved: string[];
   items: LaneItem[];
   evidence: EvidenceEntry[];
-  receipt: { sha256: string; closed_by: string | null; created_at: string } | null;
+  receipt: { sha256: string; closed_by: string | null; created_at: string; signed?: boolean;
+             algorithm?: string | null; key_fingerprint?: string | null } | null;
 }
 
 export interface Scope {
@@ -328,8 +330,17 @@ export const api = {
   members: (engId: number) => call<Member[]>(`/engagements/${engId}/members`),
   setMembers: (engId: number, members: { user_id: number; roles: string[] }[]) =>
     call<Member[]>(`/engagements/${engId}/members`, { method: "PUT", body: JSON.stringify({ members }) }),
-  updateEngagement: (engId: number, body: { separation_of_duties?: boolean }) =>
-    call<{ id: number; separation_of_duties: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  keys: () => call<{ id: number; algorithm: string; fingerprint: string; created_at: string; revoked: boolean }[]>("/auth/keys"),
+  addKey: (algorithm: string, public_key: string) =>
+    call<{ id: number; fingerprint: string }>("/auth/keys", { method: "POST", body: JSON.stringify({ algorithm, public_key }) }),
+  receiptPayload: (laneId: number, key: string) =>
+    call<{ payload: string }>(`/lanes/${laneId}/receipt-payload?key=${encodeURIComponent(key)}`),
+  closeLaneSigned: (laneId: number, payload: string, signature: string, key_fingerprint: string) =>
+    call<LaneDetail>(`/lanes/${laneId}/close`, {
+      method: "POST", body: JSON.stringify({ reviewed: true, payload, signature, key_fingerprint }),
+    }),
+  updateEngagement: (engId: number, body: { separation_of_duties?: boolean; require_signatures?: boolean }) =>
+    call<{ id: number; separation_of_duties: boolean; require_signatures: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
   createEngagement: (name: string, pack_id: string) =>

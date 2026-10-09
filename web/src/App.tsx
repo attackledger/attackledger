@@ -4,6 +4,7 @@ import { People, Team } from "./People";
 import { Executor } from "./Agent";
 import { ItemWork } from "./LaneWork";
 import { DEMO, demoUrl } from "./demo";
+import { ensureKey, localKey, sign, type LocalKey } from "./signing";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
@@ -247,7 +248,8 @@ function Workspace() {
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
               {tab === "report" && <Report engId={current} />}
               {tab === "team" && owner && (
-                <Team engId={current} separation={!!coverage.separation_of_duties} onChanged={loadCoverage} />
+                <Team engId={current} separation={!!coverage.separation_of_duties}
+                      signatures={!!coverage.require_signatures} onChanged={loadCoverage} />
               )}
             </div>
           </>
@@ -603,10 +605,24 @@ function Folio({ laneId, me, onClose, onChanged }: {
   });
   const [reviewed, setReviewed] = useState(false);
 
+  const [key, setKey] = useState<LocalKey | null>(null);
+  useEffect(() => { if (me?.kind === "person" && me.user_id) localKey(me.user_id).then(setKey); }, [me]);
+
   async function close() {
     try {
+      if (me?.kind === "person" && me.user_id) {
+        // Sign in this browser: the private key never leaves it (D-027).
+        const k = await ensureKey(me.user_id);
+        setKey(k);
+        const { payload } = await api.receiptPayload(laneId, k.fingerprint);
+        setLane(await api.closeLaneSigned(laneId, payload, await sign(k, payload), k.fingerprint));
+        setReviewed(false);
+        setError(null);
+        onChanged();
+        return;
+      }
       try { localStorage.setItem("attackledger-signer", signer.trim()); } catch { /* ignore */ }
-      setLane(await api.closeLane(laneId, me?.kind === "person" ? null : signer.trim(), reviewed));
+      setLane(await api.closeLane(laneId, signer.trim(), reviewed));
       setReviewed(false);
       setError(null);
       onChanged();
@@ -639,7 +655,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
           <div className="folio-body">
             <StatusLine lane={lane} />
             <p className="worked-by">
-              Worked by <strong>{lane.executor === "agent" ? "a Claude agent" : "you (manual)"}</strong>
+              Worked <strong>{lane.executor === "agent" ? "by a Claude agent" : "manually"}</strong>
               {ctx && (
                 <span className="muted">
                   {" "}· recon for {ctx.host}: {ctx.recon.endpoints.length} endpoints, {ctx.recon.leads.length} leads,{" "}
@@ -735,11 +751,18 @@ function Folio({ laneId, me, onClose, onChanged }: {
               <p className="muted">
                 Receipt signed by {lane.receipt!.closed_by ?? "an unknown reviewer"},{" "}
                 {new Date(lane.receipt!.created_at).toLocaleString()}
+                {lane.receipt!.signed
+                  ? <>, with key <code title={lane.receipt!.key_fingerprint ?? ""}>{(lane.receipt!.key_fingerprint ?? "").slice(0, 16)}</code> ({lane.receipt!.algorithm})</>
+                  : " (a name, not a cryptographic signature)"}
               </p>
             ) : (
               <div className="sign">
                 {me?.kind === "person" ? (
-                  <p className="muted">You sign as <strong>{me.name}</strong>.</p>
+                  <p className="muted">
+                    You sign as <strong>{me.name}</strong>
+                    {key ? <> with your key <code title={key.fingerprint}>{key.fingerprint.slice(0, 16)}</code> ({key.algorithm})</>
+                         : ". A signing key is created in this browser the first time you sign; it never leaves it"}.
+                  </p>
                 ) : (
                   <label className="sign-name">
                     Your name, as it appears on the receipt

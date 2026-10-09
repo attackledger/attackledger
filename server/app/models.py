@@ -48,6 +48,8 @@ class Engagement(Base):
     crawl_depth: Mapped[int] = mapped_column(default=3, server_default="3")
     # When on, the person who attached a lane's evidence cannot sign its receipt.
     separation_of_duties: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    # When on, a receipt needs a valid signature from the reviewer's own key (D-027).
+    require_signatures: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     assets: Mapped[list["Asset"]] = relationship(back_populates="engagement")
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
@@ -124,6 +126,13 @@ class Receipt(Base):
     # The person who reviewed the lane and closed it. Executors never issue receipts (D-018).
     closed_by: Mapped[str | None] = mapped_column(String(200))
     closed_by_user: Mapped[int | None] = mapped_column(ForeignKey("users.id"))   # set when people sign in
+    # Signed receipts: the exact signed text, the signature and the key, copied so that a
+    # report stays verifiable even if the key is later revoked.
+    payload: Mapped[str | None] = mapped_column(Text)
+    signature: Mapped[str | None] = mapped_column(String(200))
+    algorithm: Mapped[str | None] = mapped_column(String(20))
+    public_key: Mapped[str | None] = mapped_column(Text)
+    key_fingerprint: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     lane: Mapped[Lane] = relationship(back_populates="receipts")
 
@@ -247,3 +256,16 @@ class Membership(Base):
     engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     roles: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class SigningKey(Base):
+    """A reviewer's public key. The private key stays in their browser and never reaches
+    the server. Revoked keys sign nothing new; earlier signatures stay valid."""
+    __tablename__ = "signing_keys"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    algorithm: Mapped[str] = mapped_column(String(20))
+    public_key: Mapped[str] = mapped_column(Text)             # SPKI, base64
+    fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    revoked_at: Mapped[datetime | None]

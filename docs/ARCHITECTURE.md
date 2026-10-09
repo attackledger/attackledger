@@ -111,8 +111,12 @@ enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
   `chain_hash = sha256(prev_hash + record)`.
 - A receipt is the hash of a lane's manifest (items and evidence), **signed by the
   person who reviewed and closed the lane** (D-018). Any later change makes it stale
-  (shown as VOID). Only people close lanes; executors cannot. Until the API has user
-  accounts, the signature is an attestation, not an authenticated identity.
+  (shown as VOID). Only people close lanes; executors cannot.
+- With people signed in, the reviewer's browser signs the receipt with a key that never
+  leaves it (Ed25519, or ECDSA P-256; D-033). The server checks the signature against the
+  lane's current manifest and chain head and stores it with the public key. Without
+  accounts, or when the engagement allows it, a close with only a name is accepted and
+  marked as not a cryptographic signature.
 - The report embeds everything needed to rebuild every receipt and walk the chain
   offline, using only the Python standard library.
 

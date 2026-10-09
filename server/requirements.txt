@@ -8,3 +8,4 @@ pytest==8.3.4
 PyYAML==6.0.2
 alembic==1.14.0
 anthropic==1.12.1
+cryptography==43.0.3

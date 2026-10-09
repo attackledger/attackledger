@@ -15,7 +15,15 @@ from sqlalchemy import select
 from . import gates, ledger, packs
 from .models import Engagement, Evidence
 
-REPORT_FORMAT = "attackledger-report/1"
+REPORT_FORMAT = "attackledger-report/2"   # 2: receipts may carry a signature
+
+
+def _receipt(rc) -> dict:
+    out = {"manifest_sha256": rc.manifest_sha256, "closed_by": rc.closed_by, "issued_at": _iso(rc.created_at)}
+    if rc.signature:
+        out["signature"] = {"algorithm": rc.algorithm, "public_key": rc.public_key,
+                            "key_fingerprint": rc.key_fingerprint, "payload": rc.payload, "value": rc.signature}
+    return out
 
 
 def _iso(dt):
@@ -41,9 +49,7 @@ def build(session, eng: Engagement, controls: dict) -> dict:
                            "state": i.state.value, "na_reason": i.na_reason, "controls": i.controls}
                           for i in lane.items],
                 "evidence_ids": [e.id for e in lane.evidence],
-                "receipt": ({"manifest_sha256": lane.receipts[-1].manifest_sha256,
-                             "closed_by": lane.receipts[-1].closed_by,
-                             "issued_at": _iso(lane.receipts[-1].created_at)} if lane.receipts else None),
+                "receipt": (_receipt(lane.receipts[-1]) if lane.receipts else None),
             })
 
     rows = session.scalars(

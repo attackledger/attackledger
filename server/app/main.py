@@ -1,6 +1,7 @@
 import base64
 import binascii
 import hmac
+import json
 import os
 from contextlib import asynccontextmanager
 
@@ -13,12 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import (agenttools, auth, authz, blobs, executors, gates, jobgates, ledger, migrate, modules, packs, report,
+from . import (agenttools, auth, authz, blobs, signing, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import targets as targeting
 from .db import get_session
 from .models import (ROLES, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
-                     Lane, Lead, Membership, Observation, Receipt, User)
+                     Lane, Lead, Membership, Observation, Receipt, SigningKey, User)
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 
@@ -118,6 +119,9 @@ def _lane_view(lane: Lane) -> dict:
             {"sha256": lane.receipts[-1].manifest_sha256,
              "closed_by": lane.receipts[-1].closed_by,
              "closed_by_user": lane.receipts[-1].closed_by_user,
+             "signed": bool(lane.receipts[-1].signature),
+             "algorithm": lane.receipts[-1].algorithm,
+             "key_fingerprint": lane.receipts[-1].key_fingerprint,
              "created_at": lane.receipts[-1].created_at.isoformat()}
             if lane.receipts else None
         ),
@@ -180,6 +184,60 @@ def logout(request: Request, session: Session = Depends(get_session)):
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.COOKIE, path="/")
     return resp
+
+
+class KeyIn(BaseModel):
+    algorithm: str
+    public_key: str = Field(min_length=1, max_length=2000)     # SPKI, base64
+
+
+def _key_view(k: SigningKey) -> dict:
+    return {"id": k.id, "algorithm": k.algorithm, "fingerprint": k.fingerprint,
+            "created_at": k.created_at.isoformat(), "revoked": k.revoked_at is not None}
+
+
+def _person(request: Request):
+    who = authz.current(request)
+    if who.kind != "person":
+        raise HTTPException(422, "signing keys belong to people; sign in with your account")
+    return who
+
+
+@app.get("/auth/keys")
+def my_keys(request: Request, session: Session = Depends(get_session)):
+    who = _person(request)
+    return [_key_view(k) for k in session.scalars(select(SigningKey).where(SigningKey.user_id == who.user_id)
+                                                  .order_by(SigningKey.id))]
+
+
+@app.post("/auth/keys", status_code=201)
+def add_key(body: KeyIn, request: Request, session: Session = Depends(get_session)):
+    """Register the public half of a key created in your browser."""
+    who = _person(request)
+    try:
+        signing.load_public_key(body.algorithm, body.public_key)
+        fp = signing.fingerprint(body.public_key)
+    except signing.SigningError as e:
+        raise HTTPException(422, str(e))
+    key = SigningKey(user_id=who.user_id, algorithm=body.algorithm, public_key=body.public_key, fingerprint=fp)
+    session.add(key)
+    try:
+        session.commit()
+    except IntegrityError:
+        raise HTTPException(409, "that key is already registered")
+    return _key_view(key)
+
+
+@app.post("/auth/keys/{key_id}/revoke")
+def revoke_key(key_id: int, request: Request, session: Session = Depends(get_session)):
+    who = _person(request)
+    key = session.get(SigningKey, key_id)
+    if key is None or key.user_id != who.user_id:
+        raise HTTPException(404, "not found")
+    if key.revoked_at is None:
+        key.revoked_at = datetime.now(timezone.utc)
+        session.commit()
+    return _key_view(key)
 
 
 @app.get("/auth/me")
@@ -343,6 +401,91 @@ class CloseIn(BaseModel):
     # The person signing. Taken from the account when people sign in; typed otherwise.
     closed_by: str | None = Field(default=None, max_length=200)
     reviewed: bool                                         # "I reviewed this lane's evidence"
+    # A signed receipt: the payload from /receipt-payload, signed with the reviewer's key.
+    payload: str | None = Field(default=None, max_length=4000)
+    signature: str | None = Field(default=None, max_length=200)
+    key_fingerprint: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
+
+
+def _key_of(session, who, fp: str | None) -> SigningKey:
+    key = session.scalar(select(SigningKey).where(SigningKey.fingerprint == (fp or "")))
+    if key is None or key.user_id != who.user_id:
+        raise HTTPException(422, "that signing key is not registered to you")
+    if key.revoked_at is not None:
+        raise HTTPException(422, "that signing key was revoked; create a new one")
+    return key
+
+
+def _check_signed(session, lane: Lane, who, body: "CloseIn") -> SigningKey:
+    """A signed receipt must sign this lane as it is now, by this person, with their key."""
+    if who.kind != "person":
+        raise HTTPException(422, "only a signed-in person can sign a receipt")
+    key = _key_of(session, who, body.key_fingerprint)
+    try:
+        p = json.loads(body.payload or "")
+    except ValueError:
+        raise HTTPException(422, "the signed payload is not valid JSON")
+    if not isinstance(p, dict) or signing.payload_for(**_payload_fields(p)) != body.payload:
+        raise HTTPException(422, "the signed payload is not in canonical form")
+    eng = lane.asset.engagement
+    checks = [
+        (p["engagement"]["id"] == eng.id and p["lane"]["id"] == lane.id
+         and p["lane"]["host"] == lane.asset.host and p["lane"]["role"] == lane.role, "it names another lane"),
+        (p["manifest_sha256"] == gates.manifest_hash(lane), "the lane changed after the payload was issued"),
+        (p["signer"]["id"] == who.user_id, "it names another signer"),
+        (p["key_fingerprint"] == key.fingerprint, "it names another key"),
+    ]
+    head = session.scalar(select(Evidence).where(Evidence.engagement_id == eng.id,
+                                                  Evidence.seq == p["chain"]["seq"]))
+    checks.append((p["chain"]["seq"] == 0 and p["chain"]["head"] == ledger.GENESIS
+                   or (head is not None and head.chain_hash == p["chain"]["head"]),
+                   "its evidence chain head is not in this ledger"))
+    try:
+        issued = datetime.fromisoformat(p["issued_at"])
+    except (TypeError, ValueError):
+        issued = None
+    age = (datetime.now(timezone.utc) - issued).total_seconds() if issued else None
+    checks.append((age is not None and -60 <= age <= signing.PAYLOAD_MAX_AGE_SECONDS,
+                   "it is too old; ask for a new payload"))
+    for ok, why in checks:
+        if not ok:
+            raise HTTPException(422, f"the signed payload does not match: {why}")
+    try:
+        valid = signing.verify(key.algorithm, key.public_key, body.payload, body.signature or "")
+    except signing.SigningError as e:
+        raise HTTPException(422, f"signature: {e}")
+    if not valid:
+        raise HTTPException(422, "the signature does not verify with your key")
+    return key
+
+
+def _payload_fields(p: dict) -> dict:
+    try:
+        return {"engagement_id": p["engagement"]["id"], "engagement_name": p["engagement"]["name"],
+                "lane_id": p["lane"]["id"], "host": p["lane"]["host"], "role": p["lane"]["role"],
+                "manifest_sha256": p["manifest_sha256"], "chain_seq": p["chain"]["seq"],
+                "chain_head": p["chain"]["head"], "signer_id": p["signer"]["id"],
+                "signer_name": p["signer"]["name"], "key_fingerprint": p["key_fingerprint"],
+                "issued_at": p["issued_at"]}
+    except (KeyError, TypeError):
+        raise HTTPException(422, "the signed payload is missing fields")
+
+
+@app.get("/lanes/{lane_id}/receipt-payload")
+def receipt_payload(lane_id: int, key: str, request: Request, session: Session = Depends(get_session)):
+    """The text to sign for this lane as it is now. Valid for ten minutes."""
+    lane = _get(session, Lane, lane_id)
+    who = authz.current(request)
+    if who.kind != "person":
+        raise HTTPException(422, "only a signed-in person can sign a receipt")
+    k = _key_of(session, who, key)
+    eng = lane.asset.engagement
+    seq, head = ledger.chain_head(session, eng.id)
+    return {"payload": signing.payload_for(
+        engagement_id=eng.id, engagement_name=eng.name, lane_id=lane.id, host=lane.asset.host, role=lane.role,
+        manifest_sha256=gates.manifest_hash(lane), chain_seq=seq, chain_head=head, signer_id=who.user_id,
+        signer_name=who.name, key_fingerprint=k.fingerprint,
+        issued_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))}
 
 
 @app.post("/lanes/{lane_id}/close")
@@ -365,8 +508,16 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     problems = gates.unresolved(lane)
     if problems:
         raise HTTPException(422, {"error": "lane cannot close", "unresolved": problems})
+    key = None
+    if body.signature or body.payload:
+        key = _check_signed(session, lane, who, body)
+    elif lane.asset.engagement.require_signatures:
+        raise HTTPException(422, "this engagement requires signed receipts: sign with your key")
     receipt = Receipt(lane_id=lane.id, manifest_sha256=gates.manifest_hash(lane),
                       closed_by=signer, closed_by_user=who.user_id)
+    if key is not None:
+        receipt.payload, receipt.signature = body.payload, body.signature
+        receipt.algorithm, receipt.public_key, receipt.key_fingerprint = key.algorithm, key.public_key, key.fingerprint
     session.add(receipt)
     session.commit()
     session.refresh(lane)
@@ -411,6 +562,7 @@ def coverage(eng_id: int, session: Session = Depends(get_session)):
     closed = sum(1 for r in in_scope for c in r["roles"].values() if c["status"] == "closed")
     return {"engagement": eng.name, "pack": {"id": pack.id, "name": pack.name},
             "separation_of_duties": eng.separation_of_duties,
+            "require_signatures": eng.require_signatures,
             "roles": keys,
             "lanes": [{"key": l.key, "name": l.name, "needs": list(l.needs)} for l in pack.lanes],
             "closed_cells": closed, "total_cells": total, "assets": rows}
@@ -990,6 +1142,7 @@ def set_members(eng_id: int, body: MembersIn, session: Session = Depends(get_ses
 
 class EngagementPatch(BaseModel):
     separation_of_duties: bool | None = None
+    require_signatures: bool | None = None
 
 
 @app.patch("/engagements/{eng_id}")
@@ -997,8 +1150,11 @@ def update_engagement(eng_id: int, body: EngagementPatch, session: Session = Dep
     eng = _get(session, Engagement, eng_id)
     if body.separation_of_duties is not None:
         eng.separation_of_duties = body.separation_of_duties
+    if body.require_signatures is not None:
+        eng.require_signatures = body.require_signatures
     session.commit()
-    return {"id": eng.id, "separation_of_duties": eng.separation_of_duties}
+    return {"id": eng.id, "separation_of_duties": eng.separation_of_duties,
+            "require_signatures": eng.require_signatures}
 
 
 # ---- scope import ----------------------------------------------------------

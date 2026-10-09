@@ -98,20 +98,24 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
 }
 
 /** Owners only: who works on this engagement, in which roles, and whether duties are separated. */
-export function Team({ engId, separation, onChanged }: { engId: number; separation: boolean; onChanged: () => void }) {
+export function Team({ engId, separation, signatures, onChanged }: {
+  engId: number; separation: boolean; signatures: boolean; onChanged: () => void;
+}) {
   const [people, setPeople] = useState<Person[]>([]);
   const [roles, setRoles] = useState<Record<number, string[]>>({});
   const [sod, setSod] = useState(separation);
+  const [sig, setSig] = useState(signatures);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
   useEffect(() => {
     setSod(separation);
+    setSig(signatures);
     Promise.all([api.people(), api.members(engId)]).then(([ps, ms]) => {
       setPeople(ps.filter((p) => !p.disabled));
       setRoles(Object.fromEntries(ms.map((m: Member) => [m.user_id, m.roles])));
     }).catch((e) => setError(e.message));
-  }, [engId, separation]);
+  }, [engId, separation, signatures]);
 
   function toggle(uid: number, role: string) {
     const cur = roles[uid] ?? [];
@@ -123,7 +127,9 @@ export function Team({ engId, separation, onChanged }: { engId: number; separati
     setSaved(null);
     try {
       await api.setMembers(engId, Object.entries(roles).map(([uid, rs]) => ({ user_id: Number(uid), roles: rs })));
-      if (sod !== separation) await api.updateEngagement(engId, { separation_of_duties: sod });
+      if (sod !== separation || sig !== signatures) {
+        await api.updateEngagement(engId, { separation_of_duties: sod, require_signatures: sig });
+      }
       setSaved("Team saved.");
       onChanged();
     } catch (e) {
@@ -168,6 +174,10 @@ export function Team({ engId, separation, onChanged }: { engId: number; separati
       <label className="check">
         <input type="checkbox" checked={sod} onChange={(e) => setSod(e.target.checked)} />
         Separation of duties: whoever attached a lane's evidence cannot sign its receipt
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={sig} onChange={(e) => setSig(e.target.checked)} />
+        Require signed receipts: each receipt needs a signature from the reviewer's own key, created in their browser
       </label>
       {error && <p className="field-error" role="alert">{error}</p>}
       {saved && <p className="saved" role="status">{saved}</p>}

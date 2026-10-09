@@ -214,6 +214,12 @@ roles per engagement on its Team tab: **viewer** (reads coverage, evidence and r
 Turn on *separation of duties* there to stop anyone signing a lane they attached
 evidence to. Behind HTTPS, set `ATTACKLEDGER_COOKIE_SECURE=1`.
 
+A reviewer's first close creates a signing key in their browser; the private key never
+leaves it. Each receipt is then signed, and the report carries the signature and the
+public key, so `tools/verify_report.py` checks who signed what without trusting the
+server. Turn on *require signatures* on the Team tab to refuse unsigned closes.
+Signing needs HTTPS or localhost.
+
 ## Database migrations
 
 The API applies Alembic migrations at startup. The worker waits until the database

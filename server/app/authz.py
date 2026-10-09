@@ -26,6 +26,9 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/auth/login"): ("public", None),
     ("POST", "/auth/logout"): ("public", None),
     ("GET", "/auth/me"): ("signed_in", None),
+    ("GET", "/auth/keys"): ("signed_in", None),             # the handler limits it to your own keys
+    ("POST", "/auth/keys"): ("signed_in", None),
+    ("POST", "/auth/keys/{key_id}/revoke"): ("signed_in", None),
 
     ("GET", "/engagements"): ("signed_in", None),
     ("GET", "/modules"): ("signed_in", None),
@@ -74,6 +77,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/lanes/{lane_id}/agent-runs"): ("tester", LANE),
 
     ("POST", "/lanes/{lane_id}/close"): ("reviewer", LANE),
+    ("GET", "/lanes/{lane_id}/receipt-payload"): ("reviewer", LANE),
 }
 
 # FastAPI's own documentation routes.

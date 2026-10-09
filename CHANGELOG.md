@@ -34,6 +34,12 @@ local lab.
   who attached a lane's evidence cannot sign its receipt. Evidence, jobs and receipts
   record who made them. The first owner is added from the People page (open or token
   mode) or with `python -m app.people create --owner`. Migration `0010`.
+- **Signed receipts** (D-033). A reviewer's browser creates a non-extractable Ed25519
+  key (ECDSA P-256 where Ed25519 is missing) and signs each receipt; the server stores
+  only the public key and checks every signature against the lane's current manifest.
+  Report format `attackledger-report/2` carries payload, signature and public key;
+  `verify_report.py` checks them offline with the standard library and still reads
+  format 1. An engagement can require signatures. Migration `0011`.
 - **A real Claude agent run in the demo.** With no API key yet, Claude Opus worked the
   Lab recon lane from Claude Code through `tools/agent_bridge.py`, which runs every call
   through the same gated tools inside the worker (D-031). 23 requests (22 reached the lab,
