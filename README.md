@@ -127,7 +127,7 @@ Closed lanes are timestamped by DigiCert's public RFC 3161 service by default. O
 SHA-256 hash leaves the machine, once per closed lane. Set `ATTACKLEDGER_TSA_URL=off`
 in `.env` to send nothing (see [People and roles](#people-and-roles)).
 
-The API is documented at http://localhost:8000/docs (FastAPI) and
+The API is documented at http://localhost:8000/docs (sign in first once people exist) and
 http://localhost:8000/openapi.json.
 
 ## Methodology packs and controls

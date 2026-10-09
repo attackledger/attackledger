@@ -65,7 +65,7 @@ that lane is:
 | **In progress** | Open; shows how many items are still open, or "ready to sign". |
 | **Receipted** | Signed by a reviewer. |
 | **Void** | Changed after its receipt; it must be signed again. |
-| **Needs …** | The lane depends on another lane on the same host (for example, every WSTG lane needs *Information gathering*). |
+| **Needs …** | Only in packs that gate opening (the bug bounty pack): the lane opens after another lane on the same host is receipted. In the WSTG pack every lane opens at once, and the lane panel lists what must be receipted before it can be signed. |
 
 A lane can be opened and worked before the lane it depends on is signed; only **closing**
 it needs that lane receipted first.
@@ -162,9 +162,10 @@ each; export fewer items if a file is bigger.
 2. **Import**. The result says how many entries reached the inbox, how many were refused as
    out of scope, how many were duplicates and how many were unreadable.
 3. **Rows not imported** lists the others by row number. Out-of-scope rows are listed by
-   host only; nothing else about them is stored. If some rows were already in the inbox
-   (for example, the same file imported twice), the result warns you and lists them as
-   **Already in the inbox**; they are not added again.
+   host only, and only in the batch (the change history records just a count). Rows
+   already in the inbox count as duplicates and are not added again.
+4. If you upload a file you already imported, AttackLedger stops and says "This file was
+   already imported on <date> by <who>". Choose **Import it again** only if you mean to.
 
 The uploaded file itself is not kept, only its SHA-256 (under **Imported files**).
 
@@ -177,11 +178,13 @@ The uploaded file itself is not kept, only its SHA-256 (under **Imported files**
 2. Click an entry to open it. **View request** and **View response** show the stored bytes,
    after redaction.
 3. Under **Map to checklist items**, tick the suggested items that the entry is evidence for
-   (each suggestion says why it was made), or pick others in **Another item**. A lane must
-   be open on the entry's host first; if none is, open one on the **Ledger** tab.
+   (each suggestion says why it was made), or pick others in **Another item**. Items on a
+   lane that is not open yet say "(opens the lane)": choosing one opens it.
 4. Optional: a **Note**, which goes into the evidence summary.
-5. To mark the chosen items done in the same step, tick the option to mark them done.
-   Otherwise they stay open with evidence attached, and you mark them done in the lane.
+5. To mark the chosen items done in the same step, tick **Mark these items done**. It is
+   off by default, because one request is often only part of a test. Otherwise the items
+   stay open with evidence attached; the lane panel counts them as waiting to be marked
+   done.
 6. To map several entries of the same host to the same items at once, select them in the
    inbox first, then tick **Also map the other selected entries**.
 7. **Add to the ledger**. Each entry and item pair becomes one evidence entry, with the

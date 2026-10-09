@@ -671,6 +671,16 @@ After changing `.env`, apply it with:
 docker compose up -d --wait
 ```
 
+**How your clients verify a report.** The independent copies are on attackledger.com: the
+page https://attackledger.com/verify checks a report in the browser without uploading it,
+and https://attackledger.com/verify_report.py is the offline script. Signed-in people can
+also download the script and the TSA roots from this server (Report tab, or
+`/api/verifier/attackledger-verifier.zip`). Ask clients to compare its SHA-256 with the
+public copy, because a copy from the tester's own server is the weaker source.
+
+The API documentation (`/api/docs`, `/api/openapi.json`) needs sign-in whenever the API
+does.
+
 ## 13. Where the secrets live
 
 | Secret | Where | Needed for | In the backup |

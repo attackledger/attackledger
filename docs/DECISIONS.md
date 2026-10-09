@@ -624,6 +624,20 @@ options considered and who decided.
   independent implementations would drift.
 - **Made by:** Claude, for MVP item 5, under Murat's overnight permission. To be reviewed.
 
+### D-047 · Lane dependencies gate the receipt, not the opening (2026-10-10, made autonomously)
+- **Decision:**
+  - A lane that depends on another lane (every WSTG lane on *Information gathering*) can
+    be opened, worked and mapped to at once.
+  - The dependency must be receipted before the dependent lane is signed.
+  - A pack may keep opening gated with `needs_gate: open`. The bug bounty pack does,
+    because its later lanes start from the application model.
+- **Why:** pentest teams test categories in parallel; the design-partner review could not
+  map an `/admin/` request to Authentication because that lane was locked.
+- **Also:** the verifier downloads from the API are for signed-in people. The independent
+  copy for clients is on attackledger.com.
+- **Made by:** Claude, from the MVP review, under Murat's overnight permission. To be
+  reviewed.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

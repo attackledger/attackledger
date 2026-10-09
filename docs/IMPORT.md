@@ -62,13 +62,19 @@ Notes:
 
 - **Scope.** An engagement without scope rules imports nothing. A row whose host is not in
   scope (or is excluded) is refused; the batch lists it by row number and host, and nothing
-  else about it is stored.
+  else about it is stored. The audit log entry `import.batch` records counts only,
+  including how many distinct hosts were refused, and never their names or the file name.
+  Names stay in the batch row, which deleting the engagement's content clears. Entries
+  written before 0.7 still name the refused hosts and the file: the audit log is
+  hash-chained and cannot be edited, so they stay in it and in the JSON of reports that
+  carry it; History and the HTML report show only a count.
 - **Redaction** (`redact.http_message`, D-038 conventions). Every header line of the raw
   request and response goes through the header rules whatever its name (Cookie,
   Set-Cookie, Authorization, Proxy-Authorization, X-Api-Key and other secret names, and
   tokens or secret parameters inside other headers); the request line and body go through
   the text rules (secret query and form parameters, JSON keys, JWTs, bearer tokens, key
   formats; email addresses and card numbers). Binary or compressed bodies are kept and noted.
+  A Content-Length that matched the body is rewritten to the stored body's length.
   The URL and label are redacted too. The engagement's `redact_evidence` setting applies.
   The uploaded file itself is never stored, only its SHA-256.
 - **Dedupe.** By content: method, redacted URL, status and the hashes of the redacted
@@ -82,6 +88,11 @@ Notes:
 ## Inbox and mapping
 
 - Tables `import_batches` and `inbox_entries` (migration `0018`).
+- Every lane of the pack on the entry's host is offered. Choosing an item on a lane that
+  is not open opens it, and adds the host if it is in the scope rules but not yet in the
+  ledger. Mapping does not mark items done unless `mark_done` is set ("Mark these items
+  done"); lanes count items that have evidence and wait to be marked done
+  (`awaiting_done`).
 - A person maps entries to one or more items on a lane of the entry's own host. Each pair
   appends one evidence entry: kind `response` (or `request` without a response), the
   record's hash, the URL, and a summary "Imported from <format>, row <n>: <method> <url> ->
@@ -94,14 +105,19 @@ Notes:
 - Dismissing sets an entry aside with who, when and why; it is never deleted and can be
   restored. Each import, dismissal and restore is an audit log entry (`import.batch`,
   `import.dismissed`, `import.restored`).
-- Roles: testers and owners import, map, dismiss and restore; viewers read the inbox,
-  the files and the stored bytes.
+- Roles: testers and owners import, map, dismiss and restore; reviewers and viewers read
+  the inbox, including dismissed entries and their reasons, the files and the stored
+  bytes. The lane view carries the host's inbox counts (`inbox: {new, mapped, dismissed}`)
+  for the reviewer.
+- A file with the same SHA-256 as an earlier import is refused with 409
+  (`already_imported`, naming the earlier batch). Send it again with `reimport=true` to
+  import it anyway; its rows already in the inbox count as duplicates.
 
-API: `GET /imports/formats`; `POST /engagements/{id}/imports?format=&filename=` (the file is
+API: `GET /imports/formats`; `POST /engagements/{id}/imports?format=&filename=&reimport=` (the file is
 the request body); `GET /engagements/{id}/imports`; `GET /engagements/{id}/inbox` (filters
 `state`, `host`, `method`, `status` as `404`, `4xx` or `none`, `batch`, `q`, paging);
 `GET /engagements/{id}/inbox/{entry}`, `.../raw/{request|response|record}`;
-`POST /engagements/{id}/inbox/map`, `/dismiss`, `/restore`.
+`POST /engagements/{id}/inbox/map` (with `mark_done`), `/dismiss`, `/restore`.
 
 ## Caido: what to check against a real export
 

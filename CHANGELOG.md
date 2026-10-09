@@ -194,7 +194,29 @@ local lab.
   the API. Positive controls: removing the host check, the pacing, the reserved
   headers or the identification precedence each makes a test fail.
 
+### Changed (design-partner review, 2026-10-10)
+- **Lanes are worked in parallel** (D-047): a lane opens at once, and it can be signed only
+  after the lanes it needs are receipted (pack `needs_gate`; the bug bounty pack keeps
+  gating the opening).
+- **Mapping** can open a lane and, optionally, mark the items done ("Mark these items
+  done", off by default). Lanes count items with evidence that wait to be marked done.
+- **Import privacy**: the import audit entry holds counts only, never refused host names
+  or the file name.
+- **Re-importing** the same file needs an explicit choice.
+- **API docs** (`/docs`, `/openapi.json`) need sign-in whenever the API does; `/redoc` is
+  removed.
+- **Add a host** says why a host was stored out of scope.
+- **Verifier downloads**: the verifier script and TSA roots download from the API. The
+  report's "How to verify" points to attackledger.com first. Reviewers see the host's
+  inbox counts when signing.
+- **Docs**: a tester guide (`docs/TESTER_GUIDE.md`). INSTALL now covers per-OS trust
+  steps for Caddy's internal CA, a plain-HTTP trial over an SSH tunnel, keeping the CA
+  through a restore, and practising against the lab with `--profile lab` (new
+  `lab-proxy`, for capturing a browser HAR).
+
 ### Fixed
+- **Content-Length after redaction**: a stored message whose body was redacted kept its
+  original Content-Length.
 - **Evidence imports over 1 MB were refused** by the web container's nginx (default body
   limit). It is now 60 MB in nginx and Caddy.
 - **nuclei could send writes and burst over the limit** (measured by the Juice Shop
