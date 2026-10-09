@@ -10,6 +10,14 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Evidence import** (D-029): HAR 1.2, Burp Suite XML and Caido JSON files become inbox
+  entries on a new Import tab.
+  - Out-of-scope rows are refused and listed by row and host.
+  - Credentials are redacted and raw bytes encrypted before storage, and entries are
+    deduplicated by content.
+  - A person maps each entry to checklist items, with explained suggestions. Each mapping
+    is evidence with source `import:<tool>`.
+  - Imports and dismissals are in the change history. Migration `0018`.
 - **Encryption at rest** (D-043): evidence blobs and summaries are encrypted with a key
   per engagement, wrapped by a deployment master key (`ATTACKLEDGER_MASTER_KEY_FILE` or
   `ATTACKLEDGER_MASTER_KEY`; `ATTACKLEDGER_DEV_KEY=1` for trials). The API and worker

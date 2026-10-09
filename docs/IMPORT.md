@@ -79,7 +79,7 @@ Notes:
 
 ## Inbox and mapping
 
-- Tables `import_batches` and `inbox_entries` (migration `0019`).
+- Tables `import_batches` and `inbox_entries` (migration `0018`).
 - A person maps entries to one or more items on a lane of the entry's own host. Each pair
   appends one evidence entry: kind `response` (or `request` without a response), the
   record's hash, the URL, and a summary "Imported from <format>, row <n>: <method> <url> ->

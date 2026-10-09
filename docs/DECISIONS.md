@@ -338,6 +338,15 @@ options considered and who decided.
 - **Why:** pentest teams already work in Caido, Burp and scanners; proof has to come from
   where the work happens.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
+- **Built 2026-10-09 as file import only, for the MVP** (docs/IMPORT.md, migration 0018).
+  It covers HAR 1.2, Burp Suite XML and Caido JSON exports; Caido's API pull stays
+  deferred (D-035).
+  - **Adapters** are pure parsers with size limits, and XML goes through defusedxml.
+  - **Mapped evidence** commits to an import record that names the hashes of the
+    redacted request and response.
+  - **Deleting an engagement's content** also wipes its inbox.
+  - **Caido's layout** follows Caido's documented sample and should be checked against a
+    real export.
 
 ### D-030 · Deployment model: open (2026-10-09)
 - **Status:** not decided. Options: self-hosted only; self-hosted testing with a hosted
