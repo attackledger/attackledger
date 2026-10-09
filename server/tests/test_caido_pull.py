@@ -583,3 +583,19 @@ def test_it_runs_with_the_standard_library_only(caido, tmp_path):
     assert "wrote 4 request(s)" in p.stderr and TOKEN not in p.stdout + p.stderr
     assert len(json.loads((tmp_path / "h.json").read_text())) == 4
     assert proxy.seen == [] and len(fake.seen) == 2        # the version, then one page
+
+
+def test_upload_finds_the_api_under_the_site_address(monkeypatch):
+    """People give the site's address; behind the web app the API answers at /api."""
+    seen = []
+
+    def fake_send(url, body, headers, method="POST"):
+        seen.append(url)
+        if url == "https://al.example.com/api/health":
+            return 200, {}, b'{"ok": true}'
+        return 200, {}, b"<!doctype html><title>AttackLedger</title>"      # the web app's index page
+
+    monkeypatch.setattr(tool, "_send", fake_send)
+    assert tool.api_root("https://al.example.com") == "https://al.example.com/api"
+    assert tool.api_root("https://al.example.com/api") == "https://al.example.com/api"
+    assert seen == ["https://al.example.com/health", "https://al.example.com/api/health"]

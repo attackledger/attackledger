@@ -6,6 +6,8 @@
     python3 tools/caido_pull.py --filter 'req.host.eq:"shop.example.com"' --since 2026-10-01 \\
         --redact-locally --out shop.json --upload https://attackledger.example.com --engagement 12
 
+(--upload takes your AttackLedger address; the tool finds the API under it, at /api.)
+
 Runs on the tester's own machine, with the standard library only, so it needs nothing
 installed. It reads the history through Caido's GraphQL API (the `requests` query, paged,
 with an HTTPQL filter) and writes a JSON array in the layout AttackLedger's Caido adapter
@@ -700,10 +702,25 @@ def engagement_id(server: str, value: str, headers: dict) -> int:
     return found[0]
 
 
+def api_root(server: str) -> str:
+    """The API's address. Behind the web app (the usual install) it is <site>/api; people
+    often give the site's address, so check where /health answers as the API."""
+    if server.endswith("/api"):
+        return server
+    for root in (server, server + "/api"):
+        status, _, raw = _send(root + "/health", None, {"Accept": "application/json"}, method="GET")
+        try:
+            if status == 200 and isinstance(json.loads(raw), dict) and "ok" in json.loads(raw):
+                return root
+        except ValueError:
+            continue
+    return server
+
+
 def upload(args, path: Path) -> dict:
     """POST the file to /engagements/<id>/imports as the tester. Signs in with email and a
     prompted password (and signs out after), or sends the operator token."""
-    server = base_url(args.upload, "AttackLedger", args.insecure_http)
+    server = api_root(base_url(args.upload, "AttackLedger", args.insecure_http))
     headers = {"Content-Type": "application/octet-stream", "Accept": "application/json"}
     session = None
     if args.al_email:
