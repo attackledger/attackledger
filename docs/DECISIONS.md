@@ -735,6 +735,19 @@ options considered and who decided.
   licence is sold.
 - **Proposed by:** a side note in the session. **Decided by:** Murat Kabak ("bunu yapalım").
 
+### D-052 · A voided receipt stays void (2026-10-10, made autonomously)
+- **Decision:**
+  - Any change to a receipted lane voids its receipt. The audit log records it as
+    `lane.receipt_voided`, naming the receipt and the cause.
+  - Restoring the earlier state does not bring the old receipt back. Only a new signature
+    closes the lane.
+- **Why:** audit evidence must show the gap. If the receipt became valid again whenever
+  the manifest matched, nothing would show that the lane had changed in between.
+- **Considered:** keeping the receipt valid when the manifest matches again (rejected for
+  that reason).
+- **Made by:** Claude, from the second design-partner review, under Murat's overnight
+  permission.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

@@ -5,6 +5,42 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+Fixes from the second design-partner review of 0.7.0.
+
+### Changed
+- **A voided receipt stays void** (D-052). Any change to a receipted lane voids its receipt
+  until it is signed again, even if the lane is changed back. The audit log records it as
+  `lane.receipt_voided`, and the report and change history show why.
+- **Strict Content-Security-Policy on the web app**, plus the usual security headers in
+  nginx and Caddy.
+- **API docs** (`/docs`): a script-free page built from the OpenAPI schema. It loads
+  nothing from another origin.
+- **Wording**: gate and step messages use client, statement of work and rules of
+  engagement wording on pentest and internal engagements.
+
+### Added
+- **Confirmation before mapping onto a receipted lane**: the API returns 409 unless
+  `confirm_void`.
+- **`can_sign` in the lane view**: it says before signing whether this person can sign,
+  and why not.
+- **The deletion screen** says what stays: each evidence URL with its host, path and
+  query, plus receipts, signatures and logs. A proposal for a chain record that would not
+  keep query strings is in `docs/PROPOSAL_URI_PRIVACY.md`.
+- **The import route** documents its raw body in OpenAPI, and refuses multipart uploads
+  with an example.
+- **`caido_pull --upload`** finds the API under the site's address.
+- **Docs**:
+  - a Mac trial section in INSTALL;
+  - what content deletion keeps;
+  - what counts as a duplicate import;
+  - the Verify tab as it is;
+  - `.env.example` matches where each key goes.
+
+### Fixed
+- **Controls**: the status when only not-applicable items are resolved.
+- **Recon**: the per-step lead counts.
+- **Mapping**: a clearer error for an item number that doesn't exist.
+
 ## [0.7.0] - 2026-10-09
 
 The MVP for a design partner (docs/MVP.md). It covers:
