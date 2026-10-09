@@ -378,10 +378,8 @@ def test_deleting_content_makes_blobs_and_summaries_unreadable_and_the_report_st
     r = api.post(f"/lanes/{lane['id']}/evidence", json={"kind": "note", "sha256": sha(b"y"), "summary": "y"})
     assert r.status_code == 409 and "deleted on" in r.json()["detail"]
     asset = api.get(f"/engagements/{e}/coverage").json()["assets"][0]["asset_id"]
-    mapper = api.post("/lanes", json={"asset_id": asset, "role": "mapper"})
-    assert mapper.status_code == 201
-    r = api.post(f"/lanes/{mapper.json()['id']}/close", json=SIGN)     # nothing left to review: no new receipt
-    assert r.status_code == 409 and "can no longer be reviewed" in r.json()["detail"]
+    mapper = api.post("/lanes", json={"asset_id": asset, "role": "mapper"})     # no lane can be receipted again
+    assert mapper.status_code == 409 and "deleted on" in mapper.json()["detail"]
 
     # A report built afterwards verifies, with the summaries null; so does the one from before.
     after = api.get(f"/engagements/{e}/report").json()
@@ -416,6 +414,21 @@ def test_deleted_engagement_takes_no_runs(api):
     r = api.post(f"/engagements/{e}/jobs", json={"kind": "subdomains"})
     assert r.status_code == 422 and "deleted" in r.json()["detail"]
     assert api.patch(f"/engagements/{e}", json={"retain_until": "2099-01-01"}).status_code == 409
+
+
+def test_deleted_engagement_takes_no_lane_or_item_changes(api):
+    e, lane = engagement(api)
+    attach_note(api, lane["id"], 1, "GET / answered 200")
+    asset = api.get(f"/engagements/{e}/coverage").json()["assets"][0]["asset_id"]
+    delete(api, e)
+    r = api.post(f"/lanes/{lane['id']}/close", json=SIGN)     # an open lane gets no new receipt
+    assert r.status_code == 409 and "can no longer be reviewed" in r.json()["detail"]
+    r = api.patch(f"/lanes/{lane['id']}/items/1", json={"state": "done"})
+    assert r.status_code == 409 and "deleted" in r.json()["detail"]
+    r = api.patch(f"/lanes/{lane['id']}/items/2", json={"state": "na", "na_reason": "no login"})
+    assert r.status_code == 409
+    r = api.post("/lanes", json={"asset_id": asset, "role": "mapper"})
+    assert r.status_code == 409 and "deleted" in r.json()["detail"]
 
 
 def test_only_an_owner_deletes_content(client):

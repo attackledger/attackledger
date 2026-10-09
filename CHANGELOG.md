@@ -214,7 +214,26 @@ local lab.
   through a restore, and practising against the lab with `--profile lab` (new
   `lab-proxy`, for capturing a browser HAR).
 
+- **Web**:
+  - A change to an item on a receipted lane asks first, and says the client will see the
+    receipt as void.
+  - An engagement whose content was deleted offers no lane or item changes and says why,
+    and the API refuses them (409).
+  - Setup: recon or an import completes the evidence step, and there is a Team step.
+  - Pentest and internal engagements use client, statement of work and rules of
+    engagement wording, and the methodology defaults by type.
+  - Before a browser's first signature, the reviewer is told a new key will be
+    registered.
+  - People whose password someone else set are asked to choose their own at sign-in; they
+    can skip.
+  - Report and Verify point to attackledger.com/verify first, then to this server's
+    verifier with its SHA-256.
+  - The tab bar is sticky, the lane panel draws above the ledger, and the Controls table
+    fits on phones.
+
 ### Fixed
+- **Sign-in right after Sign out was lost**: signing out reloaded the page, so input typed
+  at once was dropped. It now switches to the sign-in form in place.
 - **Content-Length after redaction**: a stored message whose body was redacted kept its
   original Content-Length.
 - **Evidence imports over 1 MB were refused** by the web container's nginx (default body

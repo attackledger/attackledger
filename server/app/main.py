@@ -415,6 +415,8 @@ def open_lane(body: LaneIn, request: Request, session: Session = Depends(get_ses
     if not who.has(asset.engagement_id, "tester"):
         raise HTTPException(403 if who.can_read(asset.engagement_id) else 404,
                             "this needs the tester role on the engagement")
+    if asset.engagement.content_deleted_at is not None:    # no lane can be receipted again
+        raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(asset.engagement)))
     pack = _pack_of(asset.engagement)
     if any(l.role == body.role for l in asset.lanes):
         raise HTTPException(409, "lane already open for this asset and role")
@@ -535,6 +537,8 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
 def update_item(lane_id: int, idx: int, body: ItemUpdate, session: Session = Depends(get_session)):
     lane = _get(session, Lane, lane_id)
     item = _item(lane, idx)
+    if lane.asset.engagement.content_deleted_at is not None:    # the evidence can no longer be reviewed
+        raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(lane.asset.engagement)))
     if body.state == ItemState.done and not any(e.item_id == item.id for e in lane.evidence):
         raise HTTPException(422, "attach evidence to this item before marking it done")
     if body.state == ItemState.na and not (body.na_reason or "").strip():
