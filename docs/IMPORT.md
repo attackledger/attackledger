@@ -2,6 +2,8 @@
 
 Status: built 2026-10-09 (D-029, MVP item 4). The design is in `TARGET_ARCHITECTURE.md`,
 "Evidence import". This page says what was built and how each format is read.
+It is the technical description. For how a tester exports from Burp, Caido or a browser
+and maps entries in the app, see [`TESTER_GUIDE.md`](TESTER_GUIDE.md), section 5.
 
 A tester uploads an export file from a tool they already use. Its in-scope entries wait
 in the engagement's inbox, redacted, until a person maps each one to checklist items.
