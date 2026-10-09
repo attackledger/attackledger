@@ -1,7 +1,7 @@
 """audit log: hash-chained administrative changes; the signer's email on receipts
 
-Revision ID: 0015
-Revises: 0014
+Revision ID: 0016
+Revises: 0015
 Create Date: 2026-10-09 22:00:00
 """
 import hashlib
@@ -12,8 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0015'
-down_revision = '0014'
+revision = '0016'
+down_revision = '0015'
 branch_labels = None
 depends_on = None
 
