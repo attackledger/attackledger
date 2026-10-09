@@ -1,5 +1,5 @@
 {
- "date": "2026-10-10-worker-api",
+ "date": "2026-10-09-worker-api",
  "benchmark": "AttackLedger vs OWASP Juice Shop",
  "versions": {
   "attackledger_commit": "15ca24083f75a260476b2c11c77722cb1caa266c",

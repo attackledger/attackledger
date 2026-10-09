@@ -127,7 +127,7 @@ and the API can read (a file the gateway creates in a volume shared with the API
 
 With D-042 in mind: in a later hybrid service the API and ledger may be hosted while the
 worker and gateway stay in the customer's network. The gateway talks only to the API, over an
-authenticated channel, so it needs no change then. Since 2026-10-10 the worker does too
+authenticated channel, so it needs no change then. Since 2026-10-09 the worker does too
 (`WORKER_API.md`): it has no database, and its calls to the API go through the gateway's relay.
 
 ### 4. DNS and passive sources
@@ -298,4 +298,4 @@ passive sources and the Claude API.
   targets (a new connection per request).
 - Credential injection and the approval queue (D-040, D-041): hooks only.
 - A UI view of the request log (API only).
-- ~~The worker still uses the database directly (D-042).~~ Done 2026-10-10: `WORKER_API.md`.
+- ~~The worker still uses the database directly (D-042).~~ Done 2026-10-09: `WORKER_API.md`.

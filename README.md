@@ -255,7 +255,8 @@ removes a host or brings one back into scope; you can also add hosts on the Ledg
 ## Hunt agents (v0.6, preview)
 
 A lane can be worked by a Claude agent. Put `ANTHROPIC_API_KEY=...` in `.env` (it is
-passed to the worker only), set the lane's executor to *Claude agent* and start a run
+passed to the traffic gateway only, which adds it to the agent's API calls; the worker and
+its tools never see it), set the lane's executor to *Claude agent* and start a run
 from the lane. The agent:
 
 - sends **read-only** requests (GET, HEAD, OPTIONS) to the lane's host only, with the

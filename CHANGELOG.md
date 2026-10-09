@@ -195,6 +195,18 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Changed
+- **The worker no longer touches the database** (D-042, docs/WORKER_API.md, migration
+  0020). It has no database credentials, database network, master key, blob store or
+  Anthropic key.
+  - It claims jobs and writes through `/worker/*` API routes, relayed by the gateway, with
+    a token scoped to one job.
+  - What a job writes is limited by its kind. Scope, redaction, deduplication,
+    encryption and the evidence chain are applied in the API.
+  - The Claude API key is set on the gateway, which adds it to agent calls.
+  - Retention and marking interrupted jobs run in the API.
+  - `tools/agent_bridge.py`: a person queues the run with a `driver`, and the bridge
+    claims it.
+  - The benchmark through the gateway is unchanged.
 - **Contributions need a CLA** (D-051). See `CLA.md` and `CONTRIBUTING.md`. A bot asks each
   new contributor to sign once.
 - **Control mappings reviewed** (D-050, docs/CONTROLS.md). They were checked against PCI

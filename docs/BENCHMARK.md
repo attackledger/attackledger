@@ -364,9 +364,9 @@ network. They were not sent through the gateway, and the agent loop was not run.
 - Recon still finds nothing beyond depth 1 and `common.txt`. A larger or app-aware wordlist, or recursion that
   keeps to the rate ceiling, is the next step for /api-docs, /encryptionkeys, /metrics and /support/logs.
 
-## Worker without a database (2026-10-10)
+## Worker without a database (2026-10-09)
 
-Machine-readable results: `tools/benchmark/results-2026-10-10-worker-api.json`. Same target, settings and
+Machine-readable results: `tools/benchmark/results-2026-10-09-worker-api.json`. Same target, settings and
 pipeline as the run above (`results-2026-10-09-recon-after.json`); API, gateway and worker images built
 from branch `feat/worker-api` after it was rebased on the recon changes (`BENCH_KEEP_IMAGES=1 run.py up`).
 Recon only, no agent run. What changed (D-042, `docs/WORKER_API.md`): the worker has no database

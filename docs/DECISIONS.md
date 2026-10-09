@@ -567,6 +567,25 @@ options considered and who decided.
   encryption keys (D-043) already fit per-customer isolation. Backups, monitoring, data
   processing agreements, a security certification and billing are operational work that
   starts only when a hosted service is chosen.
+- **The worker channel was built 2026-10-09** (docs/WORKER_API.md, migration 0020). The
+  worker has no database credentials, database network, master key, blob store or
+  Anthropic key.
+  - **Channel:** the worker reaches `/worker/*` on the API only through the gateway's
+    relay, not over a network shared with the API. A shared network would make the
+    worker an owner in open mode, and production's forwarded-header trust rules out a
+    check on the source address. The relay also fits the hybrid SaaS case.
+  - **Credentials:** a worker token kept in a volume shared only with the API, which can
+    only claim jobs. Each claimed job gets its own token, separate from the gateway secret
+    its tools use.
+  - **Gates:** the API runs them at claim time. What each job kind may write is a table
+    (`WRITES`).
+  - **Encryption:** the API encrypts and stores blobs.
+  - **Anthropic key:** it moved to the gateway, which adds it to agent calls (the pattern
+    D-040 plans for test accounts).
+  - **Background work:** retention and the stale-job sweep run in the API.
+  - **Benchmark:** unchanged through the channel: 13,344 GET, peak 20 at 20, the same
+    endpoints, leads and recall.
+  - **Made by:** Claude, autonomously, under Murat's overnight permission.
 
 ### D-043 · Evidence and test accounts encrypted, with retention by key deletion (2026-10-09, decided by Murat)
 - **Decision:** raw evidence and test-account credentials are encrypted with a key per

@@ -1,6 +1,6 @@
 # Worker API: the worker talks to the API, not the database (D-042)
 
-Status: designed and built 2026-10-10 on branch `feat/worker-api` ("Keep SaaS possible", step 9
+Status: designed and built 2026-10-09 ("Keep SaaS possible", step 9
 of `TARGET_ARCHITECTURE.md`, the worker half). This file is the design and the record of the
 decisions taken while building it. `GATEWAY.md` named the gap this closes: the worker could read
 and write the whole database, so a malicious tool inside it was held to nothing.
