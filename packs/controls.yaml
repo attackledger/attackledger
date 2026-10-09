@@ -1,32 +1,117 @@
 # Control catalog. Mappings in packs point at these ids.
 # These mappings are indicative: they show which tests produce evidence that is
-# relevant to a control. They are not a compliance determination. Verify against
-# the current text of each standard before relying on them.
+# relevant to a control, and how strongly. They are not a compliance determination.
+# Method, sources and the reason for every mapping: docs/CONTROLS.md.
+#
+# A control is either a short title or {title, note}; the note says when the mapping
+# holds. Titles are short paraphrases, not the text of the standard: PCI DSS and ISO/IEC
+# texts are copyrighted, so only numbers and short titles appear here.
+reviewed:
+  by: Claude (AI assistant), for the AttackLedger project
+  date: "2026-10-10"
+  statement: >
+    Reviewed against public sources by Claude on 2026-10-10; not reviewed by a qualified
+    assessor (QSA, ISO lead auditor or DORA TLPT authority).
+  sources:
+    - framework: pci-dss-4.0.1
+      title: PCI DSS v4.0.1, PCI Security Standards Council document library
+      version: v4.0.1 (June 2024)
+      url: https://www.pcisecuritystandards.org/document_library/
+      checked: "2026-10-09"
+      note: >
+        v4.0.1 is the currently published version: the PCI SSC request for comments of
+        3 June to 20 July 2026 is on "the currently-published version", v4.0.1. The standard
+        itself is behind the library's licence page and was not fetched; requirement numbers
+        and the 6.4.1 to 6.4.2 change come from the RFC notice and secondary sources.
+    - framework: pci-dss-4.0.1
+      title: RFC instructions for the currently published PCI DSS v4.0.1
+      version: June 2026
+      url: https://www.pcisecuritystandards.org/rfc_instructions_pci-dss-v4-0-1-june2026/
+      checked: "2026-10-09"
+    - framework: iso-27001-2022
+      title: ISO/IEC 27001:2022 (with Amd 1:2024), Annex A; control names as in ISO/IEC 27002:2022
+      version: "2022, amended 2024"
+      url: https://www.iso.org/standard/27001
+      checked: "2026-10-09"
+      note: >
+        Titles checked against public control indexes; iso.org refused automated access.
+        Amd 1:2024 (climate action) changes clauses 4.1 and 4.2, not Annex A.
+    - framework: dora
+      title: Regulation (EU) 2022/2554 (DORA), EUR-Lex
+      version: OJ L 333, 27.12.2022
+      url: https://eur-lex.europa.eu/eli/reg/2022/2554/oj/eng
+      checked: "2026-10-09"
+      note: Article titles and the test types in Article 25(1) read from the EUR-Lex text.
+    - framework: dora
+      title: Commission Delegated Regulation (EU) 2025/1190, RTS on threat-led penetration testing
+      version: OJ L 2025/1190, 18.6.2025; in force 8.7.2025
+      url: https://eur-lex.europa.eu/eli/reg_del/2025/1190/oj/eng
+      checked: "2026-10-09"
+      note: Read to confirm that AttackLedger tests are not TLPT; nothing maps to Article 26 or 27.
+
+# How strongly a receipted item evidences a control. Every pack mapping names one; a bare
+# id means "supporting". A control has one strength per pack.
+strengths:
+  full: The result alone answers the control's test; nothing else is needed.
+  partial: The result answers a defined part of the control's test; the rest needs other evidence.
+  supporting: The result is relevant and can corroborate other evidence; it does not answer the test.
+
 frameworks:
-  pci-dss-4.0:
-    name: PCI DSS v4.0
+  pci-dss-4.0.1:
+    name: PCI DSS v4.0.1
     controls:
-      PCI-6.2.4: Software engineering techniques prevent or mitigate common software attacks
-      PCI-6.4.1: Public-facing web applications are protected against attacks
-      PCI-11.3.2: External vulnerability scans are performed
-      PCI-11.4.1: A penetration testing methodology is defined and followed
-      PCI-11.4.3: External penetration testing is performed
-      PCI-11.4.4: Exploitable vulnerabilities found in penetration testing are corrected and verified
+      PCI-4.2.1:
+        title: Strong cryptography protects PAN in transit over open, public networks
+        note: Only for hosts that receive or send PAN. A TLS test shows the protocol and certificate state at test time.
+      PCI-6.2.4:
+        title: Software engineering techniques prevent or mitigate common software attacks
+        note: Assessed mainly from procedures and developers; a test shows whether those attack types were found.
+      PCI-6.3.1:
+        title: Security vulnerabilities are identified and managed
+        note: The guidance names bug bounty programs as one way to learn of vulnerabilities in bespoke software.
+      PCI-11.4.1:
+        title: A penetration testing methodology is defined, documented and implemented
+        note: The method followed is the evidence for application-layer testing; network-layer and segmentation testing are not covered.
+      PCI-11.4.3:
+        title: External penetration testing is performed
+        note: >
+          Application-layer part only, and only when testing is from outside the network. Frequency,
+          tester qualification and independence, and network-layer testing need other evidence.
+          A bug bounty can add to this test but does not replace it.
   iso-27001-2022:
     name: ISO/IEC 27001:2022 Annex A
     controls:
-      ISO-A.5.9: Inventory of information and other associated assets
+      ISO-A.5.9:
+        title: Inventory of information and other associated assets
+        note: Hosts and applications found in testing can be compared with the inventory; they are not the inventory.
       ISO-A.5.15: Access control
+      ISO-A.5.17: Authentication information
+      ISO-A.8.2: Privileged access rights
+      ISO-A.8.3: Information access restriction
       ISO-A.8.5: Secure authentication
-      ISO-A.8.8: Management of technical vulnerabilities
+      ISO-A.8.8:
+        title: Management of technical vulnerabilities
+        note: Testing identifies vulnerabilities; evaluating them and acting in time need other evidence.
       ISO-A.8.9: Configuration management
       ISO-A.8.24: Use of cryptography
       ISO-A.8.28: Secure coding
-      ISO-A.8.29: Security testing in development and acceptance
+      ISO-A.8.29:
+        title: Security testing in development and acceptance
+        note: Only when the test is part of the development or release acceptance process.
   dora:
     name: EU DORA (Regulation 2022/2554)
     controls:
-      DORA-ART8: Identification of ICT assets and risks
-      DORA-ART24: General requirements for digital operational resilience testing
-      DORA-ART25: Testing of ICT tools and systems
-      DORA-ART26: Advanced testing based on TLPT
+      DORA-ART8:
+        title: Article 8, Identification
+        note: The entity identifies and inventories its own assets; external discovery can only be compared with that.
+      DORA-ART9:
+        title: Article 9, Protection and prevention
+        note: Relevant to access limitation and strong authentication, Article 9(4)(c) and (d).
+      DORA-ART24:
+        title: Article 24, General requirements for digital operational resilience testing
+        note: The testing programme, its independence, remediation and yearly coverage need other evidence.
+      DORA-ART25:
+        title: Article 25, Testing of ICT tools and systems
+        note: >
+          Vulnerability assessments and penetration testing are among the tests Article 25(1) lists.
+          AttackLedger tests are not threat-led penetration testing (Article 26, RTS 2025/1190).
