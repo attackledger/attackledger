@@ -11,8 +11,8 @@ const PUBLIC_SCRIPT = DEMO ? "../verify_report.py" : "https://attackledger.com/v
 const PUBLIC_ROOT = DEMO ? "../digicert-trusted-root-g4.pem" : "https://attackledger.com/digicert-trusted-root-g4.pem";
 const ROOT_FILE = "digicert-trusted-root-g4.pem";
 
-/** The offline check, for a report saved as `file`. */
-export function OfflineVerifier({ file }: { file: string }) {
+/** The offline check, for a report saved as `file`. `saved`: the download is already named `file`. */
+export function OfflineVerifier({ file, saved = false }: { file: string; saved?: boolean }) {
   const [index, setIndex] = useState<VerifierIndex | null>(null);
   useEffect(() => { if (!DEMO) api.verifier().then(setIndex).catch(() => setIndex(null)); }, []);
 
@@ -22,7 +22,9 @@ export function OfflineVerifier({ file }: { file: string }) {
         The same check offline needs only Python and no AttackLedger install. Get{" "}
         <a href={PUBLIC_SCRIPT} download={DEMO ? "verify_report.py" : undefined}>verify_report.py</a> and the timestamp
         root it trusts, <a href={PUBLIC_ROOT} download={DEMO ? ROOT_FILE : undefined}>{ROOT_FILE}</a>
-        {DEMO ? "" : " from attackledger.com"}, save the report as <code>{file}</code> next to them, and run:
+        {DEMO ? "" : " from attackledger.com"},{" "}
+        {saved ? <>put the downloaded report, <code>{file}</code>, next to them</> : <>save the report as <code>{file}</code> next to them</>},
+        {" "}and run:
       </p>
       <pre className="cmd" tabIndex={0} aria-label="Command">{`python3 -I verify_report.py ${file} --tsa-root ${ROOT_FILE}`}</pre>
       {index && (

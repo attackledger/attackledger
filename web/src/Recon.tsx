@@ -47,10 +47,11 @@ function ago(iso: string | null) {
   return new Date(iso).toLocaleDateString();
 }
 
-export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true, hostsInScope, engagementType }: {
+export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true, hostsInScope, engagementType, deleted = false }: {
   engId: number; onAssetsChanged: () => void; canManage?: boolean; canRun?: boolean;   // owner; tester
   hostsInScope: number;
   engagementType?: string;   // bug_bounty, pentest or internal: the words for who sets the rules
+  deleted?: boolean;         // the content was deleted: nothing new runs, and no host is added
 }) {
   const terms = termsFor(engagementType);
   const [scope, setScope] = useState<Scope | null>(null);
@@ -123,12 +124,14 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
   const noHosts = hostsInScope === 0;
   // With no host and no wildcard rule, no step has anything to work on.
   const nothingToDo = noHosts && !hasWildcard;
-  const runAllWhy = !hasScope ? "Define the scope first."
+  const runAllWhy = deleted ? "Nothing new runs: this engagement's content was deleted."
+    : !hasScope ? "Define the scope first."
     : !authorized ? "Record your authorization first."
     : nothingToDo ? "Nothing to work on yet: add a host, or a wildcard rule for recon to discover hosts under."
     : null;
 
   function blocker(kind: string): string | null {
+    if (deleted) return "Content deleted: nothing new runs";
     if (!hasScope) return "Define the scope first";
     if (!authorized) return "Record your authorization first";
     const m = mods.find((x) => x.kind === kind);
@@ -229,9 +232,10 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
                            : "This engagement has none yet."}
             </li>
           </ul>
-          {canRun ? <AddHost engId={engId} onAdded={() => { onAssetsChanged(); refresh().catch(() => {}); }}
-                             id="recon-new-host" className="inline-form" />
-                  : <p className="muted">A tester or an owner on this engagement adds hosts.</p>}
+          {deleted ? <p className="muted">No host can be added: this engagement's content was deleted.</p>
+            : canRun ? <AddHost engId={engId} onAdded={() => { onAssetsChanged(); refresh().catch(() => {}); }}
+                                id="recon-new-host" className="inline-form" />
+            : <p className="muted">A tester or an owner on this engagement adds hosts.</p>}
         </section>
       )}
 
@@ -333,7 +337,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
         {tab === "urls" && <Endpoints engId={engId} version={jobs.length} module={only ?? undefined} />}
         {tab === "leads" && <Leads engId={engId} terms={terms} version={jobs.filter((j) => shownStatus(j) === "done" || j.status === "partial").length}
                                    module={only ?? undefined} />}
-        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} canRun={canRun} liveLine={liveLine} />}
+        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} canRun={canRun && !deleted} liveLine={liveLine} />}
       </section>
     </div>
   );

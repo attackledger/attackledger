@@ -1,6 +1,8 @@
 import { FormEvent, useState } from "react";
 import { api, type Job, type LaneDetail, type LaneItem, type Redaction } from "./api";
 import { plural } from "./words";
+import { getDraft, useDraft } from "./drafts";
+import { localTime } from "./display";
 
 type Mode = null | "evidence" | "na";
 type Source = "note" | "file" | "run";
@@ -20,13 +22,17 @@ function toBase64(file: File): Promise<string> {
 export function ItemWork({ lane, item, runs, titles, onChanged }: {
   lane: LaneDetail; item: LaneItem; runs: Job[]; titles: Record<string, string>; onChanged: (l: LaneDetail) => void;
 }) {
-  const [mode, setMode] = useState<Mode>(null);
-  const [source, setSource] = useState<Source>("note");
-  const [text, setText] = useState("");
+  // Unsent text is kept as a draft (drafts.ts): after an expired session, a reload or a shared link
+  // the form opens again with it.
+  const at = `${lane.id}:${item.idx}`;
+  const [mode, setMode] = useState<Mode>(() => (getDraft(`note:${at}`) || getDraft(`summary:${at}`) ? "evidence"
+    : getDraft(`na:${at}`) ? "na" : null));
+  const [source, setSource] = useState<Source>(() => (getDraft(`summary:${at}`) && !getDraft(`note:${at}`) ? "file" : "note"));
+  const [text, setText, clearText] = useDraft(`note:${at}`);
   const [file, setFile] = useState<File | null>(null);
   const [jobId, setJobId] = useState<number | "">("");
-  const [summary, setSummary] = useState("");
-  const [reason, setReason] = useState("");
+  const [summary, setSummary, clearSummary] = useDraft(`summary:${at}`);
+  const [reason, setReason, clearReason] = useDraft(`na:${at}`);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A change waiting for the person to accept that it voids the lane's receipt.
@@ -75,7 +81,7 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
       return api.attach(lane.id, { item_idx: item.idx, kind: "run", job_id: jobId, summary });
     });
     if (ok) {
-      setText(""); setFile(null); setJobId(""); setSummary(""); setMode(null);
+      clearText(); setFile(null); setJobId(""); clearSummary(); setMode(null);
     }
   }
 
@@ -86,7 +92,7 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
 
   async function doMarkNa() {
     if (await act(() => api.updateItem(lane.id, item.idx, "na", reason.trim()))) {
-      setReason(""); setMode(null);
+      clearReason(); setMode(null);
     }
   }
 
@@ -159,7 +165,7 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
                 <option value="">Choose a finished run</option>
                 {runs.map((j) => (
                   <option key={j.id} value={j.id}>
-                    {titles[j.kind] ?? j.kind}, job {j.id}, {plural(j.result_count, "result")}, {new Date(j.created_at).toLocaleString()}
+                    {titles[j.kind] ?? j.kind}, job {j.id}, {plural(j.result_count, "result")}, {localTime(j.created_at)}
                   </option>
                 ))}
               </select>
@@ -224,8 +230,8 @@ export function RedactionNote({ r }: { r?: Redaction | null }) {
 }
 
 export function BulkNotApplicable({ lane, onChanged }: { lane: LaneDetail; onChanged: (l: LaneDetail) => void }) {
-  const [step, setStep] = useState<"idle" | "reason" | "confirm">("idle");
-  const [reason, setReason] = useState("");
+  const [step, setStep] = useState<"idle" | "reason" | "confirm">(() => (getDraft(`bulk-na:${lane.id}`) ? "reason" : "idle"));
+  const [reason, setReason, clearReason] = useDraft(`bulk-na:${lane.id}`);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -259,7 +265,7 @@ export function BulkNotApplicable({ lane, onChanged }: { lane: LaneDetail; onCha
     if (last) onChanged(last);
     if (n === list.length) {
       setProgress(`Marked ${plural(n, "item")} not applicable.`);
-      setReason("");
+      clearReason();
     } else {
       setProgress(null);
     }

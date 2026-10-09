@@ -17,7 +17,9 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
-  const load = useCallback(() => api.people().then(setPeople).catch((e) => setError(e.message)), []);
+  // A new error makes an earlier success line stale: it would read as this attempt's result.
+  const fail = useCallback((e: unknown) => { setSaved(null); setError((e as Error).message); }, []);
+  const load = useCallback(() => api.people().then(setPeople).catch(fail), [fail]);
   useEffect(() => { load(); }, [load]);
 
   async function add(ev: FormEvent) {
@@ -31,13 +33,14 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
       setEmail(""); setName(""); setPassword(""); setOwner(false);
       load();
     } catch (e) {
-      setError((e as Error).message);
+      fail(e);
     }
   }
 
   async function change(p: Person, body: Partial<Person>) {
     setError(null);
-    try { await api.updatePerson(p.id, body); load(); } catch (e) { setError((e as Error).message); }
+    setSaved(null);
+    try { await api.updatePerson(p.id, body); load(); } catch (e) { fail(e); }
   }
 
   return (
@@ -85,12 +88,12 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
         <form className="person-form" onSubmit={add}>
           <label>Name<input id="person-name" value={name} onChange={(e) => setName(e.target.value)} /></label>
           <label>Email<input id="person-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
-          <label>
-            First password
+          <div className="field">
+            <label htmlFor="person-password">First password</label>
             <input id="person-password" type="password" autoComplete="new-password" value={password}
-                   onChange={(e) => setPassword(e.target.value)} />
-            <span className="hint">At least 12 characters. They replace it with their own after signing in.</span>
-          </label>
+                   onChange={(e) => setPassword(e.target.value)} aria-describedby="person-password-hint" />
+            <span className="hint" id="person-password-hint">At least 12 characters. They replace it with their own after signing in.</span>
+          </div>
           <label className="check">
             <input type="checkbox" checked={owner} onChange={(e) => setOwner(e.target.checked)} />
             Owner

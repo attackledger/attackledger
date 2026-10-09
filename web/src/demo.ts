@@ -92,3 +92,11 @@ export async function demoCall<T>(path: string, init?: RequestInit): Promise<T> 
 export function demoInboxRaw(engId: number, entryId: number, part: string): string {
   return demoUrl(`inbox/${engId}/${entryId}-${part}.txt`);
 }
+
+/** The demo file holding an imported evidence entry's record (the bytes its hash commits to), found by
+ *  that hash among the engagement's inbox entries; null when the snapshot has none. */
+export async function demoImportRecord(engId: number, sha256: string): Promise<string | null> {
+  const data = await load();
+  const row = (data.inbox?.[String(engId)] ?? []).find((r) => r.record_sha256 === sha256);
+  return row ? demoInboxRaw(engId, Number(row.id), "record") : null;
+}

@@ -4,6 +4,13 @@ import { DEMO, demoUrl } from "./demo";
 import { plural } from "./words";
 import { OfflineVerifier, VERIFY_PAGE } from "./OfflineVerifier";
 
+/** The name the server gives a downloaded report (main.py _filename): attackledger-<name>-<id>.<ext>. */
+export function reportFilename(name: string, engId: number, ext: "html" | "json"): string {
+  const slug = Array.from(name.toLowerCase(), (ch) => (/[\p{L}\p{N}]/u.test(ch) ? ch : "-")).join("")
+    .replace(/^-+|-+$/g, "");
+  return `attackledger-${Array.from(slug).slice(0, 60).join("") || "engagement"}-${engId}.${ext}`;
+}
+
 interface ReportSummary {
   generated_at: string;
   engagement: { name: string; authorized_by: string | null; authorized_at: string | null };
@@ -35,6 +42,8 @@ export function Report({ engId }: { engId: number }) {
   if (!r) return <p className="muted">{error ?? "Building report…"}</p>;
   const s = r.summary;
   const base = `/api/engagements/${engId}`;
+  const htmlName = reportFilename(r.engagement.name, engId, "html");
+  const jsonName = reportFilename(r.engagement.name, engId, "json");
   // The demo ships each report as a static file next to the app.
   const links = DEMO
     ? { html: demoUrl(`reports/${engId}.html`), htmlDl: demoUrl(`reports/${engId}.html`), json: demoUrl(`reports/${engId}.json`) }
@@ -74,8 +83,8 @@ export function Report({ engId }: { engId: number }) {
           ) : (
             <a className="btn" href={links.html} target="_blank" rel="noopener">Open printable report</a>
           )}
-          <a className="btn ghost" href={links.htmlDl} download>Download HTML</a>
-          <a className="btn ghost" href={links.json} download>Download JSON</a>
+          <a className="btn ghost" href={links.htmlDl} download={htmlName}>Download HTML</a>
+          <a className="btn ghost" href={links.json} download={jsonName}>Download JSON</a>
         </div>
       </section>
 
@@ -93,7 +102,7 @@ export function Report({ engId }: { engId: number }) {
           the browser and uploads nothing. The verifier rebuilds every receipt from its items and evidence, walks the
           evidence chain and recomputes the body hash.
         </p>
-        <OfflineVerifier file="attackledger-report.html" />
+        <OfflineVerifier file={htmlName} saved />
         <p className="muted">The hashes change every time the report is generated, because it includes the generation time.</p>
       </section>
     </div>

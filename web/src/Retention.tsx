@@ -6,11 +6,13 @@ import { plural } from "./words";
 // content is encrypted with a key per engagement; deleting the key makes the raw evidence and
 // the summaries unreadable, while hashes, receipts and the history stay, so reports still verify.
 
+/** The day, in the reader's time zone like every time in the app. */
 function day(iso: string): string {
-  return iso.slice(0, 10);
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toLocaleDateString(undefined, { dateStyle: "long" });
 }
 
-/** "Deleted on 2026-10-09 by Olive Owner (owner@example.com)": one sentence for every view. */
+/** "Content deleted on 9 October 2026 by Olive Owner (owner@example.com).": one sentence for every view. */
 export function deletedText(d: ContentDeleted): string {
   return `Content deleted on ${day(d.at)} by ${d.by}.`;
 }
@@ -108,7 +110,7 @@ export function Retention({ engId, onChanged }: { engId: number; onChanged: () =
             </div>
             <span className="hint">
               {st.retain_until
-                ? `The worker deletes the content after ${st.retain_until}.`
+                ? `AttackLedger deletes the content after ${st.retain_until}.`
                 : "No date: the content is kept until an owner deletes it."}
             </span>
           </form>
