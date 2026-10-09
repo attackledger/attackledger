@@ -544,7 +544,7 @@ export const api = {
     call<{ ok: boolean; name: string; key_notice: KeyNotice }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   changePassword: (current_password: string, new_password: string) =>
     call<{ ok: boolean }>("/auth/password", { method: "POST", body: JSON.stringify({ current_password, new_password }) }),
-  health: () => call<{ ok: boolean; auth_required: boolean; mode: "open" | "token" | "people"; timestamps?: boolean }>("/health"),
+  health: () => call<{ ok: boolean; auth_required: boolean; mode: "open" | "token" | "people" | "setup"; timestamps?: boolean }>("/health"),
   me: () => call<Me>("/auth/me"),
   people: () => call<Person[]>("/people"),
   createPerson: (body: { email: string; name: string; password: string; is_owner: boolean }) =>
