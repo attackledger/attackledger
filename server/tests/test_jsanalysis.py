@@ -49,3 +49,37 @@ def test_template_value_is_noise():
 def test_mask():
     assert js.mask("AKIAABCDEFGHIJKLMNOP") == "AKIA…MNOP"
     assert js.mask("short") == "sh…"
+
+
+# ---- single-page app routes ------------------------------------------------------
+
+ANGULAR = ("var r=[{path:`administration`,component:Bf,canActivate:[x]},{path:`score-board`,component:Wn},"
+           "{path:`privacy-security`,component:jf,children:[{path:`privacy-policy`,component:Qg},"
+           "{path:`change-password`,component:Vf}]},{path:`web3-sandbox`,loadChildren:()=>import(`./w.js`)},"
+           "{path:`address/edit/:addressId`,component:A},{path:`**`,component:N},{path:``,component:H}];"
+           "io(u,{path:`/engine.io`,reconnection:!0});svg={path:'M0 0h24v24H0z'};"
+           "RouterModule.forRoot(r,{useHash:!0});a=`./redirect?to=https://github.com/x`")
+
+
+def test_spa_routes_nest_children_and_skip_wildcards_and_non_routes():
+    assert js.spa_routes(ANGULAR) == ["/address/edit/:addressId", "/administration", "/privacy-security",
+                                      "/privacy-security/change-password", "/privacy-security/privacy-policy",
+                                      "/score-board", "/web3-sandbox"]
+
+
+def test_routes_become_hash_urls_with_hash_routing_and_relative_links_resolve():
+    eps = js.extract_endpoints(ANGULAR, "https://app.example.com/main.js")
+    assert "https://app.example.com/#/score-board" in eps
+    assert "https://app.example.com/#/privacy-security/privacy-policy" in eps
+    assert "https://app.example.com/redirect?to=https://github.com/x" in eps
+    assert "https://app.example.com/#/engine.io" not in eps and not any("M0" in e for e in eps)
+    plain = ANGULAR.replace("useHash:!0", "useHash:!1")
+    assert "https://app.example.com/score-board" in js.extract_endpoints(plain, "https://app.example.com/main.js")
+    assert not any("#" in e for e in js.extract_endpoints(ANGULAR, "https://app.example.com/main.js", routes=False))
+
+
+def test_react_and_vue_routes():
+    react = 'createHashRouter([{path:"/",element:h(App),children:[{path:"admin",element:h(Admin)}]}])'
+    assert js.spa_routes(react) == ["/admin"] and js.uses_hash_routing(react)
+    vue = "new VueRouter({mode:'history',routes:[{path:'/settings',component:S,children:[{path:'keys',component:K}]}]})"
+    assert js.spa_routes(vue) == ["/settings", "/settings/keys"] and not js.uses_hash_routing(vue)

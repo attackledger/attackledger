@@ -36,3 +36,30 @@ def test_rank_orders_by_score_then_host():
         "dead.example.com": [],
     })
     assert [r["host"] for r in rows] == ["api.example.com", "a.example.com", "b.example.com"]
+
+
+def test_a_single_page_app_with_an_api_reaches_golden():
+    spa = [p(200, "OWASP Juice Shop", [], 3000)]
+    before = score_host("juice.lab.test", spa)
+    assert before["signals"] == ["ODDPORT", "KEYWORD", "200"] and not before["golden"]
+    after = score_host("juice.lab.test", spa, api_shapes=12)
+    assert after["signals"][-1] == "API" and after["score"] == 5 and after["golden"]
+
+
+def test_one_or_two_api_paths_do_not_count_and_api_alone_is_not_golden():
+    assert "API" not in score_host("www.example.com", [p(200)], api_shapes=2)["signals"]
+    r = score_host("www.example.com", [p(200)], api_shapes=40)
+    assert r["score"] == 3 and not r["golden"]                     # 200 + API: still below 4
+
+
+def test_rank_passes_api_shapes_per_host():
+    rows = rank({"a.example.com": [p(200, port=8080)], "b.example.com": [p(200, port=8080)]},
+                api_shapes={"b.example.com": 3})
+    assert [r["host"] for r in rows] == ["b.example.com", "a.example.com"] and rows[0]["golden"]
+
+
+def test_api_shapes_collapse_identifiers_and_ignore_junk():
+    from app.surface import api_shapes
+    assert api_shapes(["https://a/api/Products/1", "https://a/api/Products/2", "https://a/api/Users",
+                       "https://a/rest/x?y=1", "https://a/api/%60junk%60", "https://a/about"]) == \
+        {"/api/Products/{id}", "/api/Users", "/rest/x"}

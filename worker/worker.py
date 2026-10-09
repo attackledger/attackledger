@@ -849,6 +849,7 @@ RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_po
            "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze,
            "nuclei": run_nuclei, "content": run_content, "params": run_params,
            "paramclass": run_paramclass, "dorks": run_dorks}
+RUNNERS.update(__import__("app.reconsteps").reconsteps.runners(globals()))  # wellknown, content (app/reconsteps.py)
 def check_registry() -> None:
     """The worker and the module registry must describe the same job kinds."""
     missing = set(modules.BY_KIND) - set(RUNNERS)

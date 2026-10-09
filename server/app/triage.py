@@ -9,7 +9,17 @@ from its probe results and a score:
   ODDPORT  web service on a port other than 80/443        +1
   KEYWORD  host name matches the golden keyword list      +1
   200      at least one 200 response                      +1
+  API      recon recorded at least 3 distinct API paths   +2
   WAF      title looks like a WAF/bot challenge page      (flag only)
+
+API counts what the later steps found on the host (crawl, archives, JavaScript, content
+discovery), with identifiers collapsed (/api/Products/1 and /api/Products/2 are one path).
+A single-page app shows nothing in its probe: an empty shell page, no login title, often
+no detectable stack, so it scored 3 on the benchmark however much backend it had. An API
+surface is the same kind of evidence as application technology (+2), and a static site or
+a CDN edge has none. One or two API-looking links are not enough. The probe-only score is
+unchanged, so the crawl step (which runs before any endpoints exist) ranks hosts as before;
+the steps after it (content discovery, the golden nuclei pass) see the API signal.
 """
 import re
 
@@ -29,8 +39,9 @@ _BORING = re.compile(r"^(amazoncloudfront|amazonelb|amazonwebservices|awselb|env
                      r".*radar|amazon.*|google.*|sucuri|imperva|incapsula|f5 big-?ip|open-?resty|ipv6|dns|"
                      r"acme|lets? ?encrypt)$", re.I)
 
-WEIGHTS = {"AUTH": 4, "TITLE": 4, "APPTECH": 2, "ODDPORT": 1, "KEYWORD": 1, "200": 1}
+WEIGHTS = {"AUTH": 4, "TITLE": 4, "APPTECH": 2, "ODDPORT": 1, "KEYWORD": 1, "200": 1, "API": 2}
 GOLDEN_MIN_SCORE = 4
+API_MIN_SHAPES = 3
 
 
 def _tech_name(t: str) -> str:
@@ -38,8 +49,9 @@ def _tech_name(t: str) -> str:
     return t.split(":")[0].strip().lower().replace(" ", "")
 
 
-def score_host(host: str, probes: list[dict], keywords: str = GOLDEN_KEYWORDS) -> dict:
-    """probes: one dict per (scheme, port) probe of this host with status_code/title/tech/port."""
+def score_host(host: str, probes: list[dict], keywords: str = GOLDEN_KEYWORDS, api_shapes: int = 0) -> dict:
+    """probes: one dict per (scheme, port) probe of this host with status_code/title/tech/port.
+    api_shapes: distinct API-like paths recon recorded on the host (surface.api_shapes)."""
     statuses = {str(p["status_code"]) for p in probes if p.get("status_code")}
     titles = [p["title"].strip() for p in probes if (p.get("title") or "").strip()]
     tech = list(dict.fromkeys(t for p in probes for t in (p.get("tech") or [])))
@@ -62,13 +74,18 @@ def score_host(host: str, probes: list[dict], keywords: str = GOLDEN_KEYWORDS) -
         sig.append("KEYWORD")
     if "200" in statuses:
         sig.append("200")
+    if api_shapes >= API_MIN_SHAPES:
+        sig.append("API")
 
     score = sum(WEIGHTS.get(s, 0) for s in sig)
     return {"host": host, "score": score, "signals": sig, "golden": score >= GOLDEN_MIN_SCORE,
-            "statuses": sorted(statuses), "ports": sorted(ports), "titles": titles[:3], "tech": tech[:8]}
+            "statuses": sorted(statuses), "ports": sorted(ports), "titles": titles[:3], "tech": tech[:8],
+            "api_paths": api_shapes}
 
 
-def rank(probes_by_host: dict[str, list[dict]], keywords: str = GOLDEN_KEYWORDS) -> list[dict]:
-    rows = [score_host(h, p, keywords) for h, p in probes_by_host.items() if p]
+def rank(probes_by_host: dict[str, list[dict]], keywords: str = GOLDEN_KEYWORDS,
+         api_shapes: dict[str, int] | None = None) -> list[dict]:
+    api_shapes = api_shapes or {}
+    rows = [score_host(h, p, keywords, api_shapes.get(h, 0)) for h, p in probes_by_host.items() if p]
     rows.sort(key=lambda r: (-r["score"], r["host"]))
     return rows
