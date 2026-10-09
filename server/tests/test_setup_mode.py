@@ -92,3 +92,37 @@ def test_the_api_documentation_needs_sign_in_in_production(prod, monkeypatch):
 def test_open_local_use_keeps_the_documentation_open(env):
     c, _ = env
     assert c.get("/openapi.json").status_code == 200 and c.get("/docs").status_code == 200
+
+
+def test_the_documentation_page_loads_nothing_from_another_origin(prod, monkeypatch):
+    """/docs is one static page made from the schema: no script, and every URL it names is
+    relative (same origin). Swagger UI came from a CDN, unpinned and without integrity."""
+    import base64
+    import hashlib
+    import re
+    c, _ = prod
+    monkeypatch.setenv("ATTACKLEDGER_NEW_PASSWORD", PW)
+    assert people.main(["create", "--email", OWNER["email"], "--name", OWNER["name"], "--owner"]) == 0
+    assert c.post("/auth/login", json={"email": OWNER["email"], "password": PW}).status_code == 200
+    r = c.get("/docs")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    page = r.text
+    assert "<script" not in page.lower() and "swagger" not in page.lower()
+    urls = re.findall(r"""(?:src|href|action)\s*=\s*['"]([^'"]*)['"]""", page, re.I) + re.findall(r"url\(([^)]*)\)", page)
+    assert "openapi.json" in urls and "#g-engagements" in urls
+    assert all(not re.match(r"^\s*(?:[a-z][a-z0-9+.-]*:|//)", u, re.I) for u in urls), urls
+    # The policy allows nothing but the page's own style block, by hash.
+    csp = r.headers["content-security-policy"]
+    assert csp.startswith("default-src 'none'") and "frame-ancestors 'none'" in csp
+    style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
+    assert f"'sha256-{base64.b64encode(hashlib.sha256(style.encode()).digest()).decode()}'" in csp
+    assert "POST" in page and "/engagements/{eng_id}/inbox/map" in page and "the tester role" in page
+
+
+def test_the_import_route_documents_its_raw_body(env):
+    c, _ = env
+    op = c.get("/openapi.json").json()["paths"]["/engagements/{eng_id}/imports"]["post"]
+    body = op["requestBody"]
+    assert body["required"] is True and "raw request body" in body["description"]
+    assert body["content"]["application/octet-stream"]["schema"] == {"type": "string", "format": "binary"}
+    assert "multipart/form-data" not in body["content"]

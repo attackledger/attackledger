@@ -12,24 +12,37 @@ class GateError(Exception):
     pass
 
 
+def terms(eng: Engagement) -> dict[str, str]:
+    """Who sets the rules, in the words the web app uses (web/src/words.ts): a bug bounty
+    program publishes a policy; a pentest or internal assessment is done for a client under a
+    statement of work and rules of engagement."""
+    if getattr(eng, "engagement_type", None) == "bug_bounty":
+        return {"authorize": "record your authorization for this program", "test": "test this program",
+                "scope": "the program scope", "allows": "the program policy allows it",
+                "requires": "the program requires"}
+    return {"authorize": "record the client's authorization for this engagement",
+            "test": "test these hosts for the client", "scope": "the scope from the statement of work",
+            "allows": "the rules of engagement allow it", "requires": "the rules of engagement require"}
+
+
 def check_engagement(eng: Engagement, kind: str) -> modules.Module:
     m = modules.get(kind)
     if m is None:
         raise GateError(f"unknown job kind: {kind}")
     if getattr(eng, "content_deleted_at", None) is not None:
         raise GateError("this engagement's content was deleted; it takes no new runs")
+    t = terms(eng)
     if eng.authorized_at is None:
-        raise GateError("record your authorization for this program before running jobs")
+        raise GateError(f"{t['authorize']} before running jobs")
     if not eng.scope_include:
-        raise GateError("define the program scope before running jobs")
+        raise GateError(f"define {t['scope']} before running jobs")
     if m.opt_in and kind not in (eng.enabled_modules or []):
-        raise GateError(f"{m.title.lower()} is off for this engagement; enable it only if the "
-                        f"program policy allows it")
+        raise GateError(f"{m.title.lower()} is off for this engagement; enable it only if {t['allows']}")
     if eng.rate_limit_rps < m.min_rps:
         raise GateError(f"{m.title.lower()} needs a rate limit of at least {m.min_rps} per second to stay "
                         f"within it; this engagement allows {eng.rate_limit_rps}")
     if m.needs_identification and not (eng.research_header or eng.research_user_agent):
-        raise GateError("set the research header or user agent the program requires "
+        raise GateError(f"set the research header or user agent {t['requires']} "
                         "before sending traffic to its hosts")
     return m
 

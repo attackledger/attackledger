@@ -660,7 +660,8 @@ def test_mapping_works_before_the_dependency_is_receipted_and_opens_lanes(client
     assert len(detail["targets"]) == 12 and detail["asset"]["id"] == a
     athn_t = next(t for t in detail["targets"] if t["role"] == "athn")
     assert (athn_t["lane_id"], athn_t["opened"], athn_t["can_open"]) == (None, False, True)
-    assert athn_t["items"][2] == {"idx": 3, "key": "WSTG-ATHN-03", "text": athn_t["items"][2]["text"], "state": "open"}
+    assert athn_t["items"][2] == {"idx": 3, "key": "WSTG-ATHN-03", "text": athn_t["items"][2]["text"], "state": "open",
+                                  "lane_status": "not_opened", "receipted": False}
     assert any(s["role"] == "athn" and s["lane_id"] is None for s in detail["suggestions"])
     r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
                                                          "targets": [{"role": "athn", "item_idx": 3}]})
@@ -784,3 +785,28 @@ def test_the_verifier_and_its_roots_download_from_the_api(client):
     assert names == ["attackledger-verifier/verify_report.py",
                      "attackledger-verifier/tsa-roots/digicert-trusted-root-g4.pem"]
     assert index["page"] == "https://attackledger.com/verify"
+
+
+def test_a_multipart_upload_is_refused_with_how_to_send_the_file(client):
+    _, e, _ = team(client)
+    r = client.post(f"/engagements/{e}/imports", files={"file": ("export.har", HAR, "application/json")})
+    assert r.status_code == 415 and "multipart form" in r.json()["detail"] and "--data-binary" in r.json()["detail"]
+    # The same form with its content type lost on the way is recognised by its first bytes.
+    form = b"--xyz\r\nContent-Disposition: form-data; name=\"file\"; filename=\"export.har\"\r\n\r\n" + HAR + b"\r\n--xyz--\r\n"
+    r = upload(client, e, form)
+    assert r.status_code == 415 and "multipart form" in r.json()["detail"]
+    assert db(client).scalars(select(ImportBatch)).all() == []
+    assert upload(client, e, HAR).status_code == 201                  # the file itself is imported
+
+
+def test_a_bad_item_number_on_a_lane_given_by_role_says_which_lane(client):
+    _, e, a = team(client)
+    upload(client, e, HAR)
+    login = by_url(client, e, "/rest/user/login")
+    for idx in (0, 99):
+        r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
+                                                             "targets": [{"role": "athn", "item_idx": idx}]})
+        assert r.status_code == 422 and "None" not in r.json()["detail"]
+        assert r.json()["detail"].startswith(f"Authentication on shop.example.com has no item {idx}; "
+                                             "its items are numbered 1 to ")
+    assert db(client).scalars(select(Evidence)).all() == []

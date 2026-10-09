@@ -417,7 +417,8 @@ def due_for_retention(session, today: date | None = None) -> list:
 
 
 def apply_retention(session, today: date | None = None) -> list[int]:
-    """The worker's pass: delete the content of engagements past their retention date, and
+    """The API's retention pass (workerapi.start_maintenance; the worker has no database since
+    D-042): delete the content of engagements past their retention date, and
     finish any deletion whose file step did not complete. Returns the engagement ids deleted."""
     from sqlalchemy import select
 

@@ -626,3 +626,59 @@ def test_a_host_outside_the_scope_rules_says_why_it_is_stored_out_of_scope(clien
     assert (fine["in_scope"], fine["scope_note"]) == (True, None)
     asked = client.post(f"/engagements/{eng}/assets", json={"host": "b.example.com", "in_scope": False}).json()
     assert (asked["in_scope"], asked["scope_note"]) == (False, None)   # stored as asked, nothing to explain
+
+
+def test_only_not_applicable_items_resolved_is_its_own_status(client):
+    """0 items with evidence and some N/A is not progress: it says so, instead of "Some mapped
+    items receipted"."""
+    eng = client.post("/engagements", json={"name": "na-some", "pack_id": "web-pentest-wstg"}).json()["id"]
+    a = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
+    info = client.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
+    for it in info["items"]:
+        client.patch(f"/lanes/{info['id']}/items/{it['idx']}", json={"state": "na", "na_reason": "out of reach"})
+    assert client.post(f"/lanes/{info['id']}/close", json=SIGN).status_code == 200
+    rows = {r["id"]: r for r in client.get(f"/engagements/{eng}/controls").json()["controls"]}
+    pci = rows["PCI-11.4.1"]                  # every WSTG lane maps to it; only info is receipted, all N/A
+    assert pci["evidenced"] == 0 and 0 < pci["not_applicable"] < pci["required"]
+    assert pci["status"] == "only_not_applicable"
+    page = client.get(f"/engagements/{eng}/report.html").text
+    assert "Only not-applicable items resolved" in page
+
+
+def test_recon_step_lead_counts_add_up_to_the_total(client):
+    """Each step's line counts the leads its runs recorded, whatever their kind, so the steps
+    and the total agree; an agent's leads are counted apart."""
+    from app.models import Job, JobStatus, Lead
+    e = client.post("/engagements", json={"name": "leads"}).json()["id"]
+    client.put(f"/engagements/{e}/scope", json={"include": ["*.lab.test"]})
+    s = next(app.dependency_overrides[db.get_session]())
+    rows = [("jsanalyze", "secret"), ("jsanalyze", "graphql"), ("wellknown", "robots"), ("wellknown", "security-txt"),
+            ("content", "listing"), ("nuclei", "nuclei"), ("dorks", "dork"), ("agent", "agent")]
+    for n, (kind, lead_kind) in enumerate(rows):
+        job = Job(engagement_id=e, kind=kind, targets=[], status=JobStatus.done)
+        s.add(job)
+        s.flush()
+        s.add(Lead(engagement_id=e, job_id=job.id, host="a.lab.test", source_url="https://a.lab.test/",
+                   kind=lead_kind, title=f"lead {n}", fingerprint=f"{n:064d}"))
+    s.commit()
+    summary = client.get(f"/engagements/{e}/recon/summary").json()
+    assert summary["leads"] == len(rows) == sum(summary["step_leads"].values())
+    assert summary["step_leads"] == {"subdomains": 0, "live": 0, "urls": 3, "js": 2, "issues": 1, "manual": 1,
+                                     "agent": 1, "other": 0}
+
+
+def test_gate_messages_use_the_engagement_types_words(client):
+    """A bug bounty program has a policy; a pentest has a client, a statement of work and rules
+    of engagement (web/src/words.ts)."""
+    for pack, etype, words in (("bug-bounty", "bug_bounty", ("this program", "program policy")),
+                               ("web-pentest-wstg", "pentest", ("client's authorization", "rules of engagement"))):
+        e = client.post("/engagements", json={"name": etype, "pack_id": pack, "engagement_type": etype}).json()["id"]
+        r = client.post(f"/engagements/{e}/jobs", json={"kind": "resolve", "targets": ["a.lab.test"]})
+        assert r.status_code == 422 and words[0] in r.json()["detail"], r.text
+        assert client.post(f"/engagements/{e}/attest", json={"operator": "op", "policy_url": "https://example.com/p",
+                                                             "confirm": True}).status_code == 200
+        client.put(f"/engagements/{e}/scope", json={"include": ["*.lab.test"]})
+        r = client.post(f"/engagements/{e}/jobs", json={"kind": "ports", "targets": ["a.lab.test"]})
+        assert r.status_code == 422 and words[1] in r.json()["detail"], r.text
+        if etype == "pentest":
+            assert "program" not in r.json()["detail"]

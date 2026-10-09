@@ -2,6 +2,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import html
 import io
 import json
 import os
@@ -11,7 +12,6 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -25,6 +25,7 @@ from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
                      ItemState, Job, JobStatus, Lane, Lead, Membership, Observation, Receipt, SigningKey, User)
+from .text import plural
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 
@@ -140,7 +141,8 @@ def _inbox_counts(lane: Lane) -> dict:
     return counts
 
 
-def _lane_view(lane: Lane) -> dict:
+def _lane_view(lane: Lane, who=None) -> dict:
+    """who: the caller, for can_sign (whether they could sign this lane now, and why not)."""
     pack = _pack_of(lane.asset.engagement)
     keys = vault.Keys()
     by_role = {l.role: l for l in lane.asset.lanes}
@@ -181,9 +183,13 @@ def _lane_view(lane: Lane) -> dict:
                             "tsa": lane.receipts[-1].timestamp_tsa}
                            if lane.receipts[-1].timestamp_token else None),
              "timestamp_error": lane.receipts[-1].timestamp_error,
-             "created_at": iso_utc(lane.receipts[-1].created_at)}
+             "created_at": iso_utc(lane.receipts[-1].created_at),
+             # Set when a change voided this receipt ({at, by, cause, text}); it stays void
+             # until a new receipt is signed, even if the lane is changed back.
+             "void": gates.void_of(lane.receipts[-1])}
             if lane.receipts else None
         ),
+        **({"can_sign": _can_sign(lane, who)} if who is not None else {}),
     }
 
 
@@ -434,12 +440,12 @@ def open_lane(body: LaneIn, request: Request, session: Session = Depends(get_ses
         session.commit()
     except IntegrityError:
         raise HTTPException(409, "lane already open for this asset and role")
-    return _lane_view(lane)
+    return _lane_view(lane, who)
 
 
 @app.get("/lanes/{lane_id}")
-def get_lane(lane_id: int, session: Session = Depends(get_session)):
-    return _lane_view(_get(session, Lane, lane_id))
+def get_lane(lane_id: int, request: Request, session: Session = Depends(get_session)):
+    return _lane_view(_get(session, Lane, lane_id), authz.current(request))
 
 
 @app.post("/lanes/{lane_id}/evidence", status_code=201)
@@ -458,6 +464,8 @@ def add_evidence(lane_id: int, body: EvidenceIn, request: Request, session: Sess
                                     redaction=rep.as_dict() if rep.count else None)
     except vault.ContentDeleted as e:
         raise HTTPException(409, f"{e} It takes no new evidence.")
+    gates.record_change(session, lane, actor=auditlog.actor(authz.current(request)), cause={
+        "kind": "evidence", "evidence_id": ev.id, "item_idx": body.item_idx, "source": "manual"})
     session.commit()
     return {"id": ev.id}
 
@@ -534,13 +542,17 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
     ev = ledger.append_evidence(session, lane, kind=kind, sha256_hex=digest, summary=summary, uri=uri,
                                 item_id=item.id, source="manual", created_by=authz.current(request).user_id,
                                 redaction=redaction)
+    gates.record_change(session, lane, actor=auditlog.actor(authz.current(request)), cause={
+        "kind": "evidence", "evidence_id": ev.id, "item_idx": item.idx, "source": "manual"})
     session.commit()
     session.refresh(lane)
-    return {"id": ev.id, **_lane_view(lane)}
+    return {"id": ev.id, **_lane_view(lane, authz.current(request))}
 
 
 @app.patch("/lanes/{lane_id}/items/{idx}")
-def update_item(lane_id: int, idx: int, body: ItemUpdate, session: Session = Depends(get_session)):
+def update_item(lane_id: int, idx: int, body: ItemUpdate, request: Request, session: Session = Depends(get_session)):
+    """Set an item's state. On a lane that was receipted, any real change voids the receipt
+    for good (gates.py) and goes into the audit log; the lane needs a new signature."""
     lane = _get(session, Lane, lane_id)
     item = _item(lane, idx)
     if lane.asset.engagement.content_deleted_at is not None:    # the evidence can no longer be reviewed
@@ -549,10 +561,15 @@ def update_item(lane_id: int, idx: int, body: ItemUpdate, session: Session = Dep
         raise HTTPException(422, "attach evidence to this item before marking it done")
     if body.state == ItemState.na and not (body.na_reason or "").strip():
         raise HTTPException(422, "N/A needs a reason")
+    before = {"state": item.state.value, "na_reason": item.na_reason}
     item.state = body.state
     item.na_reason = body.na_reason if body.state == ItemState.na else None
+    if before != {"state": item.state.value, "na_reason": item.na_reason}:
+        gates.record_change(session, lane, actor=auditlog.actor(authz.current(request)), cause={
+            "kind": "item", "idx": item.idx, "key": item.item_key, "before": {"state": before["state"]},
+            "after": {"state": item.state.value}})
     session.commit()
-    return _lane_view(lane)
+    return _lane_view(lane, authz.current(request))
 
 
 class CloseIn(BaseModel):
@@ -633,13 +650,6 @@ def _payload_fields(p: dict) -> dict:
         raise HTTPException(422, "the signed payload is missing fields")
 
 
-def _check_can_close(lane: Lane) -> None:
-    try:
-        gates.check_can_close(lane, _pack_of(lane.asset.engagement))
-    except gates.GateError as e:
-        raise HTTPException(422, str(e))
-
-
 @app.get("/lanes/{lane_id}/receipt-payload")
 def receipt_payload(lane_id: int, key: str, request: Request, session: Session = Depends(get_session)):
     """The text to sign for this lane as it is now. Valid for ten minutes."""
@@ -648,7 +658,9 @@ def receipt_payload(lane_id: int, key: str, request: Request, session: Session =
     if who.kind != "person":
         raise HTTPException(422, "only a signed-in person can sign a receipt")
     k = _key_of(session, who, key)
-    _check_can_close(lane)          # do not hand out a payload the close would refuse
+    refusal = _sign_refusal(lane, who)      # do not hand out a payload the close would refuse
+    if refusal:
+        raise HTTPException(refusal[0], refusal[1])
     eng = lane.asset.engagement
     seq, head = ledger.chain_head(session, eng.id)
     return {"payload": signing.payload_for(
@@ -656,6 +668,49 @@ def receipt_payload(lane_id: int, key: str, request: Request, session: Session =
         manifest_sha256=gates.manifest_hash(lane), chain_seq=seq, chain_head=head, signer_id=who.user_id,
         signer_name=who.name, signer_email=who.email, key_fingerprint=k.fingerprint,
         issued_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))}
+
+
+def _sign_refusal(lane: Lane, who) -> tuple[int, object, str] | None:
+    """Why this caller cannot sign this lane now, as (status, detail, sentence), or None.
+    The close route refuses with it, and the lane view offers it as can_sign before anyone
+    creates a key, so the two never disagree. What the request itself carries (the reviewed
+    box, a typed name, the signature) is checked by the close route only."""
+    eng = lane.asset.engagement
+    if not who.has(eng.id, "reviewer"):
+        msg = "Signing needs the reviewer role on this engagement."
+        return 403, msg, msg
+    if eng.content_deleted_at is not None:     # nobody can review what can no longer be read
+        msg = (vault.deleted_sentence(vault.deleted_info(eng))
+               + " Its evidence can no longer be reviewed, so no new receipt is issued.")
+        return 409, msg, msg
+    if eng.separation_of_duties:
+        if who.kind != "person":
+            msg = "Separation of duties is on: sign in as a person to sign receipts."
+            return 422, msg, msg
+        if any(e.created_by == who.user_id for e in lane.evidence):
+            msg = ("Separation of duties is on: you attached evidence to this lane, "
+                   "so someone else must sign its receipt.")
+            return 422, msg, msg
+    if eng.require_signatures and who.kind != "person":
+        msg = "This engagement requires signed receipts: sign in as a person and sign with your key."
+        return 422, msg, msg
+    problems = gates.unresolved(lane)
+    if problems:
+        return 422, {"error": "lane cannot close", "unresolved": problems}, (
+            f"Resolve every item first: {'; '.join(problems)}.")
+    try:
+        gates.check_can_close(lane, _pack_of(eng))
+    except gates.GateError as e:
+        return 422, str(e), f"{e}."
+    return None
+
+
+def _can_sign(lane: Lane, who) -> dict:
+    """Read-only: whether this caller could sign this lane now, and why not. signature_required
+    says the close needs a signature with a registered key (the engagement requires one)."""
+    refusal = _sign_refusal(lane, who)
+    return {"ok": refusal is None, "reason": refusal[2] if refusal else None,
+            "signature_required": bool(lane.asset.engagement.require_signatures)}
 
 
 @app.post("/lanes/{lane_id}/close")
@@ -666,27 +721,19 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     who = authz.current(request)
     if not body.reviewed:
         raise HTTPException(422, "confirm that you reviewed this lane's evidence before closing it")
-    if lane.asset.engagement.content_deleted_at is not None:     # nobody can review what can no longer be read
-        raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(lane.asset.engagement))
-                            + " Its evidence can no longer be reviewed, so no new receipt is issued.")
     signer = who.name if who.kind == "person" else (body.closed_by or "").strip()
+    refusal = _sign_refusal(lane, who)
+    if refusal and refusal[0] == 409:           # deleted content: say that before asking for a name
+        raise HTTPException(refusal[0], refusal[1])
     if not signer:
         raise HTTPException(422, "a receipt needs the name of the person signing it")
-    if lane.asset.engagement.separation_of_duties:
-        if who.kind != "person":
-            raise HTTPException(422, "separation of duties is on: sign in as a person to sign receipts")
-        if any(e.created_by == who.user_id for e in lane.evidence):
-            raise HTTPException(422, "separation of duties is on: you attached evidence to this lane, "
-                                     "so someone else must sign its receipt")
-    problems = gates.unresolved(lane)
-    if problems:
-        raise HTTPException(422, {"error": "lane cannot close", "unresolved": problems})
-    _check_can_close(lane)
+    if refusal:
+        raise HTTPException(refusal[0], refusal[1])
     key = None
     if body.signature or body.payload:
         key = _check_signed(session, lane, who, body)
     elif lane.asset.engagement.require_signatures:
-        raise HTTPException(422, "this engagement requires signed receipts: sign with your key")
+        raise HTTPException(422, "This engagement requires signed receipts: sign with your key.")
     receipt = Receipt(lane_id=lane.id, manifest_sha256=gates.manifest_hash(lane),
                       closed_by=signer, closed_by_user=who.user_id, closed_by_email=who.email or None)
     if key is not None:
@@ -696,7 +743,7 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     session.add(receipt)
     session.commit()
     session.refresh(lane)
-    return {"receipt": receipt.manifest_sha256, **_lane_view(lane)}
+    return {"receipt": receipt.manifest_sha256, **_lane_view(lane, who)}
 
 
 def _timestamp(receipt: Receipt) -> None:
@@ -715,7 +762,7 @@ def _timestamp(receipt: Receipt) -> None:
 
 
 @app.post("/lanes/{lane_id}/receipt/timestamp")
-def timestamp_receipt(lane_id: int, session: Session = Depends(get_session)):
+def timestamp_receipt(lane_id: int, request: Request, session: Session = Depends(get_session)):
     """Timestamp the lane's current receipt now, after an earlier attempt failed or for a
     receipt issued before a timestamp authority was set. The token shows the later time."""
     lane = _get(session, Lane, lane_id)
@@ -731,7 +778,7 @@ def timestamp_receipt(lane_id: int, session: Session = Depends(get_session)):
     session.refresh(lane)
     if receipt.timestamp_error:
         raise HTTPException(502, receipt.timestamp_error)
-    return _lane_view(lane)
+    return _lane_view(lane, authz.current(request))
 
 
 @app.get("/engagements")
@@ -897,10 +944,10 @@ def _apply_scope_to_assets(eng: Engagement, inc: list[str], exc: list[str]) -> l
 
 @app.post("/engagements/{eng_id}/attest")
 def attest(eng_id: int, body: AttestIn, request: Request, session: Session = Depends(get_session)):
-    if not body.confirm:
-        raise HTTPException(422, "confirm that you are authorized to test this program")
-    policy_url = _policy_url(body.policy_url, required=True)
     eng = _get(session, Engagement, eng_id)
+    if not body.confirm:
+        raise HTTPException(422, f"confirm that you are authorized to {jobgates.terms(eng)['test']}")
+    policy_url = _policy_url(body.policy_url, required=True)
     before = auditlog.authorization_snapshot(eng)
     eng.authorized_by, eng.policy_url = body.operator.strip(), policy_url
     eng.authorized_at = datetime.now(timezone.utc)
@@ -958,12 +1005,18 @@ def recon_summary(eng_id: int, session: Session = Depends(get_session)):
     eps = [e for e in session.scalars(select(Endpoint).where(Endpoint.engagement_id == eng_id))
            if in_scope(e.host)]
     lead_kinds: dict[str, int] = {}
-    for l in session.scalars(select(Lead).where(Lead.engagement_id == eng_id)):
-        lead_kinds[l.kind] = lead_kinds.get(l.kind, 0) + 1
+    # Leads by the recon step whose run recorded them, so the steps add up to the total:
+    # leads an agent recorded count under "agent", and those of a module no longer in the
+    # registry under "other".
+    step_leads = dict.fromkeys([p.key for p in modules.PHASES] + ["agent", "other"], 0)
+    for kind, job_kind in session.execute(select(Lead.kind, Job.kind).join(Job, Job.id == Lead.job_id)
+                                          .where(Lead.engagement_id == eng_id)):
+        lead_kinds[kind] = lead_kinds.get(kind, 0) + 1
+        step_leads[modules.PHASE_OF.get(job_kind) or ("agent" if job_kind == "agent" else "other")] += 1
     return {"hosts": len(hosts), "resolved": len(resolved), "live": len(ranked),
             "golden": sum(1 for r in ranked if r["golden"]),
             "urls": len(eps), "js": sum(1 for e in eps if e.is_js),
-            "leads": sum(lead_kinds.values()), "lead_kinds": lead_kinds}
+            "leads": sum(lead_kinds.values()), "lead_kinds": lead_kinds, "step_leads": step_leads}
 
 
 @app.post("/engagements/{eng_id}/jobs", status_code=201)
@@ -1095,8 +1148,9 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
     evidence counts as evidenced; an item marked not applicable, with its reason, is
     counted separately and never as evidence. Status: "evidenced" when every mapped
     item has evidence, "resolved" when every item is resolved but some are not
-    applicable, "not_applicable" when all are, "partial" when some are resolved,
-    "none" otherwise. Each row also carries the strength the pack claims for the control
+    applicable, "not_applicable" when all are, "partial" when some have evidence and
+    not all are resolved, "only_not_applicable" when none has evidence and some (not
+    all) are not applicable, "none" otherwise. Each row also carries the strength the pack claims for the control
     (full, partial or supporting) and the catalog's note on when the mapping holds.
     """
     eng = _get(session, Engagement, eng_id)
@@ -1129,8 +1183,10 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
             c["status"] = "evidenced"
         elif c["required"] and resolved == c["required"]:
             c["status"] = "resolved" if c["evidenced"] else "not_applicable"
-        elif resolved:
+        elif c["evidenced"]:
             c["status"] = "partial"
+        elif c["not_applicable"]:     # nothing receipted with evidence: N/A alone is not progress
+            c["status"] = "only_not_applicable"
         else:
             c["status"] = "none"
         rows.append(c)
@@ -1243,7 +1299,7 @@ def list_executors():
 
 
 @app.patch("/lanes/{lane_id}")
-def patch_lane(lane_id: int, body: LanePatch, session: Session = Depends(get_session)):
+def patch_lane(lane_id: int, body: LanePatch, request: Request, session: Session = Depends(get_session)):
     lane = _get(session, Lane, lane_id)
     ex = executors.EXECUTORS.get(body.executor)
     if ex is None:
@@ -1253,7 +1309,7 @@ def patch_lane(lane_id: int, body: LanePatch, session: Session = Depends(get_ses
         raise HTTPException(422, why)
     lane.executor = ex.key
     session.commit()
-    return _lane_view(lane)
+    return _lane_view(lane, authz.current(request))
 
 
 @app.get("/lanes/{lane_id}/context")
@@ -1513,9 +1569,38 @@ def update_engagement(eng_id: int, body: EngagementPatch, request: Request, sess
 
 # ---- retention and deleting content (D-043) -----------------------------------
 
+def _content_terms(rows: list[Evidence]) -> dict:
+    """What deleting the content removes and what stays, in plain sentences for the deletion
+    screen. What stays is what the evidence chain, the receipts and the audit log commit to:
+    removing it would break verification (D-043)."""
+    uris = [e.uri for e in rows if e.uri]
+    queries = sum(1 for u in uris if "?" in u)
+    v1 = sum(1 for e in rows if e.summary is not None)
+    keeps = [
+        f"The URI of each evidence entry, with its host, path and query string ({plural(len(uris), 'entry', 'entries')} "
+        f"{'has' if len(uris) == 1 else 'have'} one, {queries} with a query string). The evidence chain commits "
+        "to it, so it stays in the ledger and in every report built afterwards.",
+        "The reasons given for not-applicable items, which the receipts commit to.",
+        "The hash of every evidence entry, the receipts with their signatures and timestamps, and the change "
+        "history, so reports still verify.",
+        "The names and email addresses of the people in the change history and on the receipts.",
+        "For imported entries: the host, method, status and hashes.",
+    ]
+    if v1:
+        keeps.append(f"{plural(v1, 'evidence summary', 'evidence summaries')} recorded before chain record v2, "
+                     "because the chain covers their text.")
+    removes = [
+        "The engagement's key, so the raw evidence and the evidence summaries can no longer be read.",
+        "Recon results: observations, URLs and leads.",
+        "Imported entries' URLs, labels and tool ids, import file names and the hosts of refused rows.",
+    ]
+    return {"evidence_uris": len(uris), "uris_with_query": queries, "keeps": keeps, "removes": removes}
+
+
 def _content_status(session, eng: Engagement) -> dict:
     rows = session.scalars(select(Evidence).where(Evidence.engagement_id == eng.id)).all()
     return {"engagement": eng.name, "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
+            **_content_terms(rows),
             "content_deleted": vault.deleted_info(eng),
             "encryption": vault.describe_master(),
             "evidence_entries": len(rows),
@@ -1615,8 +1700,17 @@ def audit_all(session: Session = Depends(get_session)):
 # redacted, until a person maps them to checklist items (inbox.py). The file is sent as the
 # request body, not as JSON, so a 50 MB export is not inflated by base64 on the way.
 
+_MULTIPART = ("This upload is a multipart form. Send the export file itself as the request body, "
+              "for example: curl --data-binary @export.har -H 'Content-Type: application/octet-stream' "
+              "'.../engagements/<id>/imports?filename=export.har'.")
+
+
 async def _upload_body(request: Request) -> bytes:
-    """The request body, read up to the import limit and no further."""
+    """The request body, read up to the import limit and no further. A multipart form (a
+    browser form or curl -F) is refused with a clear message: its boundaries and part headers
+    around the file would otherwise make it look like an unknown format."""
+    if request.headers.get("content-type", "").lower().lstrip().startswith("multipart/"):
+        raise HTTPException(415, _MULTIPART)
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > importers.MAX_FILE_BYTES:
         raise HTTPException(413, f"the file is larger than {importers.MAX_FILE_BYTES // 1_000_000} MB; "
@@ -1628,7 +1722,12 @@ async def _upload_body(request: Request) -> bytes:
             raise HTTPException(413, f"the file is larger than {importers.MAX_FILE_BYTES // 1_000_000} MB; "
                                      "export fewer items")
         chunks.append(chunk)
-    return b"".join(chunks)
+    data = b"".join(chunks)
+    # The same form sent without its content type: a boundary line, then a form-data part header.
+    head = data[:1024].lstrip()
+    if head.startswith(b"--") and b"content-disposition: form-data" in head.lower():
+        raise HTTPException(415, _MULTIPART)
+    return data
 
 
 @app.get("/imports/formats")
@@ -1641,7 +1740,19 @@ def import_formats():
             "suggestion_rules": inbox.RULE_HELP}
 
 
-@app.post("/engagements/{eng_id}/imports", status_code=201)
+# The body is read from the stream (_upload_body), so FastAPI cannot describe it; this does.
+_IMPORT_BODY = {"requestBody": {
+    "required": True,
+    "description": ("The export file itself as the raw request body: a HAR 1.2 file, a Burp Suite XML export "
+                    "or a Caido JSON export (GET /imports/formats), up to 50 MB. Not a multipart form and not "
+                    "JSON-wrapped or base64: a multipart upload is refused with 415. The format is detected from "
+                    "the content unless the format parameter names it."),
+    "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
+                "application/json": {"schema": {"type": "string", "format": "binary"}},
+                "application/xml": {"schema": {"type": "string", "format": "binary"}}}}}
+
+
+@app.post("/engagements/{eng_id}/imports", status_code=201, openapi_extra=_IMPORT_BODY)
 def import_file(eng_id: int, request: Request, format: str | None = None, filename: str | None = None,
                 reimport: bool = False, data: bytes = Depends(_upload_body), session: Session = Depends(get_session)):
     """Import one export file. A file with the same SHA-256 as an earlier import is refused
@@ -1777,6 +1888,9 @@ class MapIn(BaseModel):
     # Off unless asked: an imported exchange is often part of a test, not all of it, and
     # "done" says the test was performed. The lane shows items waiting to be marked done.
     mark_done: bool = False
+    # New evidence on a lane whose receipt is in force voids that receipt. Without this the
+    # route refuses with 409 and names those lanes, so nobody voids a receipt by accident.
+    confirm_void: bool = False
 
 
 class EntryIdsIn(BaseModel):
@@ -1787,7 +1901,9 @@ class EntryIdsIn(BaseModel):
 @app.post("/engagements/{eng_id}/inbox/map")
 def map_inbox(eng_id: int, body: MapIn, request: Request, session: Session = Depends(get_session)):
     """Map entries to checklist items: one evidence entry per entry and item, source import:<tool>.
-    A target given by role opens that lane on the entries' host first if needed."""
+    A target given by role opens that lane on the entries' host first if needed. Mapping onto
+    a lane whose receipt is in force voids the receipt: refused with 409 (error
+    "would_void_receipts", and the lanes) unless confirm_void is true."""
     eng = _get(session, Engagement, eng_id)
     who = authz.current(request)
     if any((t.lane_id is None) == (t.role is None) for t in body.targets):
@@ -1796,7 +1912,11 @@ def map_inbox(eng_id: int, body: MapIn, request: Request, session: Session = Dep
         done = inbox.map_entries(session, eng, body.entry_ids,
                                  [(t.lane_id, t.role, t.item_idx) for t in body.targets],
                                  note=body.note, user_id=who.user_id, mark_done=body.mark_done,
-                                 user_name=auditlog.actor_label(auditlog.actor(who)))
+                                 user_name=auditlog.actor_label(auditlog.actor(who)), actor=auditlog.actor(who),
+                                 confirm_void=body.confirm_void)
+    except inbox.WouldVoid as e:
+        session.rollback()
+        raise HTTPException(409, {"error": "would_void_receipts", "message": str(e), "lanes": e.lanes})
     except vault.ContentDeleted as e:
         session.rollback()
         raise HTTPException(409, f"{e} It takes no new evidence.")
@@ -1853,10 +1973,67 @@ def openapi_schema():
     return app.openapi()
 
 
+# The API reference is one static page made here from the OpenAPI schema: no script, nothing
+# from another origin (Swagger UI came from a CDN, unpinned and without integrity checks). Tools
+# that want an interactive view load openapi.json themselves.
+_DOCS_CSS = """
+:root{color-scheme:light dark;--text:#1d2125;--soft:#59616a;--rule:#d6dadf;--panel:#f4f6f8;--accent:#1f3a5f}
+@media (prefers-color-scheme:dark){:root{--text:#e3e6e9;--soft:#a9b1ba;--rule:#3a4148;--panel:#1d2227;--accent:#9cc3f0}}
+body{margin:0;background:Canvas;color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+main{max-width:60rem;margin:0 auto;padding:2rem 1rem 4rem}h1{font-size:1.7rem;margin:0 0 .5rem}
+h2{font-size:1.15rem;margin:2rem 0 .5rem;padding-top:.6rem;border-top:1px solid var(--rule)}
+section{border:1px solid var(--rule);border-radius:4px;padding:.6rem .8rem;margin:.6rem 0}
+h3{font-size:1rem;margin:0;overflow-wrap:anywhere}code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.m{display:inline-block;min-width:4.2rem;font:700 12px/1.6 ui-monospace,Menlo,monospace;color:var(--accent)}
+.who{color:var(--soft);font-size:13px}p{margin:.35rem 0;white-space:pre-line}ul{margin:.3rem 0;padding-left:1.2rem}
+a{color:var(--accent)}.soft{color:var(--soft)}
+"""
+_DOCS_CSP = ("default-src 'none'; style-src 'sha256-"
+             + base64.b64encode(hashlib.sha256(_DOCS_CSS.encode()).digest()).decode()
+             + "'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+_WHO = {"public": "no sign-in", "signed_in": "any signed-in caller", "owner": "owners",
+        "read": "any role on the engagement", "tester": "the tester role", "reviewer": "the reviewer role",
+        "handler": "checked by the route", "gateway": "the gateway's token only", "worker": "the worker's token only",
+        "job": "the job's own token only"}
+
+
+def _docs_html(spec: dict) -> str:
+    def e(v) -> str:
+        return html.escape("" if v is None else str(v), quote=True)
+    groups: dict[str, list[str]] = {}
+    for path, ops in spec.get("paths", {}).items():
+        for method, op in ops.items():
+            perm = authz.RULES.get((method.upper(), path), ("owner", None))[0]
+            params = [f"<li><code>{e(p['name'])}</code> ({e(p.get('in'))}{', required' if p.get('required') else ''})"
+                      f"</li>" for p in op.get("parameters", [])]
+            body = op.get("requestBody") or {}
+            if body:
+                types = ", ".join(body.get("content", {}))
+                params.append(f"<li>Request body: <code>{e(types)}</code>"
+                              f"{'. ' + e(body['description']) if body.get('description') else ''}</li>")
+            desc = op.get("description") or ""
+            groups.setdefault(path.strip("/").split("/")[0] or "/", []).append(
+                f"<section><h3><span class='m'>{e(method.upper())}</span><code>{e(path)}</code></h3>"
+                f"<div class='who'>Who: {e(_WHO.get(perm, perm))}</div>"
+                + (f"<p>{e(desc)}</p>" if desc else "")
+                + (f"<ul>{''.join(params)}</ul>" if params else "") + "</section>")
+    toc = " · ".join(f"<a href='#g-{e(g)}'>{e(g)}</a>" for g in groups)
+    parts = "".join(f"<h2 id='g-{e(g)}'>/{e(g)}</h2>{''.join(items)}" for g, items in groups.items())
+    info = spec.get("info", {})
+    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            f"<title>{e(info.get('title'))} API</title><style>{_DOCS_CSS}</style></head><body><main>"
+            f"<h1>{e(info.get('title'))} API {e(info.get('version'))}</h1>"
+            "<p class='soft'>Every route, who may call it and its parameters. The machine-readable schema is "
+            "<a href='openapi.json'>openapi.json</a>; load it into your own OpenAPI tool for an interactive view.</p>"
+            f"<p>{toc}</p>{parts}</main></body></html>")
+
+
 @app.get("/docs", include_in_schema=False)
 def api_docs():
-    # Relative, so it resolves under whatever prefix the web server forwards (/api/).
-    return get_swagger_ui_html(openapi_url="openapi.json", title="AttackLedger API")
+    # Links are relative, so they resolve under whatever prefix the web server forwards (/api/).
+    return HTMLResponse(_docs_html(app.openapi()), headers={"Content-Security-Policy": _DOCS_CSP, **_NOSNIFF,
+                                                             "Referrer-Policy": "no-referrer"})
 
 
 def _verifier_files() -> tuple[bytes, dict[str, bytes]]:

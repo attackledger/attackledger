@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from . import agentloop, agenttools, egress, executors, jobgates, ledger, modules, packs, redact, scope, triage, urls
+from . import agentloop, agenttools, auditlog, egress, executors, gates, jobgates, ledger, modules, packs, redact, scope, triage, urls
 from . import targets as targeting
 from . import vault
 from .db import SessionLocal, get_session
@@ -557,9 +557,12 @@ def recon_evidence(session, job: Job, eng: Engagement) -> None:
         asset = assets.get(host)
         lane = next((l for l in asset.lanes if l.role == recon_lane), None) if asset else None
         if lane:
-            ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256, source="recon",
-                                   uri=f"job:{job.id}", summary=f"{m.title} run, job {job.id}",
-                                   created_by=job.created_by)
+            ev = ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256, source="recon",
+                                        uri=f"job:{job.id}", summary=f"{m.title} run, job {job.id}",
+                                        created_by=job.created_by)
+            # A receipted recon lane that takes new evidence loses its receipt; the history says why.
+            gates.record_change(session, lane, actor=auditlog.starter(session, job.created_by), cause={
+                "kind": "evidence", "evidence_id": ev.id, "item_idx": None, "source": "recon"})
 
 
 def _agent_result(job: Job, res: dict) -> dict:

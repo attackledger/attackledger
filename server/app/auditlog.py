@@ -38,6 +38,8 @@ ACTIONS = (
     "person.created", "person.renamed", "person.owner", "person.disabled", "person.enabled",
     "person.password_reset", "person.password_changed",
     "import.batch", "import.dismissed", "import.restored",
+    # A receipted lane changed: its receipt is void until someone signs again (gates.py).
+    "lane.receipt_voided", "lane.item_updated",
 )
 RECORD_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
 CLI = {"kind": "cli", "user_id": None, "name": "operator CLI", "email": None}
@@ -54,6 +56,18 @@ def actor(who) -> dict:
     if who.kind == "token":
         return {"kind": "token", "user_id": None, "name": "operator token", "email": None}
     return {"kind": "open", "user_id": None, "name": "open mode", "email": None}
+
+
+def starter(session, user_id: int | None) -> dict:
+    """The actor of something a run did, such as recon evidence: the person who started the
+    run, or the operator token or open mode when no person did."""
+    user = session.get(User, user_id) if user_id is not None else None
+    if user is not None:
+        return {"kind": "person", "user_id": user.id, "name": user.name, "email": user.email or None}
+    from . import auth
+    if auth.mode(session) == "open":
+        return {"kind": "open", "user_id": None, "name": "open mode", "email": None}
+    return {"kind": "token", "user_id": None, "name": "operator token", "email": None}
 
 
 def record(e: AuditEntry) -> dict:
@@ -232,6 +246,30 @@ def _n(n, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+_ITEM_STATE = {"open": "open", "done": "done", "na": "not applicable"}
+
+
+def _cause(c: dict) -> str:
+    """What changed a receipted lane, for lane.* entries."""
+    if c.get("kind") == "item":
+        old, new = (c.get("before") or {}).get("state"), (c.get("after") or {}).get("state")
+        item = f"item {c.get('idx')} ({c.get('key')})"
+        if old == new:
+            return f"Changed the not-applicable reason of {item}"
+        did = {"open": f"Reopened {item}", "done": f"Marked {item} done",
+               "na": f"Marked {item} not applicable"}.get(new, f"Set {item} to {new}")
+        return f"{did} (it was {_ITEM_STATE.get(old, old)})"
+    if c.get("kind") == "evidence":
+        to = f"item {c['item_idx']}" if c.get("item_idx") is not None else "the lane"
+        return f"Added evidence {c.get('evidence_id')} to {to} ({c.get('source')})"
+    if c.get("kind") == "import":
+        ev = c.get("evidence") or []
+        out = f"Mapped {_n(len(c.get('entries') or []), 'imported entry', 'imported entries')} as " \
+              f"{_n(len(ev), 'evidence entry', 'evidence entries')}"
+        return out + (" and confirmed that this voids the receipt" if c.get("confirmed") else "")
+    return "Changed the lane"
+
+
 def describe(rec: dict) -> str:
     """One sentence for an entry, for the History view and the report."""
     a, ch = rec.get("action"), rec.get("change") or {}
@@ -325,6 +363,15 @@ def describe(rec: dict) -> str:
         out = f"{verb} {_n(len(ids), 'inbox entry', 'inbox entries')} ({', '.join(str(i) for i in ids[:20])}"
         out += f" and {len(ids) - 20} more)" if len(ids) > 20 else ")"
         return out + (f": {after['reason']}" if after.get("reason") else "")
+    if a in ("lane.receipt_voided", "lane.item_updated"):
+        lane, rc = ch.get("lane") or {}, ch.get("receipt") or {}
+        where = f"{lane.get('host')} / {lane.get('role')}"
+        sha = f"{(rc.get('manifest_sha256') or '')[:12]}…"
+        what = _cause(ch.get("cause") or {})
+        if a == "lane.item_updated":
+            return f"{what} on {where}, whose receipt {sha} is void; the lane needs a new signature"
+        return (f"{what} on {where}, which voided its receipt {sha} signed by {rc.get('closed_by') or 'someone'}. "
+                "The lane needs a new signature, even if it is changed back")
     person = _who(ch.get("person"))
     if a == "person.created":
         if snapshot:

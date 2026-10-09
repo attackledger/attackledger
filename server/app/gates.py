@@ -1,15 +1,29 @@
 """Fail-closed gates.
 
 A lane is CLOSED only when its latest receipt matches the current manifest
-(items + evidence). Any later change makes the receipt stale and the lane is
-treated as open again. "Done" is computed, never stored.
+(items + evidence) and the lane has not changed since the receipt was issued.
+"Done" is computed, never stored.
+
+A change to a lane after its receipt voids the receipt for good, even if a later change
+puts the lane back as it was (an item reopened, then marked done again): the auditor
+must see the gap, and only a new signature closes the lane again. The void is an entry
+in the audit log (lane.receipt_voided, naming the receipt), so it is hash-chained,
+goes into the report's change history and cannot be taken back by editing a row.
 """
 import hashlib
 import json
 from enum import Enum
 
-from .models import ChecklistItem, ItemState, Lane
+from sqlalchemy import event, select
+from sqlalchemy.orm import Session, object_session
+
+from . import auditlog
+from .models import AuditEntry, ChecklistItem, ItemState, Lane, Receipt
 from .packs import LaneDef, PackError
+
+VOID_ACTION = "lane.receipt_voided"
+ITEM_ACTION = "lane.item_updated"
+_CACHE = "voided_receipts"
 
 
 class LaneStatus(str, Enum):
@@ -59,9 +73,87 @@ def unresolved(lane: Lane) -> list[str]:
 def lane_status(lane: Lane) -> LaneStatus:
     if not lane.receipts:
         return LaneStatus.open
-    if lane.receipts[-1].manifest_sha256 == manifest_hash(lane) and not unresolved(lane):
+    rc = lane.receipts[-1]
+    if rc.manifest_sha256 == manifest_hash(lane) and not unresolved(lane) and not is_voided(rc):
         return LaneStatus.closed
     return LaneStatus.stale
+
+
+# ---- voided receipts ---------------------------------------------------------------------
+
+def _voided(session, eng_id: int) -> dict[int, dict]:
+    """The receipts of an engagement that a change voided, by receipt id, with the audit entry
+    that says so. Read once per transaction; void_receipt adds to it."""
+    cache = session.info.setdefault(_CACHE, {})
+    if eng_id not in cache:
+        with session.no_autoflush:
+            rows = session.scalars(select(AuditEntry).where(AuditEntry.engagement_id == eng_id,
+                                                            AuditEntry.action == VOID_ACTION))
+            cache[eng_id] = {json.loads(e.change)["receipt"]["id"]: _void_view(e) for e in rows}
+    return cache[eng_id]
+
+
+def _void_view(e: AuditEntry) -> dict:
+    rec = auditlog.record(e)
+    return {"at": e.at, "by": auditlog.actor_label(rec["actor"]), "cause": rec["change"].get("cause") or {},
+            "text": auditlog.describe(rec)}
+
+
+@event.listens_for(Session, "after_commit")
+@event.listens_for(Session, "after_rollback")
+def _forget_voided(session) -> None:
+    session.info.pop(_CACHE, None)
+
+
+def void_of(rc: Receipt | None) -> dict | None:
+    """When and why a receipt was voided ({at, by, cause, text}), or None if it was not."""
+    session = object_session(rc) if rc is not None else None
+    if session is None or rc.id is None:
+        return None
+    return _voided(session, rc.lane.asset.engagement_id).get(rc.id)
+
+
+def is_voided(rc: Receipt) -> bool:
+    return void_of(rc) is not None
+
+
+def _lane_ref(lane: Lane) -> dict:
+    return {"id": lane.id, "host": lane.asset.host, "role": lane.role}
+
+
+def _receipt_ref(rc: Receipt) -> dict:
+    # The id is the server's; a report has none, so a reader matches the receipt by lane,
+    # manifest hash and issue time.
+    issued = rc.created_at.isoformat() if rc.created_at else None
+    return {"id": rc.id, "manifest_sha256": rc.manifest_sha256, "closed_by": rc.closed_by, "issued_at": issued}
+
+
+def void_receipt(session, lane: Lane, *, actor: dict, cause: dict) -> bool:
+    """Record that a change to the lane voids its latest receipt, unless it was voided already.
+    Call it after a change that altered the lane (an item's state or reason, new evidence).
+    Returns whether a receipt was voided. The caller commits, with the change."""
+    if not lane.receipts:
+        return False
+    rc = lane.receipts[-1]
+    if is_voided(rc):
+        return False
+    e = auditlog.append(session, actor=actor, action=VOID_ACTION, engagement_id=lane.asset.engagement_id,
+                        change={"lane": _lane_ref(lane), "receipt": _receipt_ref(rc), "cause": cause})
+    _voided(session, lane.asset.engagement_id)[rc.id] = _void_view(e)
+    return True
+
+
+def record_change(session, lane: Lane, *, actor: dict, cause: dict) -> None:
+    """After a person changed a lane that was receipted at least once: void its latest
+    receipt if that has not happened yet, or else record the item change in the audit log,
+    so the history shows everything done to the lane between its receipts."""
+    if not lane.receipts:
+        return
+    if void_receipt(session, lane, actor=actor, cause=cause):
+        return
+    if cause.get("kind") == "item":
+        auditlog.append(session, actor=actor, action=ITEM_ACTION, engagement_id=lane.asset.engagement_id,
+                        change={"lane": _lane_ref(lane), "receipt": _receipt_ref(lane.receipts[-1]), "cause": cause})
 
 
 def waiting_on(asset, lane_def: LaneDef) -> list[str]:

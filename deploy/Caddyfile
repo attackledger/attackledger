@@ -26,11 +26,17 @@
 
 	encode gzip
 
+	# The same values as web/nginx.conf, plus HSTS, which only means something over HTTPS.
+	# No Content-Security-Policy here: web/nginx.conf sets the app's, and the API sets its
+	# own on the pages it serves (report, docs); one set here would apply on top of both.
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 		-Server
 	}
 
