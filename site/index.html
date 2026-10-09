@@ -90,6 +90,7 @@ code, .hash { font-family: var(--mono); font-size: 0.86em; }
 @media (max-width: 56rem) { .hero { grid-template-columns: minmax(0, 1fr); gap: 2.25rem; padding-block: 1.5rem 3rem; } }
 h1 { font: 700 var(--step-3) / 1.06 var(--slab); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
 .lede { font-size: var(--step-1); line-height: 1.5; color: var(--text-soft); margin: 1.25rem 0 0; max-width: 34rem; }
+.lede-more { font-size: var(--step--1); line-height: 1.5; color: var(--text-soft); margin: 0.75rem 0 0; max-width: 34rem; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; }
 .btn { display: inline-block; padding: 0.7rem 1.15rem; border-radius: var(--radius); border: 1px solid var(--ink); font-weight: 700; text-decoration: none; font-size: var(--step--1); }
 .btn.primary { background: var(--ink); color: var(--on-ink); }
@@ -203,9 +204,11 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
     <div class="hero">
       <div>
         <h1>Nothing counts as tested until it has a receipt.</h1>
-        <p class="lede">AttackLedger proves what a security test actually covered. It runs recon and hunting within
-          the program's rules, keeps every test as hash-chained evidence, and has a person sign off each lane.
-          Anyone can verify the report offline.</p>
+        <p class="lede">When a company pays for a security test, it usually gets a list of what was found, but no
+          proof of what was actually checked. AttackLedger records every check as tamper-evident evidence, and a named
+          reviewer signs off each part of the test. The client or an auditor can then verify the report themselves.</p>
+        <p class="lede-more">For testers: recon and Claude-assisted testing inside the engagement's scope and rate limit,
+          hash-chained evidence, signed and timestamped receipts, and reports that verify offline.</p>
         <div class="actions">
           <a class="btn primary" href="demo/">Try the demo</a>
           <a class="btn quiet" href="sample-report.html">Open the sample report</a>
@@ -230,8 +233,9 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
           </footer>
           <div class="stamp" aria-hidden="true">RECEIPTED</div>
         </article>
-        <figcaption class="caption">One lane of the sample report, with fictional hosts. Change any evidence entry and the
-          receipt goes void.</figcaption>
+        <figcaption class="caption">One lane of the sample report, with fictional hosts. A lane is one area of a test,
+          such as authorization, on one host. Its receipt is the reviewer's sign-off, and it breaks if anything
+          changes afterwards.</figcaption>
       </figure>
     </div>
 
