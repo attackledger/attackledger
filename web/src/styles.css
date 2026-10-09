@@ -541,29 +541,58 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .saved { margin: 0.6rem 0 0; color: var(--stamp); font-size: var(--step--1); }
 
 /* pipeline steps: a real sequence, so numbered */
-.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; }
-.step {
-  counter-increment: step;
-  display: grid;
-  grid-template-columns: 2.25rem 1fr auto;
-  gap: 0.25rem 1rem;
-  align-items: start;
-  padding: 0.9rem 0;
-  border-top: 1px solid var(--rule);
-}
-.step::before {
-  content: counter(step);
-  font: 700 var(--step-1) / 1 var(--slab);
-  color: var(--ink);
-  padding-top: 0.1rem;
-}
-.step-text h4 { margin: 0; font: 700 var(--step-0) / 1.3 var(--body); }
-.step-text p { margin: 0.15rem 0 0; color: var(--text-soft); font-size: var(--step--1); max-width: 64ch; }
-.step-text .step-last { font-size: var(--step--2); }
-.step-last.done { color: var(--stamp); }
-.step-last.failed, .step-last.cancelled { color: var(--red); }
-.step-last.running, .step-last.queued { color: var(--ink); }
-.step-action { display: flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; min-width: 9rem; }
+/* recon: target bar, funnel, phases, tool cards, results tabs */
+.target-bar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.75rem 1.5rem; padding: 0.9rem 1.2rem; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--ink); border-radius: var(--radius); }
+.target-bar dl { flex: 1 1 32rem; min-width: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.6rem 1.5rem; }
+.target-bar dt { font-size: var(--step--2); color: var(--text-faint); }
+.target-bar dd { margin: 0.1rem 0 0; font-size: var(--step--1); overflow-wrap: anywhere; }
+.target-bar code { margin-right: 0.35rem; font-size: var(--step--2); }
+.target-bar .ok { color: var(--stamp); }
+.target-bar .bad { color: var(--red); }
+
+.funnel { list-style: none; margin: 0 0 1.25rem; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--rule); border-radius: var(--radius); }
+.funnel li { padding: 0.6rem 0.75rem; font-size: var(--step--2); color: var(--text-soft); border-right: 1px solid var(--rule); position: relative; }
+.funnel li:last-child { border-right: 0; }
+.funnel li:not(:last-child)::after { content: ""; position: absolute; right: -0.36rem; top: 50%; width: 0.6rem; height: 0.6rem; background: var(--sheet); border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); transform: translateY(-50%) rotate(45deg); z-index: 1; }
+.funnel-n { display: block; font: 700 var(--step-1) / 1.15 var(--slab); color: var(--text); font-variant-numeric: tabular-nums; }
+@media (max-width: 44rem) { .funnel { grid-template-columns: repeat(3, minmax(0, 1fr)); } .funnel li:nth-child(3) { border-right: 0; } .funnel li:nth-child(-n+3) { border-bottom: 1px solid var(--rule); } .funnel li::after { display: none; } }
+
+.phases { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.phase { padding: 1rem 0 1.15rem; border-top: 1px solid var(--rule-strong); }
+.phase-head { display: grid; grid-template-columns: 2.25rem minmax(0, 1fr) auto; gap: 0.25rem 0.9rem; align-items: start; }
+.phase-n { font: 700 var(--step-2) / 1 var(--slab); color: var(--ink); font-variant-numeric: tabular-nums; }
+.phase-text h4 { margin: 0; font: 700 var(--step-0) / 1.3 var(--slab); font-size: var(--step-1); }
+.phase-text p { margin: 0.15rem 0 0; color: var(--text-soft); font-size: var(--step--1); max-width: 64ch; }
+.phase-text .phase-stat { color: var(--text); font-variant-numeric: tabular-nums; }
+.phase-help { margin: 0.5rem 0 0 3.15rem; font-size: var(--step--1); max-width: 68ch; }
+.phase-help summary { cursor: pointer; color: var(--ink); font-size: var(--step--2); width: fit-content; }
+.phase-help p { margin: 0.4rem 0 0; color: var(--text-soft); }
+@media (max-width: 36rem) { .phase-help { margin-left: 0; } }
+
+.tools { list-style: none; margin: 0.8rem 0 0 3.15rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: 0.75rem; }
+@media (max-width: 36rem) { .tools { margin-left: 0; } }
+.tool { min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; padding: 0.8rem 0.9rem; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
+.tool.blocked { background: transparent; border-style: dashed; }
+.tool-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.2rem 0.5rem; }
+.tool-head h5 { margin: 0; font: 700 var(--step--1) / 1.3 var(--body); font-size: var(--step-0); }
+.tool-badges .traffic:first-child { margin-left: 0; }
+.tool-uses { margin: 0; font-size: var(--step--2); color: var(--ink); }
+.tool-summary { margin: 0; font-size: var(--step--2); color: var(--text-soft); line-height: 1.45; }
+.tool-last { margin: 0.2rem 0 0; font-size: var(--step--2); font-variant-numeric: tabular-nums; }
+.tool .step-why { text-align: left; max-width: none; margin: 0; }
+.tool-actions { margin-top: auto; padding-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.tool .log { margin-top: 0.3rem; }
+.tool .log pre { max-height: 14rem; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 0.25rem; border-bottom: 1px solid var(--rule-strong); margin: -0.25rem 0 1rem; }
+.tab { font: 500 var(--step-0) / 1 var(--slab); padding: 0.6rem 0.8rem 0.55rem; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--text-soft); cursor: pointer; margin-bottom: -1px; }
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--text); border-bottom-color: var(--ink); }
+.tab-n { margin-left: 0.4rem; font: 400 var(--step--2) / 1 var(--body); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.tab-n.live { color: var(--ink); }
+.tabpanel-head { display: flex; justify-content: flex-end; margin-bottom: 0.6rem; }
+.only { margin: 0 0 0.8rem; font-size: var(--step--1); color: var(--text-soft); }
+.linklike { background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font: inherit; }
 .step-why { font-size: var(--step--2); color: var(--text-faint); text-align: right; max-width: 14rem; }
 
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }

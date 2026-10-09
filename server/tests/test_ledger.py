@@ -377,3 +377,23 @@ def test_scope_import_previews_then_applies(client):
     assert done["applied"] and done["result"] == {"include": ["*.example.com"], "exclude": ["old.example.com"]}
     s = client.get(f"/engagements/{eng}/scope").json()
     assert s["include"] == ["*.example.com"] and s["exclude"] == ["old.example.com"]
+
+
+def test_recon_phases_follow_the_registry(client):
+    phases = client.get("/recon/phases").json()
+    kinds = [k for p in phases for k in p["kinds"]]
+    mods = client.get("/modules").json()
+    assert kinds == [m["kind"] for m in mods]
+    assert all(m["phase"] in {p["key"] for p in phases} and m["tools"] for m in mods)
+    assert all(p["help"] and p["summary"] for p in phases)
+
+
+def test_recon_summary_counts_only_in_scope_hosts(client):
+    e = client.post("/engagements", json={"name": "sum"}).json()["id"]
+    client.put(f"/engagements/{e}/scope", json={"include": ["*.lab.test"], "exclude": ["old.lab.test"]})
+    for h in ("a.lab.test", "b.lab.test", "old.lab.test"):
+        client.post(f"/engagements/{e}/assets", json={"host": h})
+    s = client.get(f"/engagements/{e}/recon/summary").json()
+    assert s["hosts"] == 2 and s["resolved"] == 0 and s["live"] == 0 and s["urls"] == 0
+    assert client.get(f"/engagements/{e}/endpoints?module=crawl").json() == {"total": 0, "items": []}
+    assert client.get(f"/engagements/{e}/leads?module=nuclei").json() == []

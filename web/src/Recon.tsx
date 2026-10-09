@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { api, EndpointRow, Job, Lead, ReconModule, Scope, ScopeImport, TriageReport } from "./api";
+import { api, EndpointRow, Job, Lead, ObservationRow, ReconModule, ReconPhase, ReconSummary, Scope, ScopeImport,
+         TriageReport } from "./api";
 
 
 const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" } as const;
@@ -18,25 +19,59 @@ function lines(v: string) {
   return v.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
 }
 
+type ResultTab = "golden" | "hosts" | "urls" | "leads" | "runs";
+
+// Which results view shows what a module produced.
+const RESULT_TAB: Record<string, ResultTab> = {
+  subdomains: "hosts", resolve: "hosts", ports: "hosts", probe: "hosts",
+  crawl: "urls", archive: "urls", content: "urls",
+  jsanalyze: "leads", params: "leads", paramclass: "leads", nuclei: "leads", dorks: "leads",
+};
+
+function plural(n: number, one: string, many = `${one}s`) {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
+function ago(iso: string | null) {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
 export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChanged: () => void }) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [triage, setTriage] = useState<TriageReport | null>(null);
+  const [summary, setSummary] = useState<ReconSummary | null>(null);
   const [mods, setMods] = useState<ReconModule[]>([]);
+  const [phases, setPhases] = useState<ReconPhase[]>([]);
   const [pipeMsg, setPipeMsg] = useState<string | null>(null);   // all hooks before any early return
-  useEffect(() => { api.modules().then(setMods).catch(() => {}); }, []);
-  const [openLog, setOpenLog] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [tab, setTab] = useState<ResultTab>("golden");
+  const [only, setOnly] = useState<string | null>(null);         // results filtered to one module
+  useEffect(() => {
+    api.modules().then(setMods).catch(() => {});
+    api.phases().then(setPhases).catch(() => {});
+  }, []);
 
   const refresh = useCallback(async () => {
-    const [s, j, t] = await Promise.all([api.scope(engId), api.jobs(engId), api.triage(engId)]);
+    const [s, j, t, sum] = await Promise.all([api.scope(engId), api.jobs(engId), api.triage(engId),
+                                              api.reconSummary(engId)]);
     setScope(s);
     setJobs(j);
     setTriage(t);
+    setSummary(sum);
   }, [engId]);
 
   useEffect(() => {
     setScope(null);
+    setEditing(false);
+    setOnly(null);
+    setTab("golden");
     refresh().catch((e) => setError(e.message));
   }, [refresh]);
 
@@ -54,6 +89,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
   const identified = !!(scope.research_header || scope.research_user_agent);
   const hasWildcard = scope.include.some((p) => p.startsWith("*."));
   const liveHosts = triage?.hosts.length ?? 0;
+  const needsRules = !authorized || !hasScope || !identified;
 
   function blocker(kind: string): string | null {
     if (!hasScope) return "Define the scope first";
@@ -67,14 +103,16 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
     return null;
   }
 
-  async function runAll() {
+  async function queue(kinds?: string[]) {
     setError(null);
     setPipeMsg(null);
     try {
-      const r = await api.runPipeline(engId);
-      setPipeMsg(`Queued ${r.queued.length} step${r.queued.length === 1 ? "" : "s"}` +
+      const r = await api.runPipeline(engId, kinds);
+      setPipeMsg(`Queued ${plural(r.queued.length, "step")}` +
         (r.skipped.length ? `; skipped ${r.skipped.map((s) => mods.find((m) => m.kind === s.kind)?.title ?? s.kind).join(", ")}` : "") +
         ". Each step picks its targets when it starts.");
+      setTab("runs");
+      setOnly(null);
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -91,99 +129,299 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
     }
   }
 
+  function showResults(kind: string) {
+    setTab(RESULT_TAB[kind] ?? "runs");
+    setOnly(RESULT_TAB[kind] === "hosts" ? null : kind);
+    document.getElementById("results")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  const s = summary;
+  const funnel: [string, number | undefined][] = [
+    ["host names in scope", s?.hosts], ["resolve", s?.resolved], ["answer on the web", s?.live],
+    ["golden", s?.golden], ["URLs", s?.urls], ["leads", s?.leads],
+  ];
+  const stat: Record<string, string> = s ? {
+    subdomains: plural(s.hosts, "host name") + " in scope",
+    live: `${plural(s.resolved, "host")} resolve, ${s.live.toLocaleString()} answer on the web, ${s.golden.toLocaleString()} golden`,
+    urls: `${plural(s.urls, "URL")}, ${s.js.toLocaleString()} JavaScript`,
+    js: plural((s.lead_kinds.secret ?? 0) + (s.lead_kinds.graphql ?? 0) + (s.lead_kinds.sourcemap ?? 0)
+               + (s.lead_kinds.parameter ?? 0) + (s.lead_kinds["param-class"] ?? 0), "lead"),
+    issues: plural(s.lead_kinds.nuclei ?? 0, "finding") + " to verify",
+    manual: plural(s.lead_kinds.dork ?? 0, "query", "queries"),
+  } : {};
+
   return (
     <div className="recon">
-      <RulesOfEngagement engId={engId} scope={scope} mods={mods} onSaved={(s) => { setScope(s); onAssetsChanged(); }} />
+      <TargetBar scope={scope} mods={mods} editing={editing || needsRules} canClose={!needsRules}
+                 onToggle={() => setEditing(!editing)} />
+      {(editing || needsRules) && (
+        <RulesOfEngagement engId={engId} scope={scope} mods={mods}
+                           onSaved={(sc) => { setScope(sc); onAssetsChanged(); refresh().catch(() => {}); }} />
+      )}
 
-      <section aria-labelledby="pipeline-title" className="panel">
+      <section aria-labelledby="workflow-title" className="panel workflow">
         <div className="panel-head">
-          <h3 id="pipeline-title" className="panel-title">Recon pipeline</h3>
-          <button className="btn" disabled={!authorized || !hasScope || active} onClick={runAll}
+          <h3 id="workflow-title" className="panel-title">Recon workflow</h3>
+          <button className="btn" disabled={!authorized || !hasScope || active} onClick={() => queue()}
                   title="Queue every step that passes its gates, in order">
-            {active ? "Running…" : "Run pipeline"}
+            {active ? "Running…" : "Run all steps"}
           </button>
         </div>
         {pipeMsg && <p className="saved" role="status">{pipeMsg}</p>}
-        <ol className="steps">
-          {mods.map((s) => {
-            const why = blocker(s.kind);
-            const last = jobs.find((j) => j.kind === s.kind);
-            const busy = last && (last.status === "queued" || last.status === "running");
+        {error && <p className="field-error" role="alert">{error}</p>}
+
+        <ol className="funnel" aria-label="How the surface narrows">
+          {funnel.map(([label, n]) => (
+            <li key={label}><span className="funnel-n">{n === undefined ? "–" : n.toLocaleString()}</span>{label}</li>
+          ))}
+        </ol>
+
+        <ol className="phases">
+          {phases.map((p, i) => {
+            const runnable = p.kinds.filter((k) => !blocker(k));
             return (
-              <li key={s.kind} className="step">
-                <div className="step-text">
-                  <h4>
-                    {s.title} <span className={`traffic ${s.traffic}`}>{TRAFFIC_LABEL[s.traffic]}</span>
-                    {s.opt_in && <span className="traffic optin">Opt-in</span>}
-                  </h4>
-                  <p>{s.summary}</p>
-                  {last && (
-                    <p className={`step-last ${last.status}`}>
-                      Last run: {last.status}
-                      {last.status === "done" && `, ${last.result_count} ${last.result_count === 1 ? "result" : "results"}`}
-                      {last.status === "partial" && `: stopped early (time or per-run limit), ${last.remaining} target${last.remaining === 1 ? "" : "s"} not run yet`}
-                    </p>
-                  )}
-                </div>
-                <div className="step-action">
-                  <button className="btn" disabled={!!why || !!busy} onClick={() => run(s.kind)}>
-                    {busy ? "Running…" : "Run"}
+              <li key={p.key} className="phase">
+                <div className="phase-head">
+                  <span className="phase-n" aria-hidden="true">{i + 1}</span>
+                  <div className="phase-text">
+                    <h4>{p.title}</h4>
+                    <p>{p.summary}</p>
+                    {stat[p.key] && <p className="phase-stat">{stat[p.key]}</p>}
+                  </div>
+                  <button className="btn ghost small" disabled={active || runnable.length === 0}
+                          onClick={() => queue(runnable)}
+                          title={runnable.length ? `Queue ${runnable.length} of ${p.kinds.length} tools in this step` : "Nothing in this step can run yet"}>
+                    Run step
                   </button>
-                  {why && <span className="step-why">{why}</span>}
                 </div>
+                <details className="phase-help">
+                  <summary>How this step works</summary>
+                  <p>{p.help}</p>
+                </details>
+                <ul className="tools">
+                  {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
+                    <ToolCard key={m.kind} m={m} last={jobs.find((j) => j.kind === m.kind)} why={blocker(m.kind)}
+                              onRun={() => run(m.kind)} onResults={() => showResults(m.kind)} />
+                  ))}
+                </ul>
               </li>
             );
           })}
         </ol>
-        {error && <p className="field-error" role="alert">{error}</p>}
       </section>
 
-      {triage && <GoldenTargets report={triage} />}
-      <Leads engId={engId} version={jobs.filter((j) => j.status === "done").length} />
-      <Endpoints engId={engId} version={jobs.length} />
-
-      <section aria-labelledby="jobs-title" className="panel">
-        <h3 id="jobs-title" className="panel-title">Runs</h3>
-        {jobs.length === 0 ? (
-          <p className="muted">No runs yet.</p>
-        ) : (
-          <ul className="jobs">
-            {jobs.map((j) => (
-              <li key={j.id} className="job">
-                <div className="job-row">
-                  <span className={`chip ${j.status}`}>{j.status}</span>
-                  <span className="job-kind">{j.kind === "agent" ? "Claude agent" : mods.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
-                  <span className="muted">
-                    {j.status === "partial" || (j.status === "cancelled" && j.remaining)
-                      ? `${j.targets_done} of ${j.targets.length} targets run`
-                      : `${j.targets.length} target${j.targets.length === 1 ? "" : "s"}`}
-                  </span>
-                  <span className="muted job-time">{new Date(j.created_at).toLocaleTimeString()}</span>
-                  <span className="job-actions">
-                    {j.remaining > 0 && (j.status === "partial" || j.status === "cancelled") && (
-                      <button className="btn small" onClick={async () => {
-                        try { await api.resumeJob(j.id); await refresh(); } catch (e) { setError((e as Error).message); }
-                      }}>
-                        Run remaining {j.remaining}
-                      </button>
-                    )}
-                    {(j.status === "queued" || j.status === "running") && (
-                      <button className="btn ghost small" onClick={async () => { await api.cancelJob(j.id); refresh(); }}>
-                        Cancel
-                      </button>
-                    )}
-                    <button className="btn ghost small" aria-expanded={openLog === j.id}
-                            onClick={() => setOpenLog(openLog === j.id ? null : j.id)}>
-                      {openLog === j.id ? "Hide log" : "Show log"}
-                    </button>
-                  </span>
-                </div>
-                {openLog === j.id && <JobLog jobId={j.id} live={j.status === "running" || j.status === "queued"} />}
-              </li>
-            ))}
-          </ul>
+      <section id="results" aria-label="Recon results" className="panel results">
+        <div className="tabs" role="tablist" aria-label="Results">
+          {([["golden", "Golden targets"], ["hosts", "Hosts"], ["urls", "URLs"], ["leads", "Leads"], ["runs", "Runs"]] as const).map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={tab === k} className={`tab${tab === k ? " on" : ""}`}
+                    onClick={() => { setTab(k); setOnly(null); }}>
+              {label}
+              {k === "leads" && s ? <span className="tab-n">{s.leads}</span> : null}
+              {k === "urls" && s ? <span className="tab-n">{s.urls}</span> : null}
+              {k === "runs" && active ? <span className="tab-n live">running</span> : null}
+            </button>
+          ))}
+        </div>
+        {only && (
+          <p className="only">
+            Showing only what <strong>{mods.find((m) => m.kind === only)?.title ?? only}</strong> found.{" "}
+            <button className="linklike" onClick={() => setOnly(null)}>Show everything</button>
+          </p>
         )}
+        {tab === "golden" && triage && <GoldenTargets report={triage} />}
+        {tab === "hosts" && <Hosts engId={engId} version={jobs.length} />}
+        {tab === "urls" && <Endpoints engId={engId} version={jobs.length} module={only ?? undefined} />}
+        {tab === "leads" && <Leads engId={engId} version={jobs.filter((j) => j.status === "done").length}
+                                   module={only ?? undefined} />}
+        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} />}
       </section>
+    </div>
+  );
+}
+
+function TargetBar({ scope, mods, editing, canClose, onToggle }: {
+  scope: Scope; mods: ReconModule[]; editing: boolean; canClose: boolean; onToggle: () => void;
+}) {
+  const optIns = mods.filter((m) => m.opt_in);
+  const enabled = optIns.filter((m) => scope.enabled_modules.includes(m.kind));
+  const shown = scope.include.slice(0, 3);
+  return (
+    <section className="target-bar" aria-label="Target and rules">
+      <dl>
+        <div>
+          <dt>Scope</dt>
+          <dd>
+            {scope.include.length === 0 ? <span className="bad">No scope yet</span> : (
+              <>
+                {shown.map((p) => <code key={p}>{p}</code>)}
+                {scope.include.length > 3 && <span className="muted"> and {scope.include.length - 3} more</span>}
+                {scope.exclude.length > 0 && <span className="muted">, {scope.exclude.length} excluded</span>}
+              </>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Rate limit</dt>
+          <dd>{scope.rate_limit_rps} per second</dd>
+        </div>
+        <div>
+          <dt>Identification</dt>
+          <dd>{scope.research_header ? <code>{scope.research_header}</code>
+               : scope.research_user_agent ? "User agent set" : <span className="bad">Not set</span>}</dd>
+        </div>
+        <div>
+          <dt>Allowed extras</dt>
+          <dd>{enabled.length ? enabled.map((m) => m.title).join(", ") : <span className="muted">None</span>}</dd>
+        </div>
+        <div>
+          <dt>Authorization</dt>
+          <dd>{scope.authorized_at
+            ? <span className="ok">{scope.authorized_by}, {new Date(scope.authorized_at).toLocaleDateString()}</span>
+            : <span className="bad">Not recorded. Nothing will run.</span>}</dd>
+        </div>
+      </dl>
+      {canClose && (
+        <button className="btn ghost small" aria-expanded={editing} onClick={onToggle}>
+          {editing ? "Close rules" : "Edit rules"}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function ToolCard({ m, last, why, onRun, onResults }: {
+  m: ReconModule; last?: Job; why: string | null; onRun: () => void; onResults: () => void;
+}) {
+  const [log, setLog] = useState(false);
+  const busy = !!last && (last.status === "queued" || last.status === "running");
+  return (
+    <li className={`tool${why ? " blocked" : ""}`}>
+      <div className="tool-head">
+        <h5>{m.title}</h5>
+        <span className="tool-badges">
+          <span className={`traffic ${m.traffic}`}>{TRAFFIC_LABEL[m.traffic]}</span>
+          {m.opt_in && <span className="traffic optin">Opt-in</span>}
+        </span>
+      </div>
+      <p className="tool-uses">{m.tools.join(", ")}</p>
+      <p className="tool-summary">{m.summary}</p>
+      <p className="tool-last">
+        {last ? (
+          <>
+            <span className={`chip ${last.status}`}>{last.status}</span>{" "}
+            {last.status === "done" && plural(last.result_count, "result")}
+            {last.status === "partial" && `${last.remaining} not run yet`}
+            <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>
+          </>
+        ) : <span className="muted">Not run yet</span>}
+      </p>
+      {why && <p className="step-why">{why}</p>}
+      <div className="tool-actions">
+        <button className="btn small" disabled={!!why || busy} onClick={onRun}>{busy ? "Running…" : "Run"}</button>
+        <button className="btn ghost small" onClick={onResults}>Results</button>
+        {last && (
+          <button className="btn ghost small" aria-expanded={log} onClick={() => setLog(!log)}>
+            {log ? "Hide log" : "Log"}
+          </button>
+        )}
+      </div>
+      {log && last && <JobLog jobId={last.id} live={busy} />}
+    </li>
+  );
+}
+
+function Runs({ jobs, mods, refresh, onError }: {
+  jobs: Job[]; mods: ReconModule[]; refresh: () => Promise<void>; onError: (m: string) => void;
+}) {
+  const [openLog, setOpenLog] = useState<number | null>(null);
+  if (jobs.length === 0) return <p className="muted">No runs yet. Run a step above, or every step at once.</p>;
+  return (
+    <ul className="jobs">
+      {jobs.map((j) => (
+        <li key={j.id} className="job">
+          <div className="job-row">
+            <span className={`chip ${j.status}`}>{j.status}</span>
+            <span className="job-kind">{j.kind === "agent" ? "Claude agent" : mods.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
+            <span className="muted">
+              {j.status === "partial" || (j.status === "cancelled" && j.remaining)
+                ? `${j.targets_done} of ${j.targets.length} targets run`
+                : j.deferred && j.targets.length === 0 ? "targets picked when it starts"
+                : plural(j.targets.length, "target")}
+            </span>
+            <span className="muted job-time">{new Date(j.created_at).toLocaleTimeString()}</span>
+            <span className="job-actions">
+              {j.remaining > 0 && (j.status === "partial" || j.status === "cancelled") && (
+                <button className="btn small" onClick={async () => {
+                  try { await api.resumeJob(j.id); await refresh(); } catch (e) { onError((e as Error).message); }
+                }}>
+                  Run remaining {j.remaining}
+                </button>
+              )}
+              {(j.status === "queued" || j.status === "running") && (
+                <button className="btn ghost small" onClick={async () => { await api.cancelJob(j.id); refresh(); }}>
+                  Cancel
+                </button>
+              )}
+              <button className="btn ghost small" aria-expanded={openLog === j.id}
+                      onClick={() => setOpenLog(openLog === j.id ? null : j.id)}>
+                {openLog === j.id ? "Hide log" : "Show log"}
+              </button>
+            </span>
+          </div>
+          {openLog === j.id && <JobLog jobId={j.id} live={j.status === "running" || j.status === "queued"} />}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Hosts({ engId, version }: { engId: number; version: number }) {
+  const [rows, setRows] = useState<ObservationRow[]>([]);
+  const [q, setQ] = useState("");
+  const [liveOnly, setLiveOnly] = useState(false);
+  useEffect(() => { api.observations(engId).then(setRows).catch(() => {}); }, [engId, version]);
+  const shown = rows.filter((r) => (!liveOnly || r.live) && (!q || r.host.includes(q.trim().toLowerCase())));
+  return (
+    <div>
+      <div className="ep-filters">
+        <input aria-label="Filter hosts" placeholder="Filter by host name" value={q} onChange={(e) => setQ(e.target.value)} />
+        <label className="check">
+          <input type="checkbox" checked={liveOnly} onChange={(e) => setLiveOnly(e.target.checked)} />
+          Live web servers only
+        </label>
+        <span className="muted">{plural(shown.length, "host")}</span>
+      </div>
+      {shown.length === 0 ? (
+        <p className="muted">{rows.length ? "No host matches the filter." : "Find subdomains to fill this list."}</p>
+      ) : (
+        <div className="sheet">
+          <table className="obs">
+            <thead>
+              <tr>
+                <th scope="col">Host</th>
+                <th scope="col">Addresses</th>
+                <th scope="col">CNAME</th>
+                <th scope="col">Web</th>
+                <th scope="col">Title</th>
+                <th scope="col">Stack</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.slice(0, 500).map((r) => (
+                <tr key={r.host}>
+                  <th scope="row">{r.url ? <a href={r.url} target="_blank" rel="noreferrer noopener">{r.host}</a> : r.host}</th>
+                  <td className="clip" title={(r.a ?? []).join(", ")}>{(r.a ?? []).slice(0, 2).join(", ") || <span className="muted">–</span>}</td>
+                  <td className="clip" title={(r.cname ?? []).join(", ")}>{(r.cname ?? [])[0] ?? <span className="muted">–</span>}</td>
+                  <td>{r.status_code ? <span className={`code c${String(r.status_code)[0]}`}>{r.status_code}</span> : <span className="muted">–</span>}</td>
+                  <td className="clip" title={r.title}>{r.title ?? ""}</td>
+                  <td>{(r.tech ?? []).slice(0, 3).map((t) => <span key={t} className="tag">{t}</span>)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {shown.length > 500 && <p className="muted">Showing the first 500 of {shown.length}. Filter to narrow down.</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -191,9 +429,8 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
 function GoldenTargets({ report }: { report: TriageReport }) {
   const golden = report.hosts.filter((h) => h.golden).length;
   return (
-    <section aria-labelledby="golden-title" className="panel">
-      <div className="panel-head">
-        <h3 id="golden-title" className="panel-title">Golden targets</h3>
+    <div role="tabpanel" className="tabpanel">
+      <div className="tabpanel-head">
         <span className="muted">{golden} of {report.hosts.length} live hosts score {report.golden_min_score} or more</span>
       </div>
       {report.hosts.length === 0 ? (
@@ -234,22 +471,21 @@ function GoldenTargets({ report }: { report: TriageReport }) {
           </table>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
 const LEAD_KIND: Record<string, string> = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap", nuclei: "Scanner finding", parameter: "Hidden parameters", "param-class": "Parameter pattern", dork: "Manual check" };
 
-function Leads({ engId, version }: { engId: number; version: number }) {
+function Leads({ engId, version, module }: { engId: number; version: number; module?: string }) {
   const [rows, setRows] = useState<Lead[]>([]);
   const [open, setOpen] = useState<number | null>(null);
-  useEffect(() => { api.leads(engId).then(setRows).catch(() => {}); }, [engId, version]);
+  useEffect(() => { api.leads(engId, module).then(setRows).catch(() => {}); }, [engId, version, module]);
   const real = rows.filter((l) => l.kind === "secret" && l.bucket === "real").length;
 
   return (
-    <section aria-labelledby="leads-title" className="panel">
-      <div className="panel-head">
-        <h3 id="leads-title" className="panel-title">Leads</h3>
+    <div role="tabpanel" className="tabpanel">
+      <div className="tabpanel-head">
         <span className="muted">
           {rows.length} total{real ? `, ${real} secret ${real === 1 ? "candidate" : "candidates"} to review` : ""}
         </span>
@@ -298,11 +534,11 @@ function Leads({ engId, version }: { engId: number; version: number }) {
           </ul>
         </>
       )}
-    </section>
+    </div>
   );
 }
 
-function Endpoints({ engId, version }: { engId: number; version: number }) {
+function Endpoints({ engId, version, module }: { engId: number; version: number; module?: string }) {
   const [rows, setRows] = useState<EndpointRow[]>([]);
   const [total, setTotal] = useState(0);
   const [jsOnly, setJsOnly] = useState(false);
@@ -311,17 +547,16 @@ function Endpoints({ engId, version }: { engId: number; version: number }) {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      api.endpoints(engId, { js: jsOnly ? true : undefined, q: q.trim() || undefined, offset })
+      api.endpoints(engId, { js: jsOnly ? true : undefined, q: q.trim() || undefined, offset, module })
         .then((r) => { setRows(r.items); setTotal(r.total); })
         .catch(() => {});
     }, 200);
     return () => clearTimeout(t);
-  }, [engId, jsOnly, q, offset, version]);
+  }, [engId, jsOnly, q, offset, version, module]);
 
   return (
-    <section aria-labelledby="ep-title" className="panel">
-      <div className="panel-head">
-        <h3 id="ep-title" className="panel-title">Endpoints</h3>
+    <div role="tabpanel" className="tabpanel">
+      <div className="tabpanel-head">
         <span className="muted">{total} in scope</span>
       </div>
       <div className="ep-filters">
@@ -353,7 +588,7 @@ function Endpoints({ engId, version }: { engId: number; version: number }) {
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }
 

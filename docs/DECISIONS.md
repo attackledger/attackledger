@@ -275,6 +275,21 @@ options considered and who decided.
   Verification Program.
 - **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
 
+### D-026 · Recon shown as six phases, like ars0n (2026-10-09, requested by Murat)
+- **Request:** Murat asked for the recon screen to be organised the way ars0n-framework-v2
+  is: a target at the top, numbered workflow steps with tool cards, and a decision point.
+- **Decision:** `modules.PHASES` groups the modules into six steps: find subdomains;
+  resolve and find live web servers; collect URLs; JavaScript and parameters; known
+  issues; manual checks. The registry order now follows the phases, which moves content
+  discovery before JavaScript analysis (the JS files it finds are analysed too) and
+  nuclei before the dork list. A test fails if a module has no phase or the orders differ.
+- **UI:** a target bar with the rules (the form opens on demand, or by itself when
+  something required is missing), a funnel of counts from host names to leads, the
+  steps with "Run step" and "How this step works", tool cards with Run, Results and Log,
+  and results in tabs, with golden targets as the decision point.
+- **Not copied from ars0n:** company and ASN workflows, brute-force DNS and automatic
+  rounds of re-probing; they are not in the original pipeline either.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

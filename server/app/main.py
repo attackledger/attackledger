@@ -402,6 +402,36 @@ def list_modules():
     return [modules.as_dict(m) for m in modules.MODULES]
 
 
+@app.get("/recon/phases")
+def recon_phases():
+    """The recon steps the UI shows, each with the modules it runs, in pipeline order."""
+    return [modules.phase_dict(p) for p in modules.PHASES]
+
+
+@app.get("/engagements/{eng_id}/recon/summary")
+def recon_summary(eng_id: int, session: Session = Depends(get_session)):
+    """How the surface narrows from step to step: names found, resolved, live, golden,
+    then URLs and leads. Counts only what is inside the current scope rules."""
+    eng = _get(session, Engagement, eng_id)
+    inc, exc = eng.scope_include, eng.scope_exclude
+    in_scope = lambda h: scope.in_scope(h or "", inc, exc)  # noqa: E731
+    hosts = {a.host for a in eng.assets if a.in_scope and in_scope(a.host)}
+    resolved = set()
+    for o in session.scalars(select(Observation).where(Observation.engagement_id == eng_id)):
+        if (o.data.get("a") or o.data.get("aaaa")) and o.host in hosts:
+            resolved.add(o.host)
+    ranked = targeting.ranked(session, eng)
+    eps = [e for e in session.scalars(select(Endpoint).where(Endpoint.engagement_id == eng_id))
+           if in_scope(e.host)]
+    lead_kinds: dict[str, int] = {}
+    for l in session.scalars(select(Lead).where(Lead.engagement_id == eng_id)):
+        lead_kinds[l.kind] = lead_kinds.get(l.kind, 0) + 1
+    return {"hosts": len(hosts), "resolved": len(resolved), "live": len(ranked),
+            "golden": sum(1 for r in ranked if r["golden"]),
+            "urls": len(eps), "js": sum(1 for e in eps if e.is_js),
+            "leads": sum(lead_kinds.values()), "lead_kinds": lead_kinds}
+
+
 @app.post("/engagements/{eng_id}/jobs", status_code=201)
 def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
@@ -612,9 +642,12 @@ def triage_view(eng_id: int, session: Session = Depends(get_session)):
 
 @app.get("/engagements/{eng_id}/endpoints")
 def endpoints(eng_id: int, host: str | None = None, js: bool | None = None, q: str | None = None,
-              limit: int = 200, offset: int = 0, session: Session = Depends(get_session)):
+              module: str | None = None, limit: int = 200, offset: int = 0,
+              session: Session = Depends(get_session)):
     _get(session, Engagement, eng_id)
     stmt = select(Endpoint).where(Endpoint.engagement_id == eng_id)
+    if module:   # what one recon module produced
+        stmt = stmt.join(Job, Job.id == Endpoint.job_id).where(Job.kind == module)
     if host:
         stmt = stmt.where(Endpoint.host == host.lower())
     if js is not None:
@@ -628,11 +661,14 @@ def endpoints(eng_id: int, host: str | None = None, js: bool | None = None, q: s
 
 
 @app.get("/engagements/{eng_id}/leads")
-def leads(eng_id: int, kind: str | None = None, session: Session = Depends(get_session)):
+def leads(eng_id: int, kind: str | None = None, module: str | None = None,
+          session: Session = Depends(get_session)):
     _get(session, Engagement, eng_id)
     stmt = select(Lead).where(Lead.engagement_id == eng_id)
     if kind:
         stmt = stmt.where(Lead.kind == kind)
+    if module:   # what one recon module produced
+        stmt = stmt.join(Job, Job.id == Lead.job_id).where(Job.kind == module)
     order = {"real": 0, "": 1, "public": 2}
     rows = sorted(session.scalars(stmt).all(),
                   key=lambda l: (order.get(l.bucket, 1), l.kind, l.host, l.title))

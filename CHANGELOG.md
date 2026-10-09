@@ -27,6 +27,14 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **Recon screen reorganised into six steps** (D-026), like ars0n-framework-v2:
+  a target bar with the rules, a funnel from host names to leads, numbered steps with
+  "Run step" and "How this step works", one card per tool (tools used, last run,
+  results, log), and results in tabs: golden targets, hosts, URLs, leads and runs. A
+  card's Results button opens what that module found. New API: `GET /recon/phases`,
+  `GET /engagements/{id}/recon/summary`, and a `module` filter on endpoints and leads.
+  The pipeline order now matches the steps: content discovery runs before JavaScript
+  analysis, and nuclei before the dork list.
 - **Small runs by default, with a cost limit.** Defaults are 15 turns, 30 requests and an
   estimated $0.50; the run stops at whichever comes first (cost is checked after each
   turn, so a run can go over by at most one turn). The model sees at most 4,000

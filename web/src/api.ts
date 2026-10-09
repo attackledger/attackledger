@@ -189,6 +189,27 @@ export interface ReconModule {
   pipeline: string;
   caution: string;
   needs_identification: boolean;
+  tools: string[];
+  phase: string;
+}
+
+export interface ReconPhase {
+  key: string;
+  title: string;
+  summary: string;
+  help: string;
+  kinds: string[];
+}
+
+export interface ReconSummary {
+  hosts: number;
+  resolved: number;
+  live: number;
+  golden: number;
+  urls: number;
+  js: number;
+  leads: number;
+  lead_kinds: Record<string, number>;
 }
 
 export interface LaneContext {
@@ -293,8 +314,12 @@ export const api = {
   job: (jobId: number) => call<Job>(`/jobs/${jobId}`),
   importScope: (engId: number, csv: string, apply: boolean) =>
     call<ScopeImport>(`/engagements/${engId}/scope/import`, { method: "POST", body: JSON.stringify({ csv, apply }) }),
-  runPipeline: (engId: number) =>
-    call<{ queued: string[]; skipped: { kind: string; reason: string }[] }>(`/engagements/${engId}/pipeline`, { method: "POST", body: "{}" }),
+  runPipeline: (engId: number, kinds?: string[]) =>
+    call<{ queued: string[]; skipped: { kind: string; reason: string }[] }>(`/engagements/${engId}/pipeline`, {
+      method: "POST", body: JSON.stringify(kinds ? { kinds } : {}),
+    }),
+  phases: () => call<ReconPhase[]>("/recon/phases"),
+  reconSummary: (engId: number) => call<ReconSummary>(`/engagements/${engId}/recon/summary`),
   runJob: (engId: number, kind: string, targets: string[] = []) =>
     call<Job>(`/engagements/${engId}/jobs`, { method: "POST", body: JSON.stringify({ kind, targets }) }),
   resumeJob: (jobId: number) => call<Job>(`/jobs/${jobId}/resume`, { method: "POST" }),
@@ -302,10 +327,12 @@ export const api = {
   observations: (engId: number) => call<ObservationRow[]>(`/engagements/${engId}/observations`),
   modules: () => call<ReconModule[]>("/modules"),
   laneContext: (laneId: number) => call<LaneContext>(`/lanes/${laneId}/context`),
-  leads: (engId: number) => call<Lead[]>(`/engagements/${engId}/leads`),
+  leads: (engId: number, module?: string) =>
+    call<Lead[]>(`/engagements/${engId}/leads${module ? `?module=${encodeURIComponent(module)}` : ""}`),
   triage: (engId: number) => call<TriageReport>(`/engagements/${engId}/triage`),
-  endpoints: (engId: number, opts: { js?: boolean; q?: string; offset?: number } = {}) => {
+  endpoints: (engId: number, opts: { js?: boolean; q?: string; offset?: number; module?: string } = {}) => {
     const p = new URLSearchParams();
+    if (opts.module) p.set("module", opts.module);
     if (opts.js !== undefined) p.set("js", String(opts.js));
     if (opts.q) p.set("q", opts.q);
     p.set("limit", "100");
