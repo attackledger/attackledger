@@ -10,6 +10,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -27,10 +28,34 @@ def run(*args, cwd, data=None):
     return p.stdout
 
 
+def issue_with_dates(d: Path, name: str, issuer: str, not_before: datetime, not_after: datetime) -> None:
+    """Sign name.csr as a timestamping certificate with chosen dates. Old OpenSSL releases
+    (Ubuntu 24.04 ships 3.0) have no -not_before, so this uses cryptography instead."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.x509.oid import ExtendedKeyUsageOID
+    csr = x509.load_pem_x509_csr((d / f"{name}.csr").read_bytes())
+    ca = x509.load_pem_x509_certificate((d / f"{issuer}.pem").read_bytes())
+    key = serialization.load_pem_private_key((d / f"{issuer}.key").read_bytes(), None)
+    usage = x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=False,
+                          data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False,
+                          encipher_only=False, decipher_only=False)
+    cert = (x509.CertificateBuilder().subject_name(csr.subject).issuer_name(ca.subject)
+            .public_key(csr.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(not_before).not_valid_after(not_after)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=False)
+            .add_extension(usage, critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.TIME_STAMPING]), critical=True)
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(csr.public_key()), critical=False)
+            .sign(key, hashes.SHA256()))
+    (d / f"{name}.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+
+
 class TSA:
     """A throwaway timestamp authority: root CA, intermediate CA and TSA certificate."""
 
-    def __init__(self, d: Path, kind: str, inter_is_ca=True, tsa_dates=("-days", "20"), chain_has_root=False):
+    def __init__(self, d: Path, kind: str, inter_is_ca=True, tsa_valid_from: datetime | None = None,
+                 chain_has_root=False):
         self.d = d
         self.chain = "chain.pem" if chain_has_root else "inter.pem"
         keys = {"rsa": (["-newkey", "rsa:2048"], ["-newkey", "rsa:2048"], ["-newkey", "rsa:2048"]),
@@ -45,12 +70,14 @@ class TSA:
         run("req", "-x509", *keys[0], "-nodes", "-keyout", "root.key", "-out", "root.pem", "-days", "30",
             "-subj", f"/CN=Test {kind} root", "-addext", "basicConstraints=critical,CA:TRUE",
             "-addext", "keyUsage=critical,keyCertSign,cRLSign", cwd=d)
-        for name, key, issuer, ext, dates in (("inter", keys[1], "root", "ca.ext", ("-days", "20")),
-                                              ("tsa", keys[2], "inter", "tsa.ext", tsa_dates)):
+        for name, key, issuer, ext in (("inter", keys[1], "root", "ca.ext"), ("tsa", keys[2], "inter", "tsa.ext")):
             run("req", *key, "-nodes", "-keyout", f"{name}.key", "-out", f"{name}.csr",
                 "-subj", f"/CN=Test {kind} {name}", cwd=d)
+            if name == "tsa" and tsa_valid_from:
+                issue_with_dates(d, name, issuer, tsa_valid_from, tsa_valid_from.replace(month=12, day=31))
+                continue
             run("x509", "-req", "-in", f"{name}.csr", "-CA", f"{issuer}.pem", "-CAkey", f"{issuer}.key",
-                "-CAcreateserial", "-out", f"{name}.pem", *dates, "-extfile", ext, cwd=d)
+                "-CAcreateserial", "-out", f"{name}.pem", "-days", "20", "-extfile", ext, cwd=d)
         (d / "tsaserial").write_text("01\n")
         (d / "ts.cnf").write_text(f"""[ tsa ]
 default_tsa = t
@@ -152,8 +179,8 @@ def test_chain_rules(tmp_path, monkeypatch):
         return receipt_report(*timestamps.fetch("http://tsa.test", stmt)), verifier.load_roots([t.root])
 
     for sub, opts, why in (("noca", {"inter_is_ca": False}, "is not a certificate authority"),
-                           ("future", {"tsa_dates": ("-not_before", "20990101000000Z",
-                                                     "-not_after", "20991231000000Z")}, "was not valid")):
+                           ("future", {"tsa_valid_from": datetime(2099, 1, 1, tzinfo=timezone.utc)},
+                            "was not valid")):
         (tmp_path / sub).mkdir()
         report, roots = token_from(TSA(tmp_path / sub, "rsa", **opts))
         problems = verifier.check_timestamps(report, roots)[0]
