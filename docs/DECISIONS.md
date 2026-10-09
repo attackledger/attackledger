@@ -512,6 +512,21 @@ options considered and who decided.
   checks (a gateway CA trusted only inside the worker); DNS resolution and port scanning go
   through the gateway's resolver and a rate-limited tunnel, or are refused.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
+- **Built 2026-10-09** (docs/GATEWAY.md, migration 0019).
+  - **Proxy:** its own asyncio/h11 proxy rather than mitmproxy. There is nothing to
+    switch off, certificate checks are per destination, and it adds no dependencies.
+  - **Credentials and rules:** each job gets its own credentials, which the API checks.
+    The API holds the rules; the gateway has no database access (D-042).
+  - **Rate ceiling:** a token bucket whose tokens return 1.05 s after use.
+  - **DNS:** answered only for in-scope names of running jobs.
+  - **Outside services:** an allowlist of passive sources, GET only and not counted
+    against the rate; the Claude API for agent runs only.
+  - **Ports:** the gateway makes the port probes instead of naabu.
+  - **Failure:** fails closed. Hooks are in place for D-040 and D-041.
+  - **Benchmark through it:** 0 non-GET of 5,507 requests, peak 20 at a limit of 20 for
+    every tool.
+  - **Not yet:** the worker still reads the database directly.
+  - **Built by:** Claude.
 
 ### D-040 · Agents use test accounts through the gateway, never the credentials (2026-10-09, decided by Murat)
 - **Decision:** an operator adds test accounts (A, B, ...) to an engagement; they are stored

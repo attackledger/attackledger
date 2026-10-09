@@ -77,7 +77,7 @@ them are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 ## Requirements
 
 - Docker with Compose. The `worker` image bundles the recon tools (subfinder, dnsx,
-  httpx, naabu, katana, nuclei and its templates, assetfinder, gau, waybackurls,
+  httpx, katana, nuclei and its templates, assetfinder, gau, waybackurls,
   feroxbuster, Arjun), so nothing else needs installing to run the app.
 - Optional: [Claude Code](https://claude.com/claude-code), for the agents, skills,
   hooks and gates in this repository (`agents/`, `skills/`, `hooks/`, `gates/`). The
@@ -188,7 +188,7 @@ container. Steps:
 |---|---|---|
 | Find subdomains | subfinder (all sources), assetfinder, crt.sh, then DNS | passive + DNS |
 | Resolve hosts | dnsx (A/AAAA, then CNAME) | DNS |
-| Scan ports | naabu top 100, connect scan, port 25 skipped | target, **opt-in per engagement** |
+| Scan ports | connect probes made by the traffic gateway, top 100, port 25 skipped | target, **opt-in per engagement** |
 | Find live web servers | httpx: status, title, stack, CDN, per open port | target |
 | Golden targets | scoring: AUTH +4, TITLE +4, APPTECH +2, ODDPORT/KEYWORD/200 +1 | computed |
 | Crawl golden hosts | katana: same host only, JS parsing, logout/delete paths never followed | target |
@@ -202,8 +202,14 @@ container. Steps:
 
 The engagement's *requests per second* value is a hard ceiling for every step that
 sends traffic, port scanning included. There is no multiplier. nuclei takes one request
-per tick with no retries. The crawler (katana) can briefly reach a little over the
-limit in a sliding one-second window (22 at 20); the traffic gateway (D-039) closes that.
+per tick with no retries. Above the tools' own flags, the traffic gateway enforces the
+ceiling for all tools together: no sliding one-second window holds more than the limit
+(Juice Shop benchmark through the gateway: peak 20 at a limit of 20, 0 non-GET of 5,507).
+
+All target traffic goes through the gateway (D-039, docs/GATEWAY.md). The worker has no
+route to the internet; the gateway enforces scope, GET/HEAD/OPTIONS only, the rate ceiling
+and the identification, answers DNS only for in-scope names, and logs every request
+(`GET /engagements/{id}/gateway-log`).
 
 Secret candidates are stored **masked and hashed**, never in full, and are never
 tested against any service. JS fetches follow no redirects.

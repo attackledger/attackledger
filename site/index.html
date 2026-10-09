@@ -301,7 +301,8 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
       <ul class="rules">
         <li><strong>Fail-closed scope.</strong> Unknown hosts are out of scope, exclusions win, and a wildcard does not cover its apex.</li>
         <li><strong>Research identification on every request.</strong> Tools refuse to send traffic to a target without the header or user agent the program asks for.</li>
-        <li><strong>The rate limit is a ceiling.</strong> It applies to every step, port scanning included, with no multiplier. In a sliding one-second window the crawler can go slightly over (22 at 20) until the traffic gateway is released.</li>
+        <li><strong>The rate limit is a ceiling.</strong> It applies to every step, port scanning included, with no multiplier. One gateway enforces it for all tools together.</li>
+        <li><strong>One gateway for all traffic.</strong> The worker has no route to the internet. Every tool and agent goes through a gateway that checks scope, allows only GET, HEAD and OPTIONS, adds the identification and logs every request.</li>
         <li><strong>No redirects followed.</strong> A 3xx is recorded as it is, so nothing wanders off scope.</li>
         <li><strong>Risky modules are opt-in.</strong> Port scans, content discovery, parameter discovery and vulnerability scanning stay off until the policy allows them.</li>
         <li><strong>Scanner templates are read-only.</strong> nuclei runs only templates proven to send GET, HEAD or OPTIONS with no body. No DoS, fuzzing, brute force, default logins or out-of-band callbacks.</li>
@@ -310,7 +311,7 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
       </ul>
       <div class="measured">
         <p>Vulnerability scan on the lab: <span class="num">8,899 of 8,899</span> requests carried the research identification.</p>
-        <p>Juice Shop benchmark: <span class="num">0 of 5,511</span> requests were writes; nuclei peaked at 19 per second at a limit of 20.</p>
+        <p>Juice Shop benchmark through the gateway: <span class="num">0 of 5,507</span> requests were writes; the peak was <span class="num">20</span> requests in any one second at a limit of <span class="num">20</span>, across all tools.</p>
         <p>Content discovery on the lab: peak of <span class="num">20</span> requests per second at a limit of <span class="num">20</span>, over <span class="num">9,504</span> requests.</p>
         <p>Measured against a local lab target with a raw request logger, not against a live program.</p>
       </div>

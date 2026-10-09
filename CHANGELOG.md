@@ -10,6 +10,15 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Traffic gateway** (D-039, docs/GATEWAY.md). The worker has no route to the internet.
+  Every recon tool and the agent go through one gateway. The gateway:
+  - enforces scope, GET/HEAD/OPTIONS only, a rate ceiling shared by all tools, and the
+    identification;
+  - answers DNS only for in-scope names;
+  - makes the port probes (naabu removed);
+  - logs every request (`GET /engagements/{id}/gateway-log`).
+
+  Benchmark through it: 0 non-GET, peak 20/s at a limit of 20. Migration `0019`.
 - **Public verifier page** (`/verify`, D-042, D-046). Drop a report on
   attackledger.com/verify and every `verify_report.py` check runs in the browser, with
   the same verdicts and messages. Nothing is uploaded: `connect-src 'none'`, everything
