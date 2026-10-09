@@ -31,20 +31,6 @@ def _receipt(rc) -> dict:
     return out
 
 
-def _signed_by(rc: dict | None) -> str:
-    """The signer, and what backs the name: a key and a timestamp, or nothing."""
-    if not rc:
-        return ""
-    out = _e(rc.get("closed_by") or "")
-    sig, ts = rc.get("signature"), rc.get("timestamp")
-    out += (f"<br><span class='muted'>{_e(sig['algorithm'])} key <code>{_e(sig['key_fingerprint'][:16])}</code></span>"
-            if sig else "<br><span class='muted'>name only, not signed</span>")
-    if ts:
-        host = urlsplit(ts.get("tsa") or "").hostname or ts.get("tsa") or ""
-        out += f"<br><span class='muted'>timestamped {_e((ts.get('time') or '')[:19].replace('T', ' '))} UTC by {_e(host)}</span>"
-    return out
-
-
 def _iso(dt):
     return iso_utc(dt)
 
@@ -93,13 +79,16 @@ def build(session, eng: Engagement, controls: dict) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "engagement": {
             "id": eng.id, "name": eng.name, "type": eng.engagement_type,
-            "pack": {"id": pack.id, "name": pack.name, "version": pack.version},
+            "pack": {"id": pack.id, "name": pack.name, "version": pack.version,
+                     "lanes": [{"key": l.key, "name": l.name} for l in pack.lanes]},
             "policy_url": eng.policy_url,
             "authorized_by": eng.authorized_by, "authorized_at": _iso(eng.authorized_at),
             "scope": {"include": eng.scope_include, "exclude": eng.scope_exclude},
             "research_identification": {"header": eng.research_header,
                                         "user_agent": eng.research_user_agent},
             "rate_limit_rps": eng.rate_limit_rps,
+            "separation_of_duties": eng.separation_of_duties,
+            "require_signatures": eng.require_signatures,
         },
         "summary": {
             "hosts_in_scope": sum(1 for h in hosts if h["in_scope"]),
@@ -121,124 +110,389 @@ def build(session, eng: Engagement, controls: dict) -> dict:
                                   "chain_genesis": ledger.GENESIS}}
 
 
+
+
 # ---- HTML ---------------------------------------------------------------------
+# A client-facing document: cover, summary, scope, coverage, receipts and how to verify,
+# then the detail. Static and self-contained (the route's CSP allows no scripts and no
+# fetches); the only script element is the JSON bundle that verify_report.py reads.
 
 def _e(v) -> str:
     return html.escape("" if v is None else str(v), quote=True)
 
 
-_STATUS = {"closed": "Receipted", "stale": "Void", "open": "Open"}
+_STATUS = {"closed": "Receipted", "stale": "Void", "open": "In progress", None: "Not opened"}
 _TYPES = {"bug_bounty": "Bug bounty", "pentest": "Penetration test", "internal": "Internal assessment"}
+_ITEM = {"done": "Evidence recorded", "na": "Not applicable", "open": "Open"}
+# tools/tsa-roots/README.md lists the same root; shown so a reader can check the file they use.
+_DIGICERT_ROOT = ("digicert-trusted-root-g4.pem", "DigiCert Trusted Root G4",
+                  "552F7BDCF1A7AF9E6CE672017F4F12ABF77240C78E761AC203D1D9D20AC89988")
+_MATRIX_HOSTS = 4   # host columns per coverage table, so it fits an A4 page
 
 
 def _n(count: int, one: str, many: str) -> str:
     return f"{count} {one if count == 1 else many}"
 
+
+def _when(iso: str | None) -> str:
+    """An ISO time as 'YYYY-MM-DD HH:MM:SS UTC'."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return str(iso)
+    if dt.tzinfo:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _host_of(url: str | None) -> str:
+    return urlsplit(url or "").hostname or url or ""
+
+
+def _status(status: str | None) -> str:
+    return f"<span class='st st-{_e(status or 'none')}'>{_e(_STATUS.get(status, status))}</span>"
+
+
+def _table(head: list[str], rows: list[str], cls: str = "") -> str:
+    th = "".join(f"<th>{h}</th>" for h in head)
+    return f"<div class='tw'><table class='{cls}'><thead><tr>{th}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+
+
+def _dl(rows: list[tuple[str, str]]) -> str:
+    return "<dl class='meta'>" + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows) + "</dl>"
+
+
+def _list(values: list, empty: str) -> str:
+    if not values:
+        return f"<span class='muted'>{empty}</span>"
+    return "<ul class='plain'>" + "".join(f"<li><code>{_e(v)}</code></li>" for v in values) + "</ul>"
+
+
 _CSS = """
-:root{--paper:#f6f9f1;--rule:#c9d8bf;--text:#2b2f2a;--soft:#5d6559;--ink:#1f3a93;--red:#b8322a;--stamp:#2e7d4f}
-*{box-sizing:border-box}body{margin:0;background:#fff;color:var(--text);font:15px/1.5 "Atkinson Hyperlegible","Segoe UI",system-ui,sans-serif;font-variant-numeric:tabular-nums}
-main{max-width:58rem;margin:0 auto;padding:2.5rem 1.5rem 4rem}
-h1,h2,h3{font-family:"Zilla Slab",Rockwell,Georgia,serif;line-height:1.15}h1{font-size:2rem;margin:0}h2{font-size:1.4rem;margin:2.25rem 0 .6rem;padding-top:.6rem;border-top:3px double var(--rule)}h3{font-size:1.05rem;margin:1.25rem 0 .3rem}
-.sub{color:var(--soft);margin:.25rem 0 0}.meta{display:grid;grid-template-columns:12rem 1fr;gap:.25rem 1rem;margin:1rem 0 0}.meta dt{color:var(--soft)}.meta dd{margin:0}
-table{width:100%;border-collapse:collapse;font-size:13px;margin:.4rem 0}th,td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid var(--rule);vertical-align:top}thead th{border-bottom:2px solid var(--soft);font-weight:700}
-code{font:12px ui-monospace,Menlo,monospace;word-break:break-all}.ok{color:var(--stamp);font-weight:700}.bad{color:var(--red);font-weight:700}.muted{color:var(--soft)}
-.stamp{display:inline-block;border:3px double var(--stamp);color:var(--stamp);padding:.15rem .5rem;transform:rotate(-4deg);font:700 .8rem "Zilla Slab",Georgia,serif;letter-spacing:.12em}
-.integrity{background:var(--paper);border-left:4px double var(--red);padding:.8rem 1rem;margin-top:1rem}
-.note{font-size:13px;color:var(--soft)}
-.warn{margin:1rem 0 0;padding:.6rem .8rem;border-left:4px solid var(--red);background:#f7e9e4;color:var(--red);font-weight:700}
-@media print{main{padding:0}h2{break-after:avoid}tr{break-inside:avoid}a{color:inherit}}
+:root{color-scheme:light;--text:#1d2125;--soft:#59616a;--rule:#d6dadf;--rule2:#9aa2ab;--panel:#f4f6f8;--accent:#1f3a5f;
+--ok:#1d6a43;--ok-bg:#e7f2eb;--bad:#a3281f;--bad-bg:#f8e8e6;--wait:#755600;--wait-bg:#fbf2d9}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#fff;color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-variant-numeric:tabular-nums}
+main{max-width:60rem;margin:0 auto;padding:2.5rem 1.5rem 4rem}
+h1,h2,h3{font-family:Georgia,"Times New Roman",serif;line-height:1.2;color:#111}
+h1{font-size:2.1rem;margin:.35rem 0 0}h2{font-size:1.45rem;margin:2.75rem 0 .75rem;padding-top:.85rem;border-top:1px solid var(--rule2)}
+h3{font-size:1.05rem;margin:1.6rem 0 .4rem}p{margin:.6rem 0}
+.cover{border-bottom:3px solid var(--accent);padding-bottom:1.5rem}.cover+section>h2{border-top:0}.kicker{margin:0;color:var(--soft);font-size:.9rem}
+.meta{display:grid;grid-template-columns:14rem minmax(0,1fr);gap:.4rem 1.25rem;margin:1rem 0 0}
+.meta dt{color:var(--soft)}.meta dd{margin:0;overflow-wrap:anywhere}
+.toc{margin:1.5rem 0 0}.toc ol{margin:.3rem 0 0;padding-left:1.4rem;columns:2;column-gap:2rem}.toc a{color:var(--accent)}
+.tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin:1rem 0 1.25rem}
+.tile{border:1px solid var(--rule);border-top:3px solid var(--accent);background:var(--panel);padding:.7rem .85rem}
+.tile b{display:block;font:700 1.6rem/1.15 Georgia,serif}.tile span{display:block;font-size:13px;color:var(--soft)}
+.tw{overflow-x:auto;margin:.5rem 0 1rem}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:.42rem .55rem;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{background:var(--panel);border-bottom:2px solid var(--rule2);font-weight:600}
+table.matrix{table-layout:fixed}table.matrix th:first-child{width:13rem}table.matrix td,table.matrix th{text-align:center}table.matrix td:first-child,table.matrix th:first-child{text-align:left}
+table.receipts tbody{border-bottom:1px solid var(--rule2)}table.receipts td{border-bottom:0}table.receipts tr.hashes td{padding-top:0}
+table.matrix tfoot td{font-weight:600;border-top:2px solid var(--rule2);border-bottom:0}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}code{font-size:12px;overflow-wrap:anywhere}.nw{white-space:nowrap}
+pre{font-size:12.5px;background:var(--panel);border:1px solid var(--rule);padding:.6rem .8rem;white-space:pre-wrap;overflow-wrap:anywhere;margin:.4rem 0 .8rem}
+ul.plain{list-style:none;margin:0;padding:0}
+.st{display:inline-block;padding:0 .45rem;border:1px solid;border-radius:3px;font:600 12px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;white-space:nowrap;vertical-align:middle}
+.st-closed{color:var(--ok);background:var(--ok-bg)}.st-stale{color:var(--bad);background:var(--bad-bg)}
+.st-open{color:var(--wait);background:var(--wait-bg)}.st-none{color:var(--soft);border-style:dashed}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1.25rem;font-size:13px;color:var(--soft);margin:.5rem 0}
+.ok{color:var(--ok);font-weight:600}.muted{color:var(--soft)}.note{font-size:13px;color:var(--soft)}.small{font-size:12px}
+.callout{border-left:4px solid var(--accent);background:var(--panel);padding:.75rem 1rem;margin:1rem 0}.callout .meta{grid-template-columns:10rem minmax(0,1fr);margin:0}
+.warn{border-left:4px solid var(--bad);background:var(--bad-bg);color:var(--bad);padding:.6rem .85rem;font-weight:600;margin:1rem 0}
+@media (max-width:40rem){main{padding:1.5rem 1rem 3rem}h1{font-size:1.65rem}.meta{grid-template-columns:minmax(0,1fr);gap:0}
+.meta dt{margin-top:.6rem}.toc ol{columns:1}.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+table.matrix{table-layout:auto}table.matrix th:first-child{width:auto}
+table.receipts thead{display:none}table.receipts,table.receipts tbody,table.receipts tr,table.receipts td{display:block}
+table.receipts td{padding:.2rem 0}table.receipts tbody{padding:.5rem 0}table.receipts td[data-label]::before{content:attr(data-label);display:block;color:var(--soft);font-size:12px}th,td{padding:.38rem .4rem}}
+@page{size:A4;margin:16mm 14mm 18mm;@bottom-left{content:"AttackLedger coverage report";font:8pt system-ui,sans-serif;color:#59616a}
+@bottom-right{content:"Page " counter(page) " of " counter(pages);font:8pt system-ui,sans-serif;color:#59616a}}
+@media print{*{-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font-size:10pt}main{max-width:none;padding:0}
+.pb{break-before:page}.pb>h2:first-child{margin-top:0;border-top:0;padding-top:0}h2{margin-top:1.75rem}
+h2,h3{break-after:avoid}tr,table.receipts tbody,.tile,.callout,.warn,pre,dl.meta{break-inside:avoid}.tw{overflow:visible}
+table{font-size:8.5pt}code{font-size:8pt}pre{font-size:8.5pt}a{color:inherit;text-decoration:none}
+.tw.keep{break-inside:avoid}tfoot{display:table-row-group}}
 """
+
+_SECTIONS = [("summary", "Summary"), ("scope", "Scope and authorization"), ("coverage", "Coverage matrix"),
+             ("receipts", "Receipts"), ("verify", "How to verify"), ("controls", "Control evidence"),
+             ("items", "Item detail"), ("recon", "Recon runs"), ("integrity", "Integrity")]
 
 
 def render_html(r: dict) -> str:
     eng, s = r["engagement"], r["summary"]
-    lanes_by_host: dict[str, list] = {}
-    for l in r["lanes"]:
-        lanes_by_host.setdefault(l["host"], []).append(l)
-    ev_by_id = {e["id"]: e for e in r["evidence"]}
-
+    in_scope = [h["host"] for h in r["hosts"] if h["in_scope"]]
+    lanes = [l for l in r["lanes"] if l["host"] in in_scope]
+    sections = [x for x in _SECTIONS if x[0] != "recon" or r["jobs"]]
     parts = [f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Coverage report: {_e(eng['name'])}</title><style>{_CSS}</style></head><body><main>
-<h1>Coverage report: {_e(eng['name'])}</h1>
-<p class="sub">{_e(eng['pack']['name'])} methodology, version {_e(eng['pack']['version'])}. Generated {_e(r['generated_at'])}.</p>
+<header class="cover">
+<p class="kicker">AttackLedger coverage report</p>
+<h1>{_e(eng['name'])}</h1>
+{_dl([("Engagement type", _e(_TYPES.get(eng['type'], eng['type']))),
+      ("Methodology pack", f"{_e(eng['pack']['name'])}, version {_e(eng['pack']['version'])}"),
+      ("Generated", _e(_when(r['generated_at']))),
+      ("Report format", f"<code>{_e(r['format'])}</code>"),
+      ("Report body SHA-256", f"<code>{_e(r['integrity']['body_sha256'])}</code>")])}
 {'' if eng['authorized_at'] else '<p class="warn">No authorization was recorded for this engagement. The tests below are not backed by a recorded permission to test.</p>'}
-<dl class="meta">
-<dt>Engagement type</dt><dd>{_e(_TYPES.get(eng['type'], eng['type']))}</dd>
-<dt>Authorized by</dt><dd>{_e(eng['authorized_by'] or 'Not recorded')} {('on ' + _e(eng['authorized_at'])) if eng['authorized_at'] else ''}</dd>
-<dt>Program policy</dt><dd>{_e(eng['policy_url'] or 'Not recorded')}</dd>
-<dt>In scope</dt><dd>{_e(', '.join(eng['scope']['include']) or 'None defined')}</dd>
-<dt>Out of scope</dt><dd>{_e(', '.join(eng['scope']['exclude']) or 'None')}</dd>
-<dt>Research identification</dt><dd>{_e(' · '.join(x for x in (eng['research_identification']['header'], eng['research_identification']['user_agent']) if x) or 'Not set')}</dd>
-</dl>
-
-<h2>Coverage statement</h2>
-<p>Of {_n(s['lanes_possible'], 'possible lane', 'possible lanes')} ({_n(s['hosts_in_scope'], 'in-scope host', 'in-scope hosts')} × {s['lanes_per_host']} lanes),
-{s['lanes_opened']} {'was' if s['lanes_opened'] == 1 else 'were'} opened and <strong>{s['lanes_receipted']} {'is' if s['lanes_receipted'] == 1 else 'are'} receipted</strong>: every checklist item has evidence
-or a written reason, the receipt matches the ledger, and a person reviewed and signed it.
-{'No receipts are void.' if not s['lanes_stale'] else _n(s['lanes_stale'], 'receipt is', 'receipts are') + ' void because the ledger changed after issue.'}
-Lanes that were not opened were not tested.</p>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ol>
+{''.join(f'<li><a href="#{k}">{t}</a></li>' for k, t in sections)}
+</ol></nav>
+</header>
 """]
-
-    parts.append("<h2>Lanes by host</h2>")
-    for h in r["hosts"]:
-        if not h["in_scope"]:
-            continue
-        parts.append(f"<h3>{_e(h['host'])}</h3>")
-        hl = lanes_by_host.get(h["host"], [])
-        if not hl:
-            parts.append('<p class="muted">No lanes opened.</p>')
-            continue
-        parts.append("<table><thead><tr><th>Lane</th><th>Status</th><th>Items</th><th>Receipt</th><th>Signed by</th></tr></thead><tbody>")
-        for l in hl:
-            done = sum(1 for i in l["items"] if i["state"] == "done")
-            na = sum(1 for i in l["items"] if i["state"] == "na")
-            cls = "ok" if l["status"] == "closed" else "bad"
-            rc = f"<code>{_e(l['receipt']['manifest_sha256'][:16])}</code>" if l["receipt"] else '<span class="muted">none</span>'
-            parts.append(f"<tr><td>{_e(l['name'])}</td><td class='{cls}'>{_STATUS[l['status']]}</td>"
-                         f"<td>{done} with evidence, {na} not applicable, {len(l['items']) - done - na} open</td><td>{rc}</td>"
-                         f"<td>{_signed_by(l['receipt'])}</td></tr>")
-        parts.append("</tbody></table>")
-
-    parts.append("<h2>Control evidence</h2>")
-    parts.append(f"<p class='note'>{_e(r['controls'].get('disclaimer', ''))}</p>")
-    parts.append("<table><thead><tr><th>Control</th><th>Framework</th><th>Receipted items</th><th>Status</th></tr></thead><tbody>")
-    for c in r["controls"].get("controls", []):
-        cls = {"evidenced": "ok", "partial": "", "none": "muted"}[c["status"]]
-        parts.append(f"<tr><td><strong>{_e(c['id'])}</strong><br><span class='muted'>{_e(c['text'])}</span></td>"
-                     f"<td>{_e(c['framework_name'])}</td><td>{c['evidenced']}/{c['required']}</td>"
-                     f"<td class='{cls}'>{_e(c['status'].capitalize())}</td></tr>")
-    parts.append("</tbody></table>")
-
-    parts.append("<h2>Item detail</h2>")
-    for l in r["lanes"]:
-        parts.append(f"<h3>{_e(l['host'])} · {_e(l['name'])}</h3><table><thead><tr><th>Item</th><th>Result</th><th>Evidence</th></tr></thead><tbody>")
-        for i in l["items"]:
-            evs = [ev_by_id[x] for x in l["evidence_ids"] if ev_by_id[x]["item_id"] == i["item_id"]]
-            result = {"done": "Evidence recorded", "na": f"Not applicable: {i['na_reason']}", "open": "Open"}[i["state"]]
-            ev_html = "<br>".join(f"#{e['seq']} {_e(e['kind'])}: {_e(e['summary'])} <code>{_e(e['sha256'][:12])}</code>" for e in evs)
-            parts.append(f"<tr><td><span class='muted'>{_e(i['key'])}</span><br>{_e(i['text'])}</td>"
-                         f"<td>{_e(result)}</td><td>{ev_html or '<span class=muted>none</span>'}</td></tr>")
-        parts.append("</tbody></table>")
-
+    parts += [_summary(r, lanes), _scope(r), _coverage(r, in_scope), _receipts(r), _verify(r),
+              _controls(r), _items(r)]
     if r["jobs"]:
-        parts.append("<h2>Recon runs</h2><table><thead><tr><th>Run</th><th>Status</th><th>Targets</th><th>Results</th><th>Output SHA-256</th></tr></thead><tbody>")
-        for j in r["jobs"]:
-            parts.append(f"<tr><td>#{j['id']} {_e(j['kind'])}</td><td>{_e(j['status'])}</td><td>{j['targets']}</td>"
-                         f"<td>{j['result_count']}</td><td><code>{_e(j['output_sha256'] or '')}</code></td></tr>")
-        parts.append("</tbody></table>")
-
+        parts.append(_recon(r))
     integ = r["integrity"]
-    parts.append(f"""<h2>Integrity</h2>
-<div class="integrity">
-<p><span class="stamp">LEDGER</span> {s['evidence_entries']} evidence entries, chain head <code>{_e(s['chain_head'])}</code></p>
-<p>Report body SHA-256 <code>{_e(integ['body_sha256'])}</code></p>
-<p class="note">To verify: <code>python3 tools/verify_report.py this-file.html</code>. The verifier recomputes every receipt
-from its items and evidence, walks the evidence chain from the genesis value, and recomputes the body hash. It needs only the Python standard library.</p>
+    parts.append(f"""<section id="integrity"><h2>Integrity</h2>
+<div class="callout">
+{_dl([("Evidence entries", _e(s['evidence_entries'])),
+      ("Chain genesis", f"<code>{_e(integ['chain_genesis'])}</code>"),
+      ("Chain head", f"<code>{_e(s['chain_head'])}</code>"),
+      ("Report body SHA-256", f"<code>{_e(integ['body_sha256'])}</code>")])}
 </div>
+<p class="note">Every evidence entry commits to the hash of the entry before it, starting from the genesis value, so
+removing, reordering or editing any entry changes the chain head. The body hash covers everything in the report
+except this section. The full report is embedded in this page as JSON; see <a href="#verify">How to verify</a>.</p>
 <script type="application/json" id="attackledger-report">{_json_for_html(r)}</script>
+</section>
 </main></body></html>""")
     return "".join(parts)
+
+
+def _summary(r: dict, lanes: list) -> str:
+    s = r["summary"]
+    items = [i for l in lanes for i in l["items"]]
+    done = sum(1 for i in items if i["state"] == "done")
+    na = sum(1 for i in items if i["state"] == "na")
+    with_rc = [l for l in lanes if l["receipt"]]
+    signed = sum(1 for l in with_rc if l["receipt"].get("signature"))
+    stamped = sum(1 for l in with_rc if l["receipt"].get("timestamp"))
+    tiles = [
+        (s["hosts_in_scope"], "In-scope hosts"),
+        (f"{s['lanes_receipted']} of {s['lanes_opened']}", f"Lanes receipted, of those opened; {s['lanes_possible']} possible"),
+        (done, "Items with evidence"),
+        (na, "Items not applicable, with a reason"),
+        (len(items) - done - na, "Items still open"),
+        (f"{signed} of {len(with_rc)}", f"Receipts signed with a key; {stamped} timestamped"),
+    ]
+    void = s["lanes_stale"]
+    name_only = len(with_rc) - signed
+    return f"""<section id="summary" class="pb"><h2>Summary</h2>
+<div class="tiles">{''.join(f'<div class="tile"><b>{_e(v)}</b><span>{_e(t)}</span></div>' for v, t in tiles)}</div>
+{f'<p class="warn">{_n(void, "receipt is", "receipts are")} void: the ledger changed after the receipt was issued, so it no longer proves that lane.</p>' if void else ''}
+<p>Of {_n(s['lanes_possible'], 'possible lane', 'possible lanes')} ({_n(s['hosts_in_scope'], 'in-scope host', 'in-scope hosts')}
+× {s['lanes_per_host']} lanes), {s['lanes_opened']} {'was' if s['lanes_opened'] == 1 else 'were'} opened and
+<strong>{s['lanes_receipted']} {'is' if s['lanes_receipted'] == 1 else 'are'} receipted</strong>: every checklist item
+has evidence or a written reason, the receipt matches the ledger, and a named person reviewed the lane and closed it.
+{'No receipts are void.' if not void else _n(void, 'receipt is', 'receipts are') + ' void.'}
+Lanes that were not opened were not tested.</p>
+<div class="callout"><p><strong>What this report proves.</strong> It is a record of what was tested, not a judgement of
+how well. It shows which checklist items were recorded as tested or not applicable, which evidence was attached to each,
+who closed each lane and when, and that none of this changed after it was recorded: the evidence is hash-chained,
+{'' if not signed else 'signed receipts carry a signature from the reviewer’s own key, '}{'' if not stamped else 'timestamped receipts carry a token from an independent timestamp authority, '}and anyone can
+re-check all of it offline.</p>
+<p>It does not prove that the tests themselves were thorough or correct, that untested lanes or hosts are free of issues,
+or that a signing key belongs to the person named; compare key fingerprints with the signers for that. It is not a list
+of findings.{' ' + _n(name_only, 'receipt carries', 'receipts carry') + ' only a name, which rests on the tester’s own records.' if name_only else ''}</p></div>
+</section>"""
+
+
+def _scope(r: dict) -> str:
+    eng = r["engagement"]
+    ident = eng["research_identification"]
+    out_hosts = [h["host"] for h in r["hosts"] if not h["in_scope"]]
+    rows = [
+        ("Authorization recorded by", _e(eng["authorized_by"]) if eng["authorized_by"] else "<span class='muted'>Not recorded</span>"),
+        ("Recorded at", _e(_when(eng["authorized_at"])) or "<span class='muted'>Not recorded</span>"),
+        ("Policy or statement of work", f"<code>{_e(eng['policy_url'])}</code>" if eng["policy_url"] else "<span class='muted'>Not recorded</span>"),
+        ("In scope (rules)", _list(eng["scope"]["include"], "None defined")),
+        ("Out of scope (rules)", _list(eng["scope"]["exclude"], "None")),
+        ("Rate limit", f"{_e(eng['rate_limit_rps'])} requests per second"),
+        ("Identification header", f"<code>{_e(ident['header'])}</code>" if ident["header"] else "<span class='muted'>Not set</span>"),
+        ("User agent", f"<code>{_e(ident['user_agent'])}</code>" if ident["user_agent"] else "<span class='muted'>Not set</span>"),
+    ]
+    if "separation_of_duties" in eng:
+        rows.append(("Separation of duties", "On: whoever attached a lane’s evidence cannot sign its receipt"
+                     if eng["separation_of_duties"] else "Off"))
+        rows.append(("Signatures required", "Yes: a receipt needs a signature from the reviewer’s key"
+                     if eng["require_signatures"] else "No: a receipt may carry a name only"))
+    if out_hosts:
+        rows.append(("Hosts recorded as out of scope", _list(out_hosts, "")))
+    return f"""<section id="scope"><h2>Scope and authorization</h2>
+{_dl(rows)}
+<p class="note">The authorization entry is the tester’s own statement that they were permitted to test, with the policy
+or statement of work it refers to. Recon and agent runs only reach hosts that match these rules, at this rate.</p>
+</section>"""
+
+
+def _coverage(r: dict, hosts: list) -> str:
+    pack_lanes = r["engagement"]["pack"].get("lanes") or []
+    order = [(l["key"], l["name"]) for l in pack_lanes]
+    for l in r["lanes"]:
+        if l["role"] not in {k for k, _ in order}:
+            order.append((l["role"], l["name"]))
+    status = {(l["host"], l["role"]): l["status"] for l in r["lanes"]}
+    out = ["""<section id="coverage" class="pb"><h2>Coverage matrix</h2>
+<p>Each in-scope host against each lane of the methodology pack.</p>
+<div class="legend"><span><span class='st st-closed'>Receipted</span> every item resolved, reviewed and closed</span>
+<span><span class='st st-stale'>Void</span> receipted, then the ledger changed</span>
+<span><span class='st st-open'>In progress</span> opened, not closed</span>
+<span><span class='st st-none'>Not opened</span> not tested</span></div>"""]
+    if not hosts:
+        out.append("<p class='muted'>No in-scope hosts.</p>")
+    tables = -(-len(hosts) // _MATRIX_HOSTS)
+    for n in range(tables):
+        chunk = hosts[n * len(hosts) // tables:(n + 1) * len(hosts) // tables]
+        rows = [f"<tr><td>{_e(name)}</td>" + "".join(f"<td>{_status(status.get((h, key)))}</td>" for h in chunk) + "</tr>"
+                for key, name in order]
+        foot = "<tfoot><tr><td>Receipted</td>" + "".join(
+            f"<td>{sum(1 for k, _ in order if status.get((h, k)) == 'closed')} of {len(order)}</td>" for h in chunk) + "</tr></tfoot>"
+        head = "".join(f"<th><code>{_e(h)}</code></th>" for h in chunk)
+        out.append(f"<div class='tw keep'><table class='matrix'><thead><tr><th>Lane</th>{head}</tr></thead>"
+                   f"<tbody>{''.join(rows)}</tbody>{foot}</table></div>")
+    out.append("</section>")
+    return "".join(out)
+
+
+def _receipts(r: dict) -> str:
+    with_rc = [l for l in r["lanes"] if l["receipt"]]
+    out = ["""<section id="receipts" class="pb"><h2>Receipts</h2>
+<p>A receipt is the SHA-256 of the lane’s manifest: its items, their states and reasons, and the hashes of its evidence.
+A person issues it when they close the lane. A signature ties it to the reviewer’s key; a timestamp from an independent
+authority shows it existed at that time.</p>"""]
+    if not with_rc:
+        out.append("<p class='muted'>No lane has a receipt yet.</p></section>")
+        return "".join(out)
+    rows = []
+    for l in with_rc:
+        rc = l["receipt"]
+        sig, ts = rc.get("signature"), rc.get("timestamp")
+        lane = f"<strong>{_e(l['name'])}</strong><br><code>{_e(l['host'])}</code><br>{_status(l['status'])}"
+        if l["status"] == "stale":
+            lane += "<br><span class='small'>The ledger changed after this receipt was issued.</span>"
+        signer = _e(rc.get("closed_by") or "") + ("<br>Signed with a key" if sig
+                                                  else "<br><span class='muted'>Name only, not signed</span>")
+        stamp = (f"Timestamped <span class='nw'>{_e(_when(ts.get('time')))}</span> by {_e(_host_of(ts.get('tsa')))}" if ts
+                 else "<span class='muted'>Not timestamped; the issue time is the server’s clock</span>")
+        hashes = f"Manifest SHA-256 <code>{_e(rc['manifest_sha256'])}</code>"
+        if sig:
+            hashes += f"<br>{_e(sig['algorithm'])} key <code>{_e(sig['key_fingerprint'])}</code>"
+        rows.append(f"<tbody><tr><td>{lane}</td><td data-label='Signed by'>{signer}</td>"
+                    f"<td data-label='Time'>Issued <span class='nw'>{_e(_when(rc.get('issued_at')))}</span><br>{stamp}</td></tr>"
+                    f"<tr class='hashes'><td colspan='3' class='small'>{hashes}</td></tr></tbody>")
+    out.append(f"<div class='tw'><table class='receipts'><thead><tr><th>Lane</th><th>Signed by</th><th>Time</th></tr></thead>"
+               f"{''.join(rows)}</table></div>")
+    unclosed = sum(1 for l in r["lanes"] if not l["receipt"])
+    if unclosed:
+        out.append(f"<p class='note'>{_n(unclosed, 'opened lane has', 'opened lanes have')} no receipt yet.</p>")
+    out.append("</section>")
+    return "".join(out)
+
+
+def _verify(r: dict) -> str:
+    tsas = sorted({_host_of(l["receipt"]["timestamp"].get("tsa")) for l in r["lanes"]
+                   if l["receipt"] and l["receipt"].get("timestamp")})
+    file, name, fp = _DIGICERT_ROOT
+    others = [t for t in tsas if not t.endswith("digicert.com")]
+    other_note = (f"<p>This report also has timestamps from {_e(', '.join(others))}. The verifier fails those until you "
+                  "pass that authority’s root certificate with <code>--tsa-root</code>; obtain it from the authority and "
+                  "check its fingerprint first.</p>") if others else ""
+    checks = [
+        ("Report body hash", "The report has not been edited since it was generated: its SHA-256 matches the recorded value."),
+        ("Evidence chain", "Every evidence entry links to the one before it, from the genesis value to the chain head. "
+                           "No entry was removed, reordered or changed."),
+        ("Lane receipts", "For every receipted lane, a manifest rebuilt from the report’s own items and evidence has the "
+                          "receipt’s hash, every item marked done has evidence, and every not-applicable item has a reason."),
+        ("Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its "
+                               "fingerprint, and the signed text names this lane, this manifest and a chain head in the report."),
+        ("Receipt timestamps", "Each timestamp token covers this receipt’s manifest hash and signature, the authority’s "
+                               "signature verifies, and its certificate chain reaches a root you trust. Shown only when the "
+                               "report has timestamps."),
+    ]
+    return f"""<section id="verify" class="pb"><h2>How to verify</h2>
+<p>Anyone can check this report without AttackLedger, the tester’s server or a network connection. The verifier is one
+file, <code>tools/verify_report.py</code> in the AttackLedger repository, and needs only Python 3 and its standard library.</p>
+<h3>1. Get the files</h3>
+<p>Save this report as JSON (or keep this HTML file: it embeds the same report). Copy <code>verify_report.py</code> and the
+<code>tools/tsa-roots/</code> folder from the repository into one folder, keeping the folder name <code>tsa-roots</code>.</p>
+<h3>2. Run the verifier</h3>
+<pre>python3 verify_report.py report.json --tsa-root &lt;root.pem&gt;</pre>
+<p>For example, with the DigiCert root from the repository, or with this HTML file:</p>
+<pre>python3 verify_report.py report.json --tsa-root tsa-roots/{_e(file)}
+python3 verify_report.py report.html</pre>
+<p class="note">Roots in <code>tsa-roots/</code> next to the script are trusted without <code>--tsa-root</code>; pass it for
+any other authority. Running <code>python3 -I</code> keeps Python from loading modules from the current folder.</p>
+<h3>3. Read the result</h3>
+<p>Each check prints <code>PASS</code> or <code>FAIL</code>; the last line says <code>Verified.</code> and the exit code
+is 0 only if every check passed. <code>NOTE</code> lines are information, such as who signed and which receipts are not
+timestamped.</p>
+{_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks])}
+<h3>Where the timestamp root comes from</h3>
+<p><code>tools/tsa-roots/{_e(file)}</code> is {_e(name)}, the root of DigiCert’s public timestamp service
+(<code>timestamp.digicert.com</code>), taken from the macOS root store and matched against DigiCert’s download. Before you
+rely on it, compare its SHA-256 fingerprint with your operating system’s root store or DigiCert’s site:</p>
+<pre>{_e(fp)}</pre>
+{other_note}
+<h3>Tie keys to people</h3>
+<p>A valid signature proves the holder of that key signed. To tie the key to a person, ask each signer for their key
+fingerprint through a channel you trust and compare it with the one in <a href="#receipts">Receipts</a>. To make sure
+this is the report you were sent, compare the report body SHA-256 on the cover with the value the tester gave you.</p>
+</section>"""
+
+
+def _controls(r: dict) -> str:
+    c = r["controls"]
+    rows = []
+    for x in c.get("controls", []):
+        cls = {"evidenced": "ok", "partial": "", "none": "muted"}.get(x["status"], "")
+        rows.append(f"<tr><td><strong>{_e(x['id'])}</strong><br><span class='muted'>{_e(x['text'])}</span></td>"
+                    f"<td>{_e(x['framework_name'])}</td><td>{_e(x['evidenced'])}/{_e(x['required'])}</td>"
+                    f"<td class='{cls}'>{_e(str(x['status']).capitalize())}</td></tr>")
+    body = _table(["Control", "Framework", "Receipted items", "Status"], rows) if rows else \
+        "<p class='muted'>This pack maps no items to controls.</p>"
+    return f"""<section id="controls" class="pb"><h2>Control evidence</h2>
+<p class="note">{_e(c.get('disclaimer', ''))}</p>{body}</section>"""
+
+
+def _items(r: dict) -> str:
+    in_scope = {h["host"] for h in r["hosts"] if h["in_scope"]}
+    ev_by_id = {e["id"]: e for e in r["evidence"]}
+    out = ["<section id='items' class='pb'><h2>Item detail</h2>"]
+    if not r["lanes"]:
+        out.append("<p class='muted'>No lanes were opened.</p>")
+    for l in r["lanes"]:
+        scope_note = "" if l["host"] in in_scope else " <span class='muted'>(host out of scope)</span>"
+        out.append(f"<h3>{_e(l['host'])} · {_e(l['name'])}{scope_note} {_status(l['status'])}</h3>")
+        rows = []
+        for i in l["items"]:
+            evs = [ev_by_id[x] for x in l["evidence_ids"] if ev_by_id[x]["item_id"] == i["item_id"]]
+            result = _ITEM.get(i["state"], i["state"])
+            if i["state"] == "na":
+                result = f"{_e(result)}: {_e(i['na_reason'])}"
+            else:
+                result = _e(result)
+            ev_html = "<br>".join(
+                f"#{_e(e['seq'])} {_e(e['kind'])}: {_e(e['summary'])} <code>{_e(e['sha256'][:12])}</code>"
+                + (f"<br><span class='muted small'>{_e(e['uri'])}</span>" if e.get("uri") else "") for e in evs)
+            rows.append(f"<tr><td><span class='muted'>{_e(i['key'])}</span><br>{_e(i['text'])}</td>"
+                        f"<td>{result}</td><td>{ev_html or '<span class=muted>none</span>'}</td></tr>")
+        out.append(_table(["Item", "Result", "Evidence"], rows))
+    out.append("</section>")
+    return "".join(out)
+
+
+def _recon(r: dict) -> str:
+    rows = [f"<tr><td>#{_e(j['id'])} {_e(j['kind'])}</td><td>{_e(j['status'])}</td><td>{_e(j['targets'])}</td>"
+            f"<td>{_e(j['result_count'])}</td><td>{_e(_when(j['started_at']))}<br>{_e(_when(j['finished_at']))}</td>"
+            f"<td><code>{_e(j['output_sha256'] or '')}</code></td></tr>" for j in r["jobs"]]
+    return ("<section id='recon'><h2>Recon runs</h2>"
+            + _table(["Run", "Status", "Targets", "Results", "Started, finished", "Output SHA-256"], rows) + "</section>")
 
 
 def _json_for_html(r: dict) -> str:

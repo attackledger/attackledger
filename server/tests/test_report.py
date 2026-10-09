@@ -124,3 +124,70 @@ def test_report_carries_the_receipt_signer(client):
     lane = next(l for l in r["lanes"] if l["lane_id"] == info_id)
     assert lane["receipt"]["closed_by"] == "test reviewer"
     assert "test reviewer" in client.get(f"/engagements/{eng}/report.html").text
+
+
+def test_html_report_has_the_client_sections_in_order(client):
+    eng, info_id = build(client)
+    r = client.get(f"/engagements/{eng}/report").json()
+    assert [l["key"] for l in r["engagement"]["pack"]["lanes"]][:2] == ["info", "conf"]
+    assert r["engagement"]["separation_of_duties"] is False and r["engagement"]["require_signatures"] is False
+    page = client.get(f"/engagements/{eng}/report.html").text
+    ids = ["summary", "scope", "coverage", "receipts", "verify", "controls", "items", "integrity"]
+    pos = [page.index(f'<section id="{i}"') if f'<section id="{i}"' in page else page.index(f"<section id='{i}'")
+           for i in ids]
+    assert pos == sorted(pos)
+    assert "Penetration test" in page and "attackledger-report/2" in page and "Web application pentest" in page
+    # Summary: tiles and what the report does and does not prove.
+    assert "1 of 2" in page and "Items with evidence" in page and "does not prove" in page
+    # Matrix: the receipted lane, the open one and the pack's other lanes.
+    matrix = page[page.index('id="coverage"'):page.index('id="receipts"')]
+    assert matrix.count("st-closed'>Receipted") == 2        # legend + info lane
+    assert "st-open'>In progress" in matrix and matrix.count("Not opened") == 1 + 10
+    assert "1 of 12" in matrix
+    # Receipts: the full manifest hash, the signer, and that it is not signed or timestamped.
+    lane = next(l for l in r["lanes"] if l["lane_id"] == info_id)
+    receipts = page[page.index('id="receipts"'):page.index('id="verify"')]
+    assert lane["receipt"]["manifest_sha256"] in receipts and "test reviewer" in receipts
+    assert "Name only, not signed" in receipts and "Not timestamped" in receipts
+    # How to verify: the command and the pinned root.
+    assert "python3 verify_report.py report.json --tsa-root &lt;root.pem&gt;" in page
+    assert "tools/tsa-roots/digicert-trusted-root-g4.pem" in page and "552F7BDCF1A7AF9E" in page
+
+
+def test_void_receipt_is_shown_as_void(client):
+    eng, info_id = build(client)
+    client.post(f"/lanes/{info_id}/evidence", json={"item_idx": 1, "kind": "note", "sha256": h("late"), "summary": "late"})
+    r = client.get(f"/engagements/{eng}/report").json()
+    assert r["summary"]["lanes_stale"] == 1
+    page = client.get(f"/engagements/{eng}/report.html").text
+    receipts = page[page.index('id="receipts"'):page.index('id="verify"')]
+    assert "st-stale'>Void" in receipts and "ledger changed after this receipt" in receipts
+    assert "1 receipt is void" in page
+
+
+def test_html_report_escapes_every_database_string(client, tmp_path):
+    from app import report
+    bad = '"><script>alert(1)</script>'
+    eng = client.post("/engagements", json={"name": "Acme " + bad, "pack_id": "web-pentest-wstg",
+                                            "policy_url": "https://x.test/" + bad}).json()["id"]
+    a = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
+    lane = client.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
+    resolve_all(client, lane)
+    client.post(f"/lanes/{lane['id']}/evidence", json={"item_idx": 1, "kind": "note", "sha256": h("y"), "summary": bad})
+    assert client.post(f"/lanes/{lane['id']}/close", json={"closed_by": "Eve " + bad, "reviewed": True}).status_code == 200
+    r = client.get(f"/engagements/{eng}/report").json()
+    # Hosts and scope rules are normalized by the API; a report from another source may still carry anything.
+    for x in r["hosts"] + r["lanes"] + r["evidence"]:
+        x["host"] = "app.example.com" + bad
+    r["engagement"]["scope"]["include"] = [bad]
+    r["engagement"]["research_identification"]["header"] = "X-Id: " + bad
+    for page in (client.get(f"/engagements/{eng}/report.html").text, report.render_html(r)):
+        assert "<script>alert" not in page and '"><script' not in page
+        assert page.count("<script") == 1 and page.count("</script>") == 1
+        assert "&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;" in page
+    page = report.render_html(r)
+    for where in ("Acme ", "https://x.test/", "Eve ", "app.example.com", "X-Id: "):
+        assert where + "&quot;&gt;&lt;script&gt;" in page, where
+    p = tmp_path / "r.html"
+    p.write_text(client.get(f"/engagements/{eng}/report.html").text)
+    assert verify.main(["v", str(p)]) == 0
