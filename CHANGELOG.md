@@ -10,6 +10,14 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Guided first run**: the five setup steps from scope to first lane, each step's
+  status computed from the engagement itself.
+- **Role-based home**: each engagement opens on a tab chosen by role: Report for
+  viewers, Ledger for testers and reviewers, the next setup step for owners.
+- **Accessibility**: WCAG 2.2 AA contrast in both themes (axe: 0 violations on every
+  app screen), small labels one size larger, focus ring on checklist items, and
+  focusable logs, commands and tables. On phones and tablets nothing scrolls
+  sideways and the sidebar folds into a compact header.
 - **Agent runs** (`POST /lanes/{id}/agent-runs`): a job of kind `agent` on one lane,
   with turn and request limits, cancel, partial status and a token cost estimate.
   Migration `0009` adds `jobs.lane_id` and `jobs.result`.
