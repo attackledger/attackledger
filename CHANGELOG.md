@@ -47,6 +47,13 @@ local lab.
   trust (`tools/tsa-roots/` or `--tsa-root`). Docker Compose uses DigiCert's public
   service by default and its root is pinned; `ATTACKLEDGER_TSA_URL=off` turns it off.
   Migration `0012`.
+- **Demo and sample report signed and timestamped.** `tools/demo_sign.py` has a demo
+  reviewer sign every closed demo lane (a script stands in for the browser key) and
+  DigiCert timestamps each receipt; the sample report verifies with all five checks and the
+  site ships DigiCert's root for `--tsa-root`. The HTML report shows each receipt's key
+  and timestamp.
+- Times from the API and in reports now carry their UTC offset; the browser showed UTC
+  times from Postgres as local time.
 - `ATTACKLEDGER_COOKIE_SECURE` is now passed to the API by Docker Compose (it was
   documented but not forwarded).
 - **A real Claude agent run in the demo.** With no API key yet, Claude Opus worked the

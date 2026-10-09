@@ -18,7 +18,7 @@ from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, g
                scope, scopeimport, triage, urls)
 from . import targets as targeting
 from .db import get_session
-from .models import (ROLES, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
+from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
                      Lane, Lead, Membership, Observation, Receipt, SigningKey, User)
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
@@ -112,7 +112,7 @@ def _lane_view(lane: Lane) -> dict:
         "evidence": [
             {"id": e.id, "item_idx": next((i.idx for i in lane.items if i.id == e.item_id), None),
              "kind": e.kind, "sha256": e.sha256, "uri": e.uri, "summary": e.summary,
-             "created_at": e.created_at.isoformat(), "created_by": e.created_by}
+             "created_at": iso_utc(e.created_at), "created_by": e.created_by}
             for e in lane.evidence
         ],
         "receipt": (
@@ -122,11 +122,11 @@ def _lane_view(lane: Lane) -> dict:
              "signed": bool(lane.receipts[-1].signature),
              "algorithm": lane.receipts[-1].algorithm,
              "key_fingerprint": lane.receipts[-1].key_fingerprint,
-             "timestamp": ({"time": lane.receipts[-1].timestamp_time.isoformat(),
+             "timestamp": ({"time": iso_utc(lane.receipts[-1].timestamp_time),
                             "tsa": lane.receipts[-1].timestamp_tsa}
                            if lane.receipts[-1].timestamp_token else None),
              "timestamp_error": lane.receipts[-1].timestamp_error,
-             "created_at": lane.receipts[-1].created_at.isoformat()}
+             "created_at": iso_utc(lane.receipts[-1].created_at)}
             if lane.receipts else None
         ),
     }
@@ -197,7 +197,7 @@ class KeyIn(BaseModel):
 
 def _key_view(k: SigningKey) -> dict:
     return {"id": k.id, "algorithm": k.algorithm, "fingerprint": k.fingerprint,
-            "created_at": k.created_at.isoformat(), "revoked": k.revoked_at is not None}
+            "created_at": iso_utc(k.created_at), "revoked": k.revoked_at is not None}
 
 
 def _person(request: Request):
@@ -635,7 +635,7 @@ def _scope_view(eng: Engagement) -> dict:
         "research_header": eng.research_header, "research_user_agent": eng.research_user_agent,
         "enabled_modules": sorted(eng.enabled_modules or []), "crawl_depth": eng.crawl_depth,
         "authorized_by": eng.authorized_by,
-        "authorized_at": eng.authorized_at.isoformat() if eng.authorized_at else None,
+        "authorized_at": iso_utc(eng.authorized_at),
         "separation_of_duties": eng.separation_of_duties,
     }
 
@@ -694,9 +694,9 @@ def _job_view(j: Job, with_log: bool = False) -> dict:
          "result_count": j.result_count, "output_sha256": j.output_sha256,
          "targets_done": j.targets_done, "remaining": len(j.remaining_targets or []),
          "deferred": j.deferred, "lane_id": j.lane_id, "result": j.result,
-         "created_at": j.created_at.isoformat(),
-         "started_at": j.started_at.isoformat() if j.started_at else None,
-         "finished_at": j.finished_at.isoformat() if j.finished_at else None}
+         "created_at": iso_utc(j.created_at),
+         "started_at": iso_utc(j.started_at),
+         "finished_at": iso_utc(j.finished_at)}
     if with_log:
         v["log"] = j.log
     return v

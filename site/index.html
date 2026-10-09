@@ -323,13 +323,16 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
         </div>
         <div style="min-width:0">
           <p style="margin:0">Verifying a report needs no AttackLedger installation, only Python:</p>
-<pre><code>$ python3 verify_report.py sample-report.json
+<pre><code>$ python3 verify_report.py sample-report.json \
+    --tsa-root digicert-trusted-root-g4.pem
 AttackLedger report: Client web app (Web application pentest (OWASP WSTG) 0.1)
   5 receipted lanes, 43 evidence entries
 
 <span class="verify-out">  PASS  Report body hash
   PASS  Evidence chain
-  PASS  Lane receipts</span>
+  PASS  Lane receipts
+  PASS  Receipt signatures
+  PASS  Receipt timestamps</span>
 
 Verified.</code></pre>
         </div>
@@ -345,8 +348,11 @@ Verified.</code></pre>
         <p>The <a href="demo/">read-only demo</a> is the AttackLedger app itself, loaded with the same kind of
           sample data: recon from a real run against a local lab, lanes, evidence, receipts and reports.</p>
         <p><a class="btn primary" href="sample-report.html">Open the sample report</a></p>
-        <p>To check it yourself, take <a href="sample-report.json">sample-report.json</a> and
-          <a href="verify_report.py">verify_report.py</a> and run the command above.</p>
+        <p>Each receipt in it is signed by the demo reviewer's key and timestamped by DigiCert's public
+          timestamp service. To check it yourself, take <a href="sample-report.json">sample-report.json</a>,
+          <a href="verify_report.py">verify_report.py</a> and DigiCert's root certificate,
+          <a href="digicert-trusted-root-g4.pem">digicert-trusted-root-g4.pem</a> (SHA-256 fingerprint
+          <code>552F7BDC…0AC89988</code>, also in your operating system's root store), and run the command above.</p>
       </div>
     </section>
 

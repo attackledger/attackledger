@@ -3,17 +3,20 @@
 The JSON bundle carries everything needed to re-check it offline:
   - each lane's receipt can be recomputed from its items and evidence,
   - the evidence hash chain can be walked from the genesis value,
-  - the bundle hash covers the whole body.
-tools/verify_report.py does all three with the Python standard library only.
+  - the bundle hash covers the whole body,
+  - (format 2) signed receipts carry their payload, signature and public key, and
+    timestamped receipts their RFC 3161 token.
+tools/verify_report.py checks all of it with the Python standard library only.
 """
 import html
 import json
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
 from . import gates, ledger, packs
-from .models import Engagement, Evidence
+from .models import Engagement, Evidence, iso_utc
 
 REPORT_FORMAT = "attackledger-report/2"   # 2: receipts may carry a signature
 
@@ -28,8 +31,22 @@ def _receipt(rc) -> dict:
     return out
 
 
+def _signed_by(rc: dict | None) -> str:
+    """The signer, and what backs the name: a key and a timestamp, or nothing."""
+    if not rc:
+        return ""
+    out = _e(rc.get("closed_by") or "")
+    sig, ts = rc.get("signature"), rc.get("timestamp")
+    out += (f"<br><span class='muted'>{_e(sig['algorithm'])} key <code>{_e(sig['key_fingerprint'][:16])}</code></span>"
+            if sig else "<br><span class='muted'>name only, not signed</span>")
+    if ts:
+        host = urlsplit(ts.get("tsa") or "").hostname or ts.get("tsa") or ""
+        out += f"<br><span class='muted'>timestamped {_e((ts.get('time') or '')[:19].replace('T', ' '))} UTC by {_e(host)}</span>"
+    return out
+
+
 def _iso(dt):
-    return dt.isoformat() if dt else None
+    return iso_utc(dt)
 
 
 def build(session, eng: Engagement, controls: dict) -> dict:
@@ -180,7 +197,7 @@ Lanes that were not opened were not tested.</p>
             rc = f"<code>{_e(l['receipt']['manifest_sha256'][:16])}</code>" if l["receipt"] else '<span class="muted">none</span>'
             parts.append(f"<tr><td>{_e(l['name'])}</td><td class='{cls}'>{_STATUS[l['status']]}</td>"
                          f"<td>{done} with evidence, {na} not applicable, {len(l['items']) - done - na} open</td><td>{rc}</td>"
-                         f"<td>{_e((l['receipt'] or {}).get('closed_by') or '')}</td></tr>")
+                         f"<td>{_signed_by(l['receipt'])}</td></tr>")
         parts.append("</tbody></table>")
 
     parts.append("<h2>Control evidence</h2>")

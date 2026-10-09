@@ -9,8 +9,10 @@ Use it only on an API seeded with fictional data (tools/seed_demo.py plus lab ru
 everything exported is published with the demo.
 
 Usage: python3 tools/export_demo.py API_BASE OUT_DIR ENGAGEMENT_ID [ENGAGEMENT_ID ...]
+Set ATTACKLEDGER_API_TOKEN when the demo API requires sign-in.
 """
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -21,8 +23,11 @@ from pathlib import Path
 def main(base: str, out: Path, eng_ids: list[int]) -> None:
     base = base.rstrip("/")
 
+    token = os.environ.get("ATTACKLEDGER_API_TOKEN")
+    headers = {"authorization": f"Bearer {token}"} if token else {}
+
     def raw(path: str) -> bytes:
-        with urllib.request.urlopen(base + path) as r:
+        with urllib.request.urlopen(urllib.request.Request(base + path, headers=headers)) as r:
             return r.read()
 
     def get(path: str):

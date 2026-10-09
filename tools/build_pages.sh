@@ -8,7 +8,8 @@ cd "$(dirname "$0")/.."
 OUT=${1:-dist/pages}
 rm -rf "$OUT"
 mkdir -p "$OUT"
-cp site/index.html site/sample-report.html site/sample-report.json site/verify_report.py "$OUT"/
+cp site/index.html site/sample-report.html site/sample-report.json site/verify_report.py \
+   site/digicert-trusted-root-g4.pem "$OUT"/
 cp -R site/demo "$OUT"/demo
 python3 -I - "$OUT" <<'PY'
 import base64, hashlib, pathlib, re, sys
@@ -41,6 +42,9 @@ csp = "; ".join([
   Strict-Transport-Security: max-age=31536000; includeSubDomains
 
 /verify_report.py
+  Content-Type: text/plain; charset=utf-8
+
+/digicert-trusted-root-g4.pem
   Content-Type: text/plain; charset=utf-8
 """)
 print(f"{out}: {sum(1 for _ in out.rglob('*') if _.is_file())} files, {len(hashes)} inline script hashes")

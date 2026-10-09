@@ -221,12 +221,16 @@ def test_signed_close_is_timestamped_end_to_end(client, tsa, monkeypatch, tmp_pa
     assert signed_close(client, lane, k).status_code == 200
     rc = client.get(f"/lanes/{lane}").json()["receipt"]
     assert rc["timestamp"]["tsa"] == "http://tsa.test/" and rc["timestamp_error"] is None
+    # Stored in UTC and served with the offset, so a browser shows the right local time.
+    assert rc["created_at"].endswith("+00:00") and rc["timestamp"]["time"].endswith("+00:00")
 
     report = client.get(f"/engagements/{e}/report").json()
     path = tmp_path / "report.json"
     path.write_text(json.dumps(report))
     assert verifier.main(["verify", str(path), "--tsa-root", tsa.root]) == 0
     assert verifier.main(["verify", str(path)]) == 1                 # the test root is not trusted
+    page = client.get(f"/engagements/{e}/report.html").text
+    assert "Ed25519 key" in page and "timestamped" in page and "UTC by tsa.test" in page
 
 
 def test_unreachable_tsa_keeps_the_receipt_and_can_retry(client, tsa, monkeypatch):

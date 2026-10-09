@@ -17,6 +17,14 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def iso_utc(dt: datetime | None) -> str | None:
+    """ISO 8601 with the offset. Times are stored in UTC, but Postgres and SQLite give them
+    back without a zone, and a browser would read such a value as its own local time."""
+    if dt is None:
+        return None
+    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
+
+
 class ItemState(str, Enum):
     open = "open"
     done = "done"
