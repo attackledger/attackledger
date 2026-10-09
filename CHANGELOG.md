@@ -40,6 +40,11 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **Role-aware web app and a Verify tab.** Viewers get a read-only app, and each role
+  sees only the actions the server accepts (tester works, reviewer signs, owner manages);
+  one helper (`web/src/access.ts`) mirrors `authz.RULES`. The Verify tab checks each
+  receipt's signature in the browser (WebCrypto Ed25519 or ECDSA P-256) by the verifier's
+  rules, offers the report JSON, and points to `verify_report.py` for the full check.
 - **RFC 3161 timestamps** (D-034). With `ATTACKLEDGER_TSA_URL` set, each receipt's
   manifest hash and signature are timestamped (only a hash is sent). If the authority
   cannot be reached the close still succeeds and can be timestamped later. The verifier

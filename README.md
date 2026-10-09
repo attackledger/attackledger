@@ -220,6 +220,10 @@ public key, so `tools/verify_report.py` checks who signed what without trusting 
 server. Turn on *require signatures* on the Team tab to refuse unsigned closes.
 Signing needs HTTPS or localhost.
 
+Clients and auditors sign in as viewers: they read coverage, evidence and reports, and
+the Verify tab checks every receipt's signature in their browser. The authoritative check
+is `python3 verify_report.py report.json --tsa-root digicert-trusted-root-g4.pem`.
+
 Receipts are also timestamped by an RFC 3161 timestamp authority: DigiCert's public
 service by default (`ATTACKLEDGER_TSA_URL`). Only a SHA-256 hash is sent, once per
 closed lane; set `ATTACKLEDGER_TSA_URL=off` to send nothing. The report carries each
