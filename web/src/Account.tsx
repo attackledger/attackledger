@@ -67,9 +67,11 @@ export function Account({ me }: { me: Me | null }) {
       const askPassword = me.password_chosen === false && !skipped;
       setPrompted(askPassword);
       if ((others.length && !seen) || askPassword) open();
-      if (askPassword) setTimeout(() => currentRef.current?.focus(), 0);
     });
   }, [me]);
+
+  // Opened to ask for a password: start in its first field, once the section is in place.
+  useEffect(() => { if (prompted && dialog.current?.open) currentRef.current?.focus(); }, [prompted]);
 
   function open() {
     setError(null);

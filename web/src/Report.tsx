@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { DEMO, demoUrl } from "./demo";
 import { plural } from "./words";
-import { VERIFIER, VERIFY_PAGE } from "./verifier_links";
+import { OfflineVerifier, VERIFY_PAGE } from "./OfflineVerifier";
 
 interface ReportSummary {
   generated_at: string;
@@ -93,12 +93,7 @@ export function Report({ engId }: { engId: number }) {
           the browser and uploads nothing. The verifier rebuilds every receipt from its items and evidence, walks the
           evidence chain and recomputes the body hash.
         </p>
-        <p className="muted">
-          The same check offline needs only Python: <a href={VERIFIER.script} download="verify_report.py">download
-          the verifier</a> and <a href={VERIFIER.roots} download={VERIFIER.rootsFile}>the timestamp roots it trusts</a>,
-          then run:
-        </p>
-        <pre className="cmd" tabIndex={0} aria-label="Command">{VERIFIER.command("attackledger-report.html")}</pre>
+        <OfflineVerifier file="attackledger-report.html" />
         <p className="muted">The hashes change every time the report is generated, because it includes the generation time.</p>
       </section>
     </div>

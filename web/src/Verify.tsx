@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { DEMO, demoUrl } from "./demo";
-import { VERIFIER, VERIFY_PAGE } from "./verifier_links";
+import { OfflineVerifier, VERIFY_PAGE } from "./OfflineVerifier";
 import { cliText, decodeFile, ed25519Native, pageWording, selfTest, verifyReport, type CheckResult, type Outcome } from "./verify_report";
 
 // The same module as the public verifier page (attackledger.com/verify): a port of
@@ -26,8 +26,6 @@ const BADGE: Record<CheckResult["verdict"], { cls: string; label: string }> = {
   PASS: { cls: "ok", label: "Passed" }, FAIL: { cls: "bad", label: "Failed" }, SKIP: { cls: "plain", label: "Skipped" },
 };
 
-// Downloaded side by side, the script is given the timestamp roots explicitly.
-const COMMAND = VERIFIER.command("report.json");
 
 function tsaHost(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -116,8 +114,6 @@ export function Verify({ engId }: { engId: number }) {
         </div>
         <div className="report-actions">
           <a className="btn" href={json} download="report.json">Download report JSON</a>
-          <a className="btn ghost" href={VERIFIER.script} download="verify_report.py">Download the verifier</a>
-          <a className="btn ghost" href={VERIFIER.roots} download={VERIFIER.rootsFile}>Download the timestamp roots</a>
         </div>
       </section>
 
@@ -168,12 +164,7 @@ export function Verify({ engId }: { engId: number }) {
 
       <section className="panel" aria-labelledby="offline-title">
         <h3 id="offline-title" className="panel-title">The same check, offline</h3>
-        <p className="muted">
-          <code>verify_report.py</code> (download it above, with the timestamp roots it trusts) needs only Python and no
-          AttackLedger install, and makes the checks above. Save the report JSON as <code>report.json</code> next to the
-          script and the roots, and run:
-        </p>
-        <pre className="cmd" tabIndex={0} aria-label="Command">{COMMAND}</pre>
+        <OfflineVerifier file="report.json" />
         <p className="muted">
           A signature proves the key holder signed; to tie a key to a person, compare its fingerprint with the one the
           signer gives you.

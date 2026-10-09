@@ -226,7 +226,8 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [current, coverage, coverageFor, setsUp, me, engagements]);
+  // The tab is a dependency too: an import or a run started on one tab shows in the guide on the next.
+  }, [current, coverage, coverageFor, setsUp, me, engagements, tab]);
   const steps = useMemo(
     () => (setup && coverage && setup.engId === current && coverageFor === current ? setupSteps(setup, coverage) : null),
     [setup, coverage, current, coverageFor]);
@@ -245,6 +246,9 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
     }
     setChooseFor(null);
   }, [chooseFor, current, me, meKnown, steps]);
+
+  // On a phone the tab row scrolls sideways: keep the chosen tab in view.
+  useEffect(() => { document.getElementById(`tab-${tab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [tab]);
 
   function goToStep(st: SetupStep) {
     setTab(st.tab);
@@ -428,7 +432,9 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
       </main>
 
       {laneId != null && (
-        <Folio laneId={laneId} me={me} onClose={() => setLaneId(null)} onChanged={loadCoverage} />
+        <Folio laneId={laneId} me={me} onClose={() => setLaneId(null)} onChanged={loadCoverage}
+               onGoLane={setLaneId}
+               onGoImport={(host) => { setLaneId(null); setTab("import"); filterImportByHost(host); }} />
       )}
     </div>
   );
@@ -595,8 +601,12 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
   }, [coverage]);
 
   const laneName = (k: string) => coverage.lanes.find((l) => l.key === k)?.name ?? k;
-  const blockers = (row: CoverageRow, k: string) =>
-    (coverage.lanes.find((l) => l.key === k)?.needs ?? []).filter((n) => row.roles[n]?.status !== "closed");
+  // The lanes this cell needs that are not receipted yet: the server's list, or worked out here.
+  const blockers = (row: CoverageRow, k: string) => row.roles[k]?.waiting_on
+    ?? (coverage.lanes.find((l) => l.key === k)?.needs ?? []).filter((n) => row.roles[n]?.status !== "closed");
+  // "open": a lane opens only after the lanes it needs are receipted. "close": it opens at once and
+  // is signed after them. A server that does not say keeps the older rule.
+  const gate = coverage.pack.needs_gate ?? "open";
 
   const pct = coverage.total_cells ? Math.round((coverage.closed_cells / coverage.total_cells) * 100) : 0;
 
@@ -658,7 +668,8 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
                         cell={row.roles[r]}
                         disabled={!row.in_scope}
                         label={`${laneName(r)} on ${row.host}`}
-                        lockedBy={blockers(row, r).map(laneName)}
+                        waitingOn={blockers(row, r).map(laneName)}
+                        gate={gate}
                         canOpen={opens}
                         onClick={() => onOpen(row.asset_id, r, row.roles[r])}
                       />
@@ -681,28 +692,32 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
         </div>
       )}
 
-      <Legend />
+      <Legend gate={gate} />
 
       {opens && <AddHost engId={engId} onAdded={onAdded} />}
     </section>
   );
 }
 
-function Legend() {
+function Legend({ gate }: { gate: "open" | "close" }) {
   return (
     <dl className="legend" aria-label="What the marks mean">
       <div><dt><span className="stamp mini"><span className="stamp-word">Receipted</span></span></dt><dd>Every item proven</dd></div>
       <div><dt><span className="stamp mini void"><span className="stamp-word">Void</span></span></dt><dd>Changed after its receipt</dd></div>
       <div><dt><span className="mark-open">In progress</span></dt><dd>Opened, not receipted; shows how many items are open</dd></div>
       <div><dt><span className="mark-unopened">Not opened</span></dt><dd>Not tested yet</dd></div>
-      <div><dt><span className="mark-locked">Needs …</span></dt><dd>Receipt the lane it depends on first</dd></div>
+      {gate === "open"
+        ? <div><dt><span className="mark-locked">Needs …</span></dt><dd>Opens once the lane it depends on is receipted</dd></div>
+        : <div><dt><span className="mark-open">Signed after …</span></dt><dd>Can be worked now; signed once the lane it depends on is receipted</dd></div>}
     </dl>
   );
 }
 
-function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
-  cell: Cell; label: string; lockedBy: string[]; disabled: boolean; canOpen: boolean; onClick: () => void;
+function CellMark({ cell, label, waitingOn, gate, disabled, canOpen, onClick }: {
+  cell: Cell; label: string; waitingOn: string[]; gate: "open" | "close"; disabled: boolean; canOpen: boolean;
+  onClick: () => void;
 }) {
+  const after = waitingOn.length === 1 ? waitingOn[0].toLowerCase() : `${waitingOn.length} lanes`;
   // Table cells take their names from the row and column headers, so plain text, not aria-label on a span.
   if (disabled) return <span className="cell-blank"><span className="sr-only">Out of scope</span></span>;
   switch (cell.status) {
@@ -723,23 +738,26 @@ function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
     case "open":
       return (
         <button className="cell open" onClick={onClick}
-                aria-label={`${label}: in progress, ${plural(cell.unresolved ?? 0, "item")} open`}>
+                aria-label={`${label}: in progress, ${plural(cell.unresolved ?? 0, "item")} open`
+                            + (waitingOn.length ? `, signed after ${waitingOn.join(", ")}` : "")}>
           <span className="cell-word">In progress</span>
           <span className="cell-sub">
-            {cell.unresolved ? <><span className="open-count">{cell.unresolved}</span> open</> : "ready to sign"}
+            {cell.unresolved ? <><span className="open-count">{cell.unresolved}</span> open</>
+              : waitingOn.length ? `signed after ${after}` : "ready to sign"}
           </span>
         </button>
       );
     default:
-      if (lockedBy.length)
+      if (waitingOn.length && gate === "open")
         return (
-          <span className="cell locked" title={`Receipt ${lockedBy.join(", ")} on this host first`}>
-            Needs {lockedBy.length === 1 ? lockedBy[0].toLowerCase() : `${lockedBy.length} lanes`}
+          <span className="cell locked" title={`Receipt ${waitingOn.join(", ")} on this host first`}>
+            Needs {after}
           </span>
         );
       if (!canOpen) return <span className="cell plain">Not opened</span>;
       return (
-        <button className="cell unopened" onClick={onClick} aria-label={`${label}: not opened. Open this lane`}>
+        <button className="cell unopened" onClick={onClick}
+                aria-label={`${label}: not opened. Open this lane` + (waitingOn.length ? `; it is signed after ${waitingOn.join(", ")}` : "")}>
           <span className="cell-word">Not opened</span>
           <span className="cell-sub">Open lane</span>
         </button>
@@ -757,9 +775,9 @@ interface Problem { idx: number; why: string }
 const WAITING = "has evidence, not marked done";
 
 /** Open items whose evidence is attached and that only wait to be marked done: the server's count
- *  when it sends one, otherwise counted from the lane. */
+ *  (awaiting_done), or counted from the lane by a server that does not send it. */
 function waitingDone(lane: LaneDetail): number {
-  if (typeof lane.waiting_done === "number") return lane.waiting_done;
+  if (typeof lane.awaiting_done === "number") return lane.awaiting_done;
   const withEvidence = new Set(lane.evidence.map((e) => e.item_idx));
   return lane.items.filter((i) => i.state === "open" && withEvidence.has(i.idx)).length;
 }
@@ -767,7 +785,9 @@ function waitingDone(lane: LaneDetail): number {
 /** "3 items still need evidence or a reason, and 2 have evidence waiting to be marked done." */
 function progressText(needs: number, waiting: number): string {
   const need = needs > 0 ? `${plural(needs, "item")} still ${needs === 1 ? "needs" : "need"} evidence or a reason` : "";
-  const wait = waiting > 0 ? `${needs > 0 ? "" : `${plural(waiting, "item")} `}${waiting === 1 ? "has" : "have"} evidence waiting to be marked done` : "";
+  const wait = waiting > 0
+    ? `${needs > 0 ? "" : `${plural(waiting, "item")} `}${waiting === 1 ? "has" : "have"} evidence and ${waiting === 1 ? "is" : "are"} waiting to be marked done`
+    : "";
   if (need && wait) return `${need}, and ${waiting} ${wait}.`;
   return `${need || wait}.`;
 }
@@ -804,8 +824,23 @@ function goToItem(laneId: number, idx: number) {
   el?.focus({ preventScroll: true });
 }
 
-function Folio({ laneId, me, onClose, onChanged }: {
+/** Show the Import tab's inbox for one host. Import keeps its filters to itself, so this sets its
+ *  host filter (the select that starts with "Every host") once the host is listed there. */
+function filterImportByHost(host: string, tries = 40) {
+  const sel = [...document.querySelectorAll<HTMLSelectElement>("#panel-import select")]
+    .find((x) => x.options[0]?.text === "Every host");
+  if (sel && [...sel.options].some((o) => o.value === host)) {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(sel, host);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    sel.focus();
+    return;
+  }
+  if (tries > 0) setTimeout(() => filterImportByHost(host, tries - 1), 100);
+}
+
+function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
   laneId: number; me: Me | null; onClose: () => void; onChanged: () => void;
+  onGoLane: (laneId: number) => void; onGoImport: (host: string) => void;
 }) {
   const [lane, setLane] = useState<LaneDetail | null>(null);
   const [ctx, setCtx] = useState<LaneContext | null>(null);
@@ -817,6 +852,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
   }, []);
   const [error, setError] = useState<string | null>(null);
   const [refused, setRefused] = useState(false);   // the last close was refused by the gate
+  const [signError, setSignError] = useState<string | null>(null);   // why the server refused the last close
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -824,6 +860,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
     setCtx(null);
     setError(null);
     setRefused(false);
+    setSignError(null);
     api.lane(laneId).then(setLane).catch((e) => setError(e.message));
     api.laneContext(laneId).then(setCtx).catch(() => {});
     api.lane(laneId)
@@ -871,6 +908,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
         setReviewed(false);
         setError(null);
         setRefused(false);
+        setSignError(null);
         onChanged();
         return;
       }
@@ -888,7 +926,11 @@ function Folio({ laneId, me, onClose, onChanged }: {
         setError(null);
         api.lane(laneId).then(setLane).catch(() => {});
       } else {
-        setError((e as Error).message);
+        // A refusal to sign (a lane it needs is not receipted, a revoked key, separation of duties):
+        // shown where the person signs, with the lane as it is now.
+        setSignError((e as Error).message);
+        setError(null);
+        api.lane(laneId).then(setLane).catch(() => {});
       }
     }
   }
@@ -923,7 +965,8 @@ function Folio({ laneId, me, onClose, onChanged }: {
         {!lane ? (
           <p className="folio-body">{error ?? "Loading lane…"}</p>
         ) : (
-          <div className="folio-body">
+          // Focusable, so the checklist scrolls by keyboard even when nothing in it can be changed.
+          <div className="folio-body" tabIndex={0} role="region" aria-labelledby="folio-title">
             <StatusLine lane={lane} needs={needs} waiting={waiting} />
             <p className="worked-by">
               Worked <strong>{lane.executor === "agent" ? "by a Claude agent" : "manually"}</strong>
@@ -1043,6 +1086,28 @@ function Folio({ laneId, me, onClose, onChanged }: {
         {lane && (
           <div className="folio-foot">
             {error && <p className="field-error" role="alert">{error}</p>}
+            {signError && lane.status !== "closed" && (
+              <div className="refusal" role="alert"><p><strong>Not signed.</strong> {signError.replace(/\.$/, "")}.</p></div>
+            )}
+            {lane.status !== "closed" && !locked && (lane.waiting_on?.length ?? 0) > 0 && (
+              <div className="waiting-on" id={`waiting-${lane.id}`}>
+                <p>
+                  This lane can be worked now and signed once{" "}
+                  {lane.waiting_on!.length === 1 ? "this lane is" : "these lanes are"} receipted on {lane.host}:
+                </p>
+                <ul>
+                  {lane.waiting_on!.map((w) => (
+                    <li key={w.key}>
+                      {w.lane_id != null
+                        ? <button className="linklike" onClick={() => onGoLane(w.lane_id!)}>{w.name}</button>
+                        : <strong>{w.name}</strong>}
+                      {", "}{w.status === "not_opened" ? "not opened yet" : w.status === "stale" ? "its receipt is void"
+                             : w.status === "open" ? "in progress" : w.status}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {refused && lane.status !== "closed" && (problems.length > 0 ? (
               <div className="refusal" role="alert">
                 <p>
@@ -1085,7 +1150,8 @@ function Folio({ laneId, me, onClose, onChanged }: {
               </p>
             ) : locked ? (
               <p className="muted">{lane.status === "stale" ? "The receipt is void. " : "Not receipted. "}
-                This lane cannot be signed: {LOCKED_TEXT.charAt(0).toLowerCase() + LOCKED_TEXT.slice(1)}</p>
+                This lane cannot be signed: its engagement's content was deleted, and nobody can review evidence that can
+                no longer be read.</p>
             ) : !canSign ? (
               <p className="muted">
                 {lane.status === "stale" ? "The receipt is void. " : "Not receipted yet. "}
@@ -1114,12 +1180,23 @@ function Folio({ laneId, me, onClose, onChanged }: {
                     <input value={signer} onChange={(e) => setSigner(e.target.value)} placeholder="Full name" />
                   </label>
                 )}
+                {lane.inbox && lane.inbox.new + lane.inbox.mapped + lane.inbox.dismissed > 0 && (
+                  <p className="muted">
+                    Imported for {lane.host}: {lane.inbox.new} not mapped yet, {lane.inbox.mapped} mapped,{" "}
+                    {lane.inbox.dismissed} set aside.{" "}
+                    <button className="linklike" onClick={() => onGoImport(lane.host)}>
+                      See {lane.host} in Import
+                    </button>
+                  </p>
+                )}
                 <label className="check">
                   <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
                   I reviewed this lane's evidence. Only a person closes a lane.
                 </label>
-                <button className="btn primary" disabled={(me?.kind !== "person" && !signer.trim()) || !reviewed} onClick={close}
-                        aria-describedby={keyReady === false ? `new-key-${lane.id}` : undefined}>
+                <button className="btn primary" onClick={close}
+                        disabled={(me?.kind !== "person" && !signer.trim()) || !reviewed || (lane.waiting_on?.length ?? 0) > 0}
+                        aria-describedby={[(lane.waiting_on?.length ?? 0) > 0 ? `waiting-${lane.id}` : "",
+                                           keyReady === false ? `new-key-${lane.id}` : ""].filter(Boolean).join(" ") || undefined}>
                   {keyReady === false ? "Create a key, sign and close lane" : "Sign and close lane"}
                 </button>
               </div>
@@ -1144,7 +1221,10 @@ function StatusLine({ lane, needs, waiting }: { lane: LaneDetail; needs: number;
     );
   if (lane.status === "stale")
     return <p className="status bad">The ledger changed after the receipt was issued. Review the new entries and close again.</p>;
+  const after = (lane.waiting_on ?? []).map((w) => w.name).join(", ");
   if (needs === 0 && waiting === 0)
-    return <p className="status ready">In progress. Every item has evidence or a reason; a reviewer can sign and close the lane.</p>;
+    return after
+      ? <p className="status ready">In progress. Every item has evidence or a reason; it can be signed once {after} on {lane.host} is receipted.</p>
+      : <p className="status ready">In progress. Every item has evidence or a reason; a reviewer can sign and close the lane.</p>;
   return <p className="status bad">In progress. {progressText(needs, waiting)}</p>;
 }
