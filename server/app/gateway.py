@@ -438,9 +438,13 @@ class Policy:
         for k, v in headers:
             if k.decode("latin-1") in OVERRIDE_HEADERS and v.decode("latin-1").strip().upper() not in READ_ONLY:
                 raise Refused(403, f"method override to {v.decode('latin-1')[:20]} is refused")
+        # _method=DELETE and the like. Only a value that can be a method name counts: parameter
+        # discovery (Arjun) and scanners send _method with numbers or payloads, which no
+        # framework reads as a method.
         query = urlsplit(path).query
         for k, v in parse_qsl(query, keep_blank_values=True):
-            if k.lower() == "_method" and v.strip().upper() not in READ_ONLY:
+            m = v.strip().upper()
+            if k.lower() == "_method" and m.isalpha() and m not in READ_ONLY:
                 raise Refused(403, f"_method={v[:20]} is refused")
         if kind == "target" and not rules.identification():
             raise Refused(403, "the engagement has no research header or user agent; nothing is sent to targets")

@@ -140,8 +140,8 @@ threat model below.
 - **Passive sources** are an allowlist of hosts (`gateway.PASSIVE_HOSTS`, extended with
   `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`), taken from the hosts compiled into subfinder,
   assetfinder, gau and waybackurls. They are reachable only from jobs of a passive module,
-  only on port 443, only with GET, HEAD or OPTIONS and no body, with the upstream certificate
-  verified, without the research identification (it is not target traffic and would name the
+  only on port 443 (HTTPS) or 80 (HTTP: waybackurls asks the web archive over plain HTTP),
+  only with GET, HEAD or OPTIONS and no body, with the upstream certificate verified, without the research identification (it is not target traffic and would name the
   researcher to a third party), paced at 10 requests per second per host, logged with kind
   `passive`, and **not** counted against the engagement's ceiling. A host that is also in the
   engagement's scope is treated as a target.
@@ -180,7 +180,8 @@ before (nmap's list, port 25 skipped). naabu and libpcap are no longer in the wo
 Allowed to targets: GET, HEAD, OPTIONS, with no body (no `Content-Length` above 0, no
 `Transfer-Encoding`). Refused: every other method (POST, PUT, PATCH, DELETE, TRACE, DEBUG,
 PROPFIND, ...), method override headers (`X-HTTP-Method-Override` and the like) and `_method=`
-parameters naming another method, `Upgrade` (WebSocket, h2c), `https://` in absolute form (it
+parameters naming another method (a method name only: Arjun and scanners send `_method` with
+numbers and payloads, which no framework reads as a method), `Upgrade` (WebSocket, h2c), `https://` in absolute form (it
 must use CONNECT), a `Host` that differs from the CONNECT target, credentials in the URL, and
 port 25. The identification is always set by the gateway: any header of the same name sent by
 the tool is removed first, then the engagement's research header and user agent are added. An
@@ -194,10 +195,19 @@ multicast and unspecified addresses and the deployment's own containers
 address it checked, so a DNS answer cannot change between check and use. Private addresses are
 allowed: an internal pentest needs them, and the lab is one.
 
-Refusals are answered with status 403 (policy), 407 (credential), 429 (rate wait), 502
-(upstream failed) or 503 (gateway cannot check or log), the header `X-AttackLedger-Gateway:
-refused` and the reason as plain text. The agent's tool and the worker's fetcher report the
-reason instead of a target status.
+Refusals are answered with status 403 (policy), 407 (credential), 429 (rate wait) or 503
+(gateway cannot check or log), the header `X-AttackLedger-Gateway: refused` and the reason as
+plain text. When the target itself cannot be reached (does not resolve, connection refused,
+TLS failure, no response), a scanner gets what the target would have given it: a closed
+connection, never a 502 it could record as the target's answer (measured: httpx recorded a
+gateway 502 as a live HTTPS service before this). AttackLedger's own clients (the agent's
+tool, the worker's fetcher) send `X-AttackLedger-Errors: respond` and get a 502 with the
+reason instead; the header is never forwarded. Each request is logged as `allowed`,
+`refused` (a rule) or `failed` (the target could not be reached).
+
+Tools get the gateway as an address (`http://job-…@172.x.x.x:8080`), not as the name
+`gateway`: httpx and katana resolve the proxy's name with the resolver they are given, which
+is the gateway's, and it answers in-scope names only.
 
 ### 8. Fail closed
 

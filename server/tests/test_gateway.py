@@ -234,7 +234,9 @@ def test_bodies_overrides_and_upgrades_are_refused(stack, headers, body, why):
 def test_method_parameter_naming_a_write_is_refused(stack):
     status, _, text = stack.get("http://app.example.com/x?_method=DELETE")
     assert status == 403 and b"_method" in text and stack.up.requests == []
+    assert stack.get("http://app.example.com/x?_method=put")[0] == 403
     assert stack.get("http://app.example.com/x?_method=GET")[0] == 200
+    assert stack.get("http://app.example.com/x?_method=113153&a=1")[0] == 200     # Arjun's random values
 
 
 def test_missing_or_wrong_credentials_are_refused(stack):

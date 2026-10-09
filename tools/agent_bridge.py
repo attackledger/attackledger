@@ -24,7 +24,7 @@ import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, "/srv")
-from app import agenttools, egress, executors  # noqa: E402
+from app import agenttools, egress, executors, redact  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.models import Job, JobStatus, Lane  # noqa: E402
 
@@ -33,13 +33,20 @@ STATE = "/tmp/agent_bridge_state.json"
 
 def load() -> dict:
     with open(STATE) as f:
-        return json.load(f)
+        state = json.load(f)
+    for x in state["exchanges"].values():        # what each exchange had redacted (redact.Report)
+        rep = redact.Report()
+        rep.kinds, rep.not_redacted = dict(x["redaction"]["kinds"]), list(x["redaction"]["not_redacted"])
+        x["redaction"] = rep
+    return state
 
 
 def save(state: dict) -> None:
     # It holds the run's gateway credential: readable by the worker user only.
+    exchanges = {k: {**x, "redaction": {"kinds": x["redaction"].kinds, "not_redacted": x["redaction"].not_redacted}}
+                 for k, x in state["exchanges"].items()}
     with os.fdopen(os.open(STATE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-        json.dump(state, f)
+        json.dump({**state, "exchanges": exchanges}, f)
 
 
 def log(session, job: Job, line: str) -> None:
