@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -77,13 +78,13 @@ def test_every_tool_is_pointed_at_the_gateway(monkeypatch):
     monkeypatch.setattr(egress.Egress, "resolver", lambda self: "10.0.0.9:53")
     proxy = lambda t: f"http://job-7.{t}:s3cret-value-0123456789@gateway.invalid:8080"  # noqa: E731
     flags = lambda path: worker.gateway_flags([path], gw, SimpleNamespace(resolver_file=lambda: "/tmp/r.txt"))  # noqa: E731
-    assert flags(worker.tool("subfinder")) == ["-proxy", proxy("subfinder")]
-    assert flags(worker.tool("dnsx")) == ["-r", "10.0.0.9:53"]
-    assert flags(worker.tool("httpx")) == ["-proxy", proxy("httpx"), "-r", "10.0.0.9:53"]
-    assert flags(worker.tool("katana")) == ["-proxy", proxy("katana"), "-r", "10.0.0.9:53"]
+    assert flags(worker.tool("subfinder")) == ["-proxy", proxy("subfinder"), "-duc"]
+    assert flags(worker.tool("dnsx")) == ["-r", "10.0.0.9:53", "-duc"]
+    assert flags(worker.tool("httpx")) == ["-proxy", proxy("httpx"), "-r", "10.0.0.9:53", "-duc"]
+    assert flags(worker.tool("katana")) == ["-proxy", proxy("katana"), "-r", "10.0.0.9:53", "-duc"]
     assert flags(worker.tool("gau")) == ["--proxy", proxy("gau")]
     assert flags(worker.tool("feroxbuster")) == ["--proxy", proxy("feroxbuster")]
-    assert flags(worker.tool("nuclei")) == ["-p", proxy("nuclei"), "-pi", "-r", "/tmp/r.txt"]
+    assert flags(worker.tool("nuclei")) == ["-p", proxy("nuclei"), "-pi", "-r", "/tmp/r.txt", "-duc"]
     # Tools without a proxy flag get it from the environment, and nothing else from the worker.
     monkeypatch.setenv("DATABASE_URL", "postgresql://secret")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
@@ -446,3 +447,30 @@ def test_cancelling_stops_a_silent_tool_at_the_next_heartbeat(stack, monkeypatch
     assert __import__("time").monotonic() - t0 < 5
     out, j = job.finish(stopped="cancelled"), stack.job(job.id)
     assert out == {"status": "cancelled"} and j.remaining_targets == ["a.example.com"]
+
+
+def test_projectdiscovery_tools_never_check_for_updates(monkeypatch):
+    """Without -duc each of them asks api.pdtm.sh (and nuclei api.github.com) for a newer version
+    on every start: a refused, out-of-scope CONNECT in the request log the client reads."""
+    from app import egress
+    gw = egress.Egress(7, "s3cret-value-0123456789")
+    monkeypatch.setattr(egress.Egress, "resolver", lambda self: "10.0.0.9:53")
+    eng = SimpleNamespace(rate_limit_rps=5, crawl_depth=2, research_header="X-Bug-Bounty: r1", research_user_agent=None)
+    run = SimpleNamespace(resolver_file=lambda: "/tmp/r.txt")
+    seen = set()
+    for kind in ("subdomains", "resolve", "probe", "crawl", "archive"):
+        for _, cmd in worker.commands(kind, eng):
+            name = os.path.basename(cmd[0])
+            full = [*cmd, *worker.gateway_flags(cmd, gw, run)]
+            if name in egress.PD_TOOLS:
+                assert full.count("-duc") == 1, full
+                seen.add(name)
+            else:
+                assert "-duc" not in full
+    assert seen == egress.PD_TOOLS - {"nuclei"}
+    monkeypatch.setattr(worker, "NUCLEI_EXCLUDE_FILE", __file__)        # any non-empty file
+    cmd = worker.nuclei_cmd(eng)
+    assert [*cmd, *worker.gateway_flags(cmd, gw, run)].count("-duc") == 1
+    # Nothing that would turn their cloud features on reaches a tool.
+    monkeypatch.setenv("PDCP_API_KEY", "pdcp-secret")
+    assert "PDCP_API_KEY" not in gw.env("nuclei") and "PDCP_API_KEY" not in gw.env("katana")

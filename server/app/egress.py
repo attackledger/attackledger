@@ -40,6 +40,11 @@ TOP_100_PORTS = [
     7070, 8000, 8008, 8009, 8080, 8081, 8443, 8888, 9100, 9999, 10000, 32768, 49152, 49153, 49154, 49155, 49156,
     49157]
 PROBE_TIMEOUT = 45          # the gateway may queue a probe for a rate token (up to 30 s)
+# ProjectDiscovery's tools ask api.pdtm.sh (and nuclei api.github.com) for a newer version on
+# every start. Through the gateway that is a refused, out-of-scope CONNECT in the request log a
+# client reads (measured: 14 such CONNECTs for one run of each tool, none with -duc). Their cloud
+# features need PDCP_API_KEY, which env() never passes.
+PD_TOOLS = frozenset({"subfinder", "dnsx", "httpx", "katana", "nuclei"})
 
 
 class NoGateway(RuntimeError):
@@ -51,6 +56,11 @@ def issue(job) -> str:
     secret = secrets.token_urlsafe(32)
     job.gateway_secret_sha256 = hashlib.sha256(secret.encode()).hexdigest()
     return secret
+
+
+def tool_flags(tool: str) -> list[str]:
+    """Flags every run of a tool gets, besides the gateway's: no update check (-duc)."""
+    return ["-duc"] if tool in PD_TOOLS else []
 
 
 def _tool_name(tool: str) -> str:

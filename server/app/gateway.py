@@ -92,6 +92,11 @@ ERRORS_HEADER = b"x-attackledger-errors"
 AS_HEADER = b"x-attackledger-as"
 APPROVAL_HEADER = b"x-attackledger-approval"
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# katana, given -proxy, first asks the proxy whether it is Burp Suite (projectdiscovery's proxy
+# helper: GET http://burpsuite/, looking for Burp's start page); it has no flag to skip that. The
+# gateway answers it itself: nothing is sent and, as it is the tool talking to its proxy and not a
+# request towards anyone, it is not a row in the request log a client reads.
+PROXY_SELF_CHECKS = frozenset({"http://burpsuite/", "http://burpsuite"})
 REFUSED_HEADER = "X-AttackLedger-Gateway"
 REALM = 'Basic realm="AttackLedger gateway"'
 USER_RE = re.compile(r"^job-(\d{1,12})(?:\.([a-z0-9][a-z0-9-]{0,31}))?$")
@@ -920,6 +925,9 @@ class Gateway:
                 raise Refused(503, "the request log is not being written; nothing is sent until it is")
             if tunnel is None:
                 auth = _header(ev.headers, b"proxy-authorization")
+                if method == "GET" and target.lower() in PROXY_SELF_CHECKS:
+                    await self.identify(auth)        # a job's tool, or refused and logged as usual
+                    return await self._answer_self_check(conn, reader, writer)
                 if not target.lower().startswith("http://"):
                     raise Refused(400, "send http:// URLs in absolute form, and https:// through CONNECT")
                 parts = urlsplit(target)
@@ -978,10 +986,22 @@ class Gateway:
                                    url, started, wants_errors=_header(ev.headers, ERRORS_HEADER) is not None,
                                    account=account, approval_id=approval_id)
 
+    async def _answer_self_check(self, conn, reader, writer) -> bool:
+        """katana's "are you Burp Suite?" question (PROXY_SELF_CHECKS): no, answered here."""
+        await _next(conn, reader)
+        body = b"AttackLedger gateway\n"
+        writer.write(conn.send(h11.Response(status_code=404, headers=[
+            ("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body))),
+            (REFUSED_HEADER, "proxy"), ("Connection", "close")])))
+        writer.write(conn.send(h11.Data(data=body)))
+        writer.write(conn.send(h11.EndOfMessage()))
+        await writer.drain()
+        return False
+
     async def _forward(self, conn, writer, rules, tool, kind, method, scheme, host, port, path, headers, body,
                        url, started, wants_errors: bool = True, account: dict | None = None,
                        approval_id: int | None = None) -> bool:
-        status, received, reason = None, 0, ""
+        status, received, reason, sent = None, 0, "", 0
         upw = None
         label = account["label"] if account else None
         try:
@@ -1005,10 +1025,12 @@ class Gateway:
                 await lim.acquire()
             # Nothing between the token and the write: the head leaves with the token's time.
             upc = h11.Connection(h11.CLIENT, max_incomplete_event_size=MAX_HEAD)
-            upw.write(upc.send(h11.Request(method=method, target=path, headers=headers)))
+            out = upc.send(h11.Request(method=method, target=path, headers=headers))
             if body:
-                upw.write(upc.send(h11.Data(data=body)))
-            upw.write(upc.send(h11.EndOfMessage()))
+                out += upc.send(h11.Data(data=body))
+            out += upc.send(h11.EndOfMessage())
+            upw.write(out)
+            sent = len(out)           # the request as it left: head and body, in bytes
             await upw.drain()
             try:
                 while True:
@@ -1027,7 +1049,7 @@ class Gateway:
                 upw.close()
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
                         status=e.status, verdict="refused" if e.status in (403, 429) else "failed",
-                        reason=e.reason, sent=0, started=started, account=label, approval_id=approval_id)
+                        reason=e.reason, sent=sent, started=started, account=label, approval_id=approval_id)
             if e.status != 502 or wants_errors:
                 await self._refuse(conn, writer, method.encode(), e)
             return False
@@ -1061,7 +1083,7 @@ class Gateway:
         finally:
             upw.close()
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
-                        status=status, verdict="allowed", reason=reason, sent=len(body), received=received,
+                        status=status, verdict="allowed", reason=reason, sent=sent, received=received,
                         started=started, account=label, approval_id=approval_id)
         return keep
 
