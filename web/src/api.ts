@@ -52,6 +52,12 @@ export interface ContentStatus {
   observations: number;
   endpoints: number;
   leads: number;
+  // Plain sentences for the deletion screen: what deleting the content removes, and what stays
+  // because the chain, receipts and history commit to it (evidence URIs with their query strings).
+  keeps: string[];
+  removes: string[];
+  evidence_uris: number;
+  uris_with_query: number;
 }
 
 export interface EngagementSummary {
@@ -82,7 +88,7 @@ export interface ControlRow {
   evidenced: number;
   not_applicable?: number;   // resolved as not applicable, with a reason; never counted as evidence
   lanes: string[];
-  status: "evidenced" | "resolved" | "not_applicable" | "partial" | "none";
+  status: "evidenced" | "resolved" | "not_applicable" | "partial" | "only_not_applicable" | "none";
   strength: "full" | "partial" | "supporting";
   note?: string;             // when the mapping holds, from the catalog
 }
@@ -158,7 +164,27 @@ export interface LaneDetail {
   inbox?: { new: number; mapped: number; dismissed: number };   // imported entries on this host, by state
   receipt: { sha256: string; closed_by: string | null; closed_by_email?: string | null; created_at: string; signed?: boolean;
              algorithm?: string | null; key_fingerprint?: string | null;
-             timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null } | null;
+             timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null;
+             // Set once a change voided this receipt; the lane stays void until a new receipt is signed.
+             void?: ReceiptVoid | null } | null;
+  // Whether the signed-in caller could sign this lane now, and why not (ask before creating a key).
+  can_sign?: CanSign;
+}
+
+/** When and why a change voided a receipt: the audit log entry that records it. */
+export interface ReceiptVoid {
+  at: string;
+  by: string;
+  cause: Record<string, unknown>;
+  text: string;
+}
+
+/** Read-only check before offering to sign: role, deleted content, separation of duties,
+ * required signatures, unresolved items and the lane dependency. */
+export interface CanSign {
+  ok: boolean;
+  reason: string | null;
+  signature_required: boolean;
 }
 
 /** The verifier downloads this server offers, with their hashes, and the independent public copy. */
@@ -350,6 +376,8 @@ export interface ReconSummary {
   js: number;
   leads: number;
   lead_kinds: Record<string, number>;
+  /** Leads by the recon step (phase key) whose run recorded them, plus "agent" and "other"; adds up to leads. */
+  step_leads: Record<string, number>;
 }
 
 export interface LaneContext {
@@ -523,6 +551,8 @@ export interface InboxEntry {
 export interface InboxSuggestion {
   lane_id: number | null; role: string; opened: boolean; item_idx: number; key: string; text: string; score: number;
   why: string[];
+  lane_status: CellStatus;
+  receipted: boolean;   // the lane's receipt is in force: mapping here voids it
 }
 
 /** A lane of the pack on the entry's host: open (lane_id set), or one mapping can open (can_open). */
@@ -534,7 +564,8 @@ export interface InboxTarget {
   can_open: boolean;
   why_not: string | null;
   status: CellStatus;
-  items: { idx: number; key: string; text: string; state: string }[];
+  receipted: boolean;   // the lane's receipt is in force: mapping here voids it
+  items: { idx: number; key: string; text: string; state: string; lane_status: CellStatus; receipted: boolean }[];
 }
 
 export interface InboxEntryDetail extends InboxEntry {
@@ -550,7 +581,16 @@ export interface MapResult {
   evidence_added: number[];
   marked_done: { lane_id: number; item_idx: number; key: string }[];
   opened: string[];
+  receipts_voided: { lane_id: number; receipt_sha256: string }[];
   entries: InboxEntry[];
+}
+
+/** The 409 detail when mapping would void receipts in force; send again with confirm_void. */
+export interface WouldVoidReceipts {
+  error: "would_void_receipts";
+  message: string;
+  lanes: { lane_id: number; host: string; role: string; name: string; receipt_sha256: string;
+           closed_by: string | null; closed_at: string }[];
 }
 
 /** The 409 detail when a file with the same SHA-256 was imported before. */
@@ -714,9 +754,10 @@ export const api = {
     return call<InboxPage>(`/engagements/${engId}/inbox?${p}`);
   },
   inboxEntry: (engId: number, id: number) => call<InboxEntryDetail>(`/engagements/${engId}/inbox/${id}`),
-  mapEntries: (engId: number, entry_ids: number[], targets: MapTarget[], note: string, mark_done = false) =>
+  mapEntries: (engId: number, entry_ids: number[], targets: MapTarget[], note: string, mark_done = false,
+               confirm_void = false) =>
     call<MapResult>(`/engagements/${engId}/inbox/map`, {
-      method: "POST", body: JSON.stringify({ entry_ids, targets, note: note || null, mark_done }),
+      method: "POST", body: JSON.stringify({ entry_ids, targets, note: note || null, mark_done, confirm_void }),
     }),
   dismissEntries: (engId: number, entry_ids: number[], reason: string) =>
     call<{ entries: InboxEntry[] }>(`/engagements/${engId}/inbox/dismiss`, {

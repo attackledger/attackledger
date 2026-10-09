@@ -9,6 +9,7 @@ const STATUS_TEXT: Record<ControlRow["status"], string> = {
   resolved: "Resolved, partly not applicable",
   not_applicable: "Not applicable",
   partial: "Some mapped items receipted",
+  only_not_applicable: "Only not-applicable items resolved",
   none: "No mapped item receipted",
 };
 

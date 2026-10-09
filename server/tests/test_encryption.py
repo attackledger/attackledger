@@ -578,3 +578,25 @@ def test_retention_runs_in_the_api_background(api, monkeypatch):
     assert not vault.has_key(e) and blobs.get(note["sha256"], engagement_id=e) is None
     assert api.get(f"/lanes/{lane['id']}").json()["content_deleted"]["reason"] == "retention"
     assert workerapi.start_maintenance(seconds=0) is not None    # off: nothing starts
+
+
+def test_the_deletion_screen_says_that_urls_and_query_strings_stay(api, tmp_path, capsys):
+    """The chain (record v2) commits to each evidence URI, query string included, so deleting
+    the content cannot remove it. The content view says so before and after, and it is true."""
+    e, lane = engagement(api)
+    api.post(f"/lanes/{lane['id']}/evidence", json={"item_idx": 1, "kind": "request", "sha256": sha(b"q"),
+                                                    "uri": f"https://{HOST}/search?q=lab-term", "summary": "query"})
+    api.post(f"/lanes/{lane['id']}/evidence", json={"item_idx": 1, "kind": "request", "sha256": sha(b"p"),
+                                                    "uri": f"https://{HOST}/about", "summary": "plain"})
+    attach_note(api, lane["id"], 1, "a note has no URI")
+    st = api.get(f"/engagements/{e}/content").json()
+    assert st["evidence_uris"] == 2 and st["uris_with_query"] == 1
+    assert st["keeps"][0].startswith("The URI of each evidence entry, with its host, path and query string")
+    assert "(2 entries have one, 1 with a query string)" in st["keeps"][0]
+    assert any("raw evidence" in x for x in st["removes"])
+    after = delete(api, e)
+    assert after["keeps"] == st["keeps"]                # the same statement once it is done
+    report = api.get(f"/engagements/{e}/report").json()
+    assert f"https://{HOST}/search?q=lab-term" in [x["uri"] for x in report["evidence"]]   # and it is true
+    assert all(x["summary"] is None for x in report["evidence"])
+    assert run_verifier(tmp_path, report, capsys)[0] == 0

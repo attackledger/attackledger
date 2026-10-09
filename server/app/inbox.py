@@ -43,6 +43,18 @@ class InboxError(ValueError):
     """A request the inbox refuses; the message is shown to the person."""
 
 
+class WouldVoid(Exception):
+    """Mapping would add evidence to lanes whose receipt is in force, which voids those
+    receipts until someone signs again. The person must say they mean it (confirm_void)."""
+
+    def __init__(self, lanes: list[dict]):
+        self.lanes = lanes
+        names = ", ".join(f"{l['host']} / {l['name']}" for l in lanes)
+        super().__init__(f"Mapping to {'this lane' if len(lanes) == 1 else 'these lanes'} voids "
+                         f"{'its receipt' if len(lanes) == 1 else 'their receipts'}: {names}. "
+                         "Each needs a new signature afterwards.")
+
+
 class AlreadyImported(Exception):
     """The same file (same SHA-256) was imported into this engagement before. Importing it
     again is allowed, but only when the person says so (reimport=True)."""
@@ -314,7 +326,8 @@ def suggest(entry: InboxEntry, targets: list[dict], limit: int = 6) -> list[dict
             if score:
                 scored[(lane["role"], item["idx"])] = {
                     "lane_id": lane["lane_id"], "role": lane["role"], "opened": lane["opened"], "item_idx": item["idx"],
-                    "key": item["key"], "text": item["text"], "score": score, "why": reasons, "_order": order}
+                    "key": item["key"], "text": item["text"], "lane_status": lane["status"],
+                    "receipted": lane["status"] == "closed", "score": score, "why": reasons, "_order": order}
     # Best first, at most PER_LANE per lane, so one busy rule does not hide the others.
     out, per_lane = [], {}
     for sug in sorted(scored.values(), key=lambda s: (-s["score"], s["_order"], s["item_idx"])):
@@ -341,9 +354,12 @@ def target_lanes(session, eng: Engagement, host: str) -> list[dict]:
     for lane_def in pack.lanes:
         lane = by_role.get(lane_def.key)
         if lane is not None:
+            status = gates.lane_status(lane).value
+            # receipted: mapping here voids the lane's receipt (the map route asks to confirm).
             out.append({"lane_id": lane.id, "role": lane.role, "name": lane_def.name, "opened": True,
-                        "can_open": False, "why_not": None, "status": gates.lane_status(lane).value,
-                        "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value}
+                        "can_open": False, "why_not": None, "status": status, "receipted": status == "closed",
+                        "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,
+                                   "lane_status": status, "receipted": status == "closed"}
                                   for i in lane.items]})
             continue
         why = None
@@ -357,8 +373,9 @@ def target_lanes(session, eng: Engagement, host: str) -> list[dict]:
         elif pack.needs_gate == "open" and lane_def.needs:
             why = f"{lane_def.name} needs a receipted {', '.join(pack.lane(n).name for n in lane_def.needs)} lane"
         out.append({"lane_id": None, "role": lane_def.key, "name": lane_def.name, "opened": False,
-                    "can_open": why is None, "why_not": why, "status": "not_opened",
-                    "items": [{"idx": n, "key": it.id, "text": it.text, "state": "open"}
+                    "can_open": why is None, "why_not": why, "status": "not_opened", "receipted": False,
+                    "items": [{"idx": n, "key": it.id, "text": it.text, "state": "open",
+                               "lane_status": "not_opened", "receipted": False}
                               for n, it in enumerate(lane_def.items, start=1)]})
     return out
 
@@ -408,12 +425,15 @@ def _open_for(session, eng: Engagement, host: str, role: str) -> tuple[Lane, lis
 
 
 def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tuple[int | None, str | None, int]],
-                *, note: str | None, user_id: int | None, user_name: str, mark_done: bool = False) -> dict:
+                *, note: str | None, user_id: int | None, user_name: str, mark_done: bool = False,
+                actor: dict | None = None, confirm_void: bool = False) -> dict:
     """Append one evidence entry per entry and item. A target names a lane by id, or by its
     role on the entries' host, which opens the lane (and adds the host) if needed. An entry
     already mapped to an item is not mapped to it again. With mark_done, every chosen item
     that is open is marked done, since it now has evidence. Returns the evidence ids added,
-    the items marked done and the lanes opened. Raises vault.ContentDeleted once the
+    the items marked done and the lanes opened, and the receipts voided. New evidence on a
+    lane whose receipt is in force voids that receipt, so it raises WouldVoid, before
+    writing anything, unless confirm_void is set. Raises vault.ContentDeleted once the
     engagement's content was deleted. The caller commits, or rolls back on InboxError."""
     vault.check_writable(eng)
     entries = _entries(session, eng.id, entry_ids)
@@ -443,7 +463,10 @@ def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tu
             raise InboxError(f"no lane {lane_id} in this engagement")
         item = next((i for i in lane.items if i.idx == idx), None)
         if item is None:
-            raise InboxError(f"lane {lane_id} has no item {idx}")
+            pack = packs.get_pack(eng.pack_id)
+            name = pack.lane(lane.role).name if lane.role in pack.lane_index else lane.role
+            raise InboxError(f"{name} on {lane.asset.host} has no item {idx}; its items are numbered "
+                             f"1 to {len(lane.items)}")
         resolved.append((lane, item))
     resolved = list(dict.fromkeys(resolved))
     for e in entries:
@@ -452,7 +475,15 @@ def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tu
             raise InboxError(f"entry {e.id} is for {e.host}; map it to a lane on {e.host}, "
                              f"not {wrong[0].asset.host}")
 
-    added = []
+    # Which lanes would take new evidence, and which of those have a receipt in force.
+    changing = {lane.id: lane for e in entries for lane, item in resolved
+                if (lane.id, item.idx) not in {(m["lane_id"], m["item_idx"]) for m in e.mappings or []}}
+    in_force = [lane for lane in changing.values() if gates.lane_status(lane) == gates.LaneStatus.closed]
+    if in_force and not confirm_void:
+        pack = packs.get_pack(eng.pack_id)
+        raise WouldVoid([receipted_lane(lane, pack) for lane in in_force])
+
+    added, by_lane = [], {}
     for e in entries:
         title = importers.registry()[e.tool].title if e.tool in importers.registry() else e.tool
         done = {(m["lane_id"], m["item_idx"]) for m in e.mappings or []}
@@ -472,19 +503,40 @@ def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tu
                                         item_id=item.id, created_by=user_id, redaction=rep.as_dict(),
                                         source=f"import:{e.tool}")
             added.append(ev.id)
+            by_lane.setdefault(lane.id, ([], set()))[0].append(ev.id)
+            by_lane[lane.id][1].add(e.id)
             new_maps.append({"evidence_id": ev.id, "lane_id": lane.id, "item_idx": item.idx, "item_key": item.item_key,
                              "by": user_id, "by_name": user_name, "at": _now().isoformat()})
         e.mappings = new_maps
         if new_maps:
             e.state = "mapped"
+    # The history says which receipts this voided, and that the person confirmed it.
+    who = actor or {"kind": "open", "user_id": None, "name": user_name, "email": None}
+    voided = []
+    for lane_id, (evs, ids) in by_lane.items():
+        lane = changing[lane_id]
+        if gates.void_receipt(session, lane, actor=who, cause={
+                "kind": "import", "entries": sorted(ids), "evidence": evs, "confirmed": lane in in_force}):
+            voided.append({"lane_id": lane.id, "receipt_sha256": lane.receipts[-1].manifest_sha256})
     marked = []
     if mark_done:
         for lane, item in resolved:
             if item.state == ItemState.open:
                 item.state, item.na_reason = ItemState.done, None
                 marked.append({"lane_id": lane.id, "item_idx": item.idx, "key": item.item_key})
+                gates.record_change(session, lane, actor=who, cause={
+                    "kind": "item", "idx": item.idx, "key": item.item_key, "before": {"state": "open"},
+                    "after": {"state": "done"}})
     session.flush()
-    return {"evidence_added": added, "marked_done": marked, "opened": opened}
+    return {"evidence_added": added, "marked_done": marked, "opened": opened, "receipts_voided": voided}
+
+
+def receipted_lane(lane: Lane, pack) -> dict:
+    """A lane whose receipt is in force, as a refusal names it."""
+    rc = lane.receipts[-1]
+    return {"lane_id": lane.id, "host": lane.asset.host, "role": lane.role,
+            "name": pack.lane(lane.role).name if lane.role in pack.lane_index else lane.role,
+            "receipt_sha256": rc.manifest_sha256, "closed_by": rc.closed_by, "closed_at": iso_utc(rc.created_at)}
 
 
 def dismiss(session, eng: Engagement, entry_ids: list[int], *, reason: str | None, actor: dict,

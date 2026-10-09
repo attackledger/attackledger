@@ -77,7 +77,7 @@ MODULES: tuple[Module, ...] = (
            "Top 100 TCP ports per host (TCP connect probes through the gateway, port 25 skipped), within the "
            "engagement rate limit.",
            input="hosts", traffic="target", opt_in=True, after=("resolve",), produces=("observations",),
-           pipeline="M2", caution="Many programs forbid port scanning. Enable only if the policy allows it.",
+           pipeline="M2", caution="Many programs and rules of engagement forbid port scanning. Enable only if yours allow it.",
            tools=("gateway port probe",)),
     Module("probe", "Find live web servers",
            "One request per host and open port, with your research identification; records status, title, "
@@ -108,8 +108,8 @@ MODULES: tuple[Module, ...] = (
            "limit in total.",
            input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("endpoints",),
            pipeline="M3", max_targets=10, min_rps=3,
-           caution="Brute-forces paths: thousands of requests per host. Enable only if the program allows "
-                   "content discovery.", tools=("feroxbuster",)),
+           caution="Brute-forces paths: thousands of requests per host. Enable only if the program policy "
+                   "or rules of engagement allow content discovery.", tools=("feroxbuster",)),
     Module("jsanalyze", "Analyse JavaScript",
            "Downloads in-scope JS files, highest-scoring hosts first (250 per run; the rest can be resumed), and extracts endpoints, GraphQL operations, sourcemaps and "
            "secret candidates; secrets are stored masked and are never tested.",
@@ -120,7 +120,7 @@ MODULES: tuple[Module, ...] = (
            "highest-scoring hosts first. Records the parameters each endpoint accepts as leads.",
            input="urls", traffic="target", http=True, opt_in=True, after=("crawl", "archive", "content"),
            produces=("leads",), pipeline="M5", max_targets=20,
-           caution="Sends hundreds of requests per endpoint. Enable only if the program allows it.",
+           caution="Sends hundreds of requests per endpoint. Enable only if the program policy or rules of engagement allow it.",
            tools=("Arjun",)),
     Module("paramclass", "Route parameters to hunt lanes",
            "Sorts every known parameter (from URLs and hidden-parameter discovery) into gf-style classes, "
@@ -134,8 +134,8 @@ MODULES: tuple[Module, ...] = (
            "OPTIONS requests to the target with no body; never runs DoS, fuzzing, brute-force or "
            "default-login templates, follows no redirects and makes no out-of-band callbacks.",
            input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("leads",),
-           pipeline="M7", min_rps=2, caution="Automated vulnerability scanning: many programs forbid it or require "
-                                  "a lower rate. Enable only if the policy allows scanners.",
+           pipeline="M7", min_rps=2, caution="Automated vulnerability scanning: many programs and rules of "
+                                  "engagement forbid it or require a lower rate. Enable only if yours allow scanners.",
            tools=("nuclei",)),
     Module("dorks", "Dork checklist",
            "Writes click-ready Google dorks for each wildcard root as manual checks. Dorks cannot be "
@@ -167,7 +167,7 @@ PHASES: tuple[Phase, ...] = (
     Phase("live", "Resolve and find live web servers",
           "Keep the names that resolve, then find which answer on the web and score them.",
           "Many collected names no longer exist, so only names with an address go on. Port scanning, if the "
-          "program allows it, finds web services on unusual ports. One request per host and port then records "
+          "program policy or rules of engagement allow it, finds web services on unusual ports. One request per host and port then records "
           "status, title and technology, and each host gets a score. The highest-scoring hosts are the golden "
           "targets that the next steps focus on.",
           ("resolve", "ports", "probe")),

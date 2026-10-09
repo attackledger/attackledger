@@ -563,6 +563,7 @@ this is the report you were sent, compare the report body SHA-256 on the cover w
 # strength column qualifies. "Partial" is avoided here because it is also a strength.
 _CONTROL_STATUS = {"evidenced": "All mapped items receipted", "resolved": "Resolved, partly not applicable",
                    "not_applicable": "Not applicable", "partial": "Some mapped items receipted",
+                   "only_not_applicable": "Only not-applicable items resolved",
                    "none": "No mapped item receipted"}
 
 
@@ -570,7 +571,8 @@ def _controls(r: dict) -> str:
     c = r["controls"]
     rows = []
     for x in c.get("controls", []):
-        cls = {"evidenced": "ok", "not_applicable": "muted", "none": "muted"}.get(x["status"], "")
+        cls = {"evidenced": "ok", "not_applicable": "muted", "only_not_applicable": "muted",
+               "none": "muted"}.get(x["status"], "")
         na = x.get("not_applicable", 0)
         counts = f"{_e(x['evidenced'])} of {_e(x['required'])} with evidence" + (f"<br>{_e(na)} not applicable" if na else "")
         # Strength and note say how far the mapped tests go for this control (docs/CONTROLS.md).
