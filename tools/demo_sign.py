@@ -5,7 +5,8 @@ Runs inside the demo API container (it needs httpx and cryptography, which the i
 
     docker exec -i -e DEMO_TOKEN=... attackledger-demo-api-1 python - < tools/demo_sign.py
 
-DEMO_TOKEN is the demo API's ATTACKLEDGER_API_TOKEN. The script adds a demo owner and a
+DEMO_TOKEN is the demo API's ATTACKLEDGER_API_TOKEN; DEMO_LANES=12,13 signs only those
+lanes. The script adds a demo owner and a
 "Demo Reviewer" (fictional, random passwords that are thrown away), makes the reviewer a
 reviewer on every engagement, creates an Ed25519 key in memory as a browser would, and
 signs every lane that is closed now. Each signature issues a new receipt on top of the
@@ -25,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 BASE = os.environ.get("DEMO_API", "http://localhost:8000")
 TOKEN = os.environ["DEMO_TOKEN"]
+ONLY = {int(x) for x in os.environ.get("DEMO_LANES", "").split(",") if x.strip()}   # sign only these lane ids
 
 owner = httpx.Client(base_url=BASE, headers={"authorization": f"Bearer {TOKEN}"}, timeout=60)
 
@@ -61,7 +63,7 @@ print(f"Demo Reviewer key {fp[:16]} (Ed25519)")
 
 for e in engagements:
     for lane in ok(rev.get(f"/engagements/{e['id']}/report"))["lanes"]:
-        if lane["status"] != "closed":
+        if lane["status"] != "closed" or (ONLY and lane["lane_id"] not in ONLY):
             continue
         payload = ok(rev.get(f"/lanes/{lane['lane_id']}/receipt-payload", params={"key": fp}))["payload"]
         sig = base64.b64encode(key.sign(payload.encode())).decode()
