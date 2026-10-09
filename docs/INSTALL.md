@@ -343,8 +343,8 @@ leaked, and after deleting content that must not survive in old backups (see bel
    docker compose run --rm --no-deps -v /etc/attackledger/master.key.old:/run/secrets/old-master-key:ro api python -m app.vault rotate-master --old-key-file /run/secrets/old-master-key
    ```
 
-4. Start again, take a backup under the new key, and store the new key's copy (step 2
-   above):
+4. Start again, take a backup under the new key, and keep a copy of the new key
+   somewhere else, as for the first one:
 
    ```sh
    docker compose up -d --wait
