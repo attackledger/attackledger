@@ -543,6 +543,16 @@ options considered and who decided.
   it; clients and KVKK/GDPR expect a retention limit.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
 
+### D-044 · How AttackLedger is offered (2026-10-09, decided by Murat)
+- **Decision:** the whole product is open source (AGPL-3.0); organisations that cannot use
+  AGPL buy a commercial licence. Revenue, when it comes, from four lines: commercial
+  licences, installation and support, reviewed control packs by subscription, and training
+  and advice. First 2-3 design partners use it free in return for feedback and a case
+  study; prices are set after them. The move from portfolio project to side business is
+  triggered by a design partner using it on real work and saying they would pay.
+- **Details:** docs/BUSINESS.md.
+- **Proposed by:** Claude, from Murat's answers. **Decided by:** Murat Kabak.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or
