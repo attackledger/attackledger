@@ -254,20 +254,21 @@ def test_large_parts_are_cut_and_say_so(monkeypatch):
 
 # ---- the API: import, scope, redaction, dedupe -------------------------------------------
 
-def team(c, pack="web-pentest-wstg"):
-    """People mode: an owner, a tester, a viewer and an outsider; an engagement scoped to
-    shop.example.com with an open lane per WSTG category used here."""
+def team(c, pack="web-pentest-wstg", receipt_info=True):
+    """People mode: an owner, a tester, a reviewer, a viewer and an outsider; an engagement
+    scoped to shop.example.com, with its information lane receipted unless asked not to."""
     person(c, "owner@lab.test", "Olive Owner", owner=True)
     sign_in(c, "owner@lab.test")
-    ids = {n: person(c, f"{n}@lab.test", n.title()) for n in ("tess", "vic", "out")}
+    ids = {n: person(c, f"{n}@lab.test", n.title()) for n in ("tess", "rita", "vic", "out")}
     e = c.post("/engagements", json={"name": "Import", "pack_id": pack}).json()["id"]
     assert c.put(f"/engagements/{e}/scope", json={"include": ["shop.example.com", "*.shop.example.com"],
                                                   "exclude": ["static.shop.example.com"]}).status_code == 200
     c.put(f"/engagements/{e}/members", json={"members": [{"user_id": ids["tess"], "roles": ["tester"]},
+                                                         {"user_id": ids["rita"], "roles": ["reviewer"]},
                                                          {"user_id": ids["vic"], "roles": ["viewer"]}]})
     # Setting the scope added shop.example.com as a host.
     a = db(c).scalar(select(Asset.id).where(Asset.engagement_id == e, Asset.host == "shop.example.com"))
-    if pack == "web-pentest-wstg":          # the other lanes open on a receipted information lane
+    if pack == "web-pentest-wstg" and receipt_info:     # the other lanes sign on a receipted information lane
         info = c.post("/lanes", json={"asset_id": a, "role": "info"}).json()
         for it in info["items"]:
             c.patch(f"/lanes/{info['id']}/items/{it['idx']}", json={"state": "na", "na_reason": "lab"})
@@ -275,8 +276,8 @@ def team(c, pack="web-pentest-wstg"):
     return ids, e, a
 
 
-def upload(c, e, data, fmt=None, name="export.har"):
-    params = {"filename": name} | ({"format": fmt} if fmt else {})
+def upload(c, e, data, fmt=None, name="export.har", reimport=False):
+    params = {"filename": name} | ({"format": fmt} if fmt else {}) | ({"reimport": "true"} if reimport else {})
     return c.post(f"/engagements/{e}/imports", params=params, content=data,
                   headers={"content-type": "application/octet-stream"})
 
@@ -367,7 +368,7 @@ def test_with_redaction_off_the_bytes_are_kept_and_say_so(client):
 def test_dedupe_by_content_across_files(client):
     _, e, _ = team(client)
     upload(client, e, HAR)
-    again = upload(client, e, HAR).json()
+    again = upload(client, e, HAR, reimport=True).json()
     assert (again["accepted"], again["duplicates"]) == (0, 4)
     # The same exchange from another tool's file is the same content.
     p = importers.parse(HAR)[1].entries[3]                    # robots.txt
@@ -495,8 +496,9 @@ def test_dismissal_is_recorded_not_deleted_and_audited(client):
     assert actions[-3:] == ["import.batch", "import.dismissed", "import.restored"]
     assert auditlog.verify(s) == []
     texts = [x["text"] for x in client.get(f"/engagements/{e}/audit").json()["entries"]][-3:]
-    assert texts[0] == ("Imported “export.har” (har, Hand-made fixture 1.0): 3 entries to the inbox, 1 refused as "
-                        "out of scope, 1 duplicate, 1 unreadable; refused hosts tracker.example.net")
+    sha = __import__("hashlib").sha256(HAR).hexdigest()
+    assert texts[0] == (f"Imported a file (har, Hand-made fixture 1.0, SHA-256 {sha[:12]}…): 3 entries to the inbox, "
+                        "1 refused as out of scope (1 host), 1 duplicate, 1 unreadable")
     assert texts[1] == f"Dismissed 1 inbox entry ({robots['id']}): static file, nothing to test"
     assert texts[2] == f"Restored 1 inbox entry ({robots['id']})"
     batch = s.scalars(select(AuditEntry).where(AuditEntry.action == "import.batch")).one()
@@ -595,3 +597,190 @@ def test_after_the_content_is_deleted_nothing_is_imported_or_mapped(client):
     batch = client.get(f"/engagements/{e}/imports").json()[0]
     assert batch["filename"] is None and batch["refused"] == [] and batch["accepted"] == 3
     assert db(client).scalars(select(Evidence)).all() == [] and len(db(client).scalars(select(ImportBatch)).all()) == 1
+
+
+# ---- after the design-partner review ------------------------------------------------------
+
+def test_the_audit_log_and_the_report_hold_no_refused_host_name(client, tmp_path):
+    """The audit log is immutable and goes into the client's report, so a refused row's host
+    (third-party or the testing firm's own) is counted there, and named only in the batch."""
+    _, e, a = team(client)
+    sign_in(client, "tess@lab.test")
+    assert upload(client, e, HAR, name="tess-internal.har").status_code == 201
+    batch = db(client).scalars(select(AuditEntry).where(AuditEntry.action == "import.batch")).one()
+    assert "tracker.example.net" not in batch.change and "tess-internal" not in batch.change
+    after = json.loads(batch.change)["after"]
+    assert after["out_of_scope"] == 1 and after["out_of_scope_host_count"] == 1
+    assert "out_of_scope_hosts" not in after and "filename" not in after
+    # The batch row still names the host, for the tester, until the content is deleted.
+    listed = client.get(f"/engagements/{e}/imports").json()[0]
+    assert {"row": 3, "host": "tracker.example.net", "reason": "out_of_scope", "detail": None} in listed["refused"]
+    sign_in(client, "owner@lab.test")
+    report = client.get(f"/engagements/{e}/report").json()
+    html = client.get(f"/engagements/{e}/report.html").text
+    for text in (json.dumps(report), html, json.dumps(client.get(f"/engagements/{e}/audit").json())):
+        assert "tracker.example.net" not in text and "tess-internal" not in text
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(report))
+    assert verify.main(["v", str(path)]) == 0
+    # An entry written before this change keeps its names in the chain; its sentence counts them.
+    old = {"action": "import.batch", "change": {"after": {
+        "filename": "x.har", "format": "har", "accepted": 1, "out_of_scope": 3, "duplicates": 0, "unreadable": 0,
+        "out_of_scope_hosts": ["intranet.firm.example", "cdn.example.org"]}}}
+    said = auditlog.describe(old)
+    assert "intranet.firm.example" not in said and "3 refused as out of scope (2 hosts)" in said
+
+
+def test_the_same_file_twice_needs_an_explicit_choice(client):
+    ids, e, _ = team(client)
+    sign_in(client, "tess@lab.test")
+    first = upload(client, e, HAR).json()
+    r = upload(client, e, HAR, name="renamed.har")
+    assert r.status_code == 409
+    d = r.json()["detail"]
+    assert d["error"] == "already_imported" and d["earlier"]["id"] == first["id"]
+    assert re.match(r"This file was already imported on \d{4}-\d\d-\d\d \d\d:\d\d UTC "
+                    r"by Tess \(tess@lab\.test\)\.", d["message"])
+    assert len(db(client).scalars(select(ImportBatch)).all()) == 1                   # nothing stored
+    again = upload(client, e, HAR, name="renamed.har", reimport=True)
+    assert again.status_code == 201 and again.json()["repeat_of"] == first["id"]
+    assert (again.json()["accepted"], again.json()["duplicates"]) == (0, 4)
+    assert [b["repeat_of"] for b in client.get(f"/engagements/{e}/imports").json()] == [first["id"], None]
+    texts = [x["text"] for x in client.get(f"/engagements/{e}/audit").json()["entries"]]
+    assert texts[-1].endswith(f"; the same file as import {first['id']}, imported again on purpose")
+    assert upload(client, e, CAIDO).status_code == 201                            # another file is fine
+
+
+def test_mapping_works_before_the_dependency_is_receipted_and_opens_lanes(client):
+    _, e, a = team(client, receipt_info=False)
+    sign_in(client, "tess@lab.test")
+    upload(client, e, HAR)
+    login = by_url(client, e, "/rest/user/login")
+    detail = client.get(f"/engagements/{e}/inbox/{login['id']}").json()
+    assert len(detail["targets"]) == 12 and detail["asset"]["id"] == a
+    athn_t = next(t for t in detail["targets"] if t["role"] == "athn")
+    assert (athn_t["lane_id"], athn_t["opened"], athn_t["can_open"]) == (None, False, True)
+    assert athn_t["items"][2] == {"idx": 3, "key": "WSTG-ATHN-03", "text": athn_t["items"][2]["text"], "state": "open"}
+    assert any(s["role"] == "athn" and s["lane_id"] is None for s in detail["suggestions"])
+    r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
+                                                         "targets": [{"role": "athn", "item_idx": 3}]})
+    assert r.status_code == 200, r.text
+    lane_id = r.json()["entries"][0]["mappings"][0]["lane_id"]
+    assert r.json()["opened"] == [f"lane {lane_id}"] and len(r.json()["evidence_added"]) == 1
+    view = client.get(f"/lanes/{lane_id}").json()
+    assert view["role"] == "athn" and view["evidence"][0]["item_idx"] == 3
+    assert [w["key"] for w in view["waiting_on"]] == ["info"]
+    # The same role again maps into the lane now open; naming both or neither is refused.
+    again = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
+                                                             "targets": [{"role": "athn", "item_idx": 4}]})
+    assert again.json()["opened"] == [] and again.json()["entries"][0]["mappings"][1]["lane_id"] == lane_id
+    for bad in ({"item_idx": 1}, {"lane_id": lane_id, "role": "athn", "item_idx": 1}):
+        assert client.post(f"/engagements/{e}/inbox/map",
+                           json={"entry_ids": [login["id"]], "targets": [bad]}).status_code == 422
+    assert client.post(f"/engagements/{e}/inbox/map", json={
+        "entry_ids": [login["id"]], "targets": [{"role": "nope", "item_idx": 1}]}).status_code == 422
+    # A host in scope but not yet in the ledger is added with the lane.
+    rows = [{"id": "9", "host": "api.shop.example.com", "is_tls": True, "method": "GET", "path": "/v1/orders/7"}]
+    upload(client, e, json.dumps(rows).encode(), name="api.json")
+    api_entry = by_url(client, e, "/v1/orders/7")
+    assert client.get(f"/engagements/{e}/inbox/{api_entry['id']}").json()["asset"] is None
+    r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [api_entry["id"]],
+                                                         "targets": [{"role": "athz", "item_idx": 1}]})
+    assert r.status_code == 200 and r.json()["opened"][0] == "host api.shop.example.com"
+    s = db(client)
+    assert s.scalar(select(Asset).where(Asset.engagement_id == e, Asset.host == "api.shop.example.com")).in_scope
+
+
+def test_a_pack_that_gates_opening_is_not_opened_by_mapping(client):
+    _, e, a = team(client, pack="bug-bounty")
+    upload(client, e, HAR)
+    login = by_url(client, e, "/rest/user/login")
+    detail = client.get(f"/engagements/{e}/inbox/{login['id']}").json()
+    authz_t = next(t for t in detail["targets"] if t["role"] == "authz")
+    assert authz_t["can_open"] is False and "needs a receipted" in authz_t["why_not"]
+    assert all(s["role"] != "authz" for s in detail["suggestions"])
+    r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
+                                                         "targets": [{"role": "authz", "item_idx": 1}]})
+    assert r.status_code == 422 and "needs a receipted" in r.json()["detail"]
+    assert db(client).scalars(select(Evidence)).all() == []
+
+
+def test_mark_done_is_a_choice_and_the_lane_counts_what_waits_for_it(client):
+    _, e, a = team(client)
+    athn, sess = lane(client, a, "athn"), lane(client, a, "sess")
+    client.patch(f"/lanes/{sess['id']}/items/1", json={"state": "na", "na_reason": "no sessions"})
+    sign_in(client, "tess@lab.test")
+    upload(client, e, HAR)
+    login = by_url(client, e, "/rest/user/login")
+    r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
+                                                         "targets": [{"lane_id": athn["id"], "item_idx": 3}]})
+    assert r.json()["marked_done"] == []
+    view = client.get(f"/lanes/{athn['id']}").json()
+    assert view["items"][2]["state"] == "open" and view["awaiting_done"] == 1
+    cell = client.get(f"/engagements/{e}/coverage").json()["assets"][0]["roles"]["athn"]
+    assert cell["awaiting_done"] == 1
+    robots = by_url(client, e, "/robots.txt")
+    r = client.post(f"/engagements/{e}/inbox/map", json={
+        "entry_ids": [robots["id"]], "mark_done": True,
+        "targets": [{"lane_id": athn["id"], "item_idx": 4}, {"lane_id": sess["id"], "item_idx": 1}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["marked_done"] == [{"lane_id": athn["id"], "item_idx": 4, "key": "WSTG-ATHN-04"}]
+    view = client.get(f"/lanes/{athn['id']}").json()
+    assert view["items"][3]["state"] == "done" and view["awaiting_done"] == 1        # item 3 still waits
+    assert client.get(f"/lanes/{sess['id']}").json()["items"][0]["state"] == "na"   # N/A is left as it was
+
+
+def test_reviewers_and_viewers_read_the_whole_inbox_and_change_nothing(client):
+    _, e, a = team(client)
+    athn = lane(client, a, "athn")
+    sign_in(client, "tess@lab.test")
+    upload(client, e, HAR)
+    robots, login = by_url(client, e, "/robots.txt"), by_url(client, e, "/rest/user/login")
+    client.post(f"/engagements/{e}/inbox/dismiss", json={"entry_ids": [robots["id"]], "reason": "static"})
+    client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [login["id"]],
+                                                     "targets": [{"lane_id": athn["id"], "item_idx": 3}]})
+    for who in ("rita@lab.test", "vic@lab.test"):
+        sign_in(client, who)
+        page = client.get(f"/engagements/{e}/inbox").json()
+        assert page["counts"] == {"new": 1, "mapped": 1, "dismissed": 1} and page["total"] == 3
+        dismissed = client.get(f"/engagements/{e}/inbox", params={"state": "dismissed"}).json()["entries"]
+        assert dismissed[0]["dismissed"]["reason"] == "static"
+        assert client.get(f"/engagements/{e}/inbox/{robots['id']}").status_code == 200
+        assert client.get(f"/engagements/{e}/inbox/{login['id']}/raw/request").status_code == 200
+        assert client.get(f"/engagements/{e}/imports").status_code == 200
+        # The lane a reviewer signs says what was imported for its host and not mapped.
+        assert client.get(f"/lanes/{athn['id']}").json()["inbox"] == {"new": 1, "mapped": 1, "dismissed": 1}
+        assert upload(client, e, BURP).status_code == 403
+        for action in ("map", "dismiss", "restore"):
+            body = {"entry_ids": [robots["id"]]} | (
+                {"targets": [{"lane_id": athn["id"], "item_idx": 1}]} if action == "map" else {})
+            assert client.post(f"/engagements/{e}/inbox/{action}", json=body).status_code == 403
+
+
+def test_the_verifier_and_its_roots_download_from_the_api(client):
+    _, e, _ = team(client)
+    assert client.get("/verifier").status_code == 200                    # owner
+    client.cookies.clear()
+    for path in ("/verifier", "/verifier/verify_report.py", "/verifier/attackledger-verifier.zip"):
+        assert client.get(path).status_code == 401                          # sign-in first
+    sign_in(client, "vic@lab.test")                                         # a viewer, the client
+    index = client.get("/verifier").json()
+    script = client.get(index["script"]["path"])
+    assert script.status_code == 200 and script.content == (ROOT / "tools" / "verify_report.py").read_bytes()
+    assert 'filename="verify_report.py"' in script.headers["content-disposition"]
+    assert __import__("hashlib").sha256(script.content).hexdigest() == index["script"]["sha256"]
+    root = index["tsa_roots"][0]
+    assert root["name"] == "digicert-trusted-root-g4.pem"
+    assert root["certificate_sha256"] == "552F7BDCF1A7AF9E6CE672017F4F12ABF77240C78E761AC203D1D9D20AC89988"
+    pem = client.get(root["path"])
+    assert pem.content == (ROOT / "tools" / "tsa-roots" / root["name"]).read_bytes()
+    assert client.get("/verifier/tsa-roots/README.md").status_code == 404
+    assert client.get("/verifier/tsa-roots/..%2Fverify_report.py").status_code == 404
+    import io
+    import zipfile
+    z1, z2 = (client.get(index["bundle"]["path"]).content for _ in range(2))
+    assert z1 == z2 and __import__("hashlib").sha256(z1).hexdigest() == index["bundle"]["sha256"]
+    names = zipfile.ZipFile(io.BytesIO(z1)).namelist()
+    assert names == ["attackledger-verifier/verify_report.py",
+                     "attackledger-verifier/tsa-roots/digicert-trusted-root-g4.pem"]
+    assert index["page"] == "https://attackledger.com/verify"

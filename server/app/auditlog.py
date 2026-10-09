@@ -302,13 +302,22 @@ def describe(rec: dict) -> str:
                 parts.append(f"{_who(n)}: {_roles(n['roles'])} (was {_roles(o['roles'])})")
         return "Changed the roles: " + ("; ".join(parts) or "no change")
     if a == "import.batch":
-        name = f"“{after.get('filename')}”" if after.get("filename") else "a file"
-        out = (f"Imported {name} ({after.get('format')}{', ' + after['creator'] if after.get('creator') else ''}): "
+        # Entries before 0.7 named the file and the refused hosts. The chain keeps them, but the
+        # sentence (the History tab and the client report) gives only how many hosts there were.
+        tool = f"{after.get('format')}{', ' + after['creator'] if after.get('creator') else ''}"
+        if after.get("filename"):
+            name = f"“{after['filename']}” ({tool})"
+        else:
+            name = f"a file ({tool}{', SHA-256 ' + after['file_sha256'][:12] + '…' if after.get('file_sha256') else ''})"
+        hosts = after.get("out_of_scope_host_count", len(after.get("out_of_scope_hosts") or []))
+        out = (f"Imported {name}: "
                f"{_n(after.get('accepted'), 'entry', 'entries')} to the inbox, "
-               f"{after.get('out_of_scope', 0)} refused as out of scope, {_n(after.get('duplicates', 0), 'duplicate', 'duplicates')}, "
+               f"{after.get('out_of_scope', 0)} refused as out of scope"
+               f"{' (' + _n(hosts, 'host', 'hosts') + ')' if hosts else ''}, "
+               f"{_n(after.get('duplicates', 0), 'duplicate', 'duplicates')}, "
                f"{after.get('unreadable', 0)} unreadable")
-        if after.get("out_of_scope_hosts"):
-            out += f"; refused hosts {', '.join(after['out_of_scope_hosts'][:20])}"
+        if after.get("repeat_of"):
+            out += f"; the same file as import {after['repeat_of']}, imported again on purpose"
         return out
     if a in ("import.dismissed", "import.restored"):
         ids = after.get("entries") or []

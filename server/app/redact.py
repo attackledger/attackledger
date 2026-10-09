@@ -402,5 +402,21 @@ def http_message(raw: bytes | None, rep: Report, *, personal: bool = False,
     out = [text(lines[0], rep)] if lines else []
     for i, part in enumerate(lines[1:], start=1):
         out.append(part if i % 2 else _header_line(part, rep))
+    new_body = data(body, rep, personal=personal, what=what)
+    if new_body != body:
+        _fix_content_length(out, len(body), len(new_body))
     new_head = "".join(out).encode("utf-8", "surrogateescape")
-    return new_head + sep + data(body, rep, personal=personal, what=what)
+    return new_head + sep + new_body
+
+
+_CONTENT_LENGTH = re.compile(r"^(content-length[ \t]*:[ \t]*)(\d+)([ \t]*)$", re.I)
+
+
+def _fix_content_length(lines: list[str], before: int, after: int) -> None:
+    """Redaction changed the body's length, so a Content-Length that described it now
+    describes the old body. Rewrite it to the stored body's length. A value that did not
+    match the body before (an export that decoded or cut it) is left as the tool wrote it."""
+    for i in range(2, len(lines), 2):
+        m = _CONTENT_LENGTH.match(lines[i])
+        if m and int(m.group(2)) == before:
+            lines[i] = f"{m.group(1)}{after}{m.group(3)}"

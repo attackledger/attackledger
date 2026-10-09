@@ -32,7 +32,7 @@ verifiable statement of coverage.
 | Recon | `modules.py`, `jobgates.py`, `worker/worker.py` | Job kinds defined once in the registry, gated twice (when queued and when run), executed in batches with a watchdog |
 | Recon output | `Observation`, `Endpoint`, `Lead` | Per-host facts, URLs and things worth a hunter's attention. Secrets are stored masked and hashed |
 | Hunt | `executors.py` | Who works a lane, what they may read (the lane context) and what they may write |
-| Ledger | `ledger.py`, `gates.py` | Append-only, hash-chained evidence. Item rules (done needs evidence, N/A needs a reason). Receipts and stale detection |
+| Ledger | `ledger.py`, `gates.py` | Append-only, hash-chained evidence. Item rules (done needs evidence, N/A needs a reason). Lane dependencies gate the receipt (a pack's `needs_gate: open` also gates opening). Receipts and stale detection |
 | Assurance | `report.py`, `tools/verify_report.py`, `/controls` | Coverage statement, control evidence and an offline-verifiable report |
 
 ## Contracts

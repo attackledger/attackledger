@@ -81,7 +81,7 @@ def resolve_all(c, lane):
 def test_every_route_has_a_permission_rule():
     missing = []
     for r in app.routes:
-        if isinstance(r, APIRoute) and r.path not in authz.DOC_ROUTES:
+        if isinstance(r, APIRoute):
             for m in r.methods - {"HEAD", "OPTIONS"}:
                 if (m, r.path) not in authz.RULES:
                     missing.append(f"{m} {r.path}")

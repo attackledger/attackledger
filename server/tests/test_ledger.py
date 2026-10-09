@@ -243,12 +243,48 @@ def test_wstg_pack_engagement_uses_pack_lanes(client):
     eng = client.post("/engagements", json={"name": "pt", "pack_id": "web-pentest-wstg"}).json()
     assert eng["engagement_type"] == "pentest"
     a = client.post(f"/engagements/{eng['id']}/assets", json={"host": "app.example.com"}).json()
-    r = client.post("/lanes", json={"asset_id": a["id"], "role": "athz"})
-    assert r.status_code == 422 and "Information gathering" in r.json()["detail"]
+    # Lanes open and are worked in parallel; the dependency gates only the receipt.
+    athz = client.post("/lanes", json={"asset_id": a["id"], "role": "athz"})
+    assert athz.status_code == 201, athz.text
+    athz = athz.json()
+    assert athz["waiting_on"] == [{"key": "info", "name": "Information gathering", "lane_id": None,
+                                   "status": "not_opened"}]
+    resolve_all(client, athz)
+    r = client.post(f"/lanes/{athz['id']}/close", json=SIGN)
+    assert r.status_code == 422 and "only after Information gathering on app.example.com" in r.json()["detail"]
     info = client.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
-    assert info["items"][0]["key"] == "WSTG-INFO-01"
+    assert info["items"][0]["key"] == "WSTG-INFO-01" and info["waiting_on"] == []
     assert "ISO-A.5.9" in info["items"][0]["controls"]
-    assert client.post("/lanes", json={"asset_id": a["id"], "role": "authz"}).status_code == 422
+    assert client.post("/lanes", json={"asset_id": a["id"], "role": "authz"}).status_code == 422   # not a WSTG lane
+    cov = client.get(f"/engagements/{eng['id']}/coverage").json()
+    assert cov["pack"]["needs_gate"] == "close"
+    cells = cov["assets"][0]["roles"]
+    assert cells["athz"]["waiting_on"] == ["info"] and cells["conf"] == {"status": "not_opened", "waiting_on": ["info"]}
+    # An open (not receipted) dependency still blocks the close; a receipted one allows it.
+    assert client.get(f"/lanes/{athz['id']}").json()["waiting_on"][0]["status"] == "open"
+    assert client.post(f"/lanes/{athz['id']}/close", json=SIGN).status_code == 422
+    resolve_all(client, info)
+    assert client.post(f"/lanes/{info['id']}/close", json=SIGN).status_code == 200
+    assert client.get(f"/lanes/{athz['id']}").json()["waiting_on"] == []
+    assert client.post(f"/lanes/{athz['id']}/close", json=SIGN).status_code == 200
+    assert client.get(f"/engagements/{eng['id']}/coverage").json()["assets"][0]["roles"]["conf"]["waiting_on"] == []
+
+
+def test_bug_bounty_lanes_still_open_only_on_a_receipted_model(client):
+    """The bug bounty pack keeps needs_gate: open, because its later lanes start from the model."""
+    eng = client.post("/engagements", json={"name": "bb", "pack_id": "bug-bounty"}).json()
+    a = client.post(f"/engagements/{eng['id']}/assets", json={"host": "app.example.com"}).json()
+    r = client.post("/lanes", json={"asset_id": a["id"], "role": "authz"})
+    assert r.status_code == 422 and "needs a receipted" in r.json()["detail"]
+    assert client.get("/packs").json()[0]["needs_gate"] in ("open", "close")
+    assert {p["id"]: p["needs_gate"] for p in client.get("/packs").json()}["bug-bounty"] == "open"
+
+
+def test_a_pack_with_an_unknown_needs_gate_does_not_load():
+    from app import packs
+    lanes = [{"key": "a", "name": "A", "items": [{"id": "A-1", "text": "x"}]}]
+    with pytest.raises(packs.PackError, match="needs_gate"):
+        packs._parse_pack({"id": "p", "needs_gate": "never", "lanes": lanes}, {})
 
 
 def test_unknown_pack_is_rejected(client):
@@ -566,3 +602,17 @@ def test_plural():
     from app.text import plural
     assert plural(1, "result") == "1 result" and plural(0, "result") == "0 results"
     assert plural(2, "match", "matches") == "2 matches"
+
+
+def test_a_host_outside_the_scope_rules_says_why_it_is_stored_out_of_scope(client):
+    eng = client.post("/engagements", json={"name": "scope-note", "pack_id": "web-pentest-wstg"}).json()["id"]
+    client.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], "exclude": ["old.example.com"]})
+    r = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.org", "in_scope": True})
+    assert r.status_code == 201
+    assert (r.json()["in_scope"], r.json()["scope_note"]) == (False, "stored as out of scope: not in the scope rules")
+    excluded = client.post(f"/engagements/{eng}/assets", json={"host": "old.example.com", "in_scope": True}).json()
+    assert excluded["in_scope"] is False and excluded["scope_note"]
+    fine = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com", "in_scope": True}).json()
+    assert (fine["in_scope"], fine["scope_note"]) == (True, None)
+    asked = client.post(f"/engagements/{eng}/assets", json={"host": "b.example.com", "in_scope": False}).json()
+    assert (asked["in_scope"], asked["scope_note"]) == (False, None)   # stored as asked, nothing to explain

@@ -1,18 +1,22 @@
 import base64
 import binascii
+import hashlib
 import hmac
+import io
 import json
 import os
+import zipfile
 from contextlib import asynccontextmanager
 
 from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
@@ -37,8 +41,10 @@ async def lifespan(_app: FastAPI):
 
 
 # Every route passes authz.authorize first: who is calling, and may they use this route.
+# FastAPI's own documentation routes would skip that dependency, so they are off and served
+# below as ordinary routes, which the permission table covers (sign-in whenever it is needed).
 app = FastAPI(title="AttackLedger", version="0.6.0.dev0", lifespan=lifespan,
-              dependencies=[Depends(authz.authorize)])
+              dependencies=[Depends(authz.authorize)], docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(gatewayapi.router)
 COOKIE_SECURE = os.environ.get("ATTACKLEDGER_COOKIE_SECURE", "") == "1"   # set behind HTTPS
 
@@ -115,9 +121,24 @@ def _evidence_view(lane: Lane, e: Evidence, keys: vault.Keys) -> dict:
             "redaction": e.redaction, "created_at": iso_utc(e.created_at), "created_by": e.created_by}
 
 
+def _inbox_counts(lane: Lane) -> dict:
+    """Imported entries on the lane's host, by state, so whoever signs sees what was imported
+    and not mapped or set aside (the entries themselves are in the Import tab)."""
+    session = object_session(lane)
+    counts = dict.fromkeys(inbox.STATES, 0)
+    if session is not None:
+        counts |= dict(session.execute(
+            select(InboxEntry.state, func.count()).where(InboxEntry.engagement_id == lane.asset.engagement_id,
+                                                          InboxEntry.host == lane.asset.host)
+            .group_by(InboxEntry.state)).all())
+    return counts
+
+
 def _lane_view(lane: Lane) -> dict:
     pack = _pack_of(lane.asset.engagement)
     keys = vault.Keys()
+    by_role = {l.role: l for l in lane.asset.lanes}
+    waiting = gates.waiting_on(lane.asset, pack.lane(lane.role)) if lane.role in pack.lane_index else []
     return {
         "id": lane.id,
         "engagement_id": lane.asset.engagement_id,
@@ -127,6 +148,13 @@ def _lane_view(lane: Lane) -> dict:
         "executor": lane.executor,
         "status": gates.lane_status(lane).value,
         "unresolved": gates.unresolved(lane),
+        # Lanes this one needs that are not receipted on this host: it can be worked, not signed.
+        "waiting_on": [{"key": k, "name": pack.lane(k).name, "lane_id": by_role[k].id if k in by_role else None,
+                        "status": gates.lane_status(by_role[k]).value if k in by_role else "not_opened"}
+                       for k in waiting],
+        # Items with evidence that are still open: they wait to be marked done, not for evidence.
+        "awaiting_done": gates.awaiting_done(lane),
+        "inbox": _inbox_counts(lane),
         "items": [
             {"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,
              "na_reason": i.na_reason, "controls": i.controls}
@@ -375,7 +403,9 @@ def add_asset(eng_id: int, body: AssetIn, session: Session = Depends(get_session
         session.commit()
     except IntegrityError:
         raise HTTPException(409, "asset already exists in this engagement")
-    return {"id": asset.id, "host": asset.host}
+    # Asked for in scope and stored out of scope: say so and why, rather than only storing it.
+    note = "stored as out of scope: not in the scope rules" if body.in_scope and not allowed else None
+    return {"id": asset.id, "host": asset.host, "in_scope": asset.in_scope, "scope_note": note}
 
 
 @app.post("/lanes", status_code=201)
@@ -385,18 +415,13 @@ def open_lane(body: LaneIn, request: Request, session: Session = Depends(get_ses
     if not who.has(asset.engagement_id, "tester"):
         raise HTTPException(403 if who.can_read(asset.engagement_id) else 404,
                             "this needs the tester role on the engagement")
-    if not asset.in_scope:
-        raise HTTPException(422, f"{asset.host} is out of scope")
     pack = _pack_of(asset.engagement)
+    if any(l.role == body.role for l in asset.lanes):
+        raise HTTPException(409, "lane already open for this asset and role")
     try:
-        lane_def = pack.lane(body.role)
-        gates.check_can_open(asset, lane_def, pack)
-    except (gates.GateError, packs.PackError) as e:
+        lane = gates.open_lane(session, asset, pack, body.role)
+    except gates.GateError as e:
         raise HTTPException(422, str(e))
-    lane = Lane(asset_id=asset.id, role=lane_def.key)
-    lane.items = [ChecklistItem(idx=n, item_key=it.id, text=it.text, controls=list(it.controls))
-                  for n, it in enumerate(lane_def.items, start=1)]
-    session.add(lane)
     try:
         session.commit()
     except IntegrityError:
@@ -598,6 +623,13 @@ def _payload_fields(p: dict) -> dict:
         raise HTTPException(422, "the signed payload is missing fields")
 
 
+def _check_can_close(lane: Lane) -> None:
+    try:
+        gates.check_can_close(lane, _pack_of(lane.asset.engagement))
+    except gates.GateError as e:
+        raise HTTPException(422, str(e))
+
+
 @app.get("/lanes/{lane_id}/receipt-payload")
 def receipt_payload(lane_id: int, key: str, request: Request, session: Session = Depends(get_session)):
     """The text to sign for this lane as it is now. Valid for ten minutes."""
@@ -606,6 +638,7 @@ def receipt_payload(lane_id: int, key: str, request: Request, session: Session =
     if who.kind != "person":
         raise HTTPException(422, "only a signed-in person can sign a receipt")
     k = _key_of(session, who, key)
+    _check_can_close(lane)          # do not hand out a payload the close would refuse
     eng = lane.asset.engagement
     seq, head = ledger.chain_head(session, eng.id)
     return {"payload": signing.payload_for(
@@ -638,6 +671,7 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     problems = gates.unresolved(lane)
     if problems:
         raise HTTPException(422, {"error": "lane cannot close", "unresolved": problems})
+    _check_can_close(lane)
     key = None
     if body.signature or body.payload:
         key = _check_signed(session, lane, who, body)
@@ -699,11 +733,14 @@ def list_engagements(request: Request, session: Session = Depends(get_session)):
              "pack_id": e.pack_id, "engagement_type": e.engagement_type} for e in engs]
 
 
-def _cell(lane: Lane | None) -> dict:
+def _cell(lane: Lane | None, waiting: list[str]) -> dict:
+    """waiting_on: lanes this one needs that are not receipted on the host. Under the pack's
+    needs_gate "close" the lane can still be opened and worked; under "open" it cannot open."""
     if lane is None:
-        return {"status": "not_opened"}
+        return {"status": "not_opened", "waiting_on": waiting}
     status = gates.lane_status(lane).value
-    cell = {"status": status, "lane_id": lane.id, "unresolved": len(gates.unresolved(lane))}
+    cell = {"status": status, "lane_id": lane.id, "unresolved": len(gates.unresolved(lane)),
+            "awaiting_done": gates.awaiting_done(lane), "waiting_on": waiting}
     if lane.receipts:
         cell["receipt"] = lane.receipts[-1].manifest_sha256[:8]
     return cell
@@ -721,12 +758,12 @@ def coverage(eng_id: int, session: Session = Depends(get_session)):
             "asset_id": asset.id,
             "host": asset.host,
             "in_scope": asset.in_scope,
-            "roles": {k: _cell(by_role.get(k)) for k in keys},
+            "roles": {k: _cell(by_role.get(k), gates.waiting_on(asset, pack.lane(k))) for k in keys},
         })
     in_scope = [r for r in rows if r["in_scope"]]
     total = sum(len(r["roles"]) for r in in_scope)
     closed = sum(1 for r in in_scope for c in r["roles"].values() if c["status"] == "closed")
-    return {"engagement": eng.name, "pack": {"id": pack.id, "name": pack.name},
+    return {"engagement": eng.name, "pack": {"id": pack.id, "name": pack.name, "needs_gate": pack.needs_gate},
             "separation_of_duties": eng.separation_of_duties,
             "require_signatures": eng.require_signatures,
             "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
@@ -1030,7 +1067,7 @@ def observations(eng_id: int, session: Session = Depends(get_session)):
 
 def _pack_summary(p: packs.Pack) -> dict:
     return {"id": p.id, "name": p.name, "version": p.version, "description": p.description,
-            "engagement_types": list(p.engagement_types),
+            "engagement_types": list(p.engagement_types), "needs_gate": p.needs_gate,
             "lanes": [{"key": l.key, "name": l.name, "needs": list(l.needs), "items": len(l.items)}
                       for l in p.lanes]}
 
@@ -1586,28 +1623,44 @@ def import_formats():
 
 @app.post("/engagements/{eng_id}/imports", status_code=201)
 def import_file(eng_id: int, request: Request, format: str | None = None, filename: str | None = None,
-                data: bytes = Depends(_upload_body), session: Session = Depends(get_session)):
+                reimport: bool = False, data: bytes = Depends(_upload_body), session: Session = Depends(get_session)):
+    """Import one export file. A file with the same SHA-256 as an earlier import is refused
+    with 409 and the earlier import's details; send it again with reimport=true to import it
+    anyway (its rows already in the inbox count as duplicates)."""
     eng = _get(session, Engagement, eng_id)
     who = authz.current(request)
     try:
         batch = inbox.import_file(session, eng, data, fmt=format or None, filename=filename,
-                                  actor=auditlog.actor(who), user_id=who.user_id)
+                                  actor=auditlog.actor(who), user_id=who.user_id, reimport=reimport)
     except vault.ContentDeleted as e:
         session.rollback()
         raise HTTPException(409, f"{e} It takes no new imports.")
+    except inbox.AlreadyImported as e:
+        session.rollback()
+        raise HTTPException(409, {"error": "already_imported", "message": f"{e} Import it again only if you mean to; "
+                                  "its rows already in the inbox will count as duplicates.",
+                                  "earlier": inbox.batch_view(e.earlier)})
     except importers.ImportRefused as e:
         session.rollback()
         raise HTTPException(422, str(e))
     session.commit()
-    return inbox.batch_view(batch)
+    return inbox.batch_view(batch, repeat_of=_first_imports(session, eng_id).get(batch.file_sha256))
+
+
+def _first_imports(session, eng_id: int) -> dict[str, int]:
+    """The first batch of each file hash in an engagement, so later ones can say they repeat it."""
+    return {sha: first for sha, first in session.execute(
+        select(ImportBatch.file_sha256, func.min(ImportBatch.id)).where(ImportBatch.engagement_id == eng_id)
+        .group_by(ImportBatch.file_sha256)).all()}
 
 
 @app.get("/engagements/{eng_id}/imports")
 def list_imports(eng_id: int, session: Session = Depends(get_session)):
     _get(session, Engagement, eng_id)
+    first = _first_imports(session, eng_id)
     rows = session.scalars(select(ImportBatch).where(ImportBatch.engagement_id == eng_id)
                            .order_by(ImportBatch.id.desc()).limit(200))
-    return [inbox.batch_view(b) for b in rows]
+    return [inbox.batch_view(b, repeat_of=first.get(b.file_sha256)) for b in rows]
 
 
 def _entry_of(session, eng_id: int, entry_id: int) -> InboxEntry:
@@ -1659,10 +1712,14 @@ def list_inbox(eng_id: int, state: str | None = None, host: str | None = None, m
 
 @app.get("/engagements/{eng_id}/inbox/{entry_id}")
 def get_inbox_entry(eng_id: int, entry_id: int, session: Session = Depends(get_session)):
-    """One entry, the lanes on its host that it can be mapped to, and suggested items."""
+    """One entry, every lane of the pack on its host (open ones, and the others with whether
+    mapping can open them), and suggested items."""
     e = _entry_of(session, eng_id, entry_id)
-    lanes = inbox.lanes_on(session, eng_id, e.host)
-    return {**inbox.entry_view(e), "targets": inbox.item_targets(lanes), "suggestions": inbox.suggest(e, lanes)}
+    eng = _get(session, Engagement, eng_id)
+    targets = inbox.target_lanes(session, eng, e.host)
+    asset = inbox.asset_on(session, eng_id, e.host)
+    return {**inbox.entry_view(e), "targets": targets, "suggestions": inbox.suggest(e, targets),
+            "asset": {"id": asset.id, "in_scope": asset.in_scope} if asset else None}
 
 
 @app.get("/engagements/{eng_id}/inbox/{entry_id}/raw/{part}")
@@ -1686,7 +1743,10 @@ def get_inbox_raw(eng_id: int, entry_id: int, part: str, session: Session = Depe
 
 
 class MapTarget(BaseModel):
-    lane_id: int
+    """An item on an open lane (lane_id), or on the lane of this role on the entries' host
+    (role), which mapping opens if it is not open yet."""
+    lane_id: int | None = None
+    role: str | None = Field(default=None, max_length=32)
     item_idx: int
 
 
@@ -1694,6 +1754,9 @@ class MapIn(BaseModel):
     entry_ids: list[int] = Field(min_length=1, max_length=inbox.MAX_MAP_ENTRIES)
     targets: list[MapTarget] = Field(min_length=1, max_length=inbox.MAX_MAP_TARGETS)
     note: str | None = Field(default=None, max_length=2_000)
+    # Off unless asked: an imported exchange is often part of a test, not all of it, and
+    # "done" says the test was performed. The lane shows items waiting to be marked done.
+    mark_done: bool = False
 
 
 class EntryIdsIn(BaseModel):
@@ -1703,13 +1766,17 @@ class EntryIdsIn(BaseModel):
 
 @app.post("/engagements/{eng_id}/inbox/map")
 def map_inbox(eng_id: int, body: MapIn, request: Request, session: Session = Depends(get_session)):
-    """Map entries to checklist items: one evidence entry per entry and item, source import:<tool>."""
+    """Map entries to checklist items: one evidence entry per entry and item, source import:<tool>.
+    A target given by role opens that lane on the entries' host first if needed."""
     eng = _get(session, Engagement, eng_id)
     who = authz.current(request)
+    if any((t.lane_id is None) == (t.role is None) for t in body.targets):
+        raise HTTPException(422, "each item names either its lane_id or its lane's role, not both")
     try:
-        added = inbox.map_entries(session, eng, body.entry_ids, [(t.lane_id, t.item_idx) for t in body.targets],
-                                  note=body.note, user_id=who.user_id, user_name=auditlog.actor_label(
-                                      auditlog.actor(who)))
+        done = inbox.map_entries(session, eng, body.entry_ids,
+                                 [(t.lane_id, t.role, t.item_idx) for t in body.targets],
+                                 note=body.note, user_id=who.user_id, mark_done=body.mark_done,
+                                 user_name=auditlog.actor_label(auditlog.actor(who)))
     except vault.ContentDeleted as e:
         session.rollback()
         raise HTTPException(409, f"{e} It takes no new evidence.")
@@ -1717,8 +1784,7 @@ def map_inbox(eng_id: int, body: MapIn, request: Request, session: Session = Dep
         session.rollback()
         raise HTTPException(422, str(e))
     session.commit()
-    return {"evidence_added": added,
-            "entries": [inbox.entry_view(_entry_of(session, eng_id, i)) for i in dict.fromkeys(body.entry_ids)]}
+    return {**done, "entries": [inbox.entry_view(_entry_of(session, eng_id, i)) for i in dict.fromkeys(body.entry_ids)]}
 
 
 @app.post("/engagements/{eng_id}/inbox/dismiss")
@@ -1746,3 +1812,101 @@ def restore_inbox(eng_id: int, body: EntryIdsIn, request: Request, session: Sess
         raise HTTPException(422, str(e))
     session.commit()
     return {"entries": [inbox.entry_view(e) for e in rows]}
+
+
+# ---- API documentation and the offline verifier ------------------------------------------
+#
+# Both are ordinary routes so the permission table applies (authz.RULES: signed_in). The
+# verifier is not secret (AGPL-3.0, and attackledger.com publishes the same script); it is
+# served here so a signed-in client or auditor can download it from the Report and Verify
+# tabs instead of from a repository they cannot read. The independent copy stays the one on
+# attackledger.com: a reader who does not trust this server compares the two hashes.
+
+VERIFIER_DIR = packs.ITEMS_BASE / "tools"
+VERIFIER_PAGE = "https://attackledger.com/verify"
+VERIFIER_PUBLIC_COPY = "https://attackledger.com/verify_report.py"
+_NOSNIFF = {"X-Content-Type-Options": "nosniff"}
+
+
+@app.get("/openapi.json", include_in_schema=False)
+def openapi_schema():
+    return app.openapi()
+
+
+@app.get("/docs", include_in_schema=False)
+def api_docs():
+    # Relative, so it resolves under whatever prefix the web server forwards (/api/).
+    return get_swagger_ui_html(openapi_url="openapi.json", title="AttackLedger API")
+
+
+def _verifier_files() -> tuple[bytes, dict[str, bytes]]:
+    """The script and the trusted roots next to it (tools/tsa-roots/*.pem), as shipped."""
+    script = VERIFIER_DIR / "verify_report.py"
+    if not script.is_file():
+        raise HTTPException(404, "the verifier is not part of this install; get it from " + VERIFIER_PUBLIC_COPY)
+    roots = {p.name: p.read_bytes() for p in sorted((VERIFIER_DIR / "tsa-roots").glob("*.pem"))}
+    return script.read_bytes(), roots
+
+
+def _cert_fingerprint(pem: bytes) -> str | None:
+    """SHA-256 of the certificate (DER), as tools/tsa-roots/README.md and root stores show it."""
+    text = pem.decode("ascii", "replace")
+    if "-----BEGIN CERTIFICATE-----" not in text:
+        return None
+    body = text.split("-----BEGIN CERTIFICATE-----", 1)[1].split("-----END CERTIFICATE-----", 1)[0]
+    try:
+        return hashlib.sha256(base64.b64decode("".join(body.split()), validate=True)).hexdigest().upper()
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _verifier_zip(script: bytes, roots: dict[str, bytes]) -> bytes:
+    """One folder with the script and tsa-roots/ beside it, as the report's instructions ask.
+    Fixed times and order, so the same files always give the same archive and hash."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in [("verify_report.py", script)] + [(f"tsa-roots/{n}", b) for n, b in roots.items()]:
+            info = zipfile.ZipInfo(f"attackledger-verifier/{name}", date_time=(1980, 1, 1, 0, 0, 0))
+            info.external_attr = 0o644 << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, data)
+    return buf.getvalue()
+
+
+@app.get("/verifier")
+def verifier_index():
+    """What the verifier downloads are, with their SHA-256, and where the independent copy is."""
+    script, roots = _verifier_files()
+    bundle = _verifier_zip(script, roots)
+    sha = lambda b: hashlib.sha256(b).hexdigest()  # noqa: E731
+    return {"script": {"name": "verify_report.py", "path": "/verifier/verify_report.py", "sha256": sha(script),
+                       "bytes": len(script)},
+            "tsa_roots": [{"name": n, "path": f"/verifier/tsa-roots/{n}", "sha256": sha(b), "bytes": len(b),
+                           "certificate_sha256": _cert_fingerprint(b)} for n, b in roots.items()],
+            "bundle": {"name": "attackledger-verifier.zip", "path": "/verifier/attackledger-verifier.zip",
+                       "sha256": sha(bundle), "bytes": len(bundle)},
+            "page": VERIFIER_PAGE, "public_copy": VERIFIER_PUBLIC_COPY, "license": "AGPL-3.0-only",
+            "run": "python3 -I verify_report.py report.html"}
+
+
+def _download(data: bytes, media_type: str, name: str) -> Response:
+    return Response(data, media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', **_NOSNIFF})
+
+
+@app.get("/verifier/verify_report.py")
+def verifier_script():
+    return _download(_verifier_files()[0], "text/x-python; charset=utf-8", "verify_report.py")
+
+
+@app.get("/verifier/tsa-roots/{name}")
+def verifier_root(name: str):
+    roots = _verifier_files()[1]
+    if name not in roots:               # only the files shipped in tsa-roots/, by exact name
+        raise HTTPException(404, f"no timestamp root named {name!r}; the roots are {', '.join(roots) or 'none'}")
+    return _download(roots[name], "application/x-pem-file", name)
+
+
+@app.get("/verifier/attackledger-verifier.zip")
+def verifier_bundle():
+    return _download(_verifier_zip(*_verifier_files()), "application/zip", "attackledger-verifier.zip")

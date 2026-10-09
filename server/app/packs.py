@@ -16,6 +16,7 @@ PACK_DIR = Path(os.environ.get("ATTACKLEDGER_PACKS", ITEMS_BASE / "packs"))
 
 _MD_ITEM = re.compile(r"^\s*- \[ \]\s+(.+?)\s*$")
 _KEY = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+NEEDS_GATES = ("close", "open")
 
 
 class PackError(ValueError):
@@ -47,6 +48,11 @@ class Pack:
     engagement_types: tuple[str, ...]
     lanes: tuple[LaneDef, ...]
     recon_lane: str  # lane that receives recon job evidence
+    # When a lane's "needs" apply. "close" (the default): every lane opens and is worked at
+    # once, as pentest teams work in parallel, and a lane is signed only after the lanes it
+    # needs are receipted. "open": a lane does not even open before then, for methods that
+    # depend on an earlier lane's output (the bug bounty pack's application model).
+    needs_gate: str = "close"
     lane_index: dict = field(default_factory=dict, compare=False, hash=False)
 
     def lane(self, key: str) -> LaneDef:
@@ -130,7 +136,10 @@ def _parse_pack(data: dict, known_controls: dict) -> Pack:
     recon_lane = data.get("recon_lane", lanes[0].key if lanes else "")
     if recon_lane not in index:
         raise PackError(f"{pid}: recon_lane {recon_lane!r} is not a lane")
-    return Pack(recon_lane=recon_lane, id=pid, name=data.get("name", pid), version=str(data.get("version", "0")),
+    needs_gate = data.get("needs_gate", "close")
+    if needs_gate not in NEEDS_GATES:
+        raise PackError(f"{pid}: needs_gate is one of {', '.join(NEEDS_GATES)}, not {needs_gate!r}")
+    return Pack(recon_lane=recon_lane, needs_gate=needs_gate, id=pid, name=data.get("name", pid), version=str(data.get("version", "0")),
                 description=" ".join(str(data.get("description", "")).split()),
                 engagement_types=tuple(data.get("engagement_types", [])),
                 lanes=tuple(lanes), lane_index=index)

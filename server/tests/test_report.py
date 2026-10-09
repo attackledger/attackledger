@@ -152,7 +152,14 @@ def test_html_report_has_the_client_sections_in_order(client):
     assert "Name only, not signed" in receipts and "Not timestamped" in receipts
     # How to verify: the command and the pinned root.
     assert "python3 verify_report.py report.json --tsa-root &lt;root.pem&gt;" in page
-    assert "tools/tsa-roots/digicert-trusted-root-g4.pem" in page and "552F7BDCF1A7AF9E" in page
+    assert "tsa-roots/digicert-trusted-root-g4.pem" in page and "552F7BDCF1A7AF9E" in page
+    # Where to get the verifier: attackledger.com (independent of this server) and this server's download.
+    verify = page[page.index('id="verify"'):]
+    assert 'href="https://attackledger.com/verify"' in verify
+    assert 'href="https://attackledger.com/verify_report.py"' in verify
+    assert 'href="https://attackledger.com/digicert-trusted-root-g4.pem"' in verify
+    assert "/api/verifier/attackledger-verifier.zip" in verify
+    assert "in the AttackLedger repository" not in page and "tools/tsa-roots" not in verify
 
 
 def test_void_receipt_is_shown_as_void(client):

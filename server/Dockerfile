@@ -14,6 +14,9 @@ COPY server/alembic.ini ./alembic.ini
 COPY server/migrations ./migrations
 COPY checklists ./checklists
 COPY packs ./packs
+# The offline verifier and its trusted timestamp roots, served for download (GET /verifier).
+COPY tools/verify_report.py ./tools/verify_report.py
+COPY tools/tsa-roots ./tools/tsa-roots
 ENV ATTACKLEDGER_HOME=/srv
 EXPOSE 8000
 USER 10001

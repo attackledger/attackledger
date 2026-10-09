@@ -158,6 +158,10 @@ def _evidence_label(e: dict) -> str:
 # tools/tsa-roots/README.md lists the same root; shown so a reader can check the file they use.
 _DIGICERT_ROOT = ("digicert-trusted-root-g4.pem", "DigiCert Trusted Root G4",
                   "552F7BDCF1A7AF9E6CE672017F4F12ABF77240C78E761AC203D1D9D20AC89988")
+# Where a reader gets the verifier without the tester's server (site/ is published there).
+_VERIFY_PAGE = "https://attackledger.com/verify"
+_PUBLIC_SCRIPT = "https://attackledger.com/verify_report.py"
+_PUBLIC_ROOT = "https://attackledger.com/" + _DIGICERT_ROOT[0]
 _MATRIX_HOSTS = 4   # host columns per coverage table, so it fits an A4 page
 # The AttackLedger mark (site/favicon.svg), inline so the report stays one self-contained file.
 _FAVICON = "data:image/svg+xml," + quote(' '.join("""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -511,14 +515,24 @@ def _verify(r: dict) -> str:
     ]
     return f"""<section id="verify" class="pb"><h2>How to verify</h2>
 <p>Anyone can check this report without AttackLedger, the tester’s server or a network connection. The verifier is one
-file, <code>tools/verify_report.py</code> in the AttackLedger repository, and needs only Python 3 and its standard library.</p>
-<p>Or drop this file, HTML or JSON, on <a href="https://attackledger.com/verify">attackledger.com/verify</a>: the same checks run in your browser, and the file is not uploaded.</p>
+file, <code>verify_report.py</code>, and needs only Python 3 and its standard library.</p>
+<p>The quickest way: drop this file, HTML or JSON, on <a href="{_VERIFY_PAGE}">attackledger.com/verify</a>. The same checks
+run in your browser, and the file is not uploaded.</p>
 <h3>1. Get the files</h3>
-<p>Save this report as JSON (or keep this HTML file: it embeds the same report). Copy <code>verify_report.py</code> and the
-<code>tools/tsa-roots/</code> folder from the repository into one folder, keeping the folder name <code>tsa-roots</code>.</p>
+<p>Save this report as JSON (or keep this HTML file: it embeds the same report). Download the verifier and the timestamp
+root it trusts from attackledger.com, which publishes them independently of the server that made this report:</p>
+<ul>
+<li><a href="{_PUBLIC_SCRIPT}">{_PUBLIC_SCRIPT}</a></li>
+<li><a href="{_PUBLIC_ROOT}">{_PUBLIC_ROOT}</a>, saved in a folder named <code>tsa-roots</code> next to the script</li>
+</ul>
+<p>If you have an account on the AttackLedger server that made this report, its Report and Verify tabs offer the same
+files as one download, <code>attackledger-verifier.zip</code> (on that server at
+<code>/api/verifier/attackledger-verifier.zip</code>), and show each file’s SHA-256. Before you rely on a copy from the
+tester’s server, compare its SHA-256 with the copy from attackledger.com:</p>
+<pre>sha256sum verify_report.py        # or: shasum -a 256 verify_report.py</pre>
 <h3>2. Run the verifier</h3>
 <pre>python3 verify_report.py report.json --tsa-root &lt;root.pem&gt;</pre>
-<p>For example, with the DigiCert root from the repository, or with this HTML file:</p>
+<p>For example, with the DigiCert root, or with this HTML file:</p>
 <pre>python3 verify_report.py report.json --tsa-root tsa-roots/{_e(file)}
 python3 verify_report.py report.html</pre>
 <p class="note">Roots in <code>tsa-roots/</code> next to the script are trusted without <code>--tsa-root</code>; pass it for
@@ -531,7 +545,7 @@ any receipt that is not signed. <code>NOTE</code> lines are information, such as
 timestamped.</p>
 {_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks])}
 <h3>Where the timestamp root comes from</h3>
-<p><code>tools/tsa-roots/{_e(file)}</code> is {_e(name)}, the root of DigiCert’s public timestamp service
+<p><code>tsa-roots/{_e(file)}</code> is {_e(name)}, the root of DigiCert’s public timestamp service
 (<code>timestamp.digicert.com</code>), taken from the macOS root store and matched against DigiCert’s download. Before you
 rely on it, compare its SHA-256 fingerprint with your operating system’s root store or DigiCert’s site:</p>
 <pre>{_e(fp)}</pre>

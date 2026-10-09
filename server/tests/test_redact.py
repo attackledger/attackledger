@@ -447,3 +447,24 @@ def test_recon_with_redaction_off_stores_urls_as_seen(session):
     worker.store_endpoints(r, {f"https://shop.lab.test/reset?token={SESSION_SECRET}": {"wayback"}})
     session.commit()
     assert session.scalars(select(Endpoint)).one().url.endswith(SESSION_SECRET)
+
+
+def test_content_length_follows_the_redacted_body():
+    """A stored message stays consistent: the body's length changed, so its header does too."""
+    body = b'{"email":"tess@example.com","note":"hello"}'
+    raw = (b"POST /api/profile HTTP/1.1\r\nHost: shop.example.com\r\nContent-Type: application/json\r\n"
+           b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+    out = redact.http_message(raw, redact.Report(), personal=True)
+    head, new_body = out.split(b"\r\n\r\n", 1)
+    assert b"tess@example.com" not in new_body and len(new_body) != len(body)
+    assert f"Content-Length: {len(new_body)}".encode() in head.split(b"\r\n")
+    # The head is otherwise untouched, and a lower-case name is handled the same way.
+    assert head.startswith(b"POST /api/profile HTTP/1.1\r\nHost: shop.example.com\r\nContent-Type: application/json")
+    low = redact.http_message(raw.replace(b"Content-Length", b"content-length"), redact.Report(), personal=True)
+    assert f"content-length: {len(new_body)}".encode() in low
+    # A value that did not describe the body (an export that decoded it) is left as written.
+    odd = raw.replace(f"Content-Length: {len(body)}".encode(), b"Content-Length: 9999")
+    assert b"Content-Length: 9999\r\n" in redact.http_message(odd, redact.Report(), personal=True)
+    # Nothing redacted in the body: the message is stored exactly as it came.
+    plain = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+    assert redact.http_message(plain, redact.Report()) == plain
