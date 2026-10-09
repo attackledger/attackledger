@@ -262,6 +262,12 @@ from the lane. The agent:
 
 - sends **read-only** requests (GET, HEAD, OPTIONS) to the lane's host only, with the
   research identification, no redirects and within the rate limit;
+- can send requests **as a test account** (A, B, …) that a tester signed in to and added.
+  The gateway adds the session, so the agent never sees it (D-040);
+- can **propose a write** (POST, PUT, PATCH, DELETE) only if the engagement allows writes,
+  which is off by default. Each write waits on the Approvals tab until a tester approves
+  that exact request, and a DELETE needs its path typed as well. The gateway sends it
+  once (D-041, docs/APPROVALS.md);
 - attaches the exchanges it made as evidence (each one viewable as raw bytes), marks
   items done or N/A, and records leads;
 - **cannot close the lane.** You review the evidence and sign the receipt.

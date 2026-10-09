@@ -25,7 +25,7 @@ inside the gateway's limits, but the MVP does not depend on them.
 ## Not in the MVP
 
 - Test accounts with credentials injected at the gateway, and the approval queue for
-  writes (D-040, D-041). Until then the gateway refuses every write.
+  writes (D-040, D-041). Built after the MVP, on 2026-10-10.
 - Recon improvements from the benchmark (SPA routes, authenticated recon, agent context).
 - A live agent run on the Messages API; it needs an API key on the operator's side.
 - Organization id on every record and the worker talking to the API (D-042, SaaS later).

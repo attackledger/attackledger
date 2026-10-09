@@ -307,7 +307,7 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
         <li><strong>Risky modules are opt-in.</strong> Port scans, content discovery, parameter discovery and vulnerability scanning stay off until the policy allows them.</li>
         <li><strong>Scanner templates are read-only.</strong> nuclei runs only templates proven to send GET, HEAD or OPTIONS with no body. No DoS, fuzzing, brute force, default logins or out-of-band callbacks.</li>
         <li><strong>Secrets are never used.</strong> Candidates found in JavaScript are stored masked and hashed, and are never tested.</li>
-        <li><strong>Agents stay read-only.</strong> A Claude agent works one lane with GET, HEAD and OPTIONS on that host only, and cannot sign a receipt.</li>
+        <li><strong>Agents are read-only unless a person approves.</strong> A Claude agent works one lane with GET, HEAD and OPTIONS on that host only, and cannot sign a receipt. If an engagement allows writes, each one waits until a tester approves that exact request; a DELETE needs a second confirmation. Test-account sessions are added by the gateway, so the agent never sees them.</li>
       </ul>
       <div class="measured">
         <p>Vulnerability scan on the lab: <span class="num">8,899 of 8,899</span> requests carried the research identification.</p>

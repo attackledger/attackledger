@@ -5,6 +5,25 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+### Added
+- **Test accounts** (D-040, migration 0021). Testers add sessions they signed in to
+  themselves: a cookie, a bearer token or headers.
+  - They are stored encrypted and never shown again.
+  - The gateway adds them to an agent's requests "as A", for that account's hosts only,
+    and scrubs responses before they reach the worker.
+  - Evidence names the account.
+- **Writes with a person's approval** (D-041), off by default. Agents propose POST, PUT,
+  PATCH or DELETE, and a tester approves the exact request.
+  - An approval is hash-bound, expires after 15 minutes and is used once.
+  - A DELETE needs its path typed.
+  - The gateway sends the write once, and it becomes evidence and audit entries.
+  - New Test accounts and Approvals tabs.
+
+### Fixed
+- **Gateway log noise:** ProjectDiscovery tools run with `-duc`, so there are no update
+  calls in the request log, and the gateway answers katana's Burp check itself.
+- **Gateway log:** `bytes_sent` is now recorded.
+
 ## [0.7.1] - 2026-10-10
 
 Fixes from the second design-partner review of 0.7.0.

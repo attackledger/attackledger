@@ -550,6 +550,15 @@ options considered and who decided.
   needs signed-in sessions; keeping credentials at the gateway keeps them out of the model
   and the ledger.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
+- **Built 2026-10-10** (docs/APPROVALS.md, GATEWAY.md decision 9, migration 0021). The
+  account is chosen per request, with a header the gateway removes, not per job, so one
+  run can compare accounts. The session leaves the API only to the gateway, and only:
+  - for a running agent job;
+  - for the hosts named for that account;
+  - while redaction is on.
+
+  The gateway scrubs responses before they reach the worker. Recon stays
+  unauthenticated. Built by Claude.
 
 ### D-041 · Writes only with a person's approval (2026-10-09, decided by Murat; amends D-024)
 - **Decision:** agents may propose POST, PUT, PATCH or DELETE requests. Each one waits in an
@@ -559,6 +568,16 @@ options considered and who decided.
   rejection and sent write is recorded in the audit log and as evidence. Recon tools stay
   read-only by construction (nuclei templates are classified and non-GET ones excluded).
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
+- **Built 2026-10-10:**
+  - **Who approves:** testers and owners. Viewers and reviewers can't, so reviewing stays
+    separate from changing the target. Separation of duties applies: whoever started the
+    run can't approve its writes.
+  - **What an approval covers:** it binds the request's SHA-256, expires after 15 minutes,
+    and the gateway uses it once, sending the approved headers.
+  - **DELETE:** the approver types the URL's path in a second call.
+  - **Left out:** a UI route for a person's own writes. Testers use their own tools and
+    import the exchanges.
+  - Built by Claude.
 
 ### D-042 · Deployment: self-hosted, with a public verifier page (2026-10-09, decided by Murat; closes D-030)
 - **Decision:** AttackLedger runs only on the customer's own servers; test data never
