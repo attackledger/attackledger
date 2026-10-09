@@ -188,10 +188,12 @@ container. Steps:
 | Discover hidden parameters | Arjun on dynamic endpoints, one thread, fixed delay | target, **opt-in** |
 | Route parameters | gf-style classes → the hunt lane that tests them | none (computed) |
 | Dork checklist | click-ready Google dorks per root (manual) | none (computed) |
-| Scan for known issues | nuclei: takeovers (all hosts), exposures/misconfig/stack templates (one per cluster), panels/vulns/CVEs (golden) | target, **opt-in** |
+| Scan for known issues | nuclei: takeovers (all hosts), exposures/misconfig/stack templates (one per cluster), panels/vulns/CVEs (golden); read-only templates only, checked by content | target, **opt-in** |
 
 The engagement's *requests per second* value is a hard ceiling for every step that
-sends traffic, port scanning included. There is no multiplier.
+sends traffic, port scanning included. There is no multiplier. nuclei takes one request
+per tick with no retries. The crawler (katana) can briefly reach a little over the
+limit in a sliding one-second window (22 at 20); the traffic gateway (D-039) closes that.
 
 Secret candidates are stored **masked and hashed**, never in full, and are never
 tested against any service. JS fetches follow no redirects.

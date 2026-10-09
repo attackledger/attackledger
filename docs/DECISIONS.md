@@ -218,6 +218,14 @@ options considered and who decided.
   2026-10-09 at Murat's request. The VPS copy's golden pass has no CVE templates at all.
 - **Made by:** Claude, overnight under Murat's standing permission ("you may do
   everything"). **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
+- **Correction (2026-10-09):** tag and grep exclusions missed writes. The Juice Shop
+  benchmark measured 24 POST, 1 DELETE and 1 DEBUG request from nuclei
+  (`nacos-create-user` is tagged `instrusive`). Exclusion is now an allowlist by content
+  (`nucleisafe.py`): a template runs only if every request it can send is provably GET,
+  HEAD or OPTIONS with no body. The list is built with the image and re-checked before the
+  first scan; 6,551 of 13,786 templates are excluded. `-rl 20` let 40 requests into one
+  second; nuclei now takes one token per tick (`-rl 1 -rld`), with no retries. Re-run: 0
+  non-GET requests out of 5,511, nuclei peak 19 at a limit of 20.
 
 ### D-021 · Content discovery without recursion (2026-10-08, made autonomously, reviewed 2026-10-09)
 - **Decision:** feroxbuster runs at depth 1, one URL per process with a pause between
@@ -266,6 +274,9 @@ options considered and who decided.
 - **Cost:** most authorization, logic and injection checks need writes, so in these
   lanes the agent will leave items open and say why. That is intended.
 - **Made by:** Claude, overnight. **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
+- **Correction (2026-10-09):** "the recon side never writes" was not true for nuclei
+  until 2026-10-09 (measured, see D-020). It is now enforced by template content, and the
+  traffic gateway (D-039) will refuse writes for every tool.
 
 ### D-025 · Agent loop on the Messages API, not the Agent SDK (2026-10-09, made autonomously, reviewed 2026-10-09)
 - **Decision:** The agent executor is a manual tool-use loop over the Messages API

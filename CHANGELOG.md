@@ -150,6 +150,12 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Fixed
+- **nuclei could send writes and burst over the limit** (measured by the Juice Shop
+  benchmark: 24 POST, 1 DELETE, 1 DEBUG; 40 requests in one second at a limit of 20).
+  nuclei now runs only templates that provably send GET, HEAD or OPTIONS requests
+  (`nucleisafe.py`, 6,551 of 13,786 excluded; the worker refuses to scan otherwise), takes
+  one token per tick with no retries, and needs a limit of at least 2/s. Re-run: 0
+  non-GET of 5,511 requests, nuclei peak 19 at 20.
 - **Content discovery went over low rate limits.** feroxbuster's wildcard detection and
   its two start requests are not rate-limited: at a limit of 2/s the first second carried
   9 requests. It now runs with `--dont-filter` (the baseline check does that job) at the
