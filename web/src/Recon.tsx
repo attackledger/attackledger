@@ -197,6 +197,11 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
                 <details className="phase-help">
                   <summary>How this step works</summary>
                   <p>{p.help}</p>
+                  <dl>
+                    {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
+                      <div key={m.kind}><dt>{m.title}</dt><dd>{m.summary}</dd></div>
+                    ))}
+                  </dl>
                 </details>
                 <ul className="tools">
                   {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
@@ -211,9 +216,9 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
       </section>
 
       <section id="results" aria-label="Recon results" className="panel results">
-        <div className="tabs" role="tablist" aria-label="Results">
+        <div className="rtabs" role="tablist" aria-label="Results">
           {([["golden", "Golden targets"], ["hosts", "Hosts"], ["urls", "URLs"], ["leads", "Leads"], ["runs", "Runs"]] as const).map(([k, label]) => (
-            <button key={k} role="tab" aria-selected={tab === k} className={`tab${tab === k ? " on" : ""}`}
+            <button key={k} role="tab" aria-selected={tab === k} className={`rtab${tab === k ? " on" : ""}`}
                     onClick={() => { setTab(k); setOnly(null); }}>
               {label}
               {k === "leads" && s ? <span className="tab-n">{s.leads}</span> : null}
@@ -296,15 +301,14 @@ function ToolCard({ m, last, why, onRun, onResults }: {
   const busy = !!last && (last.status === "queued" || last.status === "running");
   return (
     <li className={`tool${why ? " blocked" : ""}`}>
-      <div className="tool-head">
-        <h5>{m.title}</h5>
-        <span className="tool-badges">
-          <span className={`traffic ${m.traffic}`}>{TRAFFIC_LABEL[m.traffic]}</span>
-          {m.opt_in && <span className="traffic optin">Opt-in</span>}
-        </span>
+      <div className="tool-name">
+        <h5 title={m.summary}>{m.title}</h5>
+        <p className="tool-uses">{m.tools.join(", ")}</p>
       </div>
-      <p className="tool-uses">{m.tools.join(", ")}</p>
-      <p className="tool-summary">{m.summary}</p>
+      <span className="tool-badges">
+        <span className={`traffic ${m.traffic}`}>{TRAFFIC_LABEL[m.traffic]}</span>
+        {m.opt_in && <span className="traffic optin">Opt-in</span>}
+      </span>
       <p className="tool-last">
         {last ? (
           <>
@@ -314,8 +318,8 @@ function ToolCard({ m, last, why, onRun, onResults }: {
             <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>
           </>
         ) : <span className="muted">Not run yet</span>}
+        {why && <span className="tool-why">{why}</span>}
       </p>
-      {why && <p className="step-why">{why}</p>}
       <div className="tool-actions">
         <button className="btn small" disabled={!!why || busy} onClick={onRun}>{busy ? "Running…" : "Run"}</button>
         <button className="btn ghost small" onClick={onResults}>Results</button>
