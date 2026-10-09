@@ -1,7 +1,7 @@
 """key log: hash-chained key registrations and revocations; sign-in times; own password
 
-Revision ID: 0013
-Revises: 0012
+Revision ID: 0014
+Revises: 0013
 Create Date: 2026-10-09 18:00:00
 """
 import hashlib
@@ -12,8 +12,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0013'
-down_revision = '0012'
+revision = '0014'
+down_revision = '0013'
 branch_labels = None
 depends_on = None
 
