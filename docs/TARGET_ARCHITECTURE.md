@@ -174,9 +174,11 @@ export file needs no token at all, so that path comes first.
 - Captured traffic holds cookies and Authorization headers. They must be redacted or
   flagged before anything enters an append-only ledger.
 
-## Deployment (D-030: open)
+## Deployment (D-042: self-hosted, with a public verifier page)
 
-How AttackLedger is offered is not decided. The architecture keeps every option open:
+AttackLedger runs on the customer's own servers; the only hosted part is a verification
+page on attackledger.com that checks a report in the browser without uploading it. What
+keeps this possible:
 
 - The worker, which sends traffic to targets, is separate from the API and the ledger.
   A deployment can run workers only inside the customer's network.
@@ -193,9 +195,15 @@ How AttackLedger is offered is not decided. The architecture keeps every option 
    Signatures built 2026-10-09 (D-033); timestamps built 2026-10-09 (D-034).
 3. **Client and auditor views.** A client-facing report and a read-only viewer role.
    Built 2026-10-09: the HTML report for clients, a role-aware web app and a Verify tab.
-4. **Deployment decision** (D-030), with what the first three taught us.
+4. **Deployment decision.** Decided 2026-10-09 (D-042).
+5. **Traffic gateway** (D-039): the worker loses direct egress; one gateway enforces rate,
+   methods, scope and identification for every tool and agent, and logs every request.
+6. **Test accounts and approved writes** (D-040, D-041): credential injection at the
+   gateway; an approval queue for agent-proposed writes.
+7. **Encryption and retention** (D-043): per-engagement keys, retention by key deletion.
+8. **Public verifier page** (D-042) on attackledger.com.
 
 Later (D-035): the import inbox and adapters for Caido, Burp and nuclei. Each is an
 optional integration that an operator turns on at setup with their own credentials.
 
-Agent work (live runs, write requests) continues alongside, under D-024 and D-025.
+Agent work continues alongside under D-024 (amended by D-041) and D-025.

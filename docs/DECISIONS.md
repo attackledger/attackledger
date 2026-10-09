@@ -333,6 +333,7 @@ options considered and who decided.
   service that stores, timestamps and verifies (no target traffic from our side); fully
   hosted. The architecture keeps workers separable so that every option stays possible.
 - **Decided by:** Murat Kabak, later.
+- **Update 2026-10-09:** decided in D-042 (self-hosted, with a public verifier page).
 
 ### D-031 · The demo's agent run is driven from Claude Code, through the same tools (2026-10-09, requested by Murat)
 - **Decision:** until an API key is available, the demo's agent run is made by Claude Opus
@@ -478,6 +479,60 @@ options considered and who decided.
 - **Boundary:** pattern- and name-based, not general personal-data detection; binary and
   compressed bodies are stored as is and noted; evidence stored before this change is untouched.
 - **Proposed and built by:** Claude, at Murat's request.
+
+### D-039 · All target traffic goes through a gateway (2026-10-09, decided by Murat)
+- **Problem:** each tool enforced the rules with its own flags; a Juice Shop benchmark found
+  nuclei sending POST and DELETE requests and bursting above the rate limit.
+- **Decision:** the worker has no direct route to the internet. Every request from recon
+  tools and agents goes through a separate gateway container that enforces, in one place,
+  the engagement's rate ceiling (across all tools and workers), the allowed methods, the
+  scope (host allowlist, exclusions win), the identification header and user agent, and the
+  redirect policy, and logs every request. A misconfigured tool cannot exceed the rules.
+- **Open design points:** HTTPS needs the gateway to terminate TLS for method and header
+  checks (a gateway CA trusted only inside the worker); DNS resolution and port scanning go
+  through the gateway's resolver and a rate-limited tunnel, or are refused.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-040 · Agents use test accounts through the gateway, never the credentials (2026-10-09, decided by Murat)
+- **Decision:** an operator adds test accounts (A, B, ...) to an engagement; they are stored
+  encrypted (D-043). An agent asks for a request "as A"; the gateway adds A's session
+  cookie or token. The agent's context, the logs and the evidence never contain the raw
+  credential (redaction, D-038, stays on). Creating accounts and signing in are always done
+  by a person; the evidence records which test account each request used.
+- **Why:** most of the value in the benchmark (and authorization testing such as BOLA)
+  needs signed-in sessions; keeping credentials at the gateway keeps them out of the model
+  and the ledger.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-041 · Writes only with a person's approval (2026-10-09, decided by Murat; amends D-024)
+- **Decision:** agents may propose POST, PUT, PATCH or DELETE requests. Each one waits in an
+  approval queue; a person sees the full request and approves or rejects it; the gateway
+  sends it only after approval. DELETE needs its own explicit confirmation. An engagement
+  rule (off by default) decides whether writes may be proposed at all. Every approval,
+  rejection and sent write is recorded in the audit log and as evidence. Recon tools stay
+  read-only by construction (nuclei templates are classified and non-GET ones excluded).
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-042 · Deployment: self-hosted, with a public verifier page (2026-10-09, decided by Murat; closes D-030)
+- **Decision:** AttackLedger runs only on the customer's own servers; test data never
+  leaves them. The one hosted part is a verification page on attackledger.com: an auditor
+  drops a report file in, the checks run in the browser, and nothing is uploaded. We hold
+  no customer data.
+- **Why:** banks and audit firms are the target readers (D-028 and the business
+  answers of 2026-10-09); a hosted service would put their test data with us and needs
+  operations a 5-10 hour week cannot carry.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-043 · Evidence and test accounts encrypted, with retention by key deletion (2026-10-09, decided by Murat)
+- **Decision:** raw evidence and test-account credentials are encrypted with a key per
+  engagement (wrapped by a deployment master key). Each engagement has a retention period
+  after it closes (default one year, configurable). When it ends, the engagement key is
+  destroyed: the content becomes unreadable, while hashes, receipts and reports stay valid.
+  The deletion is recorded in the audit log, and the verifier reports "content removed
+  under the retention policy" instead of failing.
+- **Why:** the chain commits to hashes, not content, so content can go without breaking
+  it; clients and KVKK/GDPR expect a retention limit.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
 
 ## Adding entries
 
