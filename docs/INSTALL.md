@@ -615,6 +615,10 @@ shell access, so that whoever reaches the web page first cannot make themselves 
 
 The creation is the first entry in the audit log, made by "the operator on the server".
 
+An install is one organization, made by the migrations; there is nothing to set up for it,
+and the app never shows it. (Several organizations in one deployment are for a hosted service
+later: `docs/ORGANIZATIONS.md`.)
+
 ## 10. Add people and give them roles
 
 Owners manage people. Everyone else sees only the engagements they have a role on.
@@ -930,6 +934,15 @@ before it takes jobs. Migrations can change the data, so always back up first.
    docker compose exec -T api python -c "from app import migrate; print(migrate.current(), migrate.head())"
    docker compose ps
    ```
+
+**Upgrading to migration 0022 (organizations, after 0.7.1).** Nothing to do beyond the steps
+above. The migration makes the default organization and puts every existing row in it; the
+key log and the audit log keep their entries and hashes, so reports issued before still
+verify, and new entries continue the same chains. Engagement names and emails are now unique
+per organization, which for one organization is what they were. The worker and gateway token
+files keep working: they belong to the default organization. The migration fills a new
+column on every table once: on Postgres, about 5 seconds per million rows of gateway log
+and recon results (measured, see `docs/ORGANIZATIONS.md`).
 
 **Rollback.** Migrations are not reversed in place (some would drop data). To go back,
 return to the previous release and restore the backup from step 2:

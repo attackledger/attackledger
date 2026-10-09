@@ -73,7 +73,7 @@ def test_session_gives_the_rules_of_a_running_job_only(api):
     eng, job = setup(api)
     r = gw(api, "POST", "/gateway/session", json={"job_id": job, "secret": SECRET})
     assert r.status_code == 200
-    assert r.json() == {"job_id": job, "engagement_id": eng, "kind": "probe", "traffic": "target",
+    assert r.json() == {"job_id": job, "engagement_id": eng, "organization_id": 1, "kind": "probe", "traffic": "target",
                         "include": ["*.example.com"], "exclude": ["admin.example.com"], "rate_limit_rps": 7,
                         "research_header": "X-Bug-Bounty: r1", "research_user_agent": None, "redact": True}
     r = gw(api, "POST", "/gateway/session", json={"job_id": job, "secret": "x" * 31})

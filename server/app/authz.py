@@ -6,7 +6,8 @@ everyone but owners, so a new route is closed until someone decides who may use 
 Permissions
   public     no sign-in (health, sign-in, sign-out)
   signed_in  any signed-in caller (lists that are filtered, or reference data)
-  owner      owners only: engagements, rules, authorization, people, roles, the whole audit log
+  owner      owners only: engagements, rules, authorization, people, roles, the whole audit log,
+             of their own organization (there is no role above it)
   read       any role on the engagement (viewer, tester, reviewer)
   tester     the tester role on the engagement: recon, lanes, evidence, agent runs
   reviewer   the reviewer role on the engagement: sign receipts
@@ -18,15 +19,19 @@ Permissions
              held by its worker (running, or cancelled and not yet finished). "running" in
              the second column: only while it runs. No person, operator or worker token opens
              them, and a job token opens no other job
-"""
-import hmac
 
+Organizations (D-042, docs/ORGANIZATIONS.md): before anything else the session is marked as
+not knowing its caller, so no query runs by accident; once the caller is known, the session is
+scoped to their organization (orgscope.py) and every query of the request sees that
+organization's rows only. Another organization's engagement, lane, job or blob therefore does
+not exist for the caller, and is answered 404 exactly like an id that was never used.
+"""
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 
-from . import auth, gateway, workerclient
+from . import auth, gateway, orgs, orgscope, workerclient
 from .db import get_session
-from .models import Evidence, Job, Lane
+from .models import Engagement, Evidence, Job, Lane
 
 ENG, LANE, JOB, BLOB, USER = "eng", "lane", "job", "blob", "user"
 
@@ -66,7 +71,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/people"): ("owner", None),
     ("POST", "/people"): ("owner", None),
     ("PATCH", "/people/{user_id}"): ("owner", USER),
-    ("GET", "/audit"): ("owner", None),                       # every engagement's history and every person's
+    ("GET", "/audit"): ("owner", None),                       # the organization's whole history, its chain
     ("POST", "/engagements/{eng_id}/content/delete"): ("owner", ENG),   # cannot be undone; confirmed by name
 
     ("GET", "/engagements/{eng_id}/coverage"): ("read", ENG),
@@ -145,11 +150,12 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
 
 
 def _engagements(session, kind: str, params: dict) -> set[int] | None:
-    """The engagement(s) a route's path points at; None if the object does not exist
-    (the handler then answers 404)."""
+    """The engagement(s) a route's path points at, in the caller's organization; None if the
+    object does not exist there."""
     try:
         if kind == ENG:
-            return {int(params["eng_id"])}
+            eng = session.get(Engagement, int(params["eng_id"]))
+            return {eng.id} if eng else None
         if kind == LANE:
             lane = session.get(Lane, int(params["lane_id"]))
             return {lane.asset.engagement_id} if lane else None
@@ -164,24 +170,48 @@ def _engagements(session, kind: str, params: dict) -> set[int] | None:
     return None
 
 
+def _person(session, params: dict):
+    from .models import User
+    try:
+        return session.get(User, int(params["user_id"]))
+    except (KeyError, ValueError):
+        return None
+
+
+# What a missing object is called when it is not there (or is another organization's), the
+# same words the handlers use, so the answer does not depend on whose it is.
+_MISSING = {ENG: ("Engagement", "eng_id"), LANE: ("Lane", "lane_id"), JOB: ("Job", "job_id")}
+
+
+def _not_found(kind: str, params: dict) -> HTTPException:
+    if kind == BLOB:
+        return HTTPException(404, "no evidence refers to this hash")
+    name, key = _MISSING.get(kind, ("", ""))
+    return HTTPException(404, f"{name} {params.get(key)} not found" if name else "not found")
+
+
 def authorize(request: Request, session=Depends(get_session)) -> None:
     route = request.scope.get("route")
     path = getattr(route, "path", request.url.path)
     rule = RULES.get((request.method, path))
+    orgscope.pend(session)              # no query until the caller's organization is known
     if rule and rule[0] == "public":
         return
     if rule and rule[0] == "gateway":
-        _gateway_caller(request)
+        orgscope.scope(session, _gateway_caller(request, session))
         return
     if rule and rule[0] == "worker":
-        _worker_caller(request)
+        orgscope.scope(session, _worker_caller(request, session))
         return
     if rule and rule[0] == "job":
         _job_caller(request, session, running_only=rule[1] == "running")
         return
     who = auth.principal(session, request)
     if who is None:
-        raise HTTPException(401, auth.SETUP_HINT if auth.mode(session) == "setup" else "sign in first")
+        with orgscope.unscoped(session):
+            setup = auth.mode(session) == "setup"
+        raise HTTPException(401, auth.SETUP_HINT if setup else "sign in first")
+    orgscope.scope(session, who.organization_id)
     request.state.principal = who
     if rule is None:
         if who.is_owner:
@@ -191,14 +221,20 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
     if perm in ("signed_in", "handler"):
         return
     if perm == "owner":
-        if not who.is_owner:
-            raise HTTPException(403, "only an owner can do this")
-        return
-    engs = _engagements(session, kind, request.path_params)
-    if engs is None:
         if who.is_owner:
-            return                      # the handler answers 404
-        raise HTTPException(404, "not found")
+            return                      # the handler answers 404 for what is not theirs
+        # Whether an id exists says nothing to someone who could not see it: 404 then, and
+        # 403 only for what they can see (an engagement they have a role on, a person of theirs).
+        if kind == ENG:
+            engs = _engagements(session, kind, request.path_params)
+            if not engs or not any(who.can_read(e) for e in engs):
+                raise HTTPException(404, "not found")
+        elif kind == USER and _person(session, request.path_params) is None:
+            raise HTTPException(404, "not found")
+        raise HTTPException(403, "only an owner can do this")
+    engs = _engagements(session, kind, request.path_params)
+    if engs is None:                    # never made, or another organization's: the same answer
+        raise _not_found(kind, request.path_params) if who.is_owner else HTTPException(404, "not found")
     if perm == "read":
         if not any(who.can_read(e) for e in engs):
             raise HTTPException(404, "not found")   # do not confirm that it exists
@@ -209,15 +245,17 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
         raise HTTPException(404, "not found")
 
 
-def _gateway_caller(request: Request) -> None:
-    """The gateway's token, and nothing else, opens the gateway routes. Without a configured
+def _gateway_caller(request: Request, session) -> int:
+    """The gateway's token, and nothing else, opens the gateway routes, for the organization
+    it belongs to (the deployment's token: the default one; orgs.py). Without a configured
     token they are closed (fail closed: the gateway then refuses all traffic)."""
     tok = gateway.gateway_token()
-    if not tok:
+    if not orgs.channel_configured(session, "gateway", tok):
         raise HTTPException(503, "no gateway token is configured")
-    header = request.headers.get("authorization", "")
-    if not (header.lower().startswith("bearer ") and hmac.compare_digest(header[7:].strip(), tok)):
+    org = orgs.channel_org(session, "gateway", tok, _bearer(request))
+    if org is None:
         raise HTTPException(401, "the gateway token is required")
+    return org
 
 
 def _bearer(request: Request) -> str:
@@ -225,25 +263,29 @@ def _bearer(request: Request) -> str:
     return header[7:].strip() if header.lower().startswith("bearer ") else ""
 
 
-def _worker_caller(request: Request) -> None:
-    """The worker's token, and nothing else, opens ping and claim. Without a configured token
+def _worker_caller(request: Request, session) -> int:
+    """The worker's token, and nothing else, opens ping and claim, for the organization it
+    belongs to: a worker claims only that organization's jobs. Without a configured token
     they are closed (fail closed: the worker then runs nothing)."""
     tok = workerclient.worker_token()
-    if not tok:
+    if not orgs.channel_configured(session, "worker", tok):
         raise HTTPException(503, "no worker token is configured")
-    if not hmac.compare_digest(_bearer(request), tok):
+    org = orgs.channel_org(session, "worker", tok, _bearer(request))
+    if org is None:
         raise HTTPException(401, "the worker token is required")
+    return org
 
 
 def _job_caller(request: Request, session, running_only: bool) -> None:
-    """A job token opens its own job's routes only, while its worker holds the job. Every call
-    is a heartbeat."""
+    """A job token opens its own job's routes only, while its worker holds the job, and scopes
+    the request to the job's organization. Every call is a heartbeat."""
     from datetime import datetime, timezone
 
     from . import workerapi
     from .models import JobStatus
     try:
-        job = session.get(Job, int(request.path_params["job_id"]))
+        with orgscope.unscoped(session):
+            job = session.get(Job, int(request.path_params["job_id"]))
     except (KeyError, ValueError):
         job = None
     token = _bearer(request)
@@ -252,6 +294,7 @@ def _job_caller(request: Request, session, running_only: bool) -> None:
     if job.status not in (JobStatus.running, JobStatus.cancelled) or (
             running_only and job.status != JobStatus.running):
         raise HTTPException(403, f"job {job.id} is {job.status.value}; its token no longer writes")
+    orgscope.scope(session, job.organization_id)
     job.heartbeat_at = datetime.now(timezone.utc)
     session.commit()
 

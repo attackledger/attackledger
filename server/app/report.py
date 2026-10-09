@@ -121,7 +121,7 @@ def build(session, eng: Engagement, controls: dict) -> dict:
     }
     signing_keys = {l["receipt"]["signature"]["key_fingerprint"] for l in lanes
                     if l["receipt"] and l["receipt"].get("signature")}
-    history = keylog.for_report(session, signing_keys)
+    history = keylog.for_report(session, signing_keys, eng.organization_id)
     if history is not None:
         body["key_log"] = history
     signers = {rc.closed_by_user for a in eng.assets for l in a.lanes for rc in l.receipts if rc.closed_by_user}

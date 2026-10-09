@@ -17,6 +17,10 @@ value; only its SHA-256 is stored, so a database leak does not leak sessions. Co
 are HttpOnly and SameSite=Strict. Failed sign-ins are counted per email and address,
 and further attempts are refused for a while after too many.
 
+Each person belongs to one organization (D-042, docs/ORGANIZATIONS.md), and so does the
+caller: a person's own, and for the operator token and open mode, the default one. Owners
+manage their own organization only; nothing in the product spans organizations.
+
 An owner sets a person's first password when adding them. After that only the person
 changes it (POST /auth/password, with their current one), or an operator resets it on the
 server (python -m app.people set-password). Nobody sets another person's password through
@@ -46,6 +50,7 @@ LOCKOUT_SECONDS = 15 * 60
 @dataclass(frozen=True)
 class Principal:
     kind: str                        # "open", "token" or "person"
+    organization_id: int = 0         # whose rows this caller sees (orgscope.py)
     user_id: int | None = None
     name: str = ""
     is_owner: bool = False
@@ -166,8 +171,11 @@ def end_sessions(session, user_id: int, keep: str | None = None) -> None:
 
 
 def people_exist(session) -> bool:
+    """Whether anyone at all has an account: it decides the mode for the whole deployment."""
+    from . import orgscope
     from .models import User
-    return bool(session.scalar(select(func.count()).select_from(User)))
+    with orgscope.unscoped(session):
+        return bool(session.scalar(select(func.count()).select_from(User)))
 
 
 def mode(session) -> str:
@@ -183,17 +191,28 @@ def _aware(t: datetime) -> datetime:
 
 
 def principal(session, request: Request) -> Principal | None:
-    """Who is calling, or None if they must sign in."""
+    """Who is calling, or None if they must sign in. Looked up before the organization is
+    known (the session or token decides it), so without the organization filter."""
+    from . import orgscope
+    with orgscope.unscoped(session):
+        return _principal(session, request)
+
+
+def _principal(session, request: Request) -> Principal | None:
+    from . import orgscope
     from .models import Membership, User, UserSession
     m = mode(session)
     if m == "open":
-        return Principal(kind="open", name="local operator", is_owner=True)
+        return Principal(kind="open", organization_id=orgscope.default_id(session), name="local operator",
+                         is_owner=True)
     tok = token()
     header = request.headers.get("authorization", "")
     cookie = request.cookies.get(COOKIE, "")
     if tok and ((header.lower().startswith("bearer ") and hmac.compare_digest(header[7:].strip(), tok))
                 or (cookie and hmac.compare_digest(cookie, token_session_value(tok)))):
-        return Principal(kind="token", name="operator token", is_owner=True)
+        # The deployment's token: an owner of the default organization, as before there were others.
+        return Principal(kind="token", organization_id=orgscope.default_id(session), name="operator token",
+                         is_owner=True)
     if m != "people" or not cookie:
         return None
     row = session.scalar(select(UserSession).where(UserSession.token_sha256 == _sha(cookie)))
@@ -204,5 +223,5 @@ def principal(session, request: Request) -> Principal | None:
         return None
     roles = {mb.engagement_id: tuple(mb.roles or ())
              for mb in session.scalars(select(Membership).where(Membership.user_id == user.id))}
-    return Principal(kind="person", user_id=user.id, name=user.name, is_owner=user.is_owner, email=user.email,
-                     roles=roles)
+    return Principal(kind="person", organization_id=user.organization_id, user_id=user.id, name=user.name,
+                     is_owner=user.is_owner, email=user.email, roles=roles)

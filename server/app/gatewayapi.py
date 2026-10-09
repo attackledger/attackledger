@@ -3,7 +3,8 @@
 The gateway holds no database credentials. It learns who a job credential belongs to, and that
 engagement's rules, from these routes, and writes its request log through them. They are
 authenticated with the gateway token (authz permission "gateway"), which only the gateway and
-the API can read. This is the channel D-042 asks for: in a later hybrid service the gateway can
+the API can read. A gateway token belongs to one organization (the deployment's own token to the
+default one, orgs.py): it sees that organization's jobs, scopes and log only. This is the channel D-042 asks for: in a later hybrid service the gateway can
 stay in the customer's network and talk to a hosted API the same way.
 
   POST /gateway/session        a job credential -> the job's engagement, traffic class and rules
@@ -74,7 +75,8 @@ def gateway_session(body: SessionIn, session: Session = Depends(get_session)):
     traffic = traffic_of(job.kind)
     if traffic is None:
         raise HTTPException(403, f"unknown job kind {job.kind}")
-    return {"job_id": job.id, "engagement_id": eng.id, "kind": job.kind, "traffic": traffic,
+    return {"job_id": job.id, "engagement_id": eng.id, "organization_id": job.organization_id,
+            "kind": job.kind, "traffic": traffic,
             "include": list(eng.scope_include), "exclude": list(eng.scope_exclude or []),
             "rate_limit_rps": eng.rate_limit_rps, "research_header": eng.research_header,
             "research_user_agent": eng.research_user_agent, "redact": bool(eng.redact_evidence)}

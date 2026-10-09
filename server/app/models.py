@@ -7,8 +7,8 @@ and latest receipt (see gates.py).
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false as sa_false, true as sa_true
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import DDL, JSON, ForeignKey, String, Text, UniqueConstraint, event, false as sa_false, true as sa_true
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
 from .db import Base
 
@@ -25,16 +25,56 @@ def iso_utc(dt: datetime | None) -> str | None:
     return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
 
 
+# ---- organizations (D-042, docs/ORGANIZATIONS.md) -----------------------------------------
+
+DEFAULT_ORGANIZATION = "Default organization"
+
+
+class Organization(Base):
+    """A customer of this deployment. A self-hosted install is one organization, made by
+    migration 0022 (or with the tables, below); more are made on the server only
+    (python -m app.orgs create), for a hosted service. Every tenant-owned row belongs to one,
+    directly (OrgOwned) or through its parent (orgscope.THROUGH)."""
+    __tablename__ = "organizations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # SHA-256 of a worker or gateway token issued for this organization only (orgs.py). The
+    # deployment's own tokens (the token files, D-039 and D-042) belong to the default organization.
+    worker_token_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+    gateway_token_sha256: Mapped[str | None] = mapped_column(String(64), unique=True)
+
+
+# A database made from the models (tests, and databases from before migrations) gets the
+# default organization with its tables, as migration 0022 makes it for everyone else.
+event.listen(Organization.__table__, "after_create", DDL(
+    f"INSERT INTO organizations (name, created_at) VALUES ('{DEFAULT_ORGANIZATION}', CURRENT_TIMESTAMP)"))
+
+
+class OrgOwned:
+    """A row that belongs to one organization directly. orgscope.py adds
+    organization_id = <the caller's> to every query on these tables and sets it on new rows
+    from their parents; nothing else needs to remember it. Tables whose leading unique
+    constraint starts with organization_id set __org_index__ = False (that index serves)."""
+    __org_index__ = True
+
+    @declared_attr
+    def organization_id(cls) -> Mapped[int]:
+        return mapped_column(ForeignKey("organizations.id"), index=cls.__org_index__)
+
+
 class ItemState(str, Enum):
     open = "open"
     done = "done"
     na = "na"
 
 
-class Engagement(Base):
+class Engagement(OrgOwned, Base):
     __tablename__ = "engagements"
+    __table_args__ = (UniqueConstraint("organization_id", "name"),)   # names are per organization
+    __org_index__ = False
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
     # Methodology pack (packs/<id>.yaml) that defines this engagement's lanes and items.
     pack_id: Mapped[str] = mapped_column(String(64), default="bug-bounty")
     engagement_type: Mapped[str] = mapped_column(String(20), default="bug_bounty")
@@ -76,7 +116,7 @@ class Engagement(Base):
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
 
-class Asset(Base):
+class Asset(OrgOwned, Base):
     __tablename__ = "assets"
     __table_args__ = (UniqueConstraint("engagement_id", "host"),)
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -87,7 +127,7 @@ class Asset(Base):
     lanes: Mapped[list["Lane"]] = relationship(back_populates="asset")
 
 
-class Lane(Base):
+class Lane(OrgOwned, Base):
     __tablename__ = "lanes"
     __table_args__ = (UniqueConstraint("asset_id", "role"),)
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -120,7 +160,7 @@ class ChecklistItem(Base):
     lane: Mapped[Lane] = relationship(back_populates="items")
 
 
-class Evidence(Base):
+class Evidence(OrgOwned, Base):
     """Append-only. Linked into a per-engagement hash chain (see ledger.py)."""
     __tablename__ = "evidence"
     __table_args__ = (UniqueConstraint("engagement_id", "seq"),)
@@ -188,7 +228,7 @@ class JobStatus(str, Enum):
     skipped = "skipped"   # a pipeline step with nothing to work on; result["skipped_reason"] says why
 
 
-class Job(Base):
+class Job(OrgOwned, Base):
     """A tool run requested from the UI and executed by the worker."""
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -249,7 +289,7 @@ class AgentExchange(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class TestAccount(Base):
+class TestAccount(OrgOwned, Base):
     """A test account a person signed in to on the target (D-040, testaccounts.py). Its session
     material (a cookie header, a bearer token or a set of headers) is sealed with the
     engagement's key and is never returned by the API; the gateway adds it to requests sent "as"
@@ -272,7 +312,7 @@ class TestAccount(Base):
     last_used_at: Mapped[datetime | None]
 
 
-class WriteProposal(Base):
+class WriteProposal(OrgOwned, Base):
     """A state-changing request an agent proposed (D-041, approvals.py). Nothing is sent until a
     person approves it; the approval is for this exact request (request_sha256), expires, and
     the gateway uses it once. The request itself is sealed with the engagement's key."""
@@ -305,7 +345,7 @@ class WriteProposal(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class GatewayRequest(Base):
+class GatewayRequest(OrgOwned, Base):
     """One request, port probe or DNS question that reached the gateway (D-039), allowed or
     refused, with the reason. Written by the gateway through the API; never updated."""
     __tablename__ = "gateway_requests"
@@ -329,7 +369,7 @@ class GatewayRequest(Base):
     approval_id: Mapped[int | None]                              # the approved write it sent (D-041)
 
 
-class Observation(Base):
+class Observation(OrgOwned, Base):
     """What a recon job saw about a host (one row per host per job)."""
     __tablename__ = "observations"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -340,7 +380,7 @@ class Observation(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class Endpoint(Base):
+class Endpoint(OrgOwned, Base):
     """A URL seen by a crawl or an archive source. Only in-scope hosts are stored."""
     __tablename__ = "endpoints"
     # Unique on a hash: archive URLs can exceed the size of a btree index entry.
@@ -356,7 +396,7 @@ class Endpoint(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class Lead(Base):
+class Lead(OrgOwned, Base):
     """Something recon noticed that a hunt lane should look at (secret candidate,
     GraphQL operation, sourcemap). Secrets are stored masked and hashed only."""
     __tablename__ = "leads"
@@ -380,12 +420,15 @@ class Lead(Base):
 ROLES = ("viewer", "tester", "reviewer")
 
 
-class User(Base):
-    """A person who signs in. Owners manage people and engagements and can do everything;
-    everyone else gets roles per engagement (Membership)."""
+class User(OrgOwned, Base):
+    """A person who signs in, in one organization. Owners manage its people and engagements and
+    can do everything there; everyone else gets roles per engagement (Membership)."""
     __tablename__ = "users"
+    # An email is unique within an organization; sign-in finds the account whose password matches.
+    __table_args__ = (UniqueConstraint("organization_id", "email"),)
+    __org_index__ = False
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(254), unique=True)
+    email: Mapped[str] = mapped_column(String(254))
     name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(String(300))
     is_owner: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
@@ -409,7 +452,7 @@ class UserSession(Base):
     expires_at: Mapped[datetime]
 
 
-class Membership(Base):
+class Membership(OrgOwned, Base):
     """A person's roles on one engagement: viewer (read), tester (work), reviewer (sign)."""
     __tablename__ = "memberships"
     __table_args__ = (UniqueConstraint("engagement_id", "user_id"),)
@@ -432,12 +475,15 @@ class SigningKey(Base):
     revoked_at: Mapped[datetime | None]
 
 
-class KeyLogEntry(Base):
-    """Append-only, hash-chained record of every key registration and revocation (keylog.py).
-    Nothing updates or deletes a row. Reports carry the entries of the keys that signed them."""
+class KeyLogEntry(OrgOwned, Base):
+    """Append-only, hash-chained record of every key registration and revocation (keylog.py),
+    one chain per organization. Nothing updates or deletes a row. Reports carry the entries of
+    the keys that signed them."""
     __tablename__ = "key_log"
+    __table_args__ = (UniqueConstraint("organization_id", "seq"),)   # one chain per organization
+    __org_index__ = False
     id: Mapped[int] = mapped_column(primary_key=True)
-    seq: Mapped[int] = mapped_column(unique=True)
+    seq: Mapped[int]
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     user_name: Mapped[str] = mapped_column(String(200))                  # the name at the time
     key_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
@@ -450,13 +496,16 @@ class KeyLogEntry(Base):
     entry_hash: Mapped[str] = mapped_column(String(64))
 
 
-class AuditEntry(Base):
+class AuditEntry(OrgOwned, Base):
     """Append-only, hash-chained record of administrative changes (auditlog.py): scope and
-    rules, authorization, engagement settings, roles, and people. Nothing updates or deletes
-    a row. Reports carry the entries of their engagement and of its people."""
+    rules, authorization, engagement settings, roles, and people, one chain per organization.
+    Nothing updates or deletes a row. Reports carry the entries of their engagement and of its
+    people."""
     __tablename__ = "audit_log"
+    __table_args__ = (UniqueConstraint("organization_id", "seq"),)   # one chain per organization
+    __org_index__ = False
     id: Mapped[int] = mapped_column(primary_key=True)
-    seq: Mapped[int] = mapped_column(unique=True)
+    seq: Mapped[int]
     at: Mapped[str] = mapped_column(String(40))     # ISO 8601 UTC with microseconds, hashed as stored
     actor_kind: Mapped[str] = mapped_column(String(16))      # see auditlog.ACTORS
     actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
@@ -473,7 +522,7 @@ class AuditEntry(Base):
 
 # ---- evidence import (D-029) ------------------------------------------------------------
 
-class ImportBatch(Base):
+class ImportBatch(OrgOwned, Base):
     """One uploaded export file: who uploaded it, when, from which tool, and what became of
     each row. Rows refused as out of scope are listed by row number and host only; nothing
     else about them is kept."""
@@ -496,7 +545,7 @@ class ImportBatch(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
-class InboxEntry(Base):
+class InboxEntry(OrgOwned, Base):
     """One imported request and response, waiting for a person to map it to checklist items.
     Nothing here is evidence until it is mapped; mapping appends to the ledger and lists the
     evidence here. A dismissed entry stays, with who dismissed it and why."""
@@ -531,3 +580,6 @@ class InboxEntry(Base):
     dismissed_at: Mapped[datetime | None]
     dismiss_reason: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+from . import orgscope  # noqa: E402,F401  (scopes every session to its organization)

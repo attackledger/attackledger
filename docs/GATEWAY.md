@@ -117,7 +117,9 @@ The gateway is the one container that talks to the internet and parses what targ
 it holds no database credentials. It gets rules and writes its log through three API routes
 (`authz.py` permission `gateway`), authenticated with a gateway token that only the gateway
 and the API can read (a file the gateway creates in a volume shared with the API, or
-`ATTACKLEDGER_GATEWAY_TOKEN`):
+`ATTACKLEDGER_GATEWAY_TOKEN`). The token belongs to one organization: this one to the default
+organization; another organization's gateway gets its own from `python -m app.orgs
+gateway-token`, and sees only that organization's jobs, scopes and log (`ORGANIZATIONS.md`):
 
 | Route | Answers |
 |---|---|

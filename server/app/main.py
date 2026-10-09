@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, object_session
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault, workerapi
-from . import approvals, testaccounts
+from . import approvals, orgs, orgscope, testaccounts
 from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
@@ -229,11 +229,22 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
         email, addr = body.email.strip().lower(), request.client.host if request.client else ""
         if auth.locked(email, addr):
             raise HTTPException(429, "too many failed sign-ins; try again in 15 minutes")
-        user = session.scalar(select(User).where(User.email == email))
-        ok = auth.verify_password(body.password or "", user.password_hash if user else auth._DUMMY_HASH)
-        if not ok or user is None or user.disabled:
+        # The email may have an account in more than one organization (D-042): the one whose
+        # password matches signs in. Every candidate is checked, so the time does not say which.
+        with orgscope.unscoped(session):
+            candidates = session.scalars(select(User).where(User.email == email).order_by(User.id)).all()
+        user = None
+        for u in candidates or [None]:
+            ok = auth.verify_password(body.password or "", u.password_hash if u else auth._DUMMY_HASH)
+            if ok and u is not None and not u.disabled and user is None:
+                user = u
+        for u in candidates:
+            if u is not user:            # another organization's account leaves this session
+                session.expunge(u)
+        if user is None:
             auth.record_failure(email, addr)
             raise HTTPException(401, "wrong email or password")
+        orgscope.scope(session, user.organization_id)
         auth.clear_failures(email, addr)
         user.previous_sign_in_at, user.last_sign_in_at = user.last_sign_in_at, datetime.now(timezone.utc)
         value = auth.new_session(session, user.id)
@@ -253,7 +264,8 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
 def logout(request: Request, session: Session = Depends(get_session)):
     value = request.cookies.get(auth.COOKIE, "")
     if value:
-        auth.end_session(session, value)
+        with orgscope.unscoped(session):        # the cookie's hash finds the session, whoever's it is
+            auth.end_session(session, value)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.COOKIE, path="/")
     return resp
@@ -341,6 +353,9 @@ def me(request: Request, session: Session = Depends(get_session)):
     who = authz.current(request)
     out = {"kind": who.kind, "user_id": who.user_id, "name": who.name, "is_owner": who.is_owner,
            "mode": auth.mode(session), "roles": {str(k): list(v) for k, v in who.roles.items()}}
+    org = orgs.visible(session, who.organization_id)     # only once a deployment has more than one
+    if org is not None:
+        out["organization"] = org
     if who.kind == "person":
         user = session.get(User, who.user_id)
         out.update(password_chosen=user.password_chosen, key_notice=_key_notice(session, user))
@@ -1370,6 +1385,13 @@ def list_agent_runs(lane_id: int, session: Session = Depends(get_session)):
     return [_job_view(j, with_log=True) for j in jobs]
 
 
+def _plaintext_ok(session, eng: Engagement) -> bool:
+    """Plaintext blobs predate encryption (0018) and organizations (0022), so they are the
+    default organization's. Evidence names its hash as the caller gives it, so another
+    organization citing the same hash must not read them."""
+    return eng.organization_id == orgscope.default_id(session)
+
+
 @app.get("/blobs/{digest}")
 def get_blob(digest: str, request: Request, session: Session = Depends(get_session)):
     """The raw bytes behind an evidence hash (an agent's HTTP exchange or note), for review.
@@ -1385,7 +1407,7 @@ def get_blob(digest: str, request: Request, session: Session = Depends(get_sessi
         if eng.content_deleted_at is not None:
             deleted.append(eng)
             continue
-        data = blobs.get(digest, engagement_id=eng_id)
+        data = blobs.get(digest, engagement_id=eng_id, plaintext=_plaintext_ok(session, eng))
         if data is not None:
             break
     if data is None and deleted and len(deleted) == len(eng_ids):
@@ -1875,7 +1897,7 @@ def get_inbox_raw(eng_id: int, entry_id: int, part: str, session: Session = Depe
     eng = _get(session, Engagement, eng_id)
     if eng.content_deleted_at is not None:
         raise HTTPException(410, vault.deleted_sentence(vault.deleted_info(eng)))
-    data = blobs.get(digest, engagement_id=eng_id)
+    data = blobs.get(digest, engagement_id=eng_id, plaintext=_plaintext_ok(session, eng))
     if data is None:
         raise HTTPException(404, "the bytes for this hash are not in the blob store, or do not match it")
     return Response(data, media_type="text/plain; charset=utf-8",

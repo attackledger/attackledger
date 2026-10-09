@@ -228,9 +228,17 @@ can read what the worker holds: the worker token and the tokens of its running j
   of what was sent;
 - fail its own jobs, or hold them running until the heartbeat timeout.
 
+## Organizations (migration 0022)
+
+A worker token belongs to one organization, and claims only its jobs; the claim and the
+gateway's session answer carry the job's `organization_id`, and every write through a job
+token belongs to the job's organization. The token file above is the default organization's.
+Another organization's worker, which would run in that customer's network, gets its own token
+from `python -m app.orgs worker-token` (`ORGANIZATIONS.md`). Job tokens are unchanged: one job.
+
 ## Not done here
 
-- Workers in more than one place (several worker tokens, per-worker job ownership). One token per
-  deployment, as one gateway.
+- Several workers for one organization (per-worker job ownership). One token per organization,
+  as one gateway.
 - Checking an agent's exchange against the gateway's log before it becomes evidence.
 - TLS between the gateway and the API (one Docker network today; a hosted API would need it).

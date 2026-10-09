@@ -1,0 +1,1371 @@
+{
+ "audit_log": {
+  "entries": [
+   {
+    "action": "person.created",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.336933+00:00",
+    "change": {
+     "after": {
+      "disabled": false,
+      "email": "reviewer-alpha@example.com",
+      "is_owner": false,
+      "name": "Rita alpha"
+     },
+     "password": "assigned",
+     "person": {
+      "email": "reviewer-alpha@example.com",
+      "id": 2,
+      "name": "Rita alpha"
+     }
+    },
+    "engagement_id": null,
+    "seq": 2,
+    "subject_id": 2
+   },
+   {
+    "action": "person.created",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.361249+00:00",
+    "change": {
+     "after": {
+      "disabled": false,
+      "email": "viewer-alpha@example.com",
+      "is_owner": false,
+      "name": "Vic alpha"
+     },
+     "password": "assigned",
+     "person": {
+      "email": "viewer-alpha@example.com",
+      "id": 3,
+      "name": "Vic alpha"
+     }
+    },
+    "engagement_id": null,
+    "seq": 3,
+    "subject_id": 3
+   },
+   {
+    "action": "engagement.created",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.364780+00:00",
+    "change": {
+     "after": {
+      "engagement_type": "bug_bounty",
+      "name": "Engagement alpha",
+      "pack_id": "bug-bounty",
+      "policy_url": null
+     }
+    },
+    "engagement_id": 1,
+    "seq": 4,
+    "subject_id": null
+   },
+   {
+    "action": "scope.updated",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.369665+00:00",
+    "change": {
+     "after": {
+      "crawl_depth": 3,
+      "enabled_modules": [],
+      "exclude": [],
+      "include": [
+       "*.alpha.example.com"
+      ],
+      "rate_limit_rps": 5,
+      "research_header": "X-Bug-Bounty: alpha",
+      "research_user_agent": null
+     },
+     "before": {
+      "crawl_depth": 3,
+      "enabled_modules": [],
+      "exclude": [],
+      "include": [],
+      "rate_limit_rps": 5,
+      "research_header": null,
+      "research_user_agent": null
+     }
+    },
+    "engagement_id": 1,
+    "seq": 5,
+    "subject_id": null
+   },
+   {
+    "action": "engagement.authorized",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.372269+00:00",
+    "change": {
+     "after": {
+      "authorized_at": "2026-10-09T23:39:45.372164+00:00",
+      "authorized_by": "Olive alpha",
+      "policy_url": "https://example.com/policy"
+     },
+     "before": {
+      "authorized_at": null,
+      "authorized_by": null,
+      "policy_url": null
+     }
+    },
+    "engagement_id": 1,
+    "seq": 6,
+    "subject_id": null
+   },
+   {
+    "action": "members.updated",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.375766+00:00",
+    "change": {
+     "after": [
+      {
+       "email": "reviewer-alpha@example.com",
+       "name": "Rita alpha",
+       "roles": [
+        "reviewer",
+        "tester"
+       ],
+       "user_id": 2
+      },
+      {
+       "email": "viewer-alpha@example.com",
+       "name": "Vic alpha",
+       "roles": [
+        "viewer"
+       ],
+       "user_id": 3
+      }
+     ],
+     "before": []
+    },
+    "engagement_id": 1,
+    "seq": 7,
+    "subject_id": null
+   },
+   {
+    "action": "engagement.writes",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.378301+00:00",
+    "change": {
+     "after": {
+      "allow_writes": true
+     },
+     "before": {
+      "allow_writes": false
+     }
+    },
+    "engagement_id": 1,
+    "seq": 8,
+    "subject_id": null
+   },
+   {
+    "action": "engagement.retention",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.378520+00:00",
+    "change": {
+     "after": {
+      "retain_until": "2099-01-01"
+     },
+     "before": {
+      "retain_until": null
+     }
+    },
+    "engagement_id": 1,
+    "seq": 9,
+    "subject_id": null
+   },
+   {
+    "action": "import.batch",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.546537+00:00",
+    "change": {
+     "after": {
+      "accepted": 3,
+      "batch_id": 1,
+      "creator": "Hand-made fixture 1.0",
+      "duplicates": 1,
+      "file_sha256": "1bc91e30a4eb79ecf7b4eb3d30a2c40073a5a082374e64d37c14370e8261e625",
+      "format": "har",
+      "out_of_scope": 1,
+      "out_of_scope_host_count": 1,
+      "rows": 6,
+      "unreadable": 1
+     }
+    },
+    "engagement_id": 1,
+    "seq": 10,
+    "subject_id": null
+   },
+   {
+    "action": "import.dismissed",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.556941+00:00",
+    "change": {
+     "after": {
+      "entries": [
+       2
+      ],
+      "reason": "noise alpha"
+     }
+    },
+    "engagement_id": 1,
+    "seq": 11,
+    "subject_id": null
+   },
+   {
+    "action": "account.added",
+    "actor": {
+     "email": "owner-alpha@example.com",
+     "kind": "person",
+     "name": "Olive alpha",
+     "user_id": 1
+    },
+    "at": "2026-10-09T23:39:45.560106+00:00",
+    "change": {
+     "after": {
+      "fingerprint": "sha256:e75c5c295ab76724",
+      "header_names": [
+       "Cookie"
+      ],
+      "hosts": [
+       "shop.alpha.example.com"
+      ],
+      "kind": "cookie",
+      "label": "A",
+      "role": "customer alpha"
+     }
+    },
+    "engagement_id": 1,
+    "seq": 12,
+    "subject_id": null
+   }
+  ],
+  "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+  "head": {
+   "entry_hash": "e2d62ec1371de9bb3faf301b9522f360d64e1d8b6bb24c0b1178eccf144122b1",
+   "seq": 12
+  },
+  "links": [
+   {
+    "entry_hash": "f9a9c175b58d3e27774c0b29d18d35291de85f3585731f1770c0b53fe007ca57",
+    "prev_hash": "afd51deec48bedd42db16f90ba347bb38c96b87dc68d19f6f2aa82b0656dd488",
+    "record_sha256": "689133da4ef17612955232f82fd6468e4ce826a4b9fc01ba40b627adbb99008c",
+    "seq": 2
+   },
+   {
+    "entry_hash": "945be23fa6a8ba49388066de15c3c5289e20a583cba2da373a35ec5713bccfd6",
+    "prev_hash": "f9a9c175b58d3e27774c0b29d18d35291de85f3585731f1770c0b53fe007ca57",
+    "record_sha256": "a98b06ac949c166560d706f8d576a8228ba6c8c4f12558b00c49d8e1fb6bf3f0",
+    "seq": 3
+   },
+   {
+    "entry_hash": "b7097ebb9754a4e677ad75bb73dd8c5a5f45fa0256e7e1a604ea6b50001802cf",
+    "prev_hash": "945be23fa6a8ba49388066de15c3c5289e20a583cba2da373a35ec5713bccfd6",
+    "record_sha256": "b0e9ed19422b04507acf8d9f4264b4e6f6754d16d65246ab786f533bd999599e",
+    "seq": 4
+   },
+   {
+    "entry_hash": "60457c359d2d9acd26b99f8e6aa133f1ed83e3453a37154b88188c55d782f20b",
+    "prev_hash": "b7097ebb9754a4e677ad75bb73dd8c5a5f45fa0256e7e1a604ea6b50001802cf",
+    "record_sha256": "00a174f37671014e82b919a9be165b293482ddcac391475cf84d3ba44aad7a15",
+    "seq": 5
+   },
+   {
+    "entry_hash": "b9df8ede0b1a11ff512b0e75f547fa9ec8e0b5e8b2b326d9859687218015ea79",
+    "prev_hash": "60457c359d2d9acd26b99f8e6aa133f1ed83e3453a37154b88188c55d782f20b",
+    "record_sha256": "9a80e13b7e10183bf6f119ceaa4faad266e66e82e865981fdc415ecb73ff272d",
+    "seq": 6
+   },
+   {
+    "entry_hash": "9cff2b7dd3cc7b102e24a8f1e6a1c2d8eac6555aba257280359ac7095c7f00b7",
+    "prev_hash": "b9df8ede0b1a11ff512b0e75f547fa9ec8e0b5e8b2b326d9859687218015ea79",
+    "record_sha256": "2d6feddcdd4dae2e6ca7052d79197feaa82bb4d45849f5a484526bc7fe9c7e94",
+    "seq": 7
+   },
+   {
+    "entry_hash": "21ee654d95b7bd25e62cf101d8305e3e91b9be3003c9b3a419a3cfe363472170",
+    "prev_hash": "9cff2b7dd3cc7b102e24a8f1e6a1c2d8eac6555aba257280359ac7095c7f00b7",
+    "record_sha256": "cf877a280763e8a4b82fa8628a8b44657917a133a297195a1af5173fd8b5e995",
+    "seq": 8
+   },
+   {
+    "entry_hash": "b92a2536718502d1afb3bf367be759db100b05b07e0dbd22eda801be4dc1ca93",
+    "prev_hash": "21ee654d95b7bd25e62cf101d8305e3e91b9be3003c9b3a419a3cfe363472170",
+    "record_sha256": "58f6d9d6358a91f25df632ca700422a7c8e39d5e580a7306d3709e9b875de89d",
+    "seq": 9
+   },
+   {
+    "entry_hash": "d9008ecc345e8d55b151c0bd47901d31ae0e339e60e069efe940692153c8029e",
+    "prev_hash": "b92a2536718502d1afb3bf367be759db100b05b07e0dbd22eda801be4dc1ca93",
+    "record_sha256": "4704327b774102ff103a95c9bc65a28b0093f1ff9c79758272e7ab8bf18272dd",
+    "seq": 10
+   },
+   {
+    "entry_hash": "c4578c8d4da4a40544c14b19c9de6c325bcfe7a62da270422855b968a09aa07b",
+    "prev_hash": "d9008ecc345e8d55b151c0bd47901d31ae0e339e60e069efe940692153c8029e",
+    "record_sha256": "4fc868d90a568c1f443952cb94e6d87323119d69a6f784c76be59dca8797cbdf",
+    "seq": 11
+   },
+   {
+    "entry_hash": "e2d62ec1371de9bb3faf301b9522f360d64e1d8b6bb24c0b1178eccf144122b1",
+    "prev_hash": "c4578c8d4da4a40544c14b19c9de6c325bcfe7a62da270422855b968a09aa07b",
+    "record_sha256": "0a8ae0069195208031bc30455b7950055b412edc9532ca358f1785d6a862d0c7",
+    "seq": 12
+   }
+  ]
+ },
+ "controls": {
+  "controls": [
+   {
+    "evidenced": 1,
+    "framework": "dora",
+    "framework_name": "EU DORA (Regulation 2022/2554)",
+    "id": "DORA-ART24",
+    "lanes": [
+     "Access control",
+     "Auth & sessions",
+     "Business logic",
+     "Input handling",
+     "Mobile",
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "The testing programme, its independence, remediation and yearly coverage need other evidence.",
+    "required": 87,
+    "status": "partial",
+    "strength": "supporting",
+    "text": "Article 24, General requirements for digital operational resilience testing"
+   },
+   {
+    "evidenced": 1,
+    "framework": "dora",
+    "framework_name": "EU DORA (Regulation 2022/2554)",
+    "id": "DORA-ART25",
+    "lanes": [
+     "Access control",
+     "Auth & sessions",
+     "Business logic",
+     "Input handling",
+     "Mobile",
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "Vulnerability assessments and penetration testing are among the tests Article 25(1) lists. AttackLedger tests are not threat-led penetration testing (Article 26, RTS 2025/1190).",
+    "required": 87,
+    "status": "partial",
+    "strength": "supporting",
+    "text": "Article 25, Testing of ICT tools and systems"
+   },
+   {
+    "evidenced": 1,
+    "framework": "dora",
+    "framework_name": "EU DORA (Regulation 2022/2554)",
+    "id": "DORA-ART8",
+    "lanes": [
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "The entity identifies and inventories its own assets; external discovery can only be compared with that.",
+    "required": 17,
+    "status": "resolved",
+    "strength": "supporting",
+    "text": "Article 8, Identification"
+   },
+   {
+    "evidenced": 0,
+    "framework": "dora",
+    "framework_name": "EU DORA (Regulation 2022/2554)",
+    "id": "DORA-ART9",
+    "lanes": [
+     "Access control",
+     "Auth & sessions"
+    ],
+    "not_applicable": 0,
+    "note": "Relevant to access limitation and strong authentication, Article 9(4)(c) and (d).",
+    "required": 34,
+    "status": "none",
+    "strength": "supporting",
+    "text": "Article 9, Protection and prevention"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.5.15",
+    "lanes": [
+     "Access control"
+    ],
+    "not_applicable": 0,
+    "note": "",
+    "required": 15,
+    "status": "none",
+    "strength": "supporting",
+    "text": "Access control"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.5.17",
+    "lanes": [
+     "Auth & sessions"
+    ],
+    "not_applicable": 0,
+    "note": "",
+    "required": 1,
+    "status": "none",
+    "strength": "supporting",
+    "text": "Authentication information"
+   },
+   {
+    "evidenced": 1,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.5.9",
+    "lanes": [
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "Hosts and applications found in testing can be compared with the inventory; they are not the inventory.",
+    "required": 17,
+    "status": "resolved",
+    "strength": "supporting",
+    "text": "Inventory of information and other associated assets"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.8.24",
+    "lanes": [
+     "Auth & sessions",
+     "Recon"
+    ],
+    "not_applicable": 2,
+    "note": "",
+    "required": 3,
+    "status": "only_not_applicable",
+    "strength": "supporting",
+    "text": "Use of cryptography"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.8.28",
+    "lanes": [
+     "Business logic",
+     "Input handling",
+     "Mobile"
+    ],
+    "not_applicable": 0,
+    "note": "",
+    "required": 36,
+    "status": "none",
+    "strength": "supporting",
+    "text": "Secure coding"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.8.3",
+    "lanes": [
+     "Access control"
+    ],
+    "not_applicable": 0,
+    "note": "",
+    "required": 15,
+    "status": "none",
+    "strength": "partial",
+    "text": "Information access restriction"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.8.5",
+    "lanes": [
+     "Auth & sessions"
+    ],
+    "not_applicable": 0,
+    "note": "",
+    "required": 19,
+    "status": "none",
+    "strength": "partial",
+    "text": "Secure authentication"
+   },
+   {
+    "evidenced": 1,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.8.8",
+    "lanes": [
+     "Access control",
+     "Auth & sessions",
+     "Business logic",
+     "Input handling",
+     "Mobile",
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "Testing identifies vulnerabilities; evaluating them and acting in time need other evidence.",
+    "required": 87,
+    "status": "partial",
+    "strength": "partial",
+    "text": "Management of technical vulnerabilities"
+   },
+   {
+    "evidenced": 0,
+    "framework": "iso-27001-2022",
+    "framework_name": "ISO/IEC 27001:2022 Annex A",
+    "id": "ISO-A.8.9",
+    "lanes": [
+     "Recon"
+    ],
+    "not_applicable": 1,
+    "note": "",
+    "required": 1,
+    "status": "not_applicable",
+    "strength": "supporting",
+    "text": "Configuration management"
+   },
+   {
+    "evidenced": 1,
+    "framework": "pci-dss-4.0.1",
+    "framework_name": "PCI DSS v4.0.1",
+    "id": "PCI-11.4.3",
+    "lanes": [
+     "Access control",
+     "Auth & sessions",
+     "Business logic",
+     "Input handling",
+     "Mobile",
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "Application-layer part only, and only when testing is from outside the network. Frequency, tester qualification and independence, and network-layer testing need other evidence. A bug bounty can add to this test but does not replace it.",
+    "required": 87,
+    "status": "partial",
+    "strength": "supporting",
+    "text": "External penetration testing is performed"
+   },
+   {
+    "evidenced": 0,
+    "framework": "pci-dss-4.0.1",
+    "framework_name": "PCI DSS v4.0.1",
+    "id": "PCI-4.2.1",
+    "lanes": [
+     "Recon"
+    ],
+    "not_applicable": 1,
+    "note": "Only for hosts that receive or send PAN. A TLS test shows the protocol and certificate state at test time.",
+    "required": 1,
+    "status": "not_applicable",
+    "strength": "supporting",
+    "text": "Strong cryptography protects PAN in transit over open, public networks"
+   },
+   {
+    "evidenced": 0,
+    "framework": "pci-dss-4.0.1",
+    "framework_name": "PCI DSS v4.0.1",
+    "id": "PCI-6.2.4",
+    "lanes": [
+     "Access control",
+     "Auth & sessions",
+     "Business logic",
+     "Input handling"
+    ],
+    "not_applicable": 0,
+    "note": "Assessed mainly from procedures and developers; a test shows whether those attack types were found.",
+    "required": 59,
+    "status": "none",
+    "strength": "supporting",
+    "text": "Software engineering techniques prevent or mitigate common software attacks"
+   },
+   {
+    "evidenced": 1,
+    "framework": "pci-dss-4.0.1",
+    "framework_name": "PCI DSS v4.0.1",
+    "id": "PCI-6.3.1",
+    "lanes": [
+     "Access control",
+     "Auth & sessions",
+     "Business logic",
+     "Input handling",
+     "Mobile",
+     "Recon"
+    ],
+    "not_applicable": 16,
+    "note": "The guidance names bug bounty programs as one way to learn of vulnerabilities in bespoke software.",
+    "required": 87,
+    "status": "partial",
+    "strength": "supporting",
+    "text": "Security vulnerabilities are identified and managed"
+   }
+  ],
+  "disclaimer": "Indicative mapping of tests to controls; not a compliance determination. Reviewed against public sources by Claude on 2026-10-09; not reviewed by a qualified assessor (QSA, ISO lead auditor or DORA TLPT authority).",
+  "engagement": "Engagement alpha",
+  "hosts_in_scope": 1,
+  "pack": "bug-bounty",
+  "reviewed": {
+   "by": "Claude (AI assistant), for the AttackLedger project",
+   "date": "2026-10-09",
+   "sources": [
+    {
+     "checked": "2026-10-09",
+     "framework": "pci-dss-4.0.1",
+     "note": "v4.0.1 is the currently published version: the PCI SSC request for comments of 3 June to 20 July 2026 is on \"the currently-published version\", v4.0.1. The standard itself is behind the library's licence page and was not fetched; requirement numbers and the 6.4.1 to 6.4.2 change come from the RFC notice and secondary sources.\n",
+     "title": "PCI DSS v4.0.1, PCI Security Standards Council document library",
+     "url": "https://www.pcisecuritystandards.org/document_library/",
+     "version": "v4.0.1 (June 2024)"
+    },
+    {
+     "checked": "2026-10-09",
+     "framework": "pci-dss-4.0.1",
+     "title": "RFC instructions for the currently published PCI DSS v4.0.1",
+     "url": "https://www.pcisecuritystandards.org/rfc_instructions_pci-dss-v4-0-1-june2026/",
+     "version": "June 2026"
+    },
+    {
+     "checked": "2026-10-09",
+     "framework": "iso-27001-2022",
+     "note": "Titles checked against public control indexes; iso.org refused automated access. Amd 1:2024 (climate action) changes clauses 4.1 and 4.2, not Annex A.\n",
+     "title": "ISO/IEC 27001:2022 (with Amd 1:2024), Annex A; control names as in ISO/IEC 27002:2022",
+     "url": "https://www.iso.org/standard/27001",
+     "version": "2022, amended 2024"
+    },
+    {
+     "checked": "2026-10-09",
+     "framework": "dora",
+     "note": "Article titles and the test types in Article 25(1) read from the EUR-Lex text.",
+     "title": "Regulation (EU) 2022/2554 (DORA), EUR-Lex",
+     "url": "https://eur-lex.europa.eu/eli/reg/2022/2554/oj/eng",
+     "version": "OJ L 333, 27.12.2022"
+    },
+    {
+     "checked": "2026-10-09",
+     "framework": "dora",
+     "note": "Read to confirm that AttackLedger tests are not TLPT; nothing maps to Article 26 or 27.",
+     "title": "Commission Delegated Regulation (EU) 2025/1190, RTS on threat-led penetration testing",
+     "url": "https://eur-lex.europa.eu/eli/reg_del/2025/1190/oj/eng",
+     "version": "OJ L 2025/1190, 18.6.2025; in force 8.7.2025"
+    }
+   ],
+   "statement": "Reviewed against public sources by Claude on 2026-10-09; not reviewed by a qualified assessor (QSA, ISO lead auditor or DORA TLPT authority)."
+  },
+  "strengths": {
+   "full": "The result alone answers the control's test; nothing else is needed.",
+   "partial": "The result answers a defined part of the control's test; the rest needs other evidence.",
+   "supporting": "The result is relevant and can corroborate other evidence; it does not answer the test."
+  }
+ },
+ "engagement": {
+  "authorized_at": "2026-10-09T23:39:45.372164+00:00",
+  "authorized_by": "Olive alpha",
+  "content_deleted": null,
+  "id": 1,
+  "name": "Engagement alpha",
+  "pack": {
+   "id": "bug-bounty",
+   "lanes": [
+    {
+     "key": "recon",
+     "name": "Recon"
+    },
+    {
+     "key": "mapper",
+     "name": "Model"
+    },
+    {
+     "key": "authz",
+     "name": "Access control"
+    },
+    {
+     "key": "authflow",
+     "name": "Auth & sessions"
+    },
+    {
+     "key": "logic",
+     "name": "Business logic"
+    },
+    {
+     "key": "injection",
+     "name": "Input handling"
+    },
+    {
+     "key": "mobile",
+     "name": "Mobile"
+    }
+   ],
+   "name": "Bug bounty",
+   "version": "0.3"
+  },
+  "policy_url": "https://example.com/policy",
+  "rate_limit_rps": 5,
+  "redact_evidence": true,
+  "require_signatures": false,
+  "research_identification": {
+   "header": "X-Bug-Bounty: alpha",
+   "user_agent": null
+  },
+  "retain_until": "2099-01-01",
+  "scope": {
+   "exclude": [],
+   "include": [
+    "*.alpha.example.com"
+   ]
+  },
+  "separation_of_duties": false,
+  "type": "bug_bounty"
+ },
+ "evidence": [
+  {
+   "chain_hash": "bd5fb7adb077359454666177d4c8bf2d5482e01d11e9b58f03bb4c9dce19d36f",
+   "created_at": "2026-10-09T23:39:45.404955+00:00",
+   "host": "shop.alpha.example.com",
+   "id": 1,
+   "item_id": null,
+   "kind": "file",
+   "lane_id": 1,
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "role": "recon",
+   "seq": 1,
+   "sha256": "7dcb150b7a43ef52e2e2b85fabf3b5e5544f0854969af0c100201dcc93dddc67",
+   "source": "recon",
+   "summary": "Resolve hosts run, job 1",
+   "summary_sha256": "6e9e9bdfde1329b356c58961002db02a17f2c15ee80f2c66a16f1542084c86d7",
+   "uri": "job:1",
+   "v": 2
+  },
+  {
+   "chain_hash": "d74da03e843ac71da65064395cfad216babc134d33863aaa1a7cc539cdb72ad4",
+   "created_at": "2026-10-09T23:39:45.423216+00:00",
+   "host": "shop.alpha.example.com",
+   "id": 2,
+   "item_id": 1,
+   "kind": "note",
+   "lane_id": 1,
+   "prev_hash": "bd5fb7adb077359454666177d4c8bf2d5482e01d11e9b58f03bb4c9dce19d36f",
+   "role": "recon",
+   "seq": 2,
+   "sha256": "2932dbaedbb93225efcd81c6d64b824d8b4c7ffd77d6feedd4fe7085cded13cb",
+   "source": "manual",
+   "summary": "note alpha",
+   "summary_sha256": "e6929390d1593e244c96c6a4f3e12aec86bb2e01cc1f9b43d64bcb120311d6d0",
+   "uri": null,
+   "v": 2
+  },
+  {
+   "chain_hash": "2bfe84b21844fbd73318350d8a56414bbccb3ab6243e66bb213506d0265cf232",
+   "created_at": "2026-10-09T23:39:45.553949+00:00",
+   "host": "shop.alpha.example.com",
+   "id": 3,
+   "item_id": 18,
+   "kind": "response",
+   "lane_id": 2,
+   "prev_hash": "d74da03e843ac71da65064395cfad216babc134d33863aaa1a7cc539cdb72ad4",
+   "role": "mapper",
+   "seq": 3,
+   "sha256": "056ccc8ec2a15f176a9ae161f6f3cb4fae3330fd51cd161bba28f09458021ee7",
+   "source": "import:har",
+   "summary": "Imported from HAR 1.2, row 1: POST https://shop.alpha.example.com/rest/user/login -> 200 (sign-in) [6 values redacted: Cookie, password, email address, Set-Cookie, token]",
+   "summary_sha256": "f1a3bda98ae7eeacecbb9bb4c69bd4d7517e46cbc1a94f4782d82d6d4ed97395",
+   "uri": "https://shop.alpha.example.com/rest/user/login",
+   "v": 2
+  },
+  {
+   "chain_hash": "affe9ce7bb4de6a8b7d05415a1ea42cf4a76aed2b0eab651e65ed8e21acef0ae",
+   "created_at": "2026-10-09T23:39:45.575961+00:00",
+   "host": "shop.alpha.example.com",
+   "id": 4,
+   "item_id": 19,
+   "kind": "response",
+   "lane_id": 2,
+   "prev_hash": "2bfe84b21844fbd73318350d8a56414bbccb3ab6243e66bb213506d0265cf232",
+   "role": "mapper",
+   "seq": 4,
+   "sha256": "9f90d4f480319488a5c1419a67474ba8e4239e587308dd0b4500072319e5a519",
+   "source": "agent",
+   "summary": "[agent] GET https://shop.alpha.example.com/ -> 200. agent saw alpha",
+   "summary_sha256": "5d92b66b50ffd1a639a2e71c4039d53db9b945c34e66a618962a597ade6bd2cf",
+   "uri": "https://shop.alpha.example.com/",
+   "v": 2
+  }
+ ],
+ "format": "attackledger-report/2",
+ "generated_at": "2026-10-09T23:39:45.589882+00:00",
+ "hosts": [
+  {
+   "host": "shop.alpha.example.com",
+   "in_scope": true
+  }
+ ],
+ "integrity": {
+  "algorithm": "sha256",
+  "body_sha256": "89570cac8db0d0c3c130935af217686c62cca88316d82e48a8a725133c914309",
+  "chain_genesis": "0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ "jobs": [
+  {
+   "finished_at": "2026-10-09T23:39:45.405434+00:00",
+   "id": 1,
+   "kind": "resolve",
+   "output_sha256": "7dcb150b7a43ef52e2e2b85fabf3b5e5544f0854969af0c100201dcc93dddc67",
+   "result_count": 1,
+   "started_at": "2026-10-09T23:39:45.391287+00:00",
+   "status": "done",
+   "targets": 1
+  },
+  {
+   "finished_at": "2026-10-09T23:39:45.418472+00:00",
+   "id": 2,
+   "kind": "wellknown",
+   "output_sha256": null,
+   "result_count": 2,
+   "started_at": "2026-10-09T23:39:45.409749+00:00",
+   "status": "done",
+   "targets": 1
+  },
+  {
+   "finished_at": null,
+   "id": 3,
+   "kind": "agent",
+   "output_sha256": null,
+   "result_count": 0,
+   "started_at": "2026-10-09T23:39:45.564994+00:00",
+   "status": "running",
+   "targets": 1
+  }
+ ],
+ "key_log": {
+  "entries": [
+   {
+    "algorithm": "Ed25519",
+    "at": "2026-10-09T23:39:45.503106+00:00",
+    "event": "registered",
+    "key_fingerprint": "2ae8e19906c979cf1cffc03abcd8ca7bd0f82e255b44ba6730e84f2b34fd44c5",
+    "seq": 1,
+    "user_id": 2,
+    "user_name": "Rita alpha",
+    "via": "assigned_password"
+   }
+  ],
+  "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+  "head": {
+   "entry_hash": "6fa0267ca411ccf5ffc5695ed05ffacdc37a25628f1c753271bd4ac4fad0f651",
+   "seq": 1
+  },
+  "links": [
+   {
+    "entry_hash": "6fa0267ca411ccf5ffc5695ed05ffacdc37a25628f1c753271bd4ac4fad0f651",
+    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+    "record_sha256": "7bd84b19967dd2fd256b1c28f8bf6404eac41946716e9ebd51b6e686820fa49f",
+    "seq": 1
+   }
+  ]
+ },
+ "lanes": [
+  {
+   "evidence_ids": [
+    1,
+    2
+   ],
+   "host": "shop.alpha.example.com",
+   "items": [
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 1,
+     "item_id": 1,
+     "key": "BUG-BOUNTY-RECON-01",
+     "na_reason": null,
+     "state": "done",
+     "text": "Scope, required research header and rate limit confirmed against the live program policy"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 2,
+     "item_id": 2,
+     "key": "BUG-BOUNTY-RECON-02",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Information gathering: search engines, metafiles, entry points and framework fingerprint"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25",
+      "ISO-A.8.9"
+     ],
+     "idx": 3,
+     "item_id": 3,
+     "key": "BUG-BOUNTY-RECON-03",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Configuration: admin interfaces, HTTP methods, default and backup files, security headers"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25",
+      "ISO-A.8.24",
+      "PCI-4.2.1"
+     ],
+     "idx": 4,
+     "item_id": 4,
+     "key": "BUG-BOUNTY-RECON-04",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Transport security: TLS versions, certificates, HSTS, cookies sent over plain HTTP"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25",
+      "ISO-A.8.24"
+     ],
+     "idx": 5,
+     "item_id": 5,
+     "key": "BUG-BOUNTY-RECON-05",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Cryptography in use where exposed: weak algorithms, padding, randomness"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 6,
+     "item_id": 6,
+     "key": "BUG-BOUNTY-RECON-06",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Source and secret leaks: repositories, backups, sourcemaps, keys in client code (never used)"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 7,
+     "item_id": 7,
+     "key": "BUG-BOUNTY-RECON-07",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Subdomains, including takeover candidates from dangling DNS records"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 8,
+     "item_id": 8,
+     "key": "BUG-BOUNTY-RECON-08",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Shadow and legacy APIs: old versions, undocumented paths, staging hosts"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 9,
+     "item_id": 9,
+     "key": "BUG-BOUNTY-RECON-09",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Network surface: open ports and services beyond the web"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 10,
+     "item_id": 10,
+     "key": "BUG-BOUNTY-RECON-10",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Cloud resources linked to the target: storage buckets, CDNs, cloud service settings"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 11,
+     "item_id": 11,
+     "key": "BUG-BOUNTY-RECON-11",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "gRPC and other non-HTTP APIs (or N/A, with the signal that was checked)"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 12,
+     "item_id": 12,
+     "key": "BUG-BOUNTY-RECON-12",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Technology fingerprint recorded, including the identity provider (\"none found\" is a result)"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 13,
+     "item_id": 13,
+     "key": "BUG-BOUNTY-RECON-13",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Decision on each secret candidate: report, time-box or skip, with the reason"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 14,
+     "item_id": 14,
+     "key": "BUG-BOUNTY-RECON-14",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Handoff to the model lane: live endpoints and the authentication surface"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 15,
+     "item_id": 15,
+     "key": "BUG-BOUNTY-RECON-15",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 16,
+     "item_id": 16,
+     "key": "BUG-BOUNTY-RECON-16",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Every suspected finding re-verified independently before it is reported (or N/A: none)"
+    },
+    {
+     "controls": [
+      "ISO-A.5.9",
+      "DORA-ART8",
+      "PCI-6.3.1",
+      "PCI-11.4.3",
+      "ISO-A.8.8",
+      "DORA-ART24",
+      "DORA-ART25"
+     ],
+     "idx": 17,
+     "item_id": 17,
+     "key": "BUG-BOUNTY-RECON-17",
+     "na_reason": "lab alpha",
+     "state": "na",
+     "text": "Every negative result backed by a positive control showing the test could have found the issue"
+    }
+   ],
+   "lane_id": 1,
+   "name": "Recon",
+   "receipt": {
+    "closed_by": "Rita alpha",
+    "closed_by_email": "reviewer-alpha@example.com",
+    "closed_by_user": 2,
+    "issued_at": "2026-10-09T23:39:45.509645+00:00",
+    "manifest_sha256": "90728ca69fe07c2b1c8242c24621b1fb235685e7b732f6fdaba9009ee7d92d0d",
+    "signature": {
+     "algorithm": "Ed25519",
+     "key_fingerprint": "2ae8e19906c979cf1cffc03abcd8ca7bd0f82e255b44ba6730e84f2b34fd44c5",
+     "payload": "{\"chain\":{\"head\":\"d74da03e843ac71da65064395cfad216babc134d33863aaa1a7cc539cdb72ad4\",\"seq\":2},\"engagement\":{\"id\":1,\"name\":\"Engagement alpha\"},\"format\":\"attackledger-receipt-v3\",\"issued_at\":\"2026-10-09T23:39:45+00:00\",\"key_fingerprint\":\"2ae8e19906c979cf1cffc03abcd8ca7bd0f82e255b44ba6730e84f2b34fd44c5\",\"lane\":{\"host\":\"shop.alpha.example.com\",\"id\":1,\"role\":\"recon\"},\"manifest_sha256\":\"90728ca69fe07c2b1c8242c24621b1fb235685e7b732f6fdaba9009ee7d92d0d\",\"signer\":{\"email\":\"reviewer-alpha@example.com\",\"id\":2,\"name\":\"Rita alpha\"}}",
+     "public_key": "MCowBQYDK2VwAyEA5Xw3WtF7IBtZH5yvQbxs3Fxt6YMS2HIhzfGiZHzTbRk=",
+     "value": "FmFECQ7FzVlXrbtx3cBtnI4BrXa8U82cM+uNs4q2CgVqbEGoSci1OBRpAe81x3WgqDV2Z2/6yqN3IoHnQoZWCA=="
+    }
+   },
+   "role": "recon",
+   "status": "closed"
+  },
+  {
+   "evidence_ids": [
+    3,
+    4
+   ],
+   "host": "shop.alpha.example.com",
+   "items": [
+    {
+     "controls": [],
+     "idx": 1,
+     "item_id": 18,
+     "key": "BUG-BOUNTY-MAPPER-01",
+     "na_reason": null,
+     "state": "open",
+     "text": "JavaScript bundles and lazy-loaded chunks collected; API calls traced to their endpoints"
+    },
+    {
+     "controls": [],
+     "idx": 2,
+     "item_id": 19,
+     "key": "BUG-BOUNTY-MAPPER-02",
+     "na_reason": null,
+     "state": "open",
+     "text": "GraphQL schema and operations inventoried (or N/A, with evidence that there is no GraphQL)"
+    },
+    {
+     "controls": [],
+     "idx": 3,
+     "item_id": 20,
+     "key": "BUG-BOUNTY-MAPPER-03",
+     "na_reason": null,
+     "state": "open",
+     "text": "Calls the app makes before any identity-provider redirect recorded"
+    },
+    {
+     "controls": [],
+     "idx": 4,
+     "item_id": 21,
+     "key": "BUG-BOUNTY-MAPPER-04",
+     "na_reason": null,
+     "state": "open",
+     "text": "Roles: every kind of user, and whether a test account exists for each"
+    },
+    {
+     "controls": [],
+     "idx": 5,
+     "item_id": 22,
+     "key": "BUG-BOUNTY-MAPPER-05",
+     "na_reason": null,
+     "state": "open",
+     "text": "Objects: identifier format, ownership field, and the endpoints that read and write them"
+    },
+    {
+     "controls": [],
+     "idx": 6,
+     "item_id": 23,
+     "key": "BUG-BOUNTY-MAPPER-06",
+     "na_reason": null,
+     "state": "open",
+     "text": "Flows: every step with its method, path and precondition"
+    },
+    {
+     "controls": [],
+     "idx": 7,
+     "item_id": 24,
+     "key": "BUG-BOUNTY-MAPPER-07",
+     "na_reason": null,
+     "state": "open",
+     "text": "State machine: states, allowed transitions and the endpoint that triggers each one"
+    },
+    {
+     "controls": [],
+     "idx": 8,
+     "item_id": 25,
+     "key": "BUG-BOUNTY-MAPPER-08",
+     "na_reason": null,
+     "state": "open",
+     "text": "Authentication required by every endpoint (anonymous, signed in, step-up) and the methods seen"
+    },
+    {
+     "controls": [],
+     "idx": 9,
+     "item_id": 26,
+     "key": "BUG-BOUNTY-MAPPER-09",
+     "na_reason": null,
+     "state": "open",
+     "text": "Roles and objects that were not observed are marked unverified; nothing is assumed"
+    },
+    {
+     "controls": [],
+     "idx": 10,
+     "item_id": 27,
+     "key": "BUG-BOUNTY-MAPPER-10",
+     "na_reason": null,
+     "state": "open",
+     "text": "Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)"
+    },
+    {
+     "controls": [],
+     "idx": 11,
+     "item_id": 28,
+     "key": "BUG-BOUNTY-MAPPER-11",
+     "na_reason": null,
+     "state": "open",
+     "text": "Every suspected finding re-verified independently before it is reported (or N/A: none)"
+    },
+    {
+     "controls": [],
+     "idx": 12,
+     "item_id": 29,
+     "key": "BUG-BOUNTY-MAPPER-12",
+     "na_reason": null,
+     "state": "open",
+     "text": "Every negative result backed by a positive control showing the test could have found the issue"
+    }
+   ],
+   "lane_id": 2,
+   "name": "Model",
+   "receipt": null,
+   "role": "mapper",
+   "status": "open"
+  }
+ ],
+ "summary": {
+  "chain_head": "affe9ce7bb4de6a8b7d05415a1ea42cf4a76aed2b0eab651e65ed8e21acef0ae",
+  "evidence_entries": 4,
+  "hosts_in_scope": 1,
+  "lanes_opened": 2,
+  "lanes_per_host": 7,
+  "lanes_possible": 7,
+  "lanes_receipted": 1,
+  "lanes_stale": 0
+ }
+}

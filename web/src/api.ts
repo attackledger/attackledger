@@ -278,6 +278,8 @@ export interface Me {
   roles: Record<string, string[]>;
   password_chosen?: boolean;     // people only: false while the password is one someone else set
   key_notice?: KeyNotice;        // people only
+  // Only when the deployment has more than one organization (D-042): which one is yours.
+  organization?: { id: number; name: string };
 }
 
 /** Keys registered or revoked for you since your previous sign-in (D-036). */

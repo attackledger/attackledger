@@ -63,9 +63,10 @@ def put(data: bytes, *, engagement_id: int | None = None) -> str:
     return digest
 
 
-def get(digest: str, *, engagement_id: int | None = None) -> bytes | None:
+def get(digest: str, *, engagement_id: int | None = None, plaintext: bool = True) -> bytes | None:
     """The plaintext, or None: not stored, deleted, the wrong engagement's key, tampered,
-    or bytes that no longer match their hash."""
+    or bytes that no longer match their hash. plaintext=False: do not fall back to the
+    plaintext store (another organization's engagement, which cannot have stored there)."""
     if not _HEX.match(digest or ""):
         return None
     if engagement_id is not None:
@@ -78,6 +79,8 @@ def get(digest: str, *, engagement_id: int | None = None) -> bytes | None:
             except vault.StoreError:
                 return None
             return data if data is not None and hashlib.sha256(data).hexdigest() == digest else None
+        if not plaintext:
+            return None
     path = plain_path(digest)
     if not path.is_file():
         return None
