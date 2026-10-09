@@ -204,3 +204,162 @@ DEBUG and TRACE. juice-proxy saw 200 requests, all GET, peak 20 in any sliding s
 engagement's identification and none with the forged values; the six writes were refused with 403 and never
 reached it. A direct connection from the worker to juice.lab.test failed (the name does not resolve there,
 and the lab network is not attached).
+
+## Recon and agent context for single-page apps (2026-10-09)
+
+Machine-readable results: `tools/benchmark/results-2026-10-09-recon-agent.json` (the comparison), with the two
+full runs in `results-2026-10-09-recon-before.json` and `results-2026-10-09-recon-after.json`. Same target,
+settings and gateway stack as the run above. Before: images built from `main` at `d856413`. After: images built
+from branch `feat/recon-agent` (`3ffe039`). Both runs were recon only (`run.py up`, `recon`, `score`, `down`) with
+no agent run, because there is no API key. The agent-context comparison below is measured on the lane context
+the API serves, not on a live agent loop.
+
+What changed (gaps 3 to 6 above):
+
+- **Triage counts an API.** A new API signal (+2) fires when recon has recorded at least 3 distinct API-like
+  paths on the host (/api/, /rest/, /graphql, /v2/, with identifiers collapsed). Juice Shop now scores 5
+  (ODDPORT, KEYWORD, 200, API) and is golden. The probe-only score is unchanged, and one or two API links do not
+  count. A host with only a 200 and an API still scores 3.
+- **Content discovery runs on catch-all hosts.** The baseline now fingerprints two random paths (status, size,
+  sha256, words, lines, title). When both get the same 200 page, feroxbuster runs with that page filtered out (by
+  size here: `--filter-size 9393`), and the results are filtered again in the runner. A host that answers every
+  path with the same error or redirect is still skipped. 200 directories it finds are checked for a listing.
+- **A new step, Read well-known files (`wellknown`, not opt-in).** It reads robots.txt and security.txt
+  (/.well-known/ first) and checks the directories robots.txt names for a listing, with at most 13 GETs per
+  service. Paths become endpoints. Robots rules, security contacts and listings become leads, and listing
+  entries are recorded without being fetched.
+- **JS analysis extracts SPA routes.** Angular, React Router and Vue router tables are read, nested children
+  are joined to their parent, hash routing gives `/#/score-board`, and `./redirect?to=` links are resolved.
+- **`urls.clean` keeps more.** Media under interesting directories (uploads, backup, ftp, private and similar)
+  is kept, as are archives, sourcemaps and PDFs anywhere, and hash routes as their own entries. Recorded files and
+  routes are never chosen as parameter-discovery targets.
+- **Agent context and reading view** (see below).
+
+### Recon recall
+
+| | Before | After |
+|---|---|---|
+| Endpoints | 134 | 198 |
+| Leads | 23 | 28 (+ robots, security-txt, listing; 14 param-class, 9 parameter) |
+| In-reach items, automated matcher | 5 / 32 (15.6%) | **15 / 32 (46.9%)** |
+| In-reach items, after review (S05 rejected as before) | 4 / 32 (12.5%) | **14 / 32 (43.8%)** |
+| Challenges solved by recon traffic | errorHandling, exposedMetrics | errorHandling, exposedMetrics, securityPolicy |
+
+These items are newly surfaced, each through the step named:
+
+| Item | How it was surfaced |
+|---|---|
+| privacyPolicy, adminSection | SPA routes `/#/privacy-security/privacy-policy` and `/#/administration` (jsanalyze) |
+| web3Sandbox | before: only the chunk name. After: also route `/#/web3-sandbox` |
+| securityPolicy | security-txt lead and endpoint (wellknown) |
+| S01 robots.txt | robots lead: `robots.txt: 1 disallowed path: /ftp` (wellknown) |
+| directoryListing | listing lead `Directory listing at /ftp: 11 entries` plus the 11 entries as endpoints (wellknown, then content) |
+| easterEggLevelOne, forgottenDevBackup, forgottenBackup, misplacedSignatureFile | `/ftp/eastere.gg`, `/ftp/package.json.bak`, `/ftp/coupons_2013.md.bak` and `/ftp/suspicious_errors.yml` listed by name. Reading them needs the `%2500` null-byte bypass, which recon does not try. |
+| redirectChallenge | `./redirect?to=` links now extracted, so paramclass records `redirect-prone parameter: to` on `/redirect` |
+
+Still not surfaced by recon: /api-docs (S02), /encryptionkeys (S03), /metrics as an endpoint, /support/logs and
+/infrastructure (none of these is in `common.txt`, and content discovery does not recurse); the SQL-injection, JWT,
+JSONP, CORS, header and test-credential items; the redirect crypto addresses (the endpoint store keeps one
+`/redirect?to=` URL per parameter set, so the crypto addresses are collapsed away; the agent's bundle view lists
+them, see below); and the photo-wall image. No step saw the image URL in this run: it only appears in
+`/rest/memories` JSON, which is not crawled. So the static-file change is covered by unit tests only, not by
+this benchmark.
+
+### Traffic (after)
+
+| Step | Status | Seconds | Requests | Peak / calendar second | Peak / sliding 1 s |
+|---|---|---|---|---|---|
+| probe | done | 0.3 | 1 | 1 | 1 |
+| wellknown | done | 0.9 | 3 | 3 | 3 |
+| crawl | done | 13.2 | 29 | 20 | 20 |
+| content | done (catch-all filtered by size 9393) | 268.0 | 4,750 | 20 | 20 |
+| jsanalyze | done | 1.8 | 20 | 10 | 12 |
+| params | partial (21 dynamic endpoints, limit 20) | 235.8 | 3,230 | 18 | 19 |
+| nuclei | done, **golden pass ran** | 313.7 | 5,319 | 18 | 19 |
+
+Counted by juice-proxy: 13,352 requests (before: 5,511), every one with the research header and user agent.
+Methods: 13,349 GET, 2 OPTIONS and 1 HEAD. The OPTIONS and HEAD come from the nuclei golden pass (panels,
+vulnerabilities, CVEs), which now runs; nucleisafe allows them. **No state-changing request was sent (0 non
+read-only)**, and the run had no request that was not GET before the golden pass started. **Peak 20 in any
+sliding second and 20 in any calendar second at a limit of 20.** The gateway's log agrees: 13,351 GET, 1 HEAD and
+2 OPTIONS allowed, and the same 5 refusals as before (katana's `burpsuite` host, the ProjectDiscovery update
+service). Wall time 840 s (before 375 s): about 270 s for content discovery and 180 s more for the golden
+nuclei pass. The golden pass found nothing new on Juice Shop (still `prometheus-metrics` only).
+
+### Agent context
+
+Recon lane of juice.lab.test. An agent's first message carries 50 endpoints (`agentloop.CONTEXT_LIMIT`) and the
+leads.
+
+**Before**, the first 50 endpoints by URL. Seventeen are junk, and none is under /rest:
+
+```
+(empty) / /%5C/index%5C.html /%60+_%28i%5B11%5D%7C%7Cf%5Bg.toLowerCase%28%29%5D%29+%60 /%60+_%28i%5B8%5D%29+%60
+/%7B%7Bhref%7D%7D /0/0 /10 /16 /160 /20 /2fa/enter /40 /60 /Zone.js /about /about.component-CZcG2819.js
+/accounting /address/create /address/edit/ /address/saved /address/select /api/Addresss /api/BasketItems
+/api/Cards /api/Challenges /api/Challenges/ /api/Challenges/?key=[redacted] /api/Complaints /api/Deliverys
+/api/Feedbacks /api/Hints /api/Products /api/Quantitys /api/Recycles /api/SecurityAnswers /api/SecurityQuestions
+/api/Users /application-configuration /application-version /application/vnd.ms-word.do
+/application/vnd.openxmlformats-officedocument.wordprocessingml.do /assets/i18n/ /bQ /basket /chatbot
+/chatbot/conversation /chunk-BJ5LcrCb.js /chunk-DAJ4olp_.js /chunk-DBPdFzgj.js
+```
+
+**After**, ranked by signal (`server/app/surface.py`). Of 198 recorded endpoints, 16 junk entries are dropped and
+the rest collapse to 137 shapes. The 50 shown are spread across prefixes, and the 44 client routes are listed
+separately as `spa_routes`. The triage row (score 5, golden) and the leads come first by kind: nuclei,
+secret, robots, security-txt, listing, then parameters.
+
+```
+/rest/user/security-question?email= /.well-known/security.txt /api/Feedbacks /robots.txt /rest/admin
+/rest/admin/application-configuration /api/Challenges /redirect?to=http://leanpub.com/juice-shop
+/rest/user/whoami /api/Hints /api/Products /api/Quantitys /api/SecurityQuestions /ftp
+/rest/user/change-password?current= /security.txt /ftp/acquisitions.md /rest/wallet/balance
+/ftp/announcement_encrypted.md /rest/captcha /ftp/coupons_2013.md.bak /rest/chat /ftp/eastere.gg
+/rest/image-captcha/ /rest/user/authentication-details/ /ftp/encrypt.pyc /rest/memories /rest/user/login
+/rest/continue-code-findIt/apply/ /rest/continue-code-fixIt/apply/ /rest/continue-code/apply/ /ws/v3/
+/ftp/incident-support.kdbx /rest/order-history /rest/user/reset-password /api/BasketItems /ftp/legal.md
+/rest/saveLoginIp /api/Challenges/?key=[redacted] /ftp/package-lock.json.bak /rest/track-order /api/Complaints
+/ftp/package.json.bak /rest/user /v3/ /api/Users /ftp/suspicious_errors.yml /rest/continue-code /data-export
+/api/Addresss
+spa_routes: /#/administration /#/score-board /#/web3-sandbox /#/privacy-security/privacy-policy ... (44)
+```
+
+**What the agent is shown of a response.** `http_request` now returns a reading view (`server/app/pagetext.py`)
+unless the agent asks for `view: "raw"`. The full response is kept as evidence either way, and the view is made
+from the stored, redacted body. The /ftp listing page is 11,307 bytes, and its first file name is at character
+9,006, so the old 4,000-character view held only inline CSS. Its reading view is 1,002 characters:
+
+```
+Title: listing directory /ftp
+Directory listing, 11 entries: quarantine, acquisitions.md, announcement_encrypted.md, coupons_2013.md.bak,
+eastere.gg, encrypt.pyc, incident-support.kdbx, legal.md, package-lock.json.bak, package.json.bak, suspicious_errors.yml
+listing directory /ftp
+~ / ftp
+quarantine 8/10/2026 9:36:13 PM
+acquisitions.md 909 8/10/2026 9:36:13 PM
+...
+Links: . ftp ftp/quarantine ftp/acquisitions.md ftp/announcement_encrypted.md ...
+```
+
+main.js (1.2 MB) becomes a 3,455-character summary. It holds the 43 client routes (hash routing noted), the
+server paths it references with API paths first and junk dropped, including all eight `/redirect?to=` targets
+with their crypto addresses, and the masked secret candidates.
+
+**Which in-reach items an agent can see** (`tools/benchmark/agent_context.py`, the run.py matchers applied
+to what the model is given):
+
+| | Before | After |
+|---|---|---|
+| Lane context only (50 endpoints, routes, leads) | 3: exposedMetrics, S04, S05 | **14**: + scoreBoard, web3Sandbox, privacyPolicy, adminSection, securityPolicy, directoryListing, easterEggLevelOne, forgottenBackup, forgottenDevBackup, misplacedSignatureFile, redirect, S01 |
+| Plus the first three responses an agent would open (/ftp, /main.js, /) | 4, one of them false (errorHandling matched the CSS selector `#stacktrace`) | **16**: + redirectCryptoCurrency and S05 from the main.js summary |
+
+The bodies for the second row were fetched once from an isolated Juice Shop v20.2.0 container with no
+network. They were not sent through the gateway, and the agent loop was not run.
+
+### Limits
+
+- No live agent run, so whether the model uses the better context is not measured.
+- The new well-known and listing requests are counted above (3 for wellknown, 1 listing check after content
+  discovery), all through the gateway as GET with the identification.
+- Recon still finds nothing beyond depth 1 and `common.txt`. A larger or app-aware wordlist, or recursion that
+  keeps to the rate ceiling, is the next step for /api-docs, /encryptionkeys, /metrics and /support/logs.
