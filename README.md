@@ -220,9 +220,11 @@ public key, so `tools/verify_report.py` checks who signed what without trusting 
 server. Turn on *require signatures* on the Team tab to refuse unsigned closes.
 Signing needs HTTPS or localhost.
 
-To timestamp receipts, set `ATTACKLEDGER_TSA_URL` to an RFC 3161 timestamp authority.
-Only a SHA-256 hash is sent to it. The report then carries each token, and the verifier
-checks it against the authority roots you trust:
+Receipts are also timestamped by an RFC 3161 timestamp authority: DigiCert's public
+service by default (`ATTACKLEDGER_TSA_URL`). Only a SHA-256 hash is sent, once per
+closed lane; set `ATTACKLEDGER_TSA_URL=off` to send nothing. The report carries each
+token, and the verifier checks it against the roots in `tools/tsa-roots/` (DigiCert's
+is included) or any you pass:
 
 ```bash
 python3 tools/verify_report.py report.json --tsa-root authority-root.pem

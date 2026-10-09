@@ -44,7 +44,9 @@ local lab.
   manifest hash and signature are timestamped (only a hash is sent). If the authority
   cannot be reached the close still succeeds and can be timestamped later. The verifier
   checks the token, the authority's signature and its certificate chain to a root you
-  trust (`--tsa-root`). Migration `0012`.
+  trust (`tools/tsa-roots/` or `--tsa-root`). Docker Compose uses DigiCert's public
+  service by default and its root is pinned; `ATTACKLEDGER_TSA_URL=off` turns it off.
+  Migration `0012`.
 - `ATTACKLEDGER_COOKIE_SECURE` is now passed to the API by Docker Compose (it was
   documented but not forwarded).
 - **A real Claude agent run in the demo.** With no API key yet, Claude Opus worked the

@@ -399,9 +399,11 @@ options considered and who decided.
   timestamp `attackledger-timestamp-v1`, the receipt's manifest hash and its signature
   (one line each). Only the SHA-256 of that text leaves the deployment. The token goes on
   the receipt and into the report (format 2, optional field). Migration `0012`.
-- **Which TSA:** set by the operator (`ATTACKLEDGER_TSA_URL`); empty means no timestamps
-  and no outside request. No default is shipped yet: the first public TSA to recommend
-  and pin a root for is Murat's call (DigiCert proposed).
+- **Which TSA:** set by the operator (`ATTACKLEDGER_TSA_URL`). Docker Compose defaults to
+  DigiCert's public service (`http://timestamp.digicert.com`, approved by Murat), and the
+  verifier pins its root, DigiCert Trusted Root G4 (taken from the macOS root store and
+  matched against DigiCert's download). `off` sends nothing and skips timestamps. A real
+  DigiCert token is kept as a test fixture and verifies offline.
 - **Server checks:** the reply must answer this request (same hash, same nonce, status
   granted). The server does not decide whether to trust the TSA; the reader does.
 - **Unreachable TSA:** the close still succeeds; the receipt records why it has no
@@ -420,6 +422,15 @@ options considered and who decided.
   and a test failed each time. A browser close against a local TSA was timestamped and
   verified.
 - **Proposed and built by:** Claude, at Murat's request (D-027).
+
+### D-035 · Tool integrations wait until after the first release (2026-10-09, decided by Murat)
+- **Decision:** evidence import (D-029) and other integrations with outside tools (Caido,
+  Burp, nuclei) move to the later section of the roadmap. When they come, each is an
+  optional integration that an operator turns on at setup with their own credentials;
+  no one's token is ever part of the code, the demo or a report.
+- **Why:** they are complex, the first release does not need them, and an integration
+  must never carry the author's own credentials.
+- **Proposed by:** Murat Kabak. **Decided by:** Murat Kabak.
 
 ## Adding entries
 

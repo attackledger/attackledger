@@ -10,7 +10,8 @@ The server checks only that the reply answers this request (same hash, same nonc
 does not decide whether to trust the TSA: the reader of the report does that, with the
 roots they trust.
 
-Off unless ATTACKLEDGER_TSA_URL is set.
+Off unless ATTACKLEDGER_TSA_URL is set ("off" also turns it off). Docker Compose sets it to
+DigiCert's public service; tools/tsa-roots/ pins that service's root for the verifier.
 """
 import base64
 import hashlib
@@ -32,7 +33,8 @@ class TimestampError(Exception):
 
 
 def tsa_url() -> str | None:
-    return os.environ.get("ATTACKLEDGER_TSA_URL", "").strip() or None
+    url = os.environ.get("ATTACKLEDGER_TSA_URL", "").strip()
+    return None if url.lower() in ("", "off", "none") else url
 
 
 def statement(manifest_sha256: str, signature_b64: str | None) -> bytes:

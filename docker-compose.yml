@@ -24,9 +24,9 @@ services:
       ATTACKLEDGER_AGENTS_ENABLED: ${ANTHROPIC_API_KEY:+1}
       # "1" behind HTTPS, so session cookies are only sent over it.
       ATTACKLEDGER_COOKIE_SECURE: ${ATTACKLEDGER_COOKIE_SECURE:-}
-      # RFC 3161 timestamp authority for receipts. Empty: receipts are not timestamped.
-      # Only a SHA-256 hash is sent to it.
-      ATTACKLEDGER_TSA_URL: ${ATTACKLEDGER_TSA_URL:-}
+      # RFC 3161 timestamp authority for receipts (D-034). Only a SHA-256 hash is sent, once
+      # per closed lane. Set ATTACKLEDGER_TSA_URL=off to send nothing and skip timestamps.
+      ATTACKLEDGER_TSA_URL: ${ATTACKLEDGER_TSA_URL:-http://timestamp.digicert.com}
     volumes:
       - blobs:/data/blobs
     ports:

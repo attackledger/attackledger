@@ -267,3 +267,27 @@ def test_no_tsa_means_no_timestamp_and_no_traffic(client, monkeypatch):
     assert rc["timestamp"] is None and rc["timestamp_error"] is None
     problems, notes = verifier.check_timestamps(client.get(f"/engagements/{e}/report").json(), [])
     assert problems == [] and any("not timestamped" in n for n in notes)
+
+
+def test_a_real_digicert_token_verifies_offline(monkeypatch):
+    """A token DigiCert issued on 2026-10-09 for a test statement, checked against the root
+    pinned in tools/tsa-roots/, with no network."""
+    data = Path(__file__).parent / "data"
+    token = (data / "digicert_token.der").read_bytes()
+    stmt = (data / "digicert_statement.txt").read_bytes()
+    assert stmt == timestamps.statement("ab" * 32, "dGVzdA==")
+    t = verifier.read_token(token)
+    roots = verifier.load_roots([str(verifier.__file__).replace("verify_report.py", "tsa-roots/digicert-trusted-root-g4.pem")])
+    assert verifier.token_problems(t, roots) == ([], "DigiCert SHA256 RSA4096 Timestamp Responder 2026 1")
+    report = receipt_report(base64.b64encode(token).decode(), t["time"], signature="dGVzdA==")
+    assert verifier.check_timestamps(report, roots)[0] == []
+    assert verifier.check_timestamps(report, [])[0]
+    assert timestamps.tst_info(token)["time"] == t["time"]
+
+
+def test_off_means_off(monkeypatch):
+    for value in ("", "off", "OFF", "none"):
+        monkeypatch.setenv("ATTACKLEDGER_TSA_URL", value)
+        assert timestamps.tsa_url() is None
+    monkeypatch.setenv("ATTACKLEDGER_TSA_URL", "http://timestamp.digicert.com")
+    assert timestamps.tsa_url() == "http://timestamp.digicert.com"

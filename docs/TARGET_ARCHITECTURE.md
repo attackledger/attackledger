@@ -96,7 +96,10 @@ receipt verifiable without trusting the database, the server or the tester:
 What it does not prove: that the tests themselves were good. It proves what was recorded,
 by whom, and when, and that nothing changed afterwards.
 
-## Evidence import (D-029)
+## Evidence import (D-029; deferred, D-035)
+
+Deferred until after the first release. The design below stands; notes from a first look
+at Caido's formats are at the end of this section.
 
 Testers already work in Caido, Burp and scanners. Import lets their output become evidence
 without changing how they work.
@@ -124,6 +127,23 @@ export or API ─► adapter ─► scope check ─► dedupe ─► inbox ─�
   Caido's current export format and API before building: an export file, or a pull through
   Caido's local API with the user's own token.
 
+**Setup, not code.** Integrations are configured by each operator when they install
+AttackLedger: their own tool URL and token, kept only in their deployment's settings,
+read by the worker, and never written to the ledger, reports or logs. Importing an
+export file needs no token at all, so that path comes first.
+
+**Caido notes** (public docs and schema, 2026-10-09; recheck before building):
+- HTTP history exports as JSON or CSV from the UI (Export, then the Exports page) or through
+  the GraphQL API (`startExportRequestsTask`, then `dataExport` for a download link). JSON
+  rows carry `host`, `port`, `is_tls`, `method`, `path`, `query`, `created_at` (epoch ms),
+  `raw` (base64) and a `response` with `status_code` and its own `raw`. Raw bytes are only
+  present if the export includes them.
+- Findings export as JSON; the exact layout was not confirmed from public sources.
+- The local API is GraphQL at the instance address with `Authorization: Bearer <token>`;
+  Caido says its schema may change between releases.
+- Captured traffic holds cookies and Authorization headers. They must be redacted or
+  flagged before anything enters an append-only ledger.
+
 ## Deployment (D-030: open)
 
 How AttackLedger is offered is not decided. The architecture keeps every option open:
@@ -141,8 +161,10 @@ How AttackLedger is offered is not decided. The architecture keeps every option 
 2. **Signed and timestamped receipts.** Browser keys, timestamp client, chain and report
    format version 2, verifier update.
    Signatures built 2026-10-09 (D-033); timestamps built 2026-10-09 (D-034).
-3. **Import inbox and the Caido adapter.** Then Burp and nuclei.
-4. **Client and auditor views.** A client-facing report and a read-only viewer role.
-5. **Deployment decision** (D-030), with what the first four taught us.
+3. **Client and auditor views.** A client-facing report and a read-only viewer role.
+4. **Deployment decision** (D-030), with what the first three taught us.
+
+Later (D-035): the import inbox and adapters for Caido, Burp and nuclei. Each is an
+optional integration that an operator turns on at setup with their own credentials.
 
 Agent work (live runs, write requests) continues alongside, under D-024 and D-025.

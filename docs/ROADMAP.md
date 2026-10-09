@@ -40,8 +40,7 @@ record records why. This file lists what comes next.
 - [x] Operator-token authentication (v0.5.0).
 - [x] Multi-user accounts, roles and separation of duties (D-032).
 - [x] Receipts signed with keys held in the reviewer's browser, checked offline (D-033).
-- [x] RFC 3161 timestamps on receipts (D-034); choose the TSA to recommend and pin its root.
-- [ ] Evidence import, Caido first (D-029).
+- [x] RFC 3161 timestamps on receipts (D-034), DigiCert by default with its root pinned.
 - [ ] Live site at attackledger.com: landing page, docs and a read-only demo.
 - [ ] Make the repository public after a fresh full-history scan, then pin it on the
       profile.
@@ -50,7 +49,9 @@ record records why. This file lists what comes next.
 
 ## Later and commercial
 
-- [ ] Signed, timestamped reports (Ed25519 + RFC 3161).
+- [ ] Evidence import from other tools (D-029, deferred by D-035): an export-file importer
+      first, then Caido, Burp and nuclei, each an optional integration set up by the
+      operator with their own credentials.
 - [ ] Compliance packs, with mappings reviewed against the current standards.
 - [ ] Continuous monitoring: scheduled re-runs and a diff of new surface.
 - [ ] Multiple workers, with a per-engagement global rate limit.
