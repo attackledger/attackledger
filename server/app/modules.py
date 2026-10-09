@@ -116,10 +116,11 @@ MODULES: tuple[Module, ...] = (
     Module("nuclei", "Scan for known issues",
            "nuclei over live web services: takeover checks on every host; exposures, misconfigurations and "
            "templates matching the detected stack on one host per cluster; panels, vulnerabilities and CVEs "
-           "on golden hosts. Medium severity and up. Never runs DoS, fuzzing, brute-force or default-login "
-           "templates, follows no redirects and makes no out-of-band callbacks.",
+           "on golden hosts. Medium severity and up. Runs only templates that provably send GET, HEAD or "
+           "OPTIONS requests to the target with no body; never runs DoS, fuzzing, brute-force or "
+           "default-login templates, follows no redirects and makes no out-of-band callbacks.",
            input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("leads",),
-           pipeline="M7", caution="Automated vulnerability scanning: many programs forbid it or require "
+           pipeline="M7", min_rps=2, caution="Automated vulnerability scanning: many programs forbid it or require "
                                   "a lower rate. Enable only if the policy allows scanners.",
            tools=("nuclei",)),
     Module("dorks", "Dork checklist",
@@ -173,8 +174,9 @@ PHASES: tuple[Phase, ...] = (
     Phase("issues", "Known issues",
           "Check live services for takeovers, exposures and known vulnerabilities.",
           "Takeover checks run on every live service. Exposure and misconfiguration templates run on one host "
-          "per cluster of identical services, and CVE templates on golden hosts. Unsafe templates (DoS, fuzzing, "
-          "brute force, default logins, out-of-band callbacks) never run.",
+          "per cluster of identical services, and CVE templates on golden hosts. Only templates that provably "
+          "send nothing but GET, HEAD or OPTIONS requests run; DoS, fuzzing, brute force, default logins and "
+          "out-of-band callbacks never do.",
           ("nuclei",)),
     Phase("manual", "Manual checks",
           "Searches only you can run.",
