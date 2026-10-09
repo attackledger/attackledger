@@ -1,0 +1,49 @@
+# HTTPS for AttackLedger. Two settings from .env (docs/INSTALL.md, step 5):
+#
+#   ATTACKLEDGER_HOSTNAME   the name people type, e.g. attackledger.example.com
+#   ATTACKLEDGER_TLS        where the certificate comes from, one of:
+#       you@example.com                       Let's Encrypt; the email gets expiry notices.
+#                                              Needs public DNS and port 80 reachable.
+#       /certs/fullchain.pem /certs/key.pem   your organisation's own certificate, put in
+#                                              deploy/certs/ (the chain first, then the key)
+#       internal                              Caddy's own CA: for tests and internal names
+#                                              only; browsers warn until you trust its root
+#
+# Caddy redirects HTTP to HTTPS by itself. Everything goes to the web container, which
+# serves the app and forwards /api/ to the API.
+
+{
+	# No telemetry, no admin API outside the container.
+	admin localhost:2019
+	log {
+		output stdout
+		format json
+	}
+}
+
+{$ATTACKLEDGER_HOSTNAME} {
+	tls {$ATTACKLEDGER_TLS}
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# The largest upload is an evidence import, 50 MB per file (docs/IMPORT.md); attached
+	# files are 5 MB, about 7 MB as base64. The API enforces its own limits below this.
+	request_body {
+		max_size 60MB
+	}
+
+	reverse_proxy web:80
+
+	log {
+		output stdout
+		format json
+	}
+}

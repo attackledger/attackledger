@@ -129,7 +129,7 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
         return
     who = auth.principal(session, request)
     if who is None:
-        raise HTTPException(401, "sign in first")
+        raise HTTPException(401, auth.SETUP_HINT if auth.mode(session) == "setup" else "sign in first")
     request.state.principal = who
     if rule is None:
         if who.is_owner:

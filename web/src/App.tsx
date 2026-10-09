@@ -59,10 +59,11 @@ function Login({ onDone }: { onDone: () => void }) {
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"token" | "people" | null>(null);
+  const [mode, setMode] = useState<"token" | "people" | "setup" | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api.health().then((h) => setMode(h.mode === "people" ? "people" : "token")).catch(() => setMode("token"));
+    api.health().then((h) => setMode(h.mode === "people" || h.mode === "setup" ? h.mode : "token"))
+      .catch(() => setMode("token"));
   }, []);
   async function submit(ev: FormEvent) {
     ev.preventDefault();
@@ -73,6 +74,22 @@ function Login({ onDone }: { onDone: () => void }) {
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+  if (mode === "setup") {
+    // Production installs refuse everyone until the first owner exists (ATTACKLEDGER_REQUIRE_SIGN_IN).
+    return (
+      <main className="login">
+        <div className="panel login-card">
+          <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
+          <p>Nobody can sign in yet.</p>
+          <p className="muted">
+            Whoever installed this server creates the first owner there, then signs in here:
+          </p>
+          <pre className="cmd" tabIndex={0} aria-label="Command">docker compose exec api python -m app.people create --owner --email you@example.com --name "Your Name"</pre>
+          <button type="button" className="btn primary" onClick={() => window.location.reload()}>I have done this</button>
+        </div>
+      </main>
+    );
   }
   if (mode === "people") {
     return (

@@ -1,0 +1,171 @@
+# Production override for docker-compose.yml. Used together with it, never on its own:
+#
+#   COMPOSE_FILE=docker-compose.yml:deploy/compose.prod.yml     (set in .env, see docs/INSTALL.md)
+#
+# What it changes from the development setup:
+#   - no default passwords: the stack refuses to start until .env sets them;
+#   - nothing is published on the host except Caddy (80 and 443); the API, the web app and
+#     Postgres are reachable only inside the compose network;
+#   - the API is closed until the first owner is created on the server
+#     (ATTACKLEDGER_REQUIRE_SIGN_IN=1) and session cookies are sent only over HTTPS;
+#   - restart policies, healthchecks, memory and CPU limits, and rotated logs for every service;
+#   - the practice target (lab) does not start;
+#   - the encryption master key comes from a root-only file on the host, mounted read-only
+#     into the API and the worker (never from .env, and never the public development key).
+#
+# Needs Docker Compose 2.24 or later (for !reset and !override).
+
+# The master key file (docs/INSTALL.md, section 7). Compose refuses to start if it is missing,
+# instead of creating an empty folder in its place.
+x-master-key: &master-key
+  type: bind
+  source: ${ATTACKLEDGER_MASTER_KEY_PATH:-/etc/attackledger/master.key}
+  target: /run/secrets/attackledger-master-key
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see docs/INSTALL.md)}
+    ports: !reset []
+    restart: unless-stopped
+    logging: *logging
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U attackledger -d attackledger"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    deploy:
+      resources:
+        limits:
+          cpus: "${ATTACKLEDGER_DB_CPUS:-2}"
+          memory: ${ATTACKLEDGER_DB_MEMORY:-2g}
+
+  api:
+    # --proxy-headers: the API sees the client's address from Caddy (X-Forwarded-For), so
+    # failed sign-ins are counted per address and not for everyone behind the proxy at once.
+    # Trusting any forwarder is safe here because the API is published nowhere: only the web
+    # container, which passes Caddy's header through, can reach it.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--proxy-headers", "--forwarded-allow-ips", "*"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/attackledger
+      ATTACKLEDGER_REQUIRE_SIGN_IN: "1"
+      ATTACKLEDGER_COOKIE_SECURE: "1"
+      ATTACKLEDGER_MASTER_KEY_FILE: /run/secrets/attackledger-master-key
+      ATTACKLEDGER_MASTER_KEY: ""
+      ATTACKLEDGER_DEV_KEY: ""
+    volumes:
+      - *master-key
+    ports: !reset []
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # Migrations run at startup, before /health answers.
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "${ATTACKLEDGER_API_CPUS:-2}"
+          memory: ${ATTACKLEDGER_API_MEMORY:-1g}
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/attackledger
+      ATTACKLEDGER_MASTER_KEY_FILE: /run/secrets/attackledger-master-key
+      ATTACKLEDGER_MASTER_KEY: ""
+      ATTACKLEDGER_DEV_KEY: ""
+    volumes:
+      - *master-key
+    restart: unless-stopped
+    logging: *logging
+    # The worker has no port to ask; this checks that it can still reach the database.
+    healthcheck:
+      test: ["CMD", "python", "-c", "from app.db import engine; engine.connect().close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "${ATTACKLEDGER_WORKER_CPUS:-2}"
+          memory: ${ATTACKLEDGER_WORKER_MEMORY:-4g}
+
+  web:
+    ports: !reset []
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on: !override
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+  # The local practice target is for development only.
+  lab:
+    profiles: ["lab"]
+
+  # HTTPS in front of the web app (which forwards /api/ to the API). See deploy/Caddyfile.
+  caddy:
+    image: caddy:2.8.4-alpine
+    environment:
+      ATTACKLEDGER_HOSTNAME: ${ATTACKLEDGER_HOSTNAME:?set ATTACKLEDGER_HOSTNAME in .env}
+      ATTACKLEDGER_TLS: ${ATTACKLEDGER_TLS:?set ATTACKLEDGER_TLS in .env}
+    ports:
+      - "${ATTACKLEDGER_HTTP_PORT:-80}:80"
+      - "${ATTACKLEDGER_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+
+volumes:
+  # Explicit names, so `docker volume ls` says what each one holds. The project name
+  # (COMPOSE_PROJECT_NAME in .env, "attackledger" by default) keeps two installs apart.
+  dbdata:
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_postgres
+  blobs:
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_evidence_blobs
+  caddy_data:
+    # Caddy's certificates and ACME account (or its internal CA). Losing it means new certificates.
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_caddy_data
+  caddy_config:
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_caddy_config

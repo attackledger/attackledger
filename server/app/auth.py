@@ -1,9 +1,12 @@
 """Who is calling: people with passwords and sessions, or the operator token.
 
-Three modes, chosen by what exists:
+Four modes, chosen by what exists:
 
   open    no people and no ATTACKLEDGER_API_TOKEN: local use only, everyone is an owner.
           /health says so; do not expose an open API beyond localhost.
+  setup   the same, but ATTACKLEDGER_REQUIRE_SIGN_IN=1 (production): nobody gets in until
+          the first owner is created on the server (python -m app.people create --owner).
+          Whoever reaches the server first over the network cannot make themselves owner.
   token   no people, ATTACKLEDGER_API_TOKEN set: the token (bearer header, or a session
           cookie holding an HMAC of it) is required and acts as an owner.
   people  at least one person exists: people sign in with email and password. The token,
@@ -59,6 +62,17 @@ class Principal:
 def token() -> str | None:
     t = os.environ.get("ATTACKLEDGER_API_TOKEN", "").strip()
     return t or None
+
+
+def require_sign_in() -> bool:
+    """Production setting: the API is never open. Unknown values count as on, so a typo
+    such as "ture" fails closed rather than leaving the ledger open."""
+    v = os.environ.get("ATTACKLEDGER_REQUIRE_SIGN_IN", "").strip().lower()
+    return v not in ("", "0", "false", "no", "off")
+
+
+SETUP_HINT = ("nobody can sign in yet: create the first owner on the server with "
+              "python -m app.people create --owner")
 
 
 def token_session_value(tok: str) -> str:
@@ -159,7 +173,9 @@ def people_exist(session) -> bool:
 def mode(session) -> str:
     if people_exist(session):
         return "people"
-    return "token" if token() else "open"
+    if token():
+        return "token"
+    return "setup" if require_sign_in() else "open"
 
 
 def _aware(t: datetime) -> datetime:

@@ -1,0 +1,3 @@
+# Your own certificate and key go here (see docs/INSTALL.md). Never commit them.
+*
+!.gitignore

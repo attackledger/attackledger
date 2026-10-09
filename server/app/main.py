@@ -177,6 +177,8 @@ def _session_cookie(resp: JSONResponse, value: str) -> JSONResponse:
 @app.post("/auth/login")
 def login(body: LoginIn, request: Request, session: Session = Depends(get_session)):
     m = auth.mode(session)
+    if m == "setup":
+        raise HTTPException(422, auth.SETUP_HINT)
     if body.email is not None:
         if m != "people":
             raise HTTPException(422, "nobody has an account yet; sign in with the operator token or create the first owner")
