@@ -260,7 +260,7 @@ def create_engagement(body: EngagementIn, session: Session = Depends(get_session
     etype = body.engagement_type or (pack.engagement_types[0] if pack.engagement_types else "pentest")
     if etype not in ENGAGEMENT_TYPES:
         raise HTTPException(422, f"unknown engagement type: {etype}")
-    eng = Engagement(name=body.name.strip(), policy_url=body.policy_url, pack_id=pack.id,
+    eng = Engagement(name=body.name.strip(), policy_url=_policy_url(body.policy_url, required=False), pack_id=pack.id,
                      engagement_type=etype)
     session.add(eng)
     try:
@@ -624,8 +624,26 @@ class ScopeIn(BaseModel):
 
 class AttestIn(BaseModel):
     operator: str = Field(min_length=1, max_length=200)
-    policy_url: str = Field(pattern="^https://")
+    policy_url: str | None = None      # checked by _policy_url, for a message a person can act on
     confirm: bool
+
+
+POLICY_URL_HINT = ("enter the HTTPS address of the program policy or statement of work that permits this test, "
+                   "such as https://hackerone.com/<program>; for the bundled lab, any HTTPS page that describes "
+                   "it will do, such as https://example.com/policy")
+
+
+def _policy_url(value: str | None, required: bool) -> str | None:
+    url = (value or "").strip()
+    if not url:
+        if required:
+            raise HTTPException(422, f"the policy URL is missing: {POLICY_URL_HINT}")
+        return None
+    if not url.startswith("https://") or not urls.host_of(url):
+        raise HTTPException(422, f"the policy URL must be an HTTPS link starting with https://: {POLICY_URL_HINT}")
+    if len(url) > 500:
+        raise HTTPException(422, "the policy URL is longer than 500 characters")
+    return url
 
 
 def _scope_view(eng: Engagement) -> dict:
@@ -686,8 +704,9 @@ def _apply_scope_to_assets(eng: Engagement, inc: list[str], exc: list[str]) -> l
 def attest(eng_id: int, body: AttestIn, session: Session = Depends(get_session)):
     if not body.confirm:
         raise HTTPException(422, "confirm that you are authorized to test this program")
+    policy_url = _policy_url(body.policy_url, required=True)
     eng = _get(session, Engagement, eng_id)
-    eng.authorized_by, eng.policy_url = body.operator.strip(), body.policy_url
+    eng.authorized_by, eng.policy_url = body.operator.strip(), policy_url
     eng.authorized_at = datetime.now(timezone.utc)
     session.commit()
     return _scope_view(eng)

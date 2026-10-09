@@ -179,7 +179,10 @@ marked **partial**, lists the targets it did not reach and can be resumed with
 A job is refused unless the engagement has:
 
 1. a scope (`*.example.com` covers subdomains only; exclusions always win),
-2. a recorded authorization (operator, policy URL, explicit confirmation),
+2. a recorded authorization (operator, policy URL, explicit confirmation). The
+   policy URL is the HTTPS address of the program policy or statement of work
+   that permits the test. For the bundled lab, any HTTPS page describing it will
+   do, such as `https://example.com/policy` (what the demo uses),
 3. for jobs that send traffic to the target, the **research header and/or
    user agent** the program requires.
 

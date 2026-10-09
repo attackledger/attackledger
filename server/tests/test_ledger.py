@@ -142,8 +142,16 @@ def test_attest_requires_confirmation_and_https_policy(client):
     eng = ready_engagement(client)
     assert client.post(f"/engagements/{eng}/attest", json={
         "operator": "op", "policy_url": "https://example.com/p", "confirm": False}).status_code == 422
-    assert client.post(f"/engagements/{eng}/attest", json={
-        "operator": "op", "policy_url": "http://example.com/p", "confirm": True}).status_code == 422
+    for bad in ("http://example.com/p", "example.com/policy", "", "https://"):
+        r = client.post(f"/engagements/{eng}/attest", json={"operator": "op", "policy_url": bad, "confirm": True})
+        assert r.status_code == 422 and isinstance(r.json()["detail"], str), bad
+        assert "https://" in r.json()["detail"] and "statement of work" in r.json()["detail"]
+    assert client.get(f"/engagements/{eng}/scope").json()["authorized_at"] is None
+    r = client.post(f"/engagements/{eng}/attest", json={"operator": "op", "confirm": True,
+                                                         "policy_url": " https://example.com/policy "})
+    assert r.status_code == 200 and r.json()["policy_url"] == "https://example.com/policy"
+    r = client.post("/engagements", json={"name": "plain-http", "policy_url": "http://example.com/p"})
+    assert r.status_code == 422 and "https://" in r.json()["detail"]
 
 
 def test_job_targets_must_be_in_scope(client):
