@@ -1,10 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, LaneItem, Me,
-         PackSummary } from "./api";
+         PackSummary, type EvidenceEntry } from "./api";
 import { focusWhenReady, nextStep, SetupData, SetupGuide, SetupStep, setupComplete, setupSteps } from "./Setup";
 import { AddHost } from "./AddHost";
 import { plural } from "./words";
 import { People, Team } from "./People";
+import { Retention, deletedText } from "./Retention";
 import { Account } from "./Account";
 import { Executor } from "./Agent";
 import { BulkNotApplicable, ItemWork, RedactionNote } from "./LaneWork";
@@ -362,8 +363,11 @@ function Workspace() {
               {tab === "verify" && <Verify engId={current} />}
               {tab === "history" && <History engId={current} />}
               {tab === "team" && owner && (
-                <Team engId={current} separation={!!coverage.separation_of_duties}
-                      signatures={!!coverage.require_signatures} onChanged={hostsChanged} />
+                <>
+                  <Team engId={current} separation={!!coverage.separation_of_duties}
+                        signatures={!!coverage.require_signatures} onChanged={hostsChanged} />
+                  <Retention engId={current} onChanged={hostsChanged} />
+                </>
               )}
             </div>
           </>
@@ -688,6 +692,10 @@ function itemCounts(lane: LaneDetail) {
   };
 }
 
+function isAgent(e: EvidenceEntry): boolean {
+  return e.source === "agent" || (e.summary ?? "").startsWith("[agent] ");
+}
+
 function goToItem(laneId: number, idx: number) {
   const el = document.getElementById(`lane-${laneId}-item-${idx}`);
   el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -856,6 +864,11 @@ function Folio({ laneId, me, onClose, onChanged }: {
             </ol>
 
             <h3>Evidence</h3>
+            {lane.content_deleted && (
+              <p className="notice-inline" role="status">
+                {deletedText(lane.content_deleted)} Its hashes, receipts and history remain, so reports still verify.
+              </p>
+            )}
             {lane.evidence.length === 0 ? (
               <p className="muted">No evidence recorded yet. Agents and the API add entries as they test.</p>
             ) : (
@@ -864,19 +877,24 @@ function Folio({ laneId, me, onClose, onChanged }: {
                   <li key={e.id}>
                     <span className="ev-kind">{e.uri?.startsWith("job:") ? "Recon run" : e.kind.charAt(0).toUpperCase() + e.kind.slice(1)}</span>
                     <span className="ev-summary">
-                      {e.summary}
+                      {e.summary ?? (
+                        <span className="ev-deleted">
+                          {e.content === "deleted" && lane.content_deleted ? deletedText(lane.content_deleted)
+                            : "Content unavailable: the stored summary does not open."}
+                        </span>
+                      )}
                       {e.item_idx != null && <span className="ev-item">Item {e.item_idx}</span>}
                       <RedactionNote r={e.redaction} />
                     </span>
                     <span className="ev-ref">
                       <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>
-                      {!DEMO && (e.summary.startsWith("[agent] ") || e.uri?.startsWith("file:") || (e.kind === "note" && !e.uri)) && (
+                      {!DEMO && !lane.content_deleted && (isAgent(e) || e.uri?.startsWith("file:") || (e.kind === "note" && !e.uri)) && (
                         <a href={`/api/blobs/${e.sha256}`} target="_blank" rel="noopener noreferrer">View raw</a>
                       )}
-                      {DEMO && e.summary.startsWith("[agent] ") && (
+                      {DEMO && isAgent(e) && (
                         <button className="linklike" onClick={() => {
                           fetch(demoUrl(`blobs/${e.sha256}`)).then((r) => (r.ok ? r.text() : Promise.reject()))
-                            .then((t) => setRaw({ title: e.summary, text: t }))
+                            .then((t) => setRaw({ title: e.summary ?? "", text: t }))
                             .catch(() => setError("The raw evidence is not in the demo data."));
                         }}>View raw</button>
                       )}

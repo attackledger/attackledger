@@ -20,7 +20,8 @@ const GROUPS: { key: Group; label: string }[] = [
 function groupOf(action: string): Group {
   if (action === "scope.updated") return "scope";
   if (action === "members.updated") return "roles";
-  if (action === "engagement.settings" || action === "engagement.created") return "settings";
+  if (action === "engagement.settings" || action === "engagement.created" || action === "engagement.retention"
+      || action === "engagement.content_deleted") return "settings";
   if (action === "engagement.authorized") return "authorization";
   return "people";
 }
