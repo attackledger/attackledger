@@ -3,8 +3,9 @@
 
 The fixtures are genuine reports from the server itself (signed in the test suite's
 browser-key stand-in, timestamped by throwaway OpenSSL timestamp authorities with RSA and
-EC chains), a version with evidence chain record v2 entries, and mutated copies, each made
-to break one check. tools/verifier_equivalence/run.sh then runs verify_report.py and the
+EC chains; evidence chain records v1 and v2 in one chain; reports made after an owner and
+the retention policy deleted an engagement's content), and mutated copies, each made to
+break one check. tools/verifier_equivalence/run.sh then runs verify_report.py and the
 browser module on every one of them and compares the output.
 
 It needs the server's dependencies and the openssl command, so it runs in the API image:
@@ -28,6 +29,7 @@ ROOT = HERE.parents[1]
 OUT = HERE / "fixtures"
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ.pop("ATTACKLEDGER_API_TOKEN", None)
+os.environ["ATTACKLEDGER_DEV_KEY"] = "1"          # the public development master key (vault.py)
 WORK = Path(tempfile.mkdtemp(prefix="al-fixtures-"))
 os.environ["ATTACKLEDGER_BLOBS"] = str(WORK / "blobs")
 sys.path[:0] = [str(ROOT / "server"), str(ROOT / "server" / "tests")]
@@ -37,8 +39,13 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
+
 from app import auth, db, people, timestamps  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import Engagement, Lane  # noqa: E402
+from test_agent import load_worker  # noqa: E402
+from test_encryption import v1_row  # noqa: E402
 from test_signing import BrowserKey  # noqa: E402
 from test_timestamps import TSA  # noqa: E402
 
@@ -54,7 +61,9 @@ def canonical(obj) -> str:
 
 
 def fresh_client() -> TestClient:
+    """A client on a new database, with its own blob and key store."""
     auth._failures.clear()
+    os.environ["ATTACKLEDGER_BLOBS"] = tempfile.mkdtemp(prefix="blobs-", dir=WORK)
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
@@ -67,7 +76,9 @@ def fresh_client() -> TestClient:
             s.close()
     app.dependency_overrides[db.get_session] = _session
     people.SessionLocal = Session
-    return TestClient(app)
+    c = TestClient(app)
+    c.Session = Session
+    return c
 
 
 def ok(r, code=(200, 201)):
@@ -95,7 +106,10 @@ def signed_close(c, lane_id, k):
 
 def lane_with_items(c, asset, role, done: dict, na_reason="lab"):
     """A lane whose items in done (idx -> evidence text) carry evidence, the rest N/A."""
-    lane = ok(c.post("/lanes", json={"asset_id": asset, "role": role}), 201)
+    return lane_items(c, ok(c.post("/lanes", json={"asset_id": asset, "role": role}), 201), done, na_reason)
+
+
+def lane_items(c, lane, done: dict, na_reason="lab"):
     for it in lane["items"]:
         if it["idx"] in done:
             ok(c.post(f"/lanes/{lane['id']}/attach", json={"item_idx": it["idx"], "kind": "note", "text": done[it["idx"]]}), 201)
@@ -137,20 +151,44 @@ def report(c, e) -> bytes:
 
 def make_signed(ec_tsa):
     """Two signers (ECDSA P-256 and Ed25519), an EC timestamp chain (P-256 root, P-384 below),
-    non-ASCII names and text, one lane left open."""
+    a v1 entry written before chain record v2 among v2 ones, non-ASCII names and text, one
+    lane left open. Returns the report, and the reports after the owner deleted the content."""
     use_tsa(ec_tsa)
     with fresh_client() as c:
-        e, assets = people_engagement(c, "Equivalence: signed")
-        a = lane_with_items(c, assets["shop.lab.test"], "recon", {1: "kapsam doğrulandı — ✓ 😀"}, na_reason="laboratuvar ortamı — yok")
+        name = "Equivalence: signed"
+        e, assets = people_engagement(c, name)
+        lane = ok(c.post("/lanes", json={"asset_id": assets["shop.lab.test"], "role": "recon"}), 201)
+        with c.Session() as s:
+            v1_row(s, s.get(Lane, lane["id"]), "written before chain record v2", sha("old"))
+        a = lane_items(c, lane, {1: "kapsam doğrulandı — ✓ 😀"}, na_reason="laboratuvar ortamı — yok")
         b = lane_with_items(c, assets["api.lab.test"], "recon", {1: "api scope confirmed", 2: "passive sources listed"})
         lane_with_items(c, assets["shop.lab.test"], "mapper", {})        # left open
         sign_in(c, "riza@lab.test")
-        keys = {"riza": register(c, "ECDSA-P256")}
-        signed_close(c, a, keys["riza"])
+        signed_close(c, a, register(c, "ECDSA-P256"))
         sign_in(c, "ray@lab.test")
-        keys["ray"] = register(c, "Ed25519")
-        signed_close(c, b, keys["ray"])
-        return report(c, e), keys
+        signed_close(c, b, register(c, "Ed25519"))
+        before = report(c, e)
+        sign_in(c, "owner@lab.test")
+        ok(c.post(f"/engagements/{e}/content/delete", json={"confirm_name": name}))
+        return before, report(c, e)
+
+
+def make_retention():
+    """The retention date passed and the worker deleted the content (actor: the retention policy)."""
+    use_tsa(None)
+    with fresh_client() as c:
+        e, assets = people_engagement(c, "Equivalence: retention")
+        a = lane_with_items(c, assets["shop.lab.test"], "recon", {1: "scope confirmed", 2: "sources listed"})
+        sign_in(c, "riza@lab.test")
+        signed_close(c, a, register(c, "Ed25519"))
+        sign_in(c, "owner@lab.test")
+        tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+        ok(c.patch(f"/engagements/{e}", json={"retain_until": tomorrow}))
+        with c.Session() as s:
+            s.get(Engagement, e).retain_until = date.today() - timedelta(days=1)
+            s.commit()
+            assert load_worker().retention_pass(s) == [e]
+        return report(c, e)
 
 
 def make_rsa(rsa_tsa):
@@ -193,6 +231,7 @@ def make_token():
             return report(c, e)
     finally:
         os.environ.pop("ATTACKLEDGER_API_TOKEN", None)
+os.environ["ATTACKLEDGER_DEV_KEY"] = "1"          # the public development master key (vault.py)
 
 
 # ---- derived fixtures ---------------------------------------------------------------------
@@ -201,43 +240,6 @@ def rehash(r: dict) -> dict:
     body = {k: v for k, v in r.items() if k != "integrity"}
     r["integrity"]["body_sha256"] = sha(canonical(body))
     return r
-
-
-def to_v2(r: dict, keys: dict, tsa, first_v2_seq: int) -> dict:
-    """Entries from first_v2_seq on become chain record v2 (as written after the encryption
-    change); the chain, the signed payloads and their timestamps are redone to match."""
-    r = copy.deepcopy(r)
-    prev, new_hash = r["integrity"]["chain_genesis"], {}
-    sources = ["manual", "import:har", "agent", "recon"]
-    for e in r["evidence"]:
-        e["prev_hash"] = prev
-        if e["seq"] >= first_v2_seq:
-            e["v"] = 2
-            e["summary_sha256"] = sha(e["summary"])
-            e["source"] = sources[e["seq"] % len(sources)]
-            rec = {k: e[k] for k in ("v", "seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri",
-                                     "summary_sha256", "source")}
-        else:
-            rec = {k: e[k] for k in ("seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary")}
-        e["chain_hash"] = sha(prev + canonical(rec))
-        new_hash[e["seq"]] = prev = e["chain_hash"]
-    r["summary"]["chain_head"] = prev
-    by_fp = {k.fingerprint: k for k in keys.values()}
-    use_tsa(tsa)
-    for lane in r["lanes"]:
-        rc = lane["receipt"]
-        if not rc or not rc.get("signature"):
-            continue
-        sig = rc["signature"]
-        p = json.loads(sig["payload"])
-        if p["chain"]["seq"]:
-            p["chain"]["head"] = new_hash[p["chain"]["seq"]]
-        sig["payload"] = canonical(p)
-        sig["value"] = by_fp[sig["key_fingerprint"]].sign(sig["payload"])
-        if rc.get("timestamp"):
-            token, when = timestamps.fetch("http://tsa.lab.test/", timestamps.statement(rc["manifest_sha256"], sig["value"]))
-            rc["timestamp"]["token"], rc["timestamp"]["time"] = token, when.isoformat()
-    return rehash(r)
 
 
 def flip_b64(s: str, at: int = 10) -> str:
@@ -267,7 +269,7 @@ def signed_lanes(r):
     return [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed" and l["receipt"].get("signature")]
 
 
-def mutations(base: dict, v2: dict) -> dict:
+def mutations(base: dict, deleted: dict) -> dict:
     out = {}
 
     def m(name, src, fn, body=True):
@@ -358,12 +360,21 @@ def mutations(base: dict, v2: dict) -> dict:
     m("malformed-no-lanes", base, lambda r: r.pop("lanes"))
     m("malformed-seq-string", base, lambda r: r["evidence"][0].__setitem__("seq", "1"))
     # evidence chain record v2
-    m("v2-summary-mismatch", v2, lambda r: next(e for e in r["evidence"] if e.get("v") == 2).__setitem__("summary", "edited"))
-    m("v2-summary-null", v2, lambda r: [e.__setitem__("summary", None) for e in r["evidence"] if e.get("v") == 2])
-    m("v2-summary-null-on-v1-entry", v2, lambda r: next(e for e in r["evidence"] if "v" not in e).__setitem__("summary", None))
-    m("v2-source-changed", v2, lambda r: next(e for e in r["evidence"] if e.get("v") == 2).__setitem__("source", "manual" if
-      next(e for e in r["evidence"] if e.get("v") == 2)["source"] != "manual" else "agent"))
-    m("v2-unknown-version", v2, lambda r: next(e for e in r["evidence"] if e.get("v") == 2).__setitem__("v", 3))
+    def first(r, v2=True):
+        return next(e for e in r["evidence"] if (e.get("v") == 2) == v2)
+    m("v2-summary-mismatch", base, lambda r: first(r).__setitem__("summary", "edited"))
+    m("v2-summary-not-a-string", base, lambda r: first(r).__setitem__("summary", 5))
+    m("v2-summary-null", base, lambda r: [e.__setitem__("summary", None) for e in r["evidence"] if e.get("v") == 2])
+    m("v2-summary-null-on-v1-entry", base, lambda r: first(r, False).__setitem__("summary", None))
+    m("v2-source-changed", base, lambda r: first(r).__setitem__("source", "agent" if first(r)["source"] != "agent" else "manual"))
+    m("v2-field-missing", base, lambda r: first(r).pop("source"))
+    m("v2-unknown-version", base, lambda r: first(r).__setitem__("v", 3))
+    m("v2-explicit-v1", base, lambda r: first(r, False).__setitem__("v", 1))
+    m("v2-passed-off-as-v1", base, lambda r: first(r).pop("v"))
+    # after deletion
+    m("deleted-summary-put-back-wrong", deleted, lambda r: first(r).__setitem__("summary", "not what was there"))
+    m("deleted-without-the-record", deleted, lambda r: r["engagement"].__setitem__("content_deleted", None))
+    m("deleted-record-without-date", deleted, lambda r: r["engagement"]["content_deleted"].pop("at"))
     return out
 
 
@@ -378,16 +389,15 @@ def main():
     (OUT / "ec-root.pem").write_bytes(Path(ec_tsa.root).read_bytes())
     (OUT / "rsa-root.pem").write_bytes(Path(rsa_tsa.root).read_bytes())
 
-    signed_raw, keys = make_signed(ec_tsa)
+    signed_raw, deleted_raw = make_signed(ec_tsa)
     (OUT / "signed.json").write_bytes(signed_raw)
+    (OUT / "content-deleted.json").write_bytes(deleted_raw)
+    (OUT / "retention-deleted.json").write_bytes(make_retention())
     (OUT / "rsa-timestamps.json").write_bytes(make_rsa(rsa_tsa))
     (OUT / "unsigned.json").write_bytes(make_unsigned())
     (OUT / "operator-token.json").write_bytes(make_token())
 
-    signed = json.loads(signed_raw)
-    v2 = to_v2(signed, keys, ec_tsa, first_v2_seq=2)
-    (OUT / "v2-chain.json").write_text(json.dumps(v2, indent=1, ensure_ascii=False), encoding="utf-8")
-    for name, r in mutations(signed, v2).items():
+    for name, r in mutations(json.loads(signed_raw), json.loads(deleted_raw)).items():
         (OUT / f"{name}.json").write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
 
     # The DigiCert token kept with the server tests, in the smallest report that carries it:

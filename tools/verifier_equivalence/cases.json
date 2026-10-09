@@ -9,7 +9,7 @@
     {"name": "demo export: lab, as HTML", "file": "site/demo/reports/1.html", "expect": {"status": "verified"}},
     {"name": "server test token (DigiCert) in a made-up receipt", "file": "tools/verifier_equivalence/fixtures/digicert-token.json", "expect": {"status": "failed", "R": "FAIL", "S": "FAIL", "T": "PASS"}},
 
-    {"name": "ECDSA P-256 and Ed25519 signers, EC timestamp chain", "file": "tools/verifier_equivalence/fixtures/signed.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "S": "PASS", "T": "PASS"}},
+    {"name": "ECDSA P-256 and Ed25519 signers, EC timestamp chain, chain records v1 and v2", "file": "tools/verifier_equivalence/fixtures/signed.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "S": "PASS", "T": "PASS"}},
     {"name": "same, with --require-signatures", "file": "tools/verifier_equivalence/fixtures/signed.json", "roots": ["ec-root.pem"], "require": true, "expect": {"status": "verified"}},
     {"name": "untrusted TSA chain (EC root not given)", "file": "tools/verifier_equivalence/fixtures/signed.json", "expect": {"status": "failed", "T": "FAIL"}},
     {"name": "RSA timestamp chain, key revoked after signing, owner's unsigned close", "file": "tools/verifier_equivalence/fixtures/rsa-timestamps.json", "roots": ["rsa-root.pem"], "expect": {"status": "verified"}},
@@ -61,11 +61,19 @@
     {"name": "malformed: no lanes", "file": "tools/verifier_equivalence/fixtures/malformed-no-lanes.json", "expect": {"status": "error"}},
     {"name": "malformed: seq as a string", "file": "tools/verifier_equivalence/fixtures/malformed-seq-string.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
 
-    {"name": "v2: chain with v1 and v2 entries", "file": "tools/verifier_equivalence/fixtures/v2-chain.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
+    {"name": "after the owner deleted the content", "file": "tools/verifier_equivalence/fixtures/content-deleted.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified", "C": "PASS", "R": "PASS"}},
+    {"name": "after the retention policy deleted the content", "file": "tools/verifier_equivalence/fixtures/retention-deleted.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
+    {"name": "deleted summary put back, wrong", "file": "tools/verifier_equivalence/fixtures/deleted-summary-put-back-wrong.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "null summaries, deletion not recorded", "file": "tools/verifier_equivalence/fixtures/deleted-without-the-record.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
+    {"name": "deletion recorded without a date", "file": "tools/verifier_equivalence/fixtures/deleted-record-without-date.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
     {"name": "v2: summary_sha256 mismatch", "file": "tools/verifier_equivalence/fixtures/v2-summary-mismatch.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
-    {"name": "v2: null summaries (content removed)", "file": "tools/verifier_equivalence/fixtures/v2-summary-null.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified", "C": "PASS"}},
+    {"name": "v2: summary not a string", "file": "tools/verifier_equivalence/fixtures/v2-summary-not-a-string.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: null summaries (content removed, body rehashed)", "file": "tools/verifier_equivalence/fixtures/v2-summary-null.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified", "C": "PASS"}},
     {"name": "v2: null summary on a v1 entry", "file": "tools/verifier_equivalence/fixtures/v2-summary-null-on-v1-entry.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
     {"name": "v2: source changed", "file": "tools/verifier_equivalence/fixtures/v2-source-changed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
-    {"name": "v2: unknown record version", "file": "tools/verifier_equivalence/fixtures/v2-unknown-version.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}}
+    {"name": "v2: a record field missing", "file": "tools/verifier_equivalence/fixtures/v2-field-missing.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: unknown record version (3)", "file": "tools/verifier_equivalence/fixtures/v2-unknown-version.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: explicit \"v\": 1", "file": "tools/verifier_equivalence/fixtures/v2-explicit-v1.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: entry passed off as v1", "file": "tools/verifier_equivalence/fixtures/v2-passed-off-as-v1.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}}
   ]
 }

@@ -23,8 +23,7 @@ import { TSA_ROOTS } from "./tsa_roots";
 export const GENESIS = "0".repeat(64);
 const FORMATS = ["attackledger-report/1", "attackledger-report/2"];
 const CHAIN_FIELDS = ["seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary"];
-// Evidence chain record v2: the summary is replaced by its hash, so the content can be
-// deleted with its engagement key while the chain still verifies (D-043).
+// Chain record v2 commits to the summary's hash, so the summary can be deleted (D-043).
 const CHAIN_FIELDS_V2 = ["v", "seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary_sha256",
                          "source"];
 const KEY_LOG_FIELDS = ["seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"];
@@ -344,6 +343,13 @@ function strip(x: unknown): string {
 
 function join(sep: string, xs: unknown): string {
   return iter(xs).map((x) => (typeof x === "string" ? x : raise("TypeError", "sequence item: expected str instance"))).join(sep);
+}
+
+/** x[:n], as a value. */
+function slice(x: unknown, n: number): unknown {
+  if (typeof x === "string") return Array.from(x).slice(0, n).join("");
+  if (Array.isArray(x)) return x.slice(0, n);
+  return raise("TypeError", `'${typeName(x)}' object is not subscriptable`);
 }
 
 /** s[:n] for a string. */
@@ -698,42 +704,59 @@ async function checkBody(r: Dict): Promise<Problems> {
   return pyEq(got, want) ? [] : [`report body hash mismatch (recorded ${pyStr(want)}, computed ${got})`];
 }
 
-async function checkChain(r: Dict): Promise<[Problems, Notes]> {
-  const problems: Problems = [], notes: Notes = [];
+async function checkChain(r: Dict): Promise<Problems> {
+  const problems: Problems = [];
   let prev = getk(getk(r, "integrity", dict()), "chain_genesis", GENESIS);
   if (!pyEq(prev, GENESIS)) problems.push("unexpected chain genesis value");
-  let removed = 0, n = 0;
-  for (const e of iter(at(r, "evidence"))) {
+  let n = 0;
+  entries: for (const e of iter(at(r, "evidence"))) {
     n += 1;
-    const seq = pyStr(at(e, "seq"));
-    if (!pyEq(at(e, "seq"), n)) problems.push(`evidence #${seq}: out of sequence (expected #${n})`);
-    if (!pyEq(at(e, "prev_hash"), prev)) problems.push(`evidence #${seq}: does not link to the previous entry`);
-    const v = getk(e, "v");
-    if (v !== null && !pyEq(v, 2)) {
-      problems.push(`evidence #${seq}: unknown record version ${pyStr(v)}`);
-    } else {
-      const rec = dict();
-      for (const k of v === null ? CHAIN_FIELDS : CHAIN_FIELDS_V2) rec[k] = at(e, k);
-      if (!pyEq(await sha(pyAdd(at(e, "prev_hash"), canonical(rec))), at(e, "chain_hash"))) {
-        problems.push(`evidence #${seq}: content does not match its chain hash`);
+    const seq = () => pyStr(at(e, "seq"));
+    if (!pyEq(at(e, "seq"), n)) problems.push(`evidence #${seq()}: out of sequence (expected #${n})`);
+    if (!pyEq(at(e, "prev_hash"), prev)) problems.push(`evidence #${seq()}: does not link to the previous entry`);
+    const version = getk(e, "v", 1);
+    if (!pyIn(version, [1, 2]) || (pyIn("v", e) && pyEq(version, 1))) {
+      problems.push(`evidence #${seq()}: unknown chain record version ${pyRepr(getk(e, "v"))}`);
+      prev = at(e, "chain_hash");
+      continue;
+    }
+    const v2 = pyEq(version, 2);
+    const rec = dict();
+    for (const k of v2 ? CHAIN_FIELDS_V2 : CHAIN_FIELDS) {
+      if (isDict(e) && !own(e, k)) {
+        problems.push(`evidence #${seq()}: the record has no ${k}`);
+        prev = at(e, "chain_hash");
+        continue entries;
       }
-      if (v !== null) {
-        const summary = getk(e, "summary");
-        if (summary === null) removed += 1;
-        else if (!pyEq(await sha(summary), at(e, "summary_sha256"))) {
-          problems.push(`evidence #${seq}: its summary does not match the summary hash in the chain`);
-        }
+      rec[k] = at(e, k);
+    }
+    if (!pyEq(await sha(pyAdd(at(e, "prev_hash"), canonical(rec))), at(e, "chain_hash"))) {
+      problems.push(`evidence #${seq()}: content does not match its chain hash`);
+    }
+    if (v2 && getk(e, "summary") !== null) {
+      const summary = at(e, "summary");
+      if (typeof summary !== "string" || !pyEq(await sha(summary), at(e, "summary_sha256"))) {
+        problems.push(`evidence #${seq()}: the summary does not match the hash the chain commits to`);
       }
     }
     prev = at(e, "chain_hash");
   }
   const head = at(at(r, "summary"), "chain_head");
   if (!pyEq(head, prev)) problems.push("summary chain head does not match the last evidence entry");
-  if (removed) {
-    notes.push(`${removed} evidence ${plural(removed, "entry has", "entries have")} no content in this report (removed under the `
-               + "retention policy); the chain still verifies over the hashes");
-  }
-  return [problems, notes];
+  return problems;
+}
+
+/** Summaries a chain record v2 commits to by hash only, because the engagement's key was
+ * deleted: the content is gone, the chain and the receipts are still checked. */
+function contentNotes(r: Dict): Notes {
+  const gone = iter(at(r, "evidence")).filter((e) => pyEq(getk(e, "v"), 2) && getk(e, "summary") === null).length;
+  if (!gone) return [];
+  const d = or(getk(getk(r, "engagement", dict()), "content_deleted"), dict());
+  const why = truthy(d)
+    ? `key deleted on ${pyStr(or(slice(or(getk(d, "at"), ""), 10), "an unknown date"))} by ${pyStr(or(getk(d, "by"), "someone"))}`
+    : "the report does not say it was deleted";
+  return [`${gone} evidence entr${gone === 1 ? "y" : "ies"}: content unavailable (${why}); `
+          + "the chain and the receipts were still checked"];
 }
 
 function manifest(lane: unknown, evidence: unknown): Dict {
@@ -1210,6 +1233,7 @@ async function checkKeyLog(r: Dict): Promise<[Problems, Notes]> {
 
 const ACTORS: Record<string, string> = {
   token: "the operator token", cli: "the operator on the server", open: "open mode", backfill: "the audit log backfill",
+  retention: "the retention policy",
 };
 
 function actorText(a: unknown): string {
@@ -1833,12 +1857,11 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions): Pro
   const notes: Note[] = [];
   const add = (check: string, more: Notes) => notes.push(...more.map((text) => ({ check, text })));
   results.push(["Report body hash", await checkBody(report), null]);
-  const [chainProblems, chainNotes] = await checkChain(report);
-  results.push(["Evidence chain", chainProblems, null]);
-  add("Evidence chain", chainNotes);
+  results.push(["Evidence chain", await checkChain(report), null]);
   const [receiptProblems, receiptNotes] = await checkReceipts(report);
-  results.push(["Lane receipts", receiptProblems, null]);
   add("Lane receipts", receiptNotes);
+  add("Evidence chain", contentNotes(report));
+  results.push(["Lane receipts", receiptProblems, null]);
   if (!pyEq(at(report, "format"), "attackledger-report/1")) {
     for (const [name, field] of [["Receipt signatures", "signature"], ["Receipt timestamps", "timestamp"]] as const) {
       const [problems, more] = field === "signature" ? await checkSignatures(report, require, mode)

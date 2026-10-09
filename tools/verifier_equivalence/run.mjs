@@ -18,7 +18,7 @@ const v = await import(pathToFileURL(path.resolve(argv[0])).href);
 const opt = (name, fallback) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback);
 const python = path.resolve(opt("--python", path.join(repo, "tools/verify_report.py")));
 const markdown = opt("--markdown", null);
-const pythonHasV2 = readFileSync(python, "utf8").includes("summary_sha256");
+const pythonHasV2 = readFileSync(python, "utf8").includes("CHAIN_FIELDS_V2");
 const CHECKS = { "Report body hash": "B", "Evidence chain": "C", "Lane receipts": "R", "Receipt signatures": "S",
                  "Signing key history": "K", "Change history": "H", "Receipt timestamps": "T" };
 const MODES = ["webcrypto", "fallback"];
