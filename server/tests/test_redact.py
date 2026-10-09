@@ -12,7 +12,7 @@ import time
 import pytest
 from sqlalchemy import select
 
-from app import blobs, ledger, redact
+from app import blobs, ledger, redact, vault
 from app.models import Endpoint, Engagement, Evidence, Job, JobStatus, Lead, Observation
 from test_agent import HOST, FakeTransport, api, api_lane, get, load_worker, make_lane, session, toolbox  # noqa: F401
 
@@ -261,7 +261,20 @@ def test_redaction_is_linear_on_large_recon_output():
 # ---- end to end: the agent's HTTP exchange -----------------------------------------------
 
 def all_blob_bytes() -> bytes:
-    return b"".join(p.read_bytes() for p in blobs.root().rglob("*") if p.is_file())
+    """Every stored blob as plaintext: encrypted ones are opened with their engagement's key,
+    so a secret cannot hide from this check behind the encryption."""
+    out = []
+    for p in blobs.root().rglob("*"):
+        if not p.is_file() or p.name in ("key.json", "deleted.json"):
+            continue
+        rel = p.relative_to(blobs.root()).parts
+        if rel[0] == "e":
+            data = vault.open_blob(int(rel[1]), p.name, p.read_bytes())
+            assert data is not None, p
+            out.append(data)
+        else:
+            out.append(p.read_bytes())
+    return b"".join(out)
 
 
 SESSION_SECRET = "Zx9SessionValue771"
@@ -284,7 +297,7 @@ def test_agent_exchange_stores_no_secret_value(session):
     for secret in (SESSION_SECRET, BEARER_SECRET, "AccessTok3n999", "alice@example.com"):
         assert secret.encode() not in stored
         assert secret not in json.dumps(res)                                      # nor shown to the model
-    raw = blobs.get(tb.exchanges["x1"]["sha256"])
+    raw = blobs.get(tb.exchanges["x1"]["sha256"], engagement_id=tb.eng.id)
     meta = json.loads(raw.split(b"\n\n", 1)[0])
     assert meta["request"]["headers"]["X-Bug-Bounty"] == "lab-researcher"         # identification stays
     assert meta["request"]["headers"]["Authorization"] == f"Bearer {m(BEARER_SECRET)}"
@@ -295,9 +308,9 @@ def test_agent_exchange_stores_no_secret_value(session):
     tb.call("add_evidence", {"item_idx": 1, "exchange_ids": ["x1"], "summary": "Profile endpoint answers."})
     session.commit()
     ev = session.scalars(select(Evidence)).one()
-    assert ev.summary.endswith("Profile endpoint answers. [5 values redacted: session, Authorization, "
+    assert vault.summary_of(ev).endswith("Profile endpoint answers. [5 values redacted: session, Authorization, "
                                "Set-Cookie, access_token, email address]")
-    assert SESSION_SECRET not in ev.summary and SESSION_SECRET not in ev.uri
+    assert SESSION_SECRET not in vault.summary_of(ev) and SESSION_SECRET not in ev.uri
     assert ev.redaction == {"redacted": 5, "kinds": ["session", "Authorization", "Set-Cookie", "access_token",
                                                      "email address"], "not_redacted": []}
     assert ev.sha256 == hashlib.sha256(raw).hexdigest()                           # the hash is of the stored bytes
@@ -314,9 +327,9 @@ def test_agent_note_and_lead_are_redacted_and_binary_bodies_noted(session):
     tb.call("record_lead", {"title": "JWT exposed", "detail": f"value {JWT}", "severity": "", "url": ""})
     session.commit()
     logo, note = session.scalars(select(Evidence).order_by(Evidence.seq)).all()
-    assert logo.summary.endswith("Logo. [not redacted: binary response body]")
-    assert note.summary == f"[agent] Saw {m(JWT)} in the page. [1 value redacted: JWT]"
-    assert blobs.get(note.sha256) == f"Saw {m(JWT)} in the page.".encode()
+    assert vault.summary_of(logo).endswith("Logo. [not redacted: binary response body]")
+    assert vault.summary_of(note) == f"[agent] Saw {m(JWT)} in the page. [1 value redacted: JWT]"
+    assert blobs.get(note.sha256, engagement_id=note.engagement_id) == f"Saw {m(JWT)} in the page.".encode()
     assert JWT not in session.scalars(select(Lead)).one().detail["text"]
 
 
@@ -330,7 +343,7 @@ def test_agent_with_redaction_off_stores_as_captured(session):
     session.commit()
     assert SESSION_SECRET.encode() in all_blob_bytes()
     ev = session.scalars(select(Evidence)).one()
-    assert ev.summary.endswith("Home. [not redacted: redaction is off for this engagement]")
+    assert vault.summary_of(ev).endswith("Home. [not redacted: redaction is off for this engagement]")
     assert ev.redaction["not_redacted"] == ["redaction is off for this engagement"]
 
 
@@ -346,7 +359,7 @@ def test_attached_note_with_a_jwt_is_masked(api):
     assert JWT.encode() not in all_blob_bytes() and api.get(f"/blobs/{ev['sha256']}").text == f"Login returns {m(JWT)} in the body."
     # A note with nothing to hide is stored exactly, without a note in its summary.
     ev = api.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note", "text": "robots.txt lists /backup/"}).json()["evidence"][-1]
-    assert ev["summary"] == "robots.txt lists /backup/" and blobs.get(ev["sha256"]) == b"robots.txt lists /backup/"
+    assert ev["summary"] == "robots.txt lists /backup/" and blobs.get(ev["sha256"], engagement_id=e) == b"robots.txt lists /backup/"
 
 
 def test_attached_files_text_redacted_binary_noted(api):
@@ -362,7 +375,7 @@ def test_attached_files_text_redacted_binary_noted(api):
     r = api.post(f"/lanes/{lane}/attach", json={"item_idx": 2, "kind": "file", "filename": "shot.png",
                                                  "content_b64": base64.b64encode(png).decode(), "summary": "Admin panel."})
     ev = r.json()["evidence"][-1]
-    assert blobs.get(ev["sha256"]) == png and ev["summary"] == "Admin panel. [not redacted: binary content]"
+    assert blobs.get(ev["sha256"], engagement_id=e) == png and ev["summary"] == "Admin panel. [not redacted: binary content]"
     assert ev["redaction"]["not_redacted"] == ["binary content"]
 
 
@@ -385,7 +398,7 @@ def test_owner_turns_redaction_off_and_it_shows(api):
     assert api.get(f"/engagements/{e}/scope").json()["redact_evidence"] is False
     ev = api.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note",
                                                   "text": f"token={SESSION_SECRET}"}).json()["evidence"][-1]
-    assert blobs.get(ev["sha256"]) == f"token={SESSION_SECRET}".encode()
+    assert blobs.get(ev["sha256"], engagement_id=e) == f"token={SESSION_SECRET}".encode()
     assert ev["summary"] == f"token={SESSION_SECRET} [not redacted: redaction is off for this engagement]"
     report = api.get(f"/engagements/{e}/report").json()
     assert report["engagement"]["redact_evidence"] is False

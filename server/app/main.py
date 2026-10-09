@@ -5,20 +5,20 @@ import json
 import os
 from contextlib import asynccontextmanager
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import auditlog, keylog, redact
+from . import auditlog, keylog, redact, vault
 from . import targets as targeting
-from .db import get_session
+from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
                      Lane, Lead, Membership, Observation, Receipt, SigningKey, User)
 
@@ -28,7 +28,10 @@ ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     packs.all_packs()  # fail fast on a broken pack
+    vault.master_key()  # fail closed: no master key, no API (D-043)
     migrate.upgrade_head()
+    with SessionLocal() as s:
+        vault.check_store(s)
     yield
 
 
@@ -93,8 +96,26 @@ def _pack_of(eng: Engagement) -> packs.Pack:
         raise HTTPException(500, str(e))
 
 
+def _content(e: Evidence, text: str | None, eng: Engagement) -> str:
+    """available, deleted (the engagement's key was deleted) or unreadable (a ciphertext that
+    does not open while the key exists: a damaged row)."""
+    if text is not None:
+        return "available"
+    return "deleted" if eng.content_deleted_at is not None else "unreadable"
+
+
+def _evidence_view(lane: Lane, e: Evidence, keys: vault.Keys) -> dict:
+    text = vault.summary_of(e, keys)
+    return {"id": e.id, "item_idx": next((i.idx for i in lane.items if i.id == e.item_id), None),
+            "kind": e.kind, "sha256": e.sha256, "uri": e.uri, "summary": text,
+            "content": _content(e, text, lane.asset.engagement), "v": e.record_version, "source": e.source,
+            "summary_sha256": e.summary_sha256,
+            "redaction": e.redaction, "created_at": iso_utc(e.created_at), "created_by": e.created_by}
+
+
 def _lane_view(lane: Lane) -> dict:
     pack = _pack_of(lane.asset.engagement)
+    keys = vault.Keys()
     return {
         "id": lane.id,
         "engagement_id": lane.asset.engagement_id,
@@ -110,12 +131,8 @@ def _lane_view(lane: Lane) -> dict:
             for i in lane.items
         ],
         "evidence_count": len(lane.evidence),
-        "evidence": [
-            {"id": e.id, "item_idx": next((i.idx for i in lane.items if i.id == e.item_id), None),
-             "kind": e.kind, "sha256": e.sha256, "uri": e.uri, "summary": e.summary,
-             "redaction": e.redaction, "created_at": iso_utc(e.created_at), "created_by": e.created_by}
-            for e in lane.evidence
-        ],
+        "evidence": [_evidence_view(lane, e, keys) for e in lane.evidence],
+        "content_deleted": vault.deleted_info(lane.asset.engagement),
         "receipt": (
             {"sha256": lane.receipts[-1].manifest_sha256,
              "closed_by": lane.receipts[-1].closed_by,
@@ -140,7 +157,8 @@ def _lane_view(lane: Lane) -> dict:
 def health(session: Session = Depends(get_session)):
     # Says how callers sign in. An open API (no people, no token) must not leave localhost.
     m = auth.mode(session)
-    return {"ok": True, "auth_required": m != "open", "mode": m, "timestamps": bool(timestamps.tsa_url())}
+    return {"ok": True, "auth_required": m != "open", "mode": m, "timestamps": bool(timestamps.tsa_url()),
+            "encryption": vault.describe_master()}
 
 
 class LoginIn(BaseModel):
@@ -396,10 +414,13 @@ def add_evidence(lane_id: int, body: EvidenceIn, request: Request, session: Sess
     summary, uri, rep = body.summary, body.uri, redact.Report()
     if redact.enabled(lane.asset.engagement):
         summary, uri = redact.text(summary, rep), redact.text(uri, rep) if uri else uri
-    ev = ledger.append_evidence(session, lane, kind=body.kind, sha256_hex=body.sha256,
-                                summary=summary + rep.suffix(), uri=uri, item_id=item_id,
-                                created_by=authz.current(request).user_id,
-                                redaction=rep.as_dict() if rep.count else None)
+    try:
+        ev = ledger.append_evidence(session, lane, kind=body.kind, sha256_hex=body.sha256,
+                                    summary=summary + rep.suffix(), uri=uri, item_id=item_id, source="manual",
+                                    created_by=authz.current(request).user_id,
+                                    redaction=rep.as_dict() if rep.count else None)
+    except vault.ContentDeleted as e:
+        raise HTTPException(409, f"{e} It takes no new evidence.")
     session.commit()
     return {"id": ev.id}
 
@@ -424,6 +445,11 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
     stored in the blob store, so the evidence hash can be opened and checked later."""
     lane = _get(session, Lane, lane_id)
     item = _item(lane, body.item_idx)
+    eng_id = lane.asset.engagement_id
+    try:
+        vault.check_writable(lane.asset.engagement)
+    except vault.ContentDeleted as e:
+        raise HTTPException(409, f"{e} It takes no new evidence.")
     summary = (body.summary or "").strip()
     # Notes and files are redacted before they are stored (D-038); the summary says what was.
     on = redact.enabled(lane.asset.engagement)
@@ -436,7 +462,7 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
             raise HTTPException(422, "write the note first")
         if on:
             text = redact.text(text, rep)
-        digest, uri, kind, summary = blobs.put(text.encode()), None, "note", summary or text[:2_000]
+        digest, uri, kind, summary = blobs.put(text.encode(), engagement_id=eng_id), None, "note", summary or text[:2_000]
         redaction = rep.as_dict()
     elif body.kind == "file":
         name = (body.filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
@@ -452,7 +478,7 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
             raise HTTPException(422, "say in a sentence what the file shows")
         if on:      # text formats are redacted; binary files are kept as they are, and the summary says so
             data = redact.data(data, rep, personal=True, filename=name)
-        digest, uri, kind = blobs.put(data), f"file:{name}", "file"
+        digest, uri, kind = blobs.put(data, engagement_id=eng_id), f"file:{name}", "file"
         redaction = rep.as_dict()
     else:
         job = session.get(Job, body.job_id) if body.job_id else None
@@ -469,7 +495,7 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
     if redaction is not None:
         summary += rep.suffix()
     ev = ledger.append_evidence(session, lane, kind=kind, sha256_hex=digest, summary=summary, uri=uri,
-                                item_id=item.id, created_by=authz.current(request).user_id,
+                                item_id=item.id, source="manual", created_by=authz.current(request).user_id,
                                 redaction=redaction)
     session.commit()
     session.refresh(lane)
@@ -593,6 +619,9 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     who = authz.current(request)
     if not body.reviewed:
         raise HTTPException(422, "confirm that you reviewed this lane's evidence before closing it")
+    if lane.asset.engagement.content_deleted_at is not None:     # nobody can review what can no longer be read
+        raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(lane.asset.engagement))
+                            + " Its evidence can no longer be reviewed, so no new receipt is issued.")
     signer = who.name if who.kind == "person" else (body.closed_by or "").strip()
     if not signer:
         raise HTTPException(422, "a receipt needs the name of the person signing it")
@@ -696,6 +725,8 @@ def coverage(eng_id: int, session: Session = Depends(get_session)):
     return {"engagement": eng.name, "pack": {"id": pack.id, "name": pack.name},
             "separation_of_duties": eng.separation_of_duties,
             "require_signatures": eng.require_signatures,
+            "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
+            "content_deleted": vault.deleted_info(eng),
             "roles": keys,
             "lanes": [{"key": l.key, "name": l.name, "needs": list(l.needs)} for l in pack.lanes],
             "closed_cells": closed, "total_cells": total, "assets": rows}
@@ -749,6 +780,8 @@ def _scope_view(eng: Engagement) -> dict:
         "authorized_at": iso_utc(eng.authorized_at),
         "separation_of_duties": eng.separation_of_duties,
         "redact_evidence": eng.redact_evidence,
+        "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
+        "content_deleted": vault.deleted_info(eng),
     }
 
 
@@ -1218,14 +1251,27 @@ def list_agent_runs(lane_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/blobs/{digest}")
-def get_blob(digest: str, session: Session = Depends(get_session)):
+def get_blob(digest: str, request: Request, session: Session = Depends(get_session)):
     """The raw bytes behind an evidence hash (an agent's HTTP exchange or note), for review.
     Only blobs that evidence refers to are served."""
-    if session.scalar(select(Evidence.id).where(Evidence.sha256 == digest).limit(1)) is None:
+    who = authz.current(request)
+    eng_ids = sorted(set(session.scalars(select(Evidence.engagement_id).where(Evidence.sha256 == digest))))
+    eng_ids = [i for i in eng_ids if who.can_read(i)]
+    if not eng_ids:
         raise HTTPException(404, "no evidence refers to this hash")
-    data = blobs.get(digest)
+    data, deleted = None, []
+    for eng_id in eng_ids:          # each engagement keeps its own encrypted copy
+        eng = session.get(Engagement, eng_id)
+        if eng.content_deleted_at is not None:
+            deleted.append(eng)
+            continue
+        data = blobs.get(digest, engagement_id=eng_id)
+        if data is not None:
+            break
+    if data is None and deleted and len(deleted) == len(eng_ids):
+        raise HTTPException(410, vault.deleted_sentence(vault.deleted_info(deleted[0])))
     if data is None:
-        raise HTTPException(404, "the bytes for this hash are not in the blob store")
+        raise HTTPException(404, "the bytes for this hash are not in the blob store, or do not match it")
     # Target content: served as inert text, never rendered.
     return Response(data, media_type="text/plain; charset=utf-8",
                     headers={"Content-Security-Policy": "default-src 'none'; sandbox",
@@ -1368,11 +1414,24 @@ class EngagementPatch(BaseModel):
     separation_of_duties: bool | None = None
     require_signatures: bool | None = None
     redact_evidence: bool | None = None         # off only for a lab: raw evidence is then stored as captured
+    retain_until: date | None = None            # keep the content through this UTC date; null removes the date
 
 
 @app.patch("/engagements/{eng_id}")
 def update_engagement(eng_id: int, body: EngagementPatch, request: Request, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
+    if "retain_until" in body.model_fields_set and body.retain_until != eng.retain_until:
+        if eng.content_deleted_at is not None:
+            raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(eng)))
+        if body.retain_until is not None and body.retain_until < datetime.now(timezone.utc).date():
+            raise HTTPException(422, "the retention date is in the past; to delete the content now, use "
+                                     "Delete this engagement's data")
+        old = eng.retain_until
+        eng.retain_until = body.retain_until
+        auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="engagement.retention",
+                        engagement_id=eng.id,
+                        change={"before": {"retain_until": old.isoformat() if old else None},
+                                "after": {"retain_until": eng.retain_until.isoformat() if eng.retain_until else None}})
     before = auditlog.settings_snapshot(eng)
     if body.separation_of_duties is not None:
         eng.separation_of_duties = body.separation_of_duties
@@ -1386,7 +1445,51 @@ def update_engagement(eng_id: int, body: EngagementPatch, request: Request, sess
                         engagement_id=eng.id, change={"before": before, "after": after})
     session.commit()
     return {"id": eng.id, "separation_of_duties": eng.separation_of_duties,
-            "require_signatures": eng.require_signatures, "redact_evidence": eng.redact_evidence}
+            "require_signatures": eng.require_signatures, "redact_evidence": eng.redact_evidence,
+            "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
+            "content_deleted": vault.deleted_info(eng)}
+
+
+# ---- retention and deleting content (D-043) -----------------------------------
+
+def _content_status(session, eng: Engagement) -> dict:
+    rows = session.scalars(select(Evidence).where(Evidence.engagement_id == eng.id)).all()
+    return {"engagement": eng.name, "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
+            "content_deleted": vault.deleted_info(eng),
+            "encryption": vault.describe_master(),
+            "evidence_entries": len(rows),
+            "encrypted_summaries": sum(1 for e in rows if e.summary_enc is not None),
+            "v1_summaries": sum(1 for e in rows if e.summary is not None),
+            "observations": session.scalar(select(func.count()).select_from(Observation)
+                                           .where(Observation.engagement_id == eng.id)) or 0,
+            "endpoints": session.scalar(select(func.count()).select_from(Endpoint)
+                                        .where(Endpoint.engagement_id == eng.id)) or 0,
+            "leads": session.scalar(select(func.count()).select_from(Lead).where(Lead.engagement_id == eng.id)) or 0}
+
+
+@app.get("/engagements/{eng_id}/content")
+def content_status(eng_id: int, session: Session = Depends(get_session)):
+    """What deleting this engagement's data would remove and keep, or when it was deleted."""
+    return _content_status(session, _get(session, Engagement, eng_id))
+
+
+class DeleteContentIn(BaseModel):
+    confirm_name: str = Field(max_length=200)     # the engagement's name, typed by the owner
+
+
+@app.post("/engagements/{eng_id}/content/delete")
+def delete_content(eng_id: int, body: DeleteContentIn, request: Request, session: Session = Depends(get_session)):
+    """Delete the engagement's key, raw evidence, summaries and recon results. Cannot be
+    undone. Hashes, receipts, signatures, timestamps and the audit log remain, so reports
+    still verify."""
+    eng = _get(session, Engagement, eng_id)
+    if eng.content_deleted_at is not None:
+        raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(eng)))
+    if body.confirm_name != eng.name:
+        raise HTTPException(422, "type the engagement's name exactly to confirm; nothing was deleted")
+    res = vault.delete_content(session, eng, actor=auditlog.actor(authz.current(request)), reason="owner")
+    return {**_content_status(session, eng), "removed": {k: res.get(k, 0) for k in (
+        "summaries_removed", "observations", "endpoints", "leads", "blobs_removed", "plaintext_blobs_removed")}}
 
 
 # ---- scope import ----------------------------------------------------------

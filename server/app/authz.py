@@ -48,6 +48,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/people"): ("owner", None),
     ("PATCH", "/people/{user_id}"): ("owner", USER),
     ("GET", "/audit"): ("owner", None),                       # every engagement's history and every person's
+    ("POST", "/engagements/{eng_id}/content/delete"): ("owner", ENG),   # cannot be undone; confirmed by name
 
     ("GET", "/engagements/{eng_id}/coverage"): ("read", ENG),
     ("GET", "/engagements/{eng_id}/scope"): ("read", ENG),
@@ -61,6 +62,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/engagements/{eng_id}/endpoints"): ("read", ENG),
     ("GET", "/engagements/{eng_id}/leads"): ("read", ENG),
     ("GET", "/engagements/{eng_id}/audit"): ("read", ENG),    # its history, and its people's
+    ("GET", "/engagements/{eng_id}/content"): ("read", ENG),  # what is kept, or when it was deleted
     ("GET", "/lanes/{lane_id}"): ("read", LANE),
     ("GET", "/lanes/{lane_id}/context"): ("read", LANE),
     ("GET", "/lanes/{lane_id}/agent-runs"): ("read", LANE),

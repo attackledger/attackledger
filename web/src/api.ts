@@ -26,12 +26,28 @@ export interface Coverage {
   engagement: string;
   separation_of_duties?: boolean;
   require_signatures?: boolean;
+  retain_until?: string | null;              // YYYY-MM-DD (UTC): the content is kept through this day
+  content_deleted?: ContentDeleted | null;
   pack: { id: string; name: string };
   roles: string[];
   lanes: LaneInfo[];
   closed_cells: number;
   total_cells: number;
   assets: CoverageRow[];
+}
+
+/** What deleting an engagement's data removes and keeps, or when it was deleted. */
+export interface ContentStatus {
+  engagement: string;
+  retain_until: string | null;
+  content_deleted: ContentDeleted | null;
+  encryption: { master_key: "configured" | "development" | "missing" };
+  evidence_entries: number;
+  encrypted_summaries: number;
+  v1_summaries: number;
+  observations: number;
+  endpoints: number;
+  leads: number;
 }
 
 export interface EngagementSummary {
@@ -81,13 +97,26 @@ export interface LaneItem {
   na_reason: string | null;
 }
 
+/** When and by whom an engagement's content was deleted (D-043): its key, raw evidence and
+ *  summaries. Hashes, receipts and the history remain. */
+export interface ContentDeleted {
+  at: string;
+  by: string;
+  reason: "owner" | "retention" | "operator";
+}
+
 export interface EvidenceEntry {
   id: number;
   item_idx: number | null;
   kind: string;
   sha256: string;
   uri: string | null;
-  summary: string;
+  // Null when the engagement's content was deleted ("deleted") or the stored text does not
+  // open ("unreadable"). Entries recorded before chain record v2 keep theirs.
+  summary: string | null;
+  content?: "available" | "deleted" | "unreadable";
+  v?: number;
+  source?: string | null;   // manual, recon, agent or import:<tool>; null before chain record v2
   // What was redacted from the stored bytes (D-038): counts and kinds, never values. Null for
   // entries with nothing stored by AttackLedger (a recon run, a hash given through the API).
   redaction?: Redaction | null;
@@ -111,6 +140,7 @@ export interface LaneDetail {
   unresolved: string[];
   items: LaneItem[];
   evidence: EvidenceEntry[];
+  content_deleted?: ContentDeleted | null;
   receipt: { sha256: string; closed_by: string | null; closed_by_email?: string | null; created_at: string; signed?: boolean;
              algorithm?: string | null; key_fingerprint?: string | null;
              timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null } | null;
@@ -120,7 +150,7 @@ export interface LaneDetail {
 export interface AuditEntry {
   seq: number;
   at: string;
-  actor: { kind: "person" | "token" | "cli" | "open" | "backfill"; user_id: number | null; name: string; email: string | null };
+  actor: { kind: "person" | "token" | "cli" | "open" | "backfill" | "retention"; user_id: number | null; name: string; email: string | null };
   actor_label: string;
   action: string;
   engagement_id: number | null;
@@ -449,8 +479,12 @@ export const api = {
   timestampReceipt: (laneId: number) =>
     call<LaneDetail>(`/lanes/${laneId}/receipt/timestamp`, { method: "POST", body: "{}" }),
   updateEngagement: (engId: number, body: { separation_of_duties?: boolean; require_signatures?: boolean;
-                                            redact_evidence?: boolean }) =>
-    call<{ id: number; separation_of_duties: boolean; require_signatures: boolean; redact_evidence: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
+                                            redact_evidence?: boolean; retain_until?: string | null }) =>
+    call<{ id: number; separation_of_duties: boolean; require_signatures: boolean; redact_evidence: boolean;
+           retain_until: string | null }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  contentStatus: (engId: number) => call<ContentStatus>(`/engagements/${engId}/content`),
+  deleteContent: (engId: number, confirm_name: string) =>
+    call<ContentStatus>(`/engagements/${engId}/content/delete`, { method: "POST", body: JSON.stringify({ confirm_name }) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
   createEngagement: (name: string, pack_id: string) =>

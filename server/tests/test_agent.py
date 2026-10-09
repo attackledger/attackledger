@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app import agentloop, agenttools, blobs, db, gates, ledger
+from app import agentloop, agenttools, blobs, db, gates, ledger, vault
 from app.models import (Asset, ChecklistItem, Engagement, Evidence, ItemState, Job, JobStatus, Lane, Lead,
                         Receipt)
 
@@ -225,7 +225,7 @@ def test_exchange_is_stored_and_body_is_truncated_for_the_model(session):
     res, err = get(tb, f"https://{HOST}/r")
     assert not err and res["status"] == 302 and res["exchange_id"] == "x1"
     assert len(res["body"]) == agenttools.MAX_BODY_CHARS and res["body_bytes"] == len(body)
-    raw = blobs.get(tb.exchanges["x1"]["sha256"])
+    raw = blobs.get(tb.exchanges["x1"]["sha256"], engagement_id=tb.eng.id)
     assert raw is not None and raw.endswith(body)
     meta = json.loads(raw.split(b"\n\n", 1)[0])
     assert meta["request"]["headers"]["X-Bug-Bounty"] == "lab-researcher"
@@ -250,9 +250,9 @@ def test_evidence_cites_only_this_runs_exchanges_and_is_chained(session):
     session.commit()
     rows = session.scalars(select(Evidence).order_by(Evidence.seq)).all()
     assert [r.kind for r in rows] == ["response", "note"]
-    assert all(r.summary.startswith("[agent] ") for r in rows)
+    assert all(vault.summary_of(r).startswith("[agent] ") and r.source == "agent" for r in rows)
     assert rows[0].sha256 == tb.exchanges["x1"]["sha256"] and rows[0].uri == f"https://{HOST}/robots.txt"
-    assert blobs.get(rows[1].sha256) == b"No login form found."
+    assert blobs.get(rows[1].sha256, engagement_id=rows[1].engagement_id) == b"No login form found."
     records = [{**ledger.evidence_record(r, HOST, "recon"), "prev_hash": r.prev_hash,
                 "chain_hash": r.chain_hash} for r in rows]
     assert ledger.verify_chain(records) == []
@@ -635,7 +635,7 @@ def test_body_shown_to_the_model_has_a_per_run_budget(session):
         res, err = get(tb, f"https://{HOST}/{n}")
         assert not err
         shown.append(res["body_shown_chars"])
-        assert blobs.get(tb.exchanges[res["exchange_id"]]["sha256"]).endswith(body)   # evidence stays complete
+        assert blobs.get(tb.exchanges[res["exchange_id"]]["sha256"], engagement_id=tb.eng.id).endswith(body)   # evidence stays complete
     assert max(shown) == agenttools.MAX_BODY_CHARS
     assert sum(shown) == agenttools.RUN_BODY_BUDGET and shown[-1] == 0 and "budget" in res["body_note"]
 

@@ -104,6 +104,8 @@ def identification(eng) -> dict[str, str]:
 def check_lane(lane: Lane) -> None:
     """Gates for starting an agent run, the same ones recon jobs pass."""
     asset, eng = lane.asset, lane.asset.engagement
+    if eng.content_deleted_at is not None:
+        raise RunRefused("this engagement's content was deleted; it takes no new runs")
     if eng.authorized_at is None:
         raise RunRefused("record your authorization for this program before running an agent")
     if not eng.scope_include:
@@ -330,7 +332,7 @@ class Toolbox:
                 "response": {"status": status, "headers": resp_headers, "body_bytes": received,
                              "truncated": truncated},
                 "redaction": rep.as_dict()}
-        digest = blobs.put(ledger.canonical(meta).encode() + b"\n\n" + body)
+        digest = blobs.put(ledger.canonical(meta).encode() + b"\n\n" + body, engagement_id=self.eng.id)
         xid = f"x{len(self.exchanges) + 1}"
         self.exchanges[xid] = {"sha256": digest, "method": method, "url": url, "status": status,
                                "redaction": rep}
@@ -371,9 +373,9 @@ class Toolbox:
             raise ToolError(f"unknown exchange ids: {', '.join(unknown)} (only this run's exchanges count)")
         added = []
         if not ids:
-            digest = blobs.put(summary.encode())
+            digest = blobs.put(summary.encode(), engagement_id=self.eng.id)
             ev = ledger.append_evidence(self.session, self.lane, kind="note", sha256_hex=digest,
-                                        summary=MARK + summary + said.suffix(), item_id=item.id,
+                                        summary=MARK + summary + said.suffix(), item_id=item.id, source="agent",
                                         created_by=self.created_by, redaction=said.as_dict())
             added.append(ev.id)
         existing = {(e.item_id, e.sha256) for e in self.session.scalars(
@@ -384,7 +386,7 @@ class Toolbox:
                 continue
             rep = redact.Report().update(x["redaction"]).update(said)
             ev = ledger.append_evidence(
-                self.session, self.lane, kind="response", sha256_hex=x["sha256"], uri=x["url"][:1000],
+                self.session, self.lane, kind="response", sha256_hex=x["sha256"], uri=x["url"][:1000], source="agent",
                 summary=f"{MARK}{x['method']} {x['url'][:300]} -> {x['status']}. {summary}{rep.suffix()}",
                 item_id=item.id, created_by=self.created_by, redaction=rep.as_dict())
             added.append(ev.id)

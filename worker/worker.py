@@ -45,7 +45,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, redact, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
-from app import agentloop, agenttools, nucleisafe, passive, triage  # noqa: E402
+from app import agentloop, agenttools, nucleisafe, passive, triage, vault  # noqa: E402
 from app.text import plural  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lane, Lead, Observation  # noqa: E402
@@ -870,7 +870,7 @@ def run(session, job: Job) -> "Run":
         asset = r.known.get(host)
         lane = next((l for l in asset.lanes if l.role == recon_lane), None) if asset and asset.id else None
         if lane:
-            ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256,
+            ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256, source="recon",
                                    uri=f"job:{job.id}", summary=f"{m.title} run, job {job.id}",
                                    created_by=job.created_by)
     session.commit()
@@ -977,16 +977,39 @@ def claim(session):
     return job
 
 
+RETENTION_SECONDS = 60
+
+
+def retention_pass(session) -> list[int]:
+    """Delete the content of engagements past their retention date (D-043, vault.py), and
+    finish a deletion whose file step was interrupted. A failure is reported, never fatal."""
+    try:
+        done = vault.apply_retention(session)
+    except Exception as e:  # noqa: BLE001
+        session.rollback()
+        print(f"retention pass failed: {e}", flush=True)
+        return []
+    for eng_id in done:
+        print(f"retention: deleted the content of engagement {eng_id}", flush=True)
+    return done
+
+
 def main():
     check_registry()
+    vault.master_key()       # fail closed: no master key, no worker (D-043)
     migrate.wait_for_head()  # the API owns migrations
     with SessionLocal() as session:
+        vault.check_store(session)
         stale = recover_interrupted(session, all_running=True)
     if stale:
         print(f"marked {plural(len(stale), 'interrupted job')} failed: {stale}", flush=True)
     print("worker ready", flush=True)
+    next_retention = 0.0
     while True:
         with SessionLocal() as session:
+            if time.monotonic() >= next_retention:
+                retention_pass(session)
+                next_retention = time.monotonic() + RETENTION_SECONDS
             recover_interrupted(session, all_running=False)
             job = claim(session)
             if not job:

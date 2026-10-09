@@ -93,7 +93,8 @@ def test_rewriting_the_whole_chain_still_breaks_the_receipt(client):
     prev = verify.GENESIS
     for e in t["evidence"]:
         e["prev_hash"] = prev
-        e["chain_hash"] = verify.sha(prev + verify.canonical({k: e[k] for k in verify.CHAIN_FIELDS}))
+        fields = verify.CHAIN_FIELDS_V2 if e.get("v") == 2 else verify.CHAIN_FIELDS
+        e["chain_hash"] = verify.sha(prev + verify.canonical({k: e[k] for k in fields}))
         prev = e["chain_hash"]
     t["summary"]["chain_head"] = prev
     rehash(t)

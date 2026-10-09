@@ -29,11 +29,14 @@ services:
     ports: !override ["127.0.0.1:8099:8000"]
     environment:
       ATTACKLEDGER_TSA_URL: "off"
+      ATTACKLEDGER_DEV_KEY: "1"     # lab data only: the public development key (docs/ENCRYPTION.md)
     networks: [default, front]
   worker:
     image: attackledger-bench-worker:latest
     build: !reset null
     pull_policy: never
+    environment:
+      ATTACKLEDGER_DEV_KEY: "1"
     networks: [default]
   # Not used by the benchmark; kept off the run (start only the services listed above).
   lab:

@@ -4,7 +4,7 @@ Evidence and receipts are append-only: the API exposes no update or delete for
 them. A lane's status is never stored; it is computed from its items, evidence
 and latest receipt (see gates.py).
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 
 from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false as sa_false, true as sa_true
@@ -61,6 +61,14 @@ class Engagement(Base):
     # When on (the default), credentials and some personal data are replaced before raw
     # evidence is stored (redact.py, D-038). An owner may turn it off for a lab.
     redact_evidence: Mapped[bool] = mapped_column(default=True, server_default=sa_true())
+    # Retention (D-043, vault.py): the content is kept through this UTC date, then the worker
+    # deletes the engagement's key. No date: kept until an owner deletes it.
+    retain_until: Mapped[date | None]
+    # Set when the content was deleted: when, by whom (name and email, or "the retention
+    # policy"), and why (owner, retention, operator). Hashes, receipts and history remain.
+    content_deleted_at: Mapped[datetime | None]
+    content_deleted_by: Mapped[str | None] = mapped_column(String(460))
+    content_deleted_reason: Mapped[str | None] = mapped_column(String(16))
     assets: Mapped[list["Asset"]] = relationship(back_populates="engagement")
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
@@ -123,7 +131,16 @@ class Evidence(Base):
     kind: Mapped[str] = mapped_column(String(40))  # request, response, file, note
     sha256: Mapped[str] = mapped_column(String(64))
     uri: Mapped[str | None] = mapped_column(String(1000))
-    summary: Mapped[str] = mapped_column(Text)
+    # Chain record version (ledger.py). v1 rows (before 0018) keep their summary here in
+    # plaintext, because their chain hash covers the text. v2 rows keep it encrypted with the
+    # engagement's key in summary_enc, and the chain commits to summary_sha256; summary_enc is
+    # null once the engagement's content was deleted (vault.py).
+    record_version: Mapped[int] = mapped_column(default=1, server_default="1")
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_sha256: Mapped[str | None] = mapped_column(String(64))
+    summary_enc: Mapped[str | None] = mapped_column(Text)
+    # Where it came from: manual, recon, agent or import:<tool>. Null on v1 rows, which did not record it.
+    source: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))   # who attached it, or started the run
     # What was redacted from the stored bytes (redact.Report.as_dict): counts and kinds, never

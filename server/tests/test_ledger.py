@@ -495,18 +495,18 @@ def test_attach_note_and_file_store_the_bytes_behind_the_hash(client, tmp_path, 
     import base64
     from app import blobs
     monkeypatch.setenv("ATTACKLEDGER_BLOBS", str(tmp_path / "blobs"))
-    _, lane = _lane(client)
+    e, lane = _lane(client)
     r = client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note", "text": "robots.txt lists /backup/"})
     assert r.status_code == 201
     ev = r.json()["evidence"][-1]
-    assert ev["kind"] == "note" and ev["item_idx"] == 1 and blobs.get(ev["sha256"]) == b"robots.txt lists /backup/"
+    assert ev["kind"] == "note" and ev["item_idx"] == 1 and blobs.get(ev["sha256"], engagement_id=e) == b"robots.txt lists /backup/"
 
     data = b"\x89PNG fake screenshot"
     r = client.post(f"/lanes/{lane}/attach", json={"item_idx": 2, "kind": "file", "filename": "C:\\shots\\a.png",
                                                   "content_b64": base64.b64encode(data).decode(),
                                                   "summary": "Admin panel answers 401."})
     ev = r.json()["evidence"][-1]
-    assert ev["uri"] == "file:a.png" and ev["sha256"] == h_bytes(data) and blobs.get(ev["sha256"]) == data
+    assert ev["uri"] == "file:a.png" and ev["sha256"] == h_bytes(data) and blobs.get(ev["sha256"], engagement_id=e) == data
     assert client.get(f"/blobs/{ev['sha256']}").content == data
     # A file without a summary, an empty note, bad base64 and a missing item are refused.
     assert client.post(f"/lanes/{lane}/attach", json={"item_idx": 2, "kind": "file", "filename": "a.png",

@@ -30,9 +30,11 @@ ACTORS = {
     "cli": "the operator on the server",
     "open": "open mode (no sign-in)",
     "backfill": "recorded when the audit log was added",
+    "retention": "the retention policy",
 }
 ACTIONS = (
     "engagement.created", "scope.updated", "engagement.authorized", "engagement.settings", "members.updated",
+    "engagement.retention", "engagement.content_deleted",
     "person.created", "person.renamed", "person.owner", "person.disabled", "person.enabled",
     "person.password_reset", "person.password_changed",
 )
@@ -262,6 +264,22 @@ def describe(rec: dict) -> str:
                 f"{label} {'on' if after.get(k) else 'off'}" for k, label in _SETTINGS)
         return "; ".join(f"Turned {label} {'on' if after.get(k) else 'off'}"
                          for k, label in _SETTINGS if before.get(k) != after.get(k)) or "Saved the settings unchanged"
+    if a == "engagement.retention":
+        new, old = after.get("retain_until"), (before or {}).get("retain_until")
+        if not new:
+            return "Removed the retention date: the content is kept until someone deletes it" + (
+                f" (was {old})" if old else "")
+        return f"Set the retention date: the content is kept until {new}, then deleted" + (f" (was {old})" if old else "")
+    if a == "engagement.content_deleted":
+        removed, kept = ch.get("removed") or {}, ch.get("kept") or {}
+        why = {"retention": "because its retention date had passed", "owner": "at an owner's request",
+               "operator": "by the operator on the server"}.get(after.get("reason"), "")
+        out = (f"Deleted the engagement's content {why}: its key, its raw evidence, "
+               f"{removed.get('summaries', 0)} evidence summaries and its recon results. Hashes, receipts "
+               "and this history remain")
+        if kept.get("v1_summaries"):
+            out += f"; {kept['v1_summaries']} summaries recorded before chain v2 remain, because the chain covers their text"
+        return out
     if a == "members.updated":
         old = {m["user_id"]: m for m in (before or [])}
         new = {m["user_id"]: m for m in (ch.get("after") or [])}
