@@ -1,7 +1,9 @@
 // In-browser check of a report's receipt signatures, following the same rules as
 // tools/verify_report.py check_signatures. It is a convenience: the offline verifier is
 // the authoritative check (it also rebuilds each manifest, walks the evidence chain,
-// recomputes the body hash and checks RFC 3161 timestamp tokens, which this does not).
+// recomputes the body hash, checks RFC 3161 timestamp tokens, and checks the key log and the
+// change history, which this does not). Payloads in format v2 and v3 are read; v3 adds the
+// signer's email.
 
 export interface ReportSignature {
   algorithm: string;
@@ -14,6 +16,7 @@ export interface ReportSignature {
 export interface ReportReceipt {
   manifest_sha256: string;
   closed_by: string | null;
+  closed_by_email?: string | null;
   issued_at?: string;
   signature?: ReportSignature | null;
   timestamp?: { time: string; tsa?: string | null; token?: string } | null;
@@ -43,10 +46,13 @@ export interface ReceiptCheck {
   outcome: Outcome;
   problems: string[];         // why it failed, or why it could not be checked
   signer: string | null;      // the name inside the signed payload
+  signerEmail: string | null; // the email inside a v3 payload
   fingerprint: string | null; // the fingerprint computed from the public key
 }
 
 const GENESIS = "0".repeat(64);
+const V2 = "attackledger-receipt-v2";
+const FORMATS = [V2, "attackledger-receipt-v3"];
 
 // SubjectPublicKeyInfo DER prefixes, as in verify_report.py.
 const SPKI_PREFIX: Record<string, string> = {
@@ -102,13 +108,13 @@ export async function verifySignature(algorithm: string, spki: Uint8Array, paylo
 export async function checkReceipt(lane: ReportLane, chain: Map<number, string>): Promise<ReceiptCheck> {
   const rc = lane.receipt!;
   const sig = rc.signature;
-  if (!sig) return { lane, outcome: "unsigned", problems: [], signer: null, fingerprint: null };
+  if (!sig) return { lane, outcome: "unsigned", problems: [], signer: null, signerEmail: null, fingerprint: null };
 
   const problems: string[] = [];
   let spki: Uint8Array, value: Uint8Array;
   let payload: {
     format?: string; manifest_sha256?: string; key_fingerprint?: string;
-    lane?: { id?: number }; signer?: { name?: string }; chain?: { seq?: number; head?: string };
+    lane?: { id?: number }; signer?: { name?: string; email?: string }; chain?: { seq?: number; head?: string };
   };
   try {
     spki = unb64(sig.public_key);
@@ -116,7 +122,8 @@ export async function checkReceipt(lane: ReportLane, chain: Map<number, string>)
     payload = JSON.parse(sig.payload);
     if (!payload || typeof payload !== "object") throw new Error("payload");
   } catch {
-    return { lane, outcome: "fail", problems: ["The signature fields cannot be read."], signer: null, fingerprint: null };
+    return { lane, outcome: "fail", problems: ["The signature fields cannot be read."], signer: null, signerEmail: null,
+             fingerprint: null };
   }
 
   const fingerprint = hex(await crypto.subtle.digest("SHA-256", spki));
@@ -131,7 +138,10 @@ export async function checkReceipt(lane: ReportLane, chain: Map<number, string>)
     if ((e as Error).message === "unsupported") unsupported = true;
     else problems.push("The public key cannot be used to verify.");
   }
-  if (payload.format !== "attackledger-receipt-v2") problems.push("The signed payload has an unknown format.");
+  if (!FORMATS.includes(payload.format ?? "")) problems.push("The signed payload has an unknown format.");
+  else if (payload.format !== V2 && typeof payload.signer?.email !== "string") {
+    problems.push("The signed payload does not name the signer's email.");
+  }
   if (payload.manifest_sha256 !== rc.manifest_sha256) problems.push("The signature covers a different manifest.");
   if (payload.lane?.id !== lane.lane_id) problems.push("The signature names another lane.");
   if (payload.key_fingerprint !== sig.key_fingerprint) problems.push("The signed payload names another key.");
@@ -142,12 +152,13 @@ export async function checkReceipt(lane: ReportLane, chain: Map<number, string>)
   }
 
   const signer = payload.signer?.name ?? null;
-  if (problems.length) return { lane, outcome: "fail", problems, signer, fingerprint };
+  const signerEmail = payload.signer?.email ?? null;
+  if (problems.length) return { lane, outcome: "fail", problems, signer, signerEmail, fingerprint };
   if (unsupported) {
-    return { lane, outcome: "unsupported", signer, fingerprint,
+    return { lane, outcome: "unsupported", signer, signerEmail, fingerprint,
              problems: ["This browser cannot check Ed25519 signatures (its WebCrypto has no Ed25519). Use verify_report.py."] };
   }
-  return { lane, outcome: "pass", problems: [], signer, fingerprint };
+  return { lane, outcome: "pass", problems: [], signer, signerEmail, fingerprint };
 }
 
 /** Every receipted lane in the report, checked. */

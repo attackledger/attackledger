@@ -13,6 +13,7 @@ import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
 import { Verify } from "./Verify";
+import { History } from "./History";
 import { can, readOnly, rolesOn } from "./access";
 import { ThemeToggle } from "./theme";
 
@@ -22,9 +23,9 @@ const TYPE_NAMES: Record<string, string> = {
   internal: "Internal assessment",
 };
 
-type Tab = "recon" | "ledger" | "controls" | "report" | "verify" | "team";
+type Tab = "recon" | "ledger" | "controls" | "report" | "verify" | "history" | "team";
 const TAB_NAMES: Record<Tab, string> = {
-  recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", team: "Team",
+  recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History", team: "Team",
 };
 
 export function App() {
@@ -235,7 +236,7 @@ function Workspace() {
             <header className="eng-head">
               <h2 className="eng-title">{coverage.engagement}</h2>
               <div className="tabs" role="tablist" aria-label="Engagement views">
-                {(["recon", "ledger", "controls", "report", "verify", ...(owner ? ["team"] as const : [])] as const).map((t) => (
+                {(["recon", "ledger", "controls", "report", "verify", "history", ...(owner ? ["team"] as const : [])] as const).map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -270,6 +271,7 @@ function Workspace() {
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
               {tab === "report" && <Report engId={current} />}
               {tab === "verify" && <Verify engId={current} />}
+              {tab === "history" && <History engId={current} />}
               {tab === "team" && owner && (
                 <Team engId={current} separation={!!coverage.separation_of_duties}
                       signatures={!!coverage.require_signatures} onChanged={hostsChanged} />
@@ -829,7 +831,8 @@ function Folio({ laneId, me, onClose, onChanged }: {
             ))}
             {lane.status === "closed" ? (
               <p className="muted">
-                Receipt signed by {lane.receipt!.closed_by ?? "an unknown reviewer"},{" "}
+                Receipt signed by {lane.receipt!.closed_by ?? "an unknown reviewer"}
+                {lane.receipt!.closed_by_email && <> ({lane.receipt!.closed_by_email})</>},{" "}
                 {new Date(lane.receipt!.created_at).toLocaleString()}
                 {lane.receipt!.signed
                   ? <>, with key <code title={lane.receipt!.key_fingerprint ?? ""}>{(lane.receipt!.key_fingerprint ?? "").slice(0, 16)}</code> ({lane.receipt!.algorithm})</>

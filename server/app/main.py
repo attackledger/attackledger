@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import keylog
+from . import auditlog, keylog
 from . import targets as targeting
 from .db import get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
@@ -120,6 +120,7 @@ def _lane_view(lane: Lane) -> dict:
             {"sha256": lane.receipts[-1].manifest_sha256,
              "closed_by": lane.receipts[-1].closed_by,
              "closed_by_user": lane.receipts[-1].closed_by_user,
+             "closed_by_email": lane.receipts[-1].closed_by_email,
              "signed": bool(lane.receipts[-1].signature),
              "algorithm": lane.receipts[-1].algorithm,
              "key_fingerprint": lane.receipts[-1].key_fingerprint,
@@ -305,12 +306,14 @@ def change_password(body: PasswordIn, request: Request, session: Session = Depen
     auth.clear_failures(user.email, addr)
     user.password_hash, user.password_chosen = auth.hash_password(body.new_password), True
     auth.end_sessions(session, user.id, keep=request.cookies.get(auth.COOKIE, ""))
+    auditlog.append(session, actor=auditlog.actor(who), action="person.password_changed", subject_id=user.id,
+                    change={"person": auditlog.person_ref(user), "password_chosen": True})
     session.commit()
     return {"ok": True}
 
 
 @app.post("/engagements", status_code=201)
-def create_engagement(body: EngagementIn, session: Session = Depends(get_session)):
+def create_engagement(body: EngagementIn, request: Request, session: Session = Depends(get_session)):
     try:
         pack = packs.get_pack(body.pack_id)
     except packs.PackError as e:
@@ -322,9 +325,15 @@ def create_engagement(body: EngagementIn, session: Session = Depends(get_session
                      engagement_type=etype)
     session.add(eng)
     try:
-        session.commit()
+        session.flush()
     except IntegrityError:
+        session.rollback()
         raise HTTPException(409, "engagement name already exists")
+    auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="engagement.created",
+                    engagement_id=eng.id, change={"after": {"name": eng.name, "pack_id": eng.pack_id,
+                                                            "engagement_type": eng.engagement_type,
+                                                            "policy_url": eng.policy_url}})
+    session.commit()
     return {"id": eng.id, "name": eng.name, "pack_id": eng.pack_id,
             "engagement_type": eng.engagement_type}
 
@@ -487,6 +496,8 @@ def _check_signed(session, lane: Lane, who, body: "CloseIn") -> SigningKey:
         p = json.loads(body.payload or "")
     except ValueError:
         raise HTTPException(422, "the signed payload is not valid JSON")
+    if isinstance(p, dict) and p.get("format") != signing.PAYLOAD_FORMAT:
+        raise HTTPException(422, "the signed payload is in another format; ask for a new payload")
     if not isinstance(p, dict) or signing.payload_for(**_payload_fields(p)) != body.payload:
         raise HTTPException(422, "the signed payload is not in canonical form")
     eng = lane.asset.engagement
@@ -494,7 +505,8 @@ def _check_signed(session, lane: Lane, who, body: "CloseIn") -> SigningKey:
         (p["engagement"]["id"] == eng.id and p["lane"]["id"] == lane.id
          and p["lane"]["host"] == lane.asset.host and p["lane"]["role"] == lane.role, "it names another lane"),
         (p["manifest_sha256"] == gates.manifest_hash(lane), "the lane changed after the payload was issued"),
-        (p["signer"]["id"] == who.user_id, "it names another signer"),
+        (p["signer"]["id"] == who.user_id and p["signer"]["name"] == who.name
+         and p["signer"]["email"] == who.email, "it names another signer, or your name or email changed"),
         (p["key_fingerprint"] == key.fingerprint, "it names another key"),
     ]
     head = session.scalar(select(Evidence).where(Evidence.engagement_id == eng.id,
@@ -527,7 +539,8 @@ def _payload_fields(p: dict) -> dict:
                 "lane_id": p["lane"]["id"], "host": p["lane"]["host"], "role": p["lane"]["role"],
                 "manifest_sha256": p["manifest_sha256"], "chain_seq": p["chain"]["seq"],
                 "chain_head": p["chain"]["head"], "signer_id": p["signer"]["id"],
-                "signer_name": p["signer"]["name"], "key_fingerprint": p["key_fingerprint"],
+                "signer_name": p["signer"]["name"], "signer_email": p["signer"]["email"],
+                "key_fingerprint": p["key_fingerprint"],
                 "issued_at": p["issued_at"]}
     except (KeyError, TypeError):
         raise HTTPException(422, "the signed payload is missing fields")
@@ -546,7 +559,7 @@ def receipt_payload(lane_id: int, key: str, request: Request, session: Session =
     return {"payload": signing.payload_for(
         engagement_id=eng.id, engagement_name=eng.name, lane_id=lane.id, host=lane.asset.host, role=lane.role,
         manifest_sha256=gates.manifest_hash(lane), chain_seq=seq, chain_head=head, signer_id=who.user_id,
-        signer_name=who.name, key_fingerprint=k.fingerprint,
+        signer_name=who.name, signer_email=who.email, key_fingerprint=k.fingerprint,
         issued_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))}
 
 
@@ -576,7 +589,7 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     elif lane.asset.engagement.require_signatures:
         raise HTTPException(422, "this engagement requires signed receipts: sign with your key")
     receipt = Receipt(lane_id=lane.id, manifest_sha256=gates.manifest_hash(lane),
-                      closed_by=signer, closed_by_user=who.user_id)
+                      closed_by=signer, closed_by_user=who.user_id, closed_by_email=who.email or None)
     if key is not None:
         receipt.payload, receipt.signature = body.payload, body.signature
         receipt.algorithm, receipt.public_key, receipt.key_fingerprint = key.algorithm, key.public_key, key.fingerprint
@@ -722,8 +735,9 @@ def get_scope(eng_id: int, session: Session = Depends(get_session)):
 
 
 @app.put("/engagements/{eng_id}/scope")
-def put_scope(eng_id: int, body: ScopeIn, session: Session = Depends(get_session)):
+def put_scope(eng_id: int, body: ScopeIn, request: Request, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
+    before = auditlog.scope_snapshot(eng)
     try:
         inc = sorted({scope.normalize_pattern(p) for p in body.include if p.strip()})
         exc = sorted({scope.normalize_pattern(p) for p in body.exclude if p.strip()})
@@ -740,8 +754,24 @@ def put_scope(eng_id: int, body: ScopeIn, session: Session = Depends(get_session
         raise HTTPException(422, f"not an opt-in module: {', '.join(sorted(unknown))}")
     eng.enabled_modules, eng.crawl_depth = sorted(enabled), body.crawl_depth
     added = _apply_scope_to_assets(eng, inc, exc)
+    _audit_scope(session, request, eng, before, added)
     session.commit()
     return {**_scope_view(eng), "hosts_added": added}
+
+
+def _audit_scope(session, request: Request, eng: Engagement, before: dict, added: list[str],
+                 imported: str | None = None) -> None:
+    """One scope.updated entry, if a rule or a host changed."""
+    after = auditlog.scope_snapshot(eng)
+    if after == before and not added:
+        return
+    change = {"before": before, "after": after}
+    if added:
+        change["hosts_added"] = added
+    if imported:
+        change["import"] = imported
+    auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="scope.updated",
+                    engagement_id=eng.id, change=change)
 
 
 def _apply_scope_to_assets(eng: Engagement, inc: list[str], exc: list[str]) -> list[str]:
@@ -759,13 +789,16 @@ def _apply_scope_to_assets(eng: Engagement, inc: list[str], exc: list[str]) -> l
 
 
 @app.post("/engagements/{eng_id}/attest")
-def attest(eng_id: int, body: AttestIn, session: Session = Depends(get_session)):
+def attest(eng_id: int, body: AttestIn, request: Request, session: Session = Depends(get_session)):
     if not body.confirm:
         raise HTTPException(422, "confirm that you are authorized to test this program")
     policy_url = _policy_url(body.policy_url, required=True)
     eng = _get(session, Engagement, eng_id)
+    before = auditlog.authorization_snapshot(eng)
     eng.authorized_by, eng.policy_url = body.operator.strip(), policy_url
     eng.authorized_at = datetime.now(timezone.utc)
+    auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="engagement.authorized",
+                    engagement_id=eng.id, change={"before": before, "after": auditlog.authorization_snapshot(eng)})
     session.commit()
     return _scope_view(eng)
 
@@ -1208,7 +1241,7 @@ def list_people(session: Session = Depends(get_session)):
 
 
 @app.post("/people", status_code=201)
-def create_person(body: PersonIn, session: Session = Depends(get_session)):
+def create_person(body: PersonIn, request: Request, session: Session = Depends(get_session)):
     """Add a person. The first one must be an owner: from then on, everyone signs in."""
     if not auth.people_exist(session) and not body.is_owner:
         raise HTTPException(422, "the first person must be an owner, or nobody could manage the ledger")
@@ -1219,14 +1252,20 @@ def create_person(body: PersonIn, session: Session = Depends(get_session)):
                 password_hash=auth.hash_password(body.password), is_owner=body.is_owner)
     session.add(user)
     try:
-        session.commit()
+        session.flush()
     except IntegrityError:
+        session.rollback()
         raise HTTPException(409, "someone with that email already exists")
+    # The fact that the creator chose the first password is recorded; the password is not.
+    auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="person.created",
+                    subject_id=user.id, change={"person": auditlog.person_ref(user),
+                                                "after": auditlog.person_snapshot(user), "password": "assigned"})
+    session.commit()
     return _person_view(user)
 
 
 @app.patch("/people/{user_id}")
-def update_person(user_id: int, body: PersonPatch, session: Session = Depends(get_session)):
+def update_person(user_id: int, body: PersonPatch, request: Request, session: Session = Depends(get_session)):
     user = _get(session, User, user_id)
     losing_owner = (body.is_owner is False or body.disabled is True) and user.is_owner and not user.disabled
     if losing_owner and _active_owners(session) <= 1:
@@ -1237,11 +1276,20 @@ def update_person(user_id: int, body: PersonPatch, session: Session = Depends(ge
         # server resets a forgotten one there.
         raise HTTPException(422, "people change their own password; to reset a forgotten one, run "
                                  "python -m app.people set-password on the server")
-    if body.name is not None:
+    who, ref = auditlog.actor(authz.current(request)), auditlog.person_ref(user)
+
+    def audit(action: str, field: str, old, new) -> None:
+        auditlog.append(session, actor=who, action=action, subject_id=user.id,
+                        change={"person": ref, "before": {field: old}, "after": {field: new}})
+    if body.name is not None and body.name.strip() != user.name:
+        audit("person.renamed", "name", user.name, body.name.strip())
         user.name = body.name.strip()
-    if body.is_owner is not None:
+    if body.is_owner is not None and body.is_owner != user.is_owner:
+        audit("person.owner", "is_owner", user.is_owner, body.is_owner)
         user.is_owner = body.is_owner
     if body.disabled is not None:
+        if body.disabled != user.disabled:
+            audit("person.disabled" if body.disabled else "person.enabled", "disabled", user.disabled, body.disabled)
         user.disabled = body.disabled
         if body.disabled:
             auth.end_sessions(session, user.id)
@@ -1268,9 +1316,10 @@ def list_members(eng_id: int, session: Session = Depends(get_session)):
 
 
 @app.put("/engagements/{eng_id}/members")
-def set_members(eng_id: int, body: MembersIn, session: Session = Depends(get_session)):
+def set_members(eng_id: int, body: MembersIn, request: Request, session: Session = Depends(get_session)):
     """Replace who works on this engagement and in which roles."""
     _get(session, Engagement, eng_id)
+    before = auditlog.members_snapshot(session, eng_id)
     for m in body.members:
         bad = [r for r in m.roles if r not in ROLES]
         if bad:
@@ -1283,6 +1332,11 @@ def set_members(eng_id: int, body: MembersIn, session: Session = Depends(get_ses
     for m in body.members:
         if m.roles:
             session.add(Membership(engagement_id=eng_id, user_id=m.user_id, roles=sorted(set(m.roles))))
+    session.flush()
+    after = auditlog.members_snapshot(session, eng_id)
+    if after != before:
+        auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="members.updated",
+                        engagement_id=eng_id, change={"before": before, "after": after})
     session.commit()
     return list_members(eng_id, session)
 
@@ -1293,12 +1347,17 @@ class EngagementPatch(BaseModel):
 
 
 @app.patch("/engagements/{eng_id}")
-def update_engagement(eng_id: int, body: EngagementPatch, session: Session = Depends(get_session)):
+def update_engagement(eng_id: int, body: EngagementPatch, request: Request, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
+    before = auditlog.settings_snapshot(eng)
     if body.separation_of_duties is not None:
         eng.separation_of_duties = body.separation_of_duties
     if body.require_signatures is not None:
         eng.require_signatures = body.require_signatures
+    after = auditlog.settings_snapshot(eng)
+    if after != before:
+        auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="engagement.settings",
+                        engagement_id=eng.id, change={"before": before, "after": after})
     session.commit()
     return {"id": eng.id, "separation_of_duties": eng.separation_of_duties,
             "require_signatures": eng.require_signatures}
@@ -1313,7 +1372,7 @@ class ScopeImportIn(BaseModel):
 
 
 @app.post("/engagements/{eng_id}/scope/import")
-def import_scope(eng_id: int, body: ScopeImportIn, session: Session = Depends(get_session)):
+def import_scope(eng_id: int, body: ScopeImportIn, request: Request, session: Session = Depends(get_session)):
     """Preview (default) or apply a HackerOne scope CSV. Ineligible assets become excludes."""
     eng = _get(session, Engagement, eng_id)
     try:
@@ -1327,8 +1386,33 @@ def import_scope(eng_id: int, body: ScopeImportIn, session: Session = Depends(ge
         inc, exc = parsed["include"], parsed["exclude"]
     result = {**parsed, "result": {"include": inc, "exclude": exc}, "applied": False}
     if body.apply:
+        before = auditlog.scope_snapshot(eng)
         eng.scope_include, eng.scope_exclude = inc, exc
         result["hosts_added"] = _apply_scope_to_assets(eng, inc, exc)
+        _audit_scope(session, request, eng, before, result["hosts_added"], imported=body.mode)
         session.commit()
         result["applied"] = True
     return result
+
+
+# ---- audit log ----------------------------------------------------------------
+
+def _audit_view(session, entries) -> dict:
+    problems = auditlog.verify(session)
+    return {"chain": {"intact": not problems, "problems": problems, "head": auditlog.head(session)},
+            "entries": [auditlog.view(e) for e in entries]}
+
+
+@app.get("/engagements/{eng_id}/audit")
+def engagement_audit(eng_id: int, session: Session = Depends(get_session)):
+    """This engagement's administrative history, and the person events of its people."""
+    _get(session, Engagement, eng_id)
+    signers = {u for u in session.scalars(select(Receipt.closed_by_user).join(Lane).join(Asset)
+                                          .where(Asset.engagement_id == eng_id)) if u is not None}
+    return _audit_view(session, auditlog.for_engagement(session, eng_id, auditlog.people_of(session, eng_id, signers)))
+
+
+@app.get("/audit")
+def audit_all(session: Session = Depends(get_session)):
+    """Every administrative change in this deployment, and whether the chain is intact."""
+    return _audit_view(session, session.scalars(select(auditlog.AuditEntry).order_by(auditlog.AuditEntry.seq)))

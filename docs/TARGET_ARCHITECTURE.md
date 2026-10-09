@@ -107,6 +107,15 @@ receipt verifiable without trusting the database, the server or the tester:
    - For high assurance, the reader compares each signer's key fingerprint with the one
      the signer gives them through a channel they trust. That check does not depend on
      the server at all.
+   - **Administrative changes are logged too (D-037).** Scope and rules, authorization,
+     engagement settings, roles and people (added, renamed, owner, disabled, password set
+     or reset, never the password) are entries in a second hash-chained log, written in
+     the same transaction as the change. Reports carry their engagement's entries and the
+     person events of its signers and members; the verifier says which scope was in force
+     when each receipt was issued and fails a receipt whose signer did not hold the
+     reviewer role (and was not an owner) then, or had another name. The signed payload
+     (`attackledger-receipt-v3`) names the signer's email as well as their name, so
+     renaming an account to look like someone else does not make their signature.
 3. **Timestamps.** Each signature is sent, as a hash only, to an RFC 3161 timestamp
    authority. The token proves the receipt existed at that time and was not changed
    afterwards. The authority is configurable; no evidence content leaves the deployment.

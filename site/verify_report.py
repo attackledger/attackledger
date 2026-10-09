@@ -24,7 +24,12 @@ purpose: it re-derives every hash itself. Checks:
   6. (format 2, reports with a key log) every signing key: its key log entries hash
      correctly and link into the log in order up to the head the report names, it was
      registered to the signer before the receipt's payload was issued, and it was not
-     revoked before that.
+     revoked before that,
+  7. (format 2, reports with an audit log) the change history: its entries hash correctly
+     and link into the audit log in order up to the head, and for every receipt issued
+     while the log covered the engagement, the signer held the reviewer role on it (or was
+     an owner), had an active account, and had the name and email the receipt names, at
+     the time it was issued. A NOTE gives the scope in force and who gave the role.
 
 Checks 4 and 5 print SKIP, which is neither a pass nor a failure, when no receipt in
 the report is signed or timestamped: there is nothing for them to check. With
@@ -49,6 +54,8 @@ GENESIS = "0" * 64
 FORMATS = ("attackledger-report/1", "attackledger-report/2")
 CHAIN_FIELDS = ("seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary")
 KEY_LOG_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
+AUDIT_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
+PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3")   # v3 adds the signer's email
 KEY_VIA = {
     "own_session": "from their own session",
     "assigned_password": "from a session signed in with a password someone else set",
@@ -315,6 +322,12 @@ def count_receipts(r: dict, field: str) -> tuple[int, int]:
     return sum(1 for rc in rcs if rc.get(field)), len(rcs)
 
 
+def _signer(s) -> str:
+    """A payload's signer as "Name (email)"; v2 payloads have no email."""
+    s = s if isinstance(s, dict) else {}
+    return f"{s.get('name')} ({s['email']})" if s.get("email") else str(s.get("name"))
+
+
 def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[str]]:
     """With require, an unsigned receipt is a problem."""
     import base64
@@ -343,8 +356,10 @@ def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[st
             problems.append(f"{label}: the public key does not match its fingerprint")
         if not verify_signature(sig.get("algorithm", ""), spki, sig["payload"].encode(), value):
             problems.append(f"{label}: the signature does not verify")
-        if payload.get("format") != "attackledger-receipt-v2":
+        if payload.get("format") not in PAYLOAD_FORMATS:
             problems.append(f"{label}: unknown signed payload format")
+        elif payload["format"] != PAYLOAD_FORMATS[0] and not isinstance((payload.get("signer") or {}).get("email"), str):
+            problems.append(f"{label}: the signed payload does not name the signer's email")
         if payload.get("manifest_sha256") != rc["manifest_sha256"]:
             problems.append(f"{label}: the signature covers a different manifest")
         if (payload.get("lane") or {}).get("id") != lane["lane_id"]:
@@ -355,7 +370,7 @@ def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[st
         if not (c.get("seq") == 0 and c.get("head") == GENESIS) and chain.get(c.get("seq")) != c.get("head"):
             problems.append(f"{label}: the signed evidence chain head is not in this report")
         if not problems:
-            notes.append(f"{label}: signed by {(payload.get('signer') or {}).get('name')} with key "
+            notes.append(f"{label}: signed by {_signer(payload.get('signer'))} with key "
                          f"{sig.get('key_fingerprint', '')[:16]} ({sig.get('algorithm')})")
     if receipted and signed < receipted:
         notes.append(f"{receipted - signed} of {_receipts(receipted)} {'is' if receipted - signed == 1 else 'are'} "
@@ -377,53 +392,66 @@ def _utc(text: str, whole_seconds: bool = False):
     return t.replace(microsecond=0) if whole_seconds else t
 
 
+def check_log(log: dict, what: str, fields: tuple) -> tuple[list[str], list[tuple] | None]:
+    """The links and records of a hash-chained log in a report (the key log, the audit log).
+    Returns the problems and the records in chain order as (time, record), or None for the
+    records when the links cannot be read."""
+    problems = []
+    if log.get("genesis") != GENESIS:
+        problems.append(f"unexpected {what} genesis value")
+    links, prev = log.get("links") or [], None
+    for n, ln in enumerate(links):
+        try:
+            seq, ph, rsha, eh = ln["seq"], ln["prev_hash"], ln["record_sha256"], ln["entry_hash"]
+        except (KeyError, TypeError):
+            problems.append(f"a {what} link cannot be read")
+            return problems, None
+        if n == 0 and seq == 1 and ph != GENESIS:
+            problems.append(f"{what} entry #1 does not start from the genesis value")
+        if n > 0 and seq != links[n - 1]["seq"] + 1:
+            problems.append(f"{what} entry #{seq}: out of sequence (expected #{links[n - 1]['seq'] + 1})")
+        if n > 0 and ph != prev:
+            problems.append(f"{what} entry #{seq}: does not link to the previous entry")
+        if sha(ph + rsha) != eh:
+            problems.append(f"{what} entry #{seq}: does not match its chain hash")
+        prev = eh
+    head = log.get("head") or {}
+    if links and (head.get("seq") != links[-1]["seq"] or head.get("entry_hash") != links[-1]["entry_hash"]):
+        problems.append(f"the {what} head does not match its last link")
+    by_seq = {ln["seq"]: ln for ln in links}
+    records, latest = [], None
+    for e in sorted(log.get("entries") or [], key=lambda e: e.get("seq") or 0):
+        ln = by_seq.get(e.get("seq"))
+        if ln is None:
+            problems.append(f"{what} entry #{e.get('seq')} is not in the chain the report carries")
+        elif sha(canonical({k: e.get(k) for k in fields})) != ln["record_sha256"]:
+            problems.append(f"{what} entry #{e.get('seq')}: content does not match its record hash")
+        try:
+            at = _utc(e["at"])
+        except (ValueError, KeyError, TypeError):
+            problems.append(f"{what} entry #{e.get('seq')}: its time cannot be read")
+            continue
+        if latest is not None and at < latest:          # appended later, but dated earlier
+            problems.append(f"{what} entry #{e.get('seq')} is dated before an earlier entry")
+        latest = max(at, latest or at)
+        records.append((at, e))
+    return problems, records
+
+
 def check_key_log(r: dict) -> tuple[list[str], list[str]]:
-    problems, notes = [], []
+    notes = []
     signed = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed" and l["receipt"].get("signature")]
     log = r.get("key_log")
     if log is None:
         if signed:
             notes.append("this report has no key history (made before the key log); compare each signer's key "
                          "fingerprint with the one they give you")
+        return [], notes
+    problems, records = check_log(log, "key log", KEY_LOG_FIELDS)
+    if records is None:
         return problems, notes
-    if log.get("genesis") != GENESIS:
-        problems.append("unexpected key log genesis value")
-    links, prev = log.get("links") or [], None
-    for n, ln in enumerate(links):
-        try:
-            seq, ph, rsha, eh = ln["seq"], ln["prev_hash"], ln["record_sha256"], ln["entry_hash"]
-        except (KeyError, TypeError):
-            problems.append("a key log link cannot be read")
-            return problems, notes
-        if n == 0 and seq == 1 and ph != GENESIS:
-            problems.append("key log entry #1 does not start from the genesis value")
-        if n > 0 and seq != links[n - 1]["seq"] + 1:
-            problems.append(f"key log entry #{seq}: out of sequence (expected #{links[n - 1]['seq'] + 1})")
-        if n > 0 and ph != prev:
-            problems.append(f"key log entry #{seq}: does not link to the previous entry")
-        if sha(ph + rsha) != eh:
-            problems.append(f"key log entry #{seq}: does not match its chain hash")
-        prev = eh
-    head = log.get("head") or {}
-    if links and (head.get("seq") != links[-1]["seq"] or head.get("entry_hash") != links[-1]["entry_hash"]):
-        problems.append("the key log head does not match its last link")
-    by_seq = {ln["seq"]: ln for ln in links}
     history: dict[str, list[dict]] = {}
-    latest = None
-    for e in sorted(log.get("entries") or [], key=lambda e: e.get("seq") or 0):
-        ln = by_seq.get(e.get("seq"))
-        if ln is None:
-            problems.append(f"key log entry #{e.get('seq')} is not in the chain the report carries")
-        elif sha(canonical({k: e.get(k) for k in KEY_LOG_FIELDS})) != ln["record_sha256"]:
-            problems.append(f"key log entry #{e.get('seq')}: content does not match its record hash")
-        try:
-            at = _utc(e["at"])
-        except (ValueError, KeyError, TypeError):
-            problems.append(f"key log entry #{e.get('seq')}: its time cannot be read")
-            continue
-        if latest is not None and at < latest:          # appended later, but dated earlier
-            problems.append(f"key log entry #{e.get('seq')} is dated before an earlier entry")
-        latest = max(at, latest or at)
+    for _, e in records:
         history.setdefault(e.get("key_fingerprint"), []).append(e)
 
     described = set()
@@ -464,8 +492,128 @@ def check_key_log(r: dict) -> tuple[list[str], list[str]]:
             when = _utc(reg["at"]).strftime("%Y-%m-%d %H:%M UTC")
             later = (f"; revoked {_utc(revoked[0]['at']).strftime('%Y-%m-%d %H:%M UTC')}, after it signed"
                      if revoked else "")
-            notes.append(f"{signer.get('name')} signed with key {fp[:16]}, registered {when} "
+            notes.append(f"{_signer(signer)} signed with key {fp[:16]}, registered {when} "
                          f"{KEY_VIA.get(reg.get('via'), 'in a way this verifier does not know')}{later}")
+    return problems, notes
+
+
+# ---- the audit log ------------------------------------------------------------------
+#
+# Administrative changes (scope, settings, roles, authorization, people) are entries in
+# another hash chain, built like the key log. The report carries its engagement's entries
+# and the person events of its signers and members in full, and the links from the first of
+# them to the head. From them the verifier rebuilds who held which role, under which name,
+# and which scope was in force, at the time each receipt was issued.
+
+_ACTORS = {"token": "the operator token", "cli": "the operator on the server", "open": "open mode",
+           "backfill": "the audit log backfill"}
+
+
+def _actor(a) -> str:
+    a = a if isinstance(a, dict) else {}
+    if a.get("kind") == "person":
+        return f"{a.get('name')} ({a.get('email')})" if a.get("email") else str(a.get("name"))
+    return _ACTORS.get(a.get("kind"), str(a.get("kind")))
+
+
+def _scope_text(s: dict) -> str:
+    def words(v):
+        return ", ".join(v) if v else "none"
+    out = [f"in scope {words(s.get('include'))}", f"out of scope {words(s.get('exclude'))}",
+           f"{s.get('rate_limit_rps')} requests per second"]
+    if s.get("research_header"):
+        out.append(f"header {s['research_header']}")
+    if s.get("research_user_agent"):
+        out.append(f"user agent {s['research_user_agent']}")
+    if s.get("enabled_modules"):
+        out.append(f"opt-in modules {words(s['enabled_modules'])}")
+    return "; ".join(out)
+
+
+def _state_at(records: list[tuple], eng_id, when) -> dict:
+    """Scope, roles and people as the log has them at a time: entries at or before it."""
+    st = {"scope": None, "roles": {}, "since": {}, "people": {}}
+    for at, e in records:
+        if at > when:
+            break
+        action, ch = e.get("action"), e.get("change") or {}
+        after = ch.get("after")
+        if e.get("engagement_id") == eng_id and action == "scope.updated":
+            st["scope"] = (at, e)
+        elif e.get("engagement_id") == eng_id and action == "members.updated":
+            roles = {m["user_id"]: m.get("roles") or [] for m in after or []}
+            for uid, rs in roles.items():                  # since when each person has held "reviewer"
+                if "reviewer" in rs and "reviewer" not in st["roles"].get(uid, []):
+                    st["since"][uid] = (at, e)
+            st["roles"] = roles
+        elif action in ("person.created", "person.renamed", "person.owner", "person.disabled", "person.enabled"):
+            st["people"].setdefault(e.get("subject_id"), {}).update(after or {})
+    return st
+
+
+def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
+    notes = []
+    receipted = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed"]
+    log = r.get("audit_log")
+    if log is None:
+        if receipted:
+            notes.append("this report has no change history (made before the audit log); who held the reviewer "
+                         "role and which scope was in force when each receipt was issued are not shown")
+        return [], notes
+    problems, records = check_log(log, "audit log", AUDIT_FIELDS)
+    if records is None:
+        return problems, notes
+    eng_id = r["engagement"]["id"]
+    start = next((at for at, e in records if e.get("engagement_id") == eng_id), None)
+    for lane in receipted:
+        label, rc = f"{lane['host']} / {lane['name']}", lane["receipt"]
+        sig, payload = rc.get("signature"), None
+        try:
+            if sig:
+                payload = json.loads(sig["payload"])
+                uid, name, email = payload["signer"]["id"], payload["signer"]["name"], payload["signer"].get("email")
+            else:
+                uid, name, email = rc.get("closed_by_user"), rc.get("closed_by"), rc.get("closed_by_email")
+            issued = _utc(rc["issued_at"])
+        except (ValueError, KeyError, TypeError):
+            problems.append(f"{label}: the receipt's signer or issue time cannot be read")
+            continue
+        if start is None or issued < start:
+            notes.append(f"{label}: issued before the audit log covered this engagement, so the roles and scope "
+                         "at that time are not recorded")
+            continue
+        st = _state_at(records, eng_id, issued)
+        scope = (f"scope set {st['scope'][0].strftime('%Y-%m-%d %H:%M UTC')} by {_actor(st['scope'][1].get('actor'))}: "
+                 f"{_scope_text((st['scope'][1].get('change') or {}).get('after') or {})}") if st["scope"] \
+            else "no scope recorded"
+        if uid is None:
+            notes.append(f"{label}: closed by \"{name}\" with the operator token or in open mode, so no account or "
+                         f"role applies; {scope}")
+            continue
+        person = st["people"].get(uid)
+        mine = []
+        if person is None:
+            mine.append(f"{label}: the audit log has no record of the signer {name} (id {uid})")
+        else:
+            if person.get("name") != name:
+                mine.append(f"{label}: the receipt names the signer {name}, but the audit log names them "
+                            f"{person.get('name')} at that time")
+            if email is not None and person.get("email") != email:
+                mine.append(f"{label}: the receipt names the signer's email {email}, but the audit log has "
+                            f"{person.get('email')}")
+            if person.get("disabled"):
+                mine.append(f"{label}: the signer's account was disabled when the receipt was issued")
+        held = "reviewer" in st["roles"].get(uid, [])
+        if not held and not (person or {}).get("is_owner"):
+            mine.append(f"{label}: {name} did not hold the reviewer role on this engagement when the receipt was "
+                        "issued, and was not an owner")
+        problems += mine
+        if not mine:
+            since = st["since"].get(uid)
+            role = (f"held the reviewer role, given {since[0].strftime('%Y-%m-%d %H:%M UTC')} by {_actor(since[1].get('actor'))}"
+                    if held and since else "was an owner, who may sign any receipt")
+            who = f"{name} ({person.get('email')})" if person.get("email") else name
+            notes.append(f"{label}: issued {issued.strftime('%Y-%m-%d %H:%M UTC')}; {who} {role}; {scope}")
     return problems, notes
 
 
@@ -806,6 +954,10 @@ def main(argv: list[str]) -> int:
                 if "key_log" in r:
                     results.append(("Signing key history", key_problems, None))
                 notes += key_notes
+                audit_problems, audit_notes = check_audit_log(r)
+                if "audit_log" in r:
+                    results.append(("Change history", audit_problems, None))
+                notes += audit_notes
     elif require:
         results.append(("Receipt signatures", ["this report format carries no signatures"], None))
 
