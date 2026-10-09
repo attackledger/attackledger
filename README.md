@@ -76,9 +76,16 @@ them are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code)
-- Optional: [Caido](https://caido.io) together with [caido-mcp-server](https://github.com/c0tton-fluff/caido-mcp-server)
-- Recon tooling: the usual ProjectDiscovery stack (subfinder, dnsx, httpx, katana, nuclei), plus ffuf/feroxbuster, jq and Python 3
+- Docker with Compose. The `worker` image bundles the recon tools (subfinder, dnsx,
+  httpx, naabu, katana, nuclei and its templates, assetfinder, gau, waybackurls,
+  feroxbuster, Arjun), so nothing else needs installing to run the app.
+- Optional: [Claude Code](https://claude.com/claude-code), for the agents, skills,
+  hooks and gates in this repository (`agents/`, `skills/`, `hooks/`, `gates/`). The
+  app does not need it. Hunt agents inside the app need only an Anthropic API key
+  (see [Hunt agents](#hunt-agents-v06-preview)).
+- Optional: [Caido](https://caido.io) together with [caido-mcp-server](https://github.com/c0tton-fluff/caido-mcp-server).
+- To run the scripts in `recon/` and `gates/` outside Docker: the ProjectDiscovery
+  stack, ffuf/feroxbuster, jq and Python 3.
 
 ## Quick start
 
@@ -88,9 +95,29 @@ python3 tools/seed_demo.py          # optional demo engagements
 open http://localhost:8080
 ```
 
+1. **Add the first owner** on the People page (or with the command in
+   [People and roles](#people-and-roles)). Until then the API is open to anyone on
+   localhost, unless you set a token (below).
+2. Create an engagement and save its scope: `shop.lab.test` for the bundled lab, with a
+   research header such as `X-Bug-Bounty: your-handle` for the steps that send traffic.
+   Record the authorization with a policy URL (`https://example.com/policy` for the lab).
+3. Run recon from the Recon tab, work the lanes on the Ledger tab, and close them.
+
 All ports bind to `127.0.0.1`. To require a token (do this before exposing the API
-anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`. The `lab` service is a local practice target that
-answers as `shop.lab.test` inside the compose network.
+anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`.
+The `lab` service is a local practice target that answers as `shop.lab.test` inside
+the compose network.
+
+The database password defaults to `change-me`. Set `POSTGRES_PASSWORD` in `.env`
+before the first start; Postgres keeps the password it was created with, so changing
+it later also means changing it inside the database (`ALTER USER attackledger PASSWORD ...`).
+
+Closed lanes are timestamped by DigiCert's public RFC 3161 service by default. Only a
+SHA-256 hash leaves the machine, once per closed lane. Set `ATTACKLEDGER_TSA_URL=off`
+in `.env` to send nothing (see [People and roles](#people-and-roles)).
+
+The API is documented at http://localhost:8000/docs (FastAPI) and
+http://localhost:8000/openapi.json.
 
 ## Methodology packs and controls
 
@@ -121,7 +148,7 @@ python3 tools/verify_report.py attackledger-report.html
 ```
 
 The verifier uses only the Python standard library and shares no code with
-AttackLedger. It performs three checks:
+AttackLedger. It performs these checks:
 
 1. **Body hash.** The report body matches its recorded SHA-256.
 2. **Evidence chain.** Each evidence entry is linked to the previous one
@@ -130,6 +157,14 @@ AttackLedger. It performs three checks:
 3. **Receipts.** Every lane reported as receipted is checked against a manifest
    rebuilt from the report's own items and evidence. This means that rewriting
    the whole chain and the body hash is still detected.
+4. **Signatures.** Every signed receipt verifies with the reviewer's public key
+   (see [People and roles](#people-and-roles)).
+5. **Timestamps.** Every RFC 3161 token covers its receipt and chains to a trusted root.
+
+Checks 4 and 5 print `SKIP` when no receipt is signed or timestamped: there is
+nothing to check, and a skip is neither a pass nor a failure. Add
+`--require-signatures` to fail any receipt that is not signed. The exit code is 0
+only if no check failed.
 
 The HTML report is served with `default-src 'none'`. No script runs in it and
 nothing is fetched. All evidence text is escaped.
@@ -163,20 +198,37 @@ tested against any service. JS fetches follow no redirects.
 
 Crawl and archive output is cleaned in the same way as `uro`: static files are
 dropped and URLs that differ only in parameter values are collapsed. Only
-in-scope URLs are kept. A job whose tool fails without producing anything is
-marked failed, not done. A job stopped at the time limit (`WORKER_JOB_TIMEOUT`, default 30 min) is
-marked **partial**, lists the targets it did not reach and can be resumed with
+in-scope URLs are kept. A job ends in one of these states:
+
+- **done**: it ran on every target. Zero results means it ran and found nothing.
+- **failed**: a tool or every fetch failed and nothing was found, or a gate refused it.
+- **skipped**: it had nothing to work on, with the reason in its log, such as "needs
+  a wildcard in scope" or "no live web servers from 'Find live web servers'".
+  *Run all steps* does not queue a step that cannot apply to the scope (steps that
+  start from wildcards, when there is none); a later step whose earlier steps found
+  nothing is skipped when it starts.
+- **partial**: see below.
+
+A job stopped at the time limit (`WORKER_JOB_TIMEOUT`, default 30 min) or at a
+step's per-run target limit is marked **partial**, lists the targets it did not reach and can be resumed with
 *Run remaining*.
 
 A job is refused unless the engagement has:
 
 1. a scope (`*.example.com` covers subdomains only; exclusions always win),
-2. a recorded authorization (operator, policy URL, explicit confirmation),
+2. a recorded authorization (operator, policy URL, explicit confirmation). The
+   policy URL is the HTTPS address of the program policy or statement of work
+   that permits the test. For the bundled lab, any HTTPS page describing it will
+   do, such as `https://example.com/policy` (what the demo uses),
 3. for jobs that send traffic to the target, the **research header and/or
    user agent** the program requires.
 
 The worker re-checks scope on every target and on every host a tool reports.
 Redirects are not followed.
+
+Saving the scope adds each exact entry (`shop.lab.test`) as a host, unless an
+exclusion matches it. Wildcards stay rules: recon finds their hosts. Saving never
+removes a host or brings one back into scope; you can also add hosts on the Ledger tab.
 
 ## Hunt agents (v0.6, preview)
 
@@ -207,6 +259,10 @@ Add the first owner on the People page, or from the command line:
 ```bash
 docker compose exec -it api python -m app.people create --email you@example.com --name "Your Name" --owner
 ```
+
+The command asks for the password in the terminal (not echoed). In a script, pass it in
+`ATTACKLEDGER_NEW_PASSWORD` instead (`docker compose exec -e ATTACKLEDGER_NEW_PASSWORD ...`);
+it is never taken as an argument.
 
 From then on everyone signs in with email and password. Owners add people and give them
 roles per engagement on its Team tab: **viewer** (reads coverage, evidence and reports),
@@ -264,8 +320,9 @@ assumes and enforces:
 
 ## Status
 
-`v0.1`: initial public release of the methodology, roles, gates and recon
-pipeline. Expect rough edges.
+`v0.6.0`, not yet released (see [`CHANGELOG.md`](CHANGELOG.md)). Before 1.0, minor
+versions may change the data model; migrations upgrade existing databases. Hunt
+agents are a preview and have not yet run against the live API. Expect rough edges.
 
 ## Author
 

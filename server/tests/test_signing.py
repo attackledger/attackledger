@@ -254,3 +254,46 @@ def test_keys_need_a_person_and_a_valid_key(client, monkeypatch):
     k = BrowserKey("Ed25519")
     assert client.post("/auth/keys", json={"algorithm": "Ed25519", "public_key": k.spki}).status_code == 201
     assert client.post("/auth/keys", json={"algorithm": "Ed25519", "public_key": k.spki}).status_code == 409
+
+
+def run_verifier(tmp_path, report, *flags):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(report))
+    import contextlib
+    import io
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = verifier.main(["verify_report.py", str(path), *flags])
+    return code, out.getvalue()
+
+
+def test_verifier_skips_signatures_when_none_are_signed(client, tmp_path, monkeypatch):
+    monkeypatch.delenv("ATTACKLEDGER_TSA_URL", raising=False)
+    e, lane, _ = setup(client)
+    assert client.post(f"/lanes/{lane}/close", json={"reviewed": True}).status_code == 200
+    report = client.get(f"/engagements/{e}/report").json()
+    code, out = run_verifier(tmp_path, report)
+    assert code == 0 and "Verified." in out and "1 receipted lane," in out
+    assert "SKIP  Receipt signatures (0 of 1 receipt signed)" in out
+    assert "SKIP  Receipt timestamps (0 of 1 receipt timestamped)" in out
+    assert "PASS  Receipt signatures" not in out and "PASS  Receipt timestamps" not in out
+    code, out = run_verifier(tmp_path, report, "--require-signatures")
+    assert code == 1 and "FAIL  Receipt signatures" in out and "the receipt is not signed" in out
+
+
+def test_verifier_passes_signed_receipts_and_skips_without_receipts(client, tmp_path, monkeypatch):
+    monkeypatch.delenv("ATTACKLEDGER_TSA_URL", raising=False)
+    e, lane, _ = setup(client)
+    code, out = run_verifier(tmp_path, client.get(f"/engagements/{e}/report").json(), "--require-signatures")
+    assert code == 0 and "SKIP  Receipt signatures (no receipts)" in out
+    sign_in(client, "rita@lab.test")
+    assert signed_close(client, lane, register(client)).status_code == 200
+    report = client.get(f"/engagements/{e}/report").json()
+    for flags in ((), ("--require-signatures",)):
+        code, out = run_verifier(tmp_path, report, *flags)
+        assert code == 0 and "PASS  Receipt signatures" in out and "SKIP  Receipt timestamps" in out
+    report["format"] = "attackledger-report/1"
+    report["integrity"]["body_sha256"] = verifier.sha(verifier.canonical(
+        {k: v for k, v in report.items() if k != "integrity"}))
+    code, out = run_verifier(tmp_path, report, "--require-signatures")
+    assert code == 1 and "carries no signatures" in out

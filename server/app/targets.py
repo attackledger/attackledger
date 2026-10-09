@@ -17,6 +17,34 @@ NO_TARGET_HINT = {
     "jsanalyze": "crawl golden hosts or collect archived URLs first",
 }
 
+NEEDS_WILDCARD = "needs a wildcard in scope, such as *.example.com"
+# Why a pipeline step found nothing to work on when it started, keyed by input, then kind.
+SKIP_REASON = {
+    "roots": NEEDS_WILDCARD,
+    "hosts": "no in-scope hosts: add an exact scope entry or a host, or a wildcard for 'Find subdomains'",
+    "urls": "earlier steps found no URLs to work on",
+    "crawl": "no live web servers from 'Find live web servers'",
+    "content": "no live web servers from 'Find live web servers'",
+    "nuclei": "no live web servers from 'Find live web servers'",
+    "jsanalyze": "no JavaScript files from the crawl or the archived URLs",
+    "params": "no dynamic endpoints from the crawl, the archived URLs or content discovery",
+    "paramclass": "no URLs with parameters from the earlier steps",
+}
+
+
+def skip_reason(m: modules.Module) -> str:
+    return SKIP_REASON.get(m.kind) or SKIP_REASON[m.input]
+
+
+def cannot_apply(eng: Engagement, m: modules.Module) -> str | None:
+    """Why a pipeline step can never have targets with this scope, known before anything runs."""
+    roots = jobgates.roots(eng)
+    if m.input == "roots" and not roots:
+        return NEEDS_WILDCARD
+    if m.input == "hosts" and not roots and not any(a.in_scope for a in eng.assets):
+        return SKIP_REASON["hosts"]
+    return None
+
 
 def probes_by_host(session, eng_id: int) -> dict[str, list[dict]]:
     rows = session.scalars(select(Observation).where(Observation.engagement_id == eng_id)

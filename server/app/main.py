@@ -260,7 +260,7 @@ def create_engagement(body: EngagementIn, session: Session = Depends(get_session
     etype = body.engagement_type or (pack.engagement_types[0] if pack.engagement_types else "pentest")
     if etype not in ENGAGEMENT_TYPES:
         raise HTTPException(422, f"unknown engagement type: {etype}")
-    eng = Engagement(name=body.name.strip(), policy_url=body.policy_url, pack_id=pack.id,
+    eng = Engagement(name=body.name.strip(), policy_url=_policy_url(body.policy_url, required=False), pack_id=pack.id,
                      engagement_type=etype)
     session.add(eng)
     try:
@@ -624,8 +624,26 @@ class ScopeIn(BaseModel):
 
 class AttestIn(BaseModel):
     operator: str = Field(min_length=1, max_length=200)
-    policy_url: str = Field(pattern="^https://")
+    policy_url: str | None = None      # checked by _policy_url, for a message a person can act on
     confirm: bool
+
+
+POLICY_URL_HINT = ("enter the address of the program policy or statement of work that permits this test, "
+                   "such as https://hackerone.com/<program>; for the bundled lab, any HTTPS page that describes "
+                   "it will do, such as https://example.com/policy")
+
+
+def _policy_url(value: str | None, required: bool) -> str | None:
+    url = (value or "").strip()
+    if not url:
+        if required:
+            raise HTTPException(422, f"a policy URL is required: {POLICY_URL_HINT}")
+        return None
+    if not url.startswith("https://") or not urls.host_of(url):
+        raise HTTPException(422, f"the policy URL must start with https://; {POLICY_URL_HINT}")
+    if len(url) > 500:
+        raise HTTPException(422, "the policy URL is longer than 500 characters")
+    return url
 
 
 def _scope_view(eng: Engagement) -> dict:
@@ -663,20 +681,32 @@ def put_scope(eng_id: int, body: ScopeIn, session: Session = Depends(get_session
     if unknown:
         raise HTTPException(422, f"not an opt-in module: {', '.join(sorted(unknown))}")
     eng.enabled_modules, eng.crawl_depth = sorted(enabled), body.crawl_depth
-    # Re-evaluate existing assets: rules can move hosts out of scope, never into it silently.
+    added = _apply_scope_to_assets(eng, inc, exc)
+    session.commit()
+    return {**_scope_view(eng), "hosts_added": added}
+
+
+def _apply_scope_to_assets(eng: Engagement, inc: list[str], exc: list[str]) -> list[str]:
+    """Rules can move existing hosts out of scope, never into it silently. Each exact
+    include rule that no exclusion matches becomes a host, if it is not one already;
+    wildcards stay rules, and recon finds their hosts. Returns the hosts added."""
     for a in eng.assets:
         if not scope.in_scope(a.host, inc, exc):
             a.in_scope = False
-    session.commit()
-    return _scope_view(eng)
+    known = {a.host for a in eng.assets}
+    added = [p for p in inc if not p.startswith("*.") and p not in known and scope.in_scope(p, inc, exc)]
+    for host in added:
+        eng.assets.append(Asset(host=host, in_scope=True))
+    return added
 
 
 @app.post("/engagements/{eng_id}/attest")
 def attest(eng_id: int, body: AttestIn, session: Session = Depends(get_session)):
     if not body.confirm:
         raise HTTPException(422, "confirm that you are authorized to test this program")
+    policy_url = _policy_url(body.policy_url, required=True)
     eng = _get(session, Engagement, eng_id)
-    eng.authorized_by, eng.policy_url = body.operator.strip(), body.policy_url
+    eng.authorized_by, eng.policy_url = body.operator.strip(), policy_url
     eng.authorized_at = datetime.now(timezone.utc)
     session.commit()
     return _scope_view(eng)
@@ -767,8 +797,9 @@ class PipelineIn(BaseModel):
 @app.post("/engagements/{eng_id}/pipeline", status_code=201)
 def run_pipeline(eng_id: int, request: Request, body: PipelineIn | None = None,
                  session: Session = Depends(get_session)):
-    """Queue every step that passes its gates, in registry order. Each step resolves
-    its targets when it starts, from what the steps before it produced."""
+    """Queue every step that passes its gates and can apply to this scope, in registry
+    order. Each step resolves its targets when it starts, from what the steps before it
+    produced; one that finds none ends "skipped", with the reason."""
     eng = _get(session, Engagement, eng_id)
     wanted = (body.kinds if body and body.kinds else [m.kind for m in modules.MODULES])
     unknown = [k for k in wanted if k not in modules.BY_KIND]
@@ -782,6 +813,10 @@ def run_pipeline(eng_id: int, request: Request, body: PipelineIn | None = None,
             jobgates.check_engagement(eng, m.kind)
         except jobgates.GateError as e:
             skipped.append({"kind": m.kind, "reason": str(e)})
+            continue
+        why = targeting.cannot_apply(eng, m)
+        if why:
+            skipped.append({"kind": m.kind, "reason": why})
             continue
         job = Job(engagement_id=eng.id, kind=m.kind, targets=[], deferred=True,
                   created_by=authz.current(request).user_id)
@@ -1230,9 +1265,7 @@ def import_scope(eng_id: int, body: ScopeImportIn, session: Session = Depends(ge
     result = {**parsed, "result": {"include": inc, "exclude": exc}, "applied": False}
     if body.apply:
         eng.scope_include, eng.scope_exclude = inc, exc
-        for a in eng.assets:            # rules can move hosts out of scope, never into it silently
-            if not scope.in_scope(a.host, inc, exc):
-                a.in_scope = False
+        result["hosts_added"] = _apply_scope_to_assets(eng, inc, exc)
         session.commit()
         result["applied"] = True
     return result

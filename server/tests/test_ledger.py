@@ -142,8 +142,16 @@ def test_attest_requires_confirmation_and_https_policy(client):
     eng = ready_engagement(client)
     assert client.post(f"/engagements/{eng}/attest", json={
         "operator": "op", "policy_url": "https://example.com/p", "confirm": False}).status_code == 422
-    assert client.post(f"/engagements/{eng}/attest", json={
-        "operator": "op", "policy_url": "http://example.com/p", "confirm": True}).status_code == 422
+    for bad in ("http://example.com/p", "example.com/policy", "", "https://"):
+        r = client.post(f"/engagements/{eng}/attest", json={"operator": "op", "policy_url": bad, "confirm": True})
+        assert r.status_code == 422 and isinstance(r.json()["detail"], str), bad
+        assert "https://" in r.json()["detail"] and "statement of work" in r.json()["detail"]
+    assert client.get(f"/engagements/{eng}/scope").json()["authorized_at"] is None
+    r = client.post(f"/engagements/{eng}/attest", json={"operator": "op", "confirm": True,
+                                                         "policy_url": " https://example.com/policy "})
+    assert r.status_code == 200 and r.json()["policy_url"] == "https://example.com/policy"
+    r = client.post("/engagements", json={"name": "plain-http", "policy_url": "http://example.com/p"})
+    assert r.status_code == 422 and "https://" in r.json()["detail"]
 
 
 def test_job_targets_must_be_in_scope(client):
@@ -169,7 +177,40 @@ def test_scope_rules_decide_asset_scope(client):
     a = client.post(f"/engagements/{eng}/assets", json={"host": "evil.test"}).json()
     b = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
     cov = {r["host"]: r["in_scope"] for r in client.get(f"/engagements/{eng}/coverage").json()["assets"]}
-    assert cov == {"evil.test": False, "app.example.com": True}
+    assert cov == {"evil.test": False, "app.example.com": True, "example.com": True}   # example.com: exact rule
+
+
+def test_exact_scope_entries_become_hosts(client):
+    e = client.post("/engagements", json={"name": "exact"}).json()["id"]
+    client.post(f"/engagements/{e}/assets", json={"host": "old.lab.test", "in_scope": False})
+    rules = {"include": ["Shop.Lab.Test", "*.lab.test", "lab.test", "admin.lab.test", "old.lab.test",
+                         "x.legacy.lab.test"],
+             "exclude": ["admin.lab.test", "*.legacy.lab.test"]}
+    r = client.put(f"/engagements/{e}/scope", json=rules)
+    assert r.status_code == 200 and r.json()["hosts_added"] == ["lab.test", "shop.lab.test"]
+    cov = {a["host"]: a["in_scope"] for a in client.get(f"/engagements/{e}/coverage").json()["assets"]}
+    # Exclusions win, wildcards stay rules, and an existing host is left as the operator set it.
+    assert cov == {"lab.test": True, "shop.lab.test": True, "old.lab.test": False}
+    assert client.put(f"/engagements/{e}/scope", json=rules).json()["hosts_added"] == []
+    assert client.get(f"/engagements/{e}/recon/summary").json()["hosts"] == 2
+    attested(client, e)
+    assert client.post(f"/engagements/{e}/jobs", json={"kind": "resolve"}).json()["targets"] == \
+        ["lab.test", "shop.lab.test"]
+
+
+def test_wildcard_only_scope_adds_no_hosts(client):
+    e = client.post("/engagements", json={"name": "wild"}).json()["id"]
+    assert client.put(f"/engagements/{e}/scope", json={"include": ["*.lab.test"]}).json()["hosts_added"] == []
+    assert client.get(f"/engagements/{e}/coverage").json()["assets"] == []
+
+
+def test_scope_import_adds_exact_hosts(client):
+    e = client.post("/engagements", json={"name": "imp-hosts"}).json()["id"]
+    csv_ = ("identifier,asset_type,eligible_for_submission\n*.example.com,WILDCARD,true\n"
+            "api.example.com,URL,true\nold.example.com,URL,false\n")
+    assert client.post(f"/engagements/{e}/scope/import", json={"csv": csv_}).json().get("hosts_added") is None
+    done = client.post(f"/engagements/{e}/scope/import", json={"csv": csv_, "apply": True}).json()
+    assert done["hosts_added"] == ["api.example.com"]
 
 
 def attested(c, eng):
@@ -390,6 +431,23 @@ def test_pipeline_queues_steps_that_pass_their_gates(client):
     assert all(j["deferred"] and j["targets"] == [] for j in jobs)
 
 
+def test_pipeline_does_not_queue_steps_that_cannot_apply(client):
+    e = client.post("/engagements", json={"name": "pipe-exact"}).json()["id"]
+    client.put(f"/engagements/{e}/scope", json={"include": ["shop.lab.test"]})
+    attested(client, e)
+    body = client.post(f"/engagements/{e}/pipeline").json()
+    assert body["queued"] == ["resolve", "paramclass"]
+    reasons = {s["kind"]: s["reason"] for s in body["skipped"]}
+    assert all("needs a wildcard in scope" in reasons[k] for k in ("subdomains", "archive", "dorks"))
+
+    e = client.post("/engagements", json={"name": "pipe-nohosts"}).json()["id"]
+    client.put(f"/engagements/{e}/scope", json={"include": ["old.lab.test"], "exclude": ["old.lab.test"]})
+    attested(client, e)
+    body = client.post(f"/engagements/{e}/pipeline").json()
+    assert body["queued"] == ["paramclass"] and "no in-scope hosts" in \
+        {s["kind"]: s["reason"] for s in body["skipped"]}["resolve"]
+
+
 def test_pipeline_refuses_when_nothing_can_run(client):
     eng = client.post("/engagements", json={"name": "pipe-none"}).json()["id"]
     r = client.post(f"/engagements/{eng}/pipeline")
@@ -482,3 +540,29 @@ def test_attach_run_needs_a_finished_run_from_the_same_engagement(client):
 
 def h_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
+
+
+def test_report_labels_recon_runs_and_counts(client):
+    from app import db
+    from app.models import Job, JobStatus
+    e, lane = _lane(client)
+    s = next(app.dependency_overrides[db.get_session]())
+    run = Job(engagement_id=e, kind="probe", targets=["shop.lab.test"], status=JobStatus.done, output_sha256="a" * 64)
+    skipped = Job(engagement_id=e, kind="archive", targets=[], status=JobStatus.skipped, deferred=True)
+    s.add_all([run, skipped])
+    s.commit()
+    client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "run", "job_id": run.id})
+    client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note", "text": "checked by hand"})
+    page = client.get(f"/engagements/{e}/report.html").text
+    items = page[page.index("id='items'"):]
+    assert f"Recon run: Find live web servers run, job {run.id}" in items and " file: " not in items
+    assert "Note: checked by hand" in items
+    recon = page[page.index("id='recon'"):]
+    assert "Find live web servers" in recon and "Skipped" in recon and "Collect archived URLs" in recon
+    assert "1 in-scope host " in page or "1 in-scope host\n" in page
+
+
+def test_plural():
+    from app.text import plural
+    assert plural(1, "result") == "1 result" and plural(0, "result") == "0 results"
+    assert plural(2, "match", "matches") == "2 matches"
