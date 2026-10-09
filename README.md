@@ -76,9 +76,16 @@ them are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Requirements
 
-- [Claude Code](https://claude.com/claude-code)
-- Optional: [Caido](https://caido.io) together with [caido-mcp-server](https://github.com/c0tton-fluff/caido-mcp-server)
-- Recon tooling: the usual ProjectDiscovery stack (subfinder, dnsx, httpx, katana, nuclei), plus ffuf/feroxbuster, jq and Python 3
+- Docker with Compose. The `worker` image bundles the recon tools (subfinder, dnsx,
+  httpx, naabu, katana, nuclei and its templates, assetfinder, gau, waybackurls,
+  feroxbuster, Arjun), so nothing else needs installing to run the app.
+- Optional: [Claude Code](https://claude.com/claude-code), for the agents, skills,
+  hooks and gates in this repository (`agents/`, `skills/`, `hooks/`, `gates/`). The
+  app does not need it. Hunt agents inside the app need only an Anthropic API key
+  (see [Hunt agents](#hunt-agents-v06-preview)).
+- Optional: [Caido](https://caido.io) together with [caido-mcp-server](https://github.com/c0tton-fluff/caido-mcp-server).
+- To run the scripts in `recon/` and `gates/` outside Docker: the ProjectDiscovery
+  stack, ffuf/feroxbuster, jq and Python 3.
 
 ## Quick start
 
@@ -88,9 +95,29 @@ python3 tools/seed_demo.py          # optional demo engagements
 open http://localhost:8080
 ```
 
+1. **Add the first owner** on the People page (or with the command in
+   [People and roles](#people-and-roles)). Until then the API is open to anyone on
+   localhost, unless you set a token (below).
+2. Create an engagement and save its scope: `shop.lab.test` for the bundled lab, with a
+   research header such as `X-Bug-Bounty: your-handle` for the steps that send traffic.
+   Record the authorization with a policy URL (`https://example.com/policy` for the lab).
+3. Run recon from the Recon tab, work the lanes on the Ledger tab, and close them.
+
 All ports bind to `127.0.0.1`. To require a token (do this before exposing the API
-anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`. The `lab` service is a local practice target that
-answers as `shop.lab.test` inside the compose network.
+anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`.
+The `lab` service is a local practice target that answers as `shop.lab.test` inside
+the compose network.
+
+The database password defaults to `change-me`. Set `POSTGRES_PASSWORD` in `.env`
+before the first start; Postgres keeps the password it was created with, so changing
+it later also means changing it inside the database (`ALTER USER attackledger PASSWORD ...`).
+
+Closed lanes are timestamped by DigiCert's public RFC 3161 service by default. Only a
+SHA-256 hash leaves the machine, once per closed lane. Set `ATTACKLEDGER_TSA_URL=off`
+in `.env` to send nothing (see [People and roles](#people-and-roles)).
+
+The API is documented at http://localhost:8000/docs (FastAPI) and
+http://localhost:8000/openapi.json.
 
 ## Methodology packs and controls
 
@@ -233,6 +260,10 @@ Add the first owner on the People page, or from the command line:
 docker compose exec -it api python -m app.people create --email you@example.com --name "Your Name" --owner
 ```
 
+The command asks for the password in the terminal (not echoed). In a script, pass it in
+`ATTACKLEDGER_NEW_PASSWORD` instead (`docker compose exec -e ATTACKLEDGER_NEW_PASSWORD ...`);
+it is never taken as an argument.
+
 From then on everyone signs in with email and password. Owners add people and give them
 roles per engagement on its Team tab: **viewer** (reads coverage, evidence and reports),
 **tester** (runs recon, works lanes, attaches evidence) and **reviewer** (signs receipts).
@@ -289,8 +320,9 @@ assumes and enforces:
 
 ## Status
 
-`v0.1`: initial public release of the methodology, roles, gates and recon
-pipeline. Expect rough edges.
+`v0.6.0`, not yet released (see [`CHANGELOG.md`](CHANGELOG.md)). Before 1.0, minor
+versions may change the data model; migrations upgrade existing databases. Hunt
+agents are a preview and have not yet run against the live API. Expect rough edges.
 
 ## Author
 
