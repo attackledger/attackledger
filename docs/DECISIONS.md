@@ -453,6 +453,17 @@ options considered and who decided.
 - **Why:** they are complex, the first release does not need them, and an integration
   must never carry the author's own credentials.
 - **Proposed by:** Murat Kabak. **Decided by:** Murat Kabak.
+- **Caido API pull, built 2026-10-09** (`tools/caido_pull.py`, docs/IMPORT.md). It runs on
+  the tester's machine, not on the server, and the server holds no tool token.
+  - **The token** is read from the environment or a file only, and is sent only to the
+    Caido address given.
+  - **The tool** uses no proxy and follows no redirect.
+  - **Schema:** pinned to Caido's public schema v0.58.3; it fails closed on any other
+    shape.
+  - **Not supported:** personal access tokens, because exchanging them would need Caido's
+    cloud flow.
+  - **Testing:** checked against Caido's public schema only, not a live instance.
+  - **Made by:** Claude, under Murat's overnight permission.
 
 ### D-036 · Key trust: no password setting for others, and a key log (2026-10-09)
 - **Problem:** an owner could set another person's password through the API, sign in as

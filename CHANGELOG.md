@@ -10,6 +10,10 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Caido pull** (`tools/caido_pull.py`, D-035). It reads HTTP history from your own Caido's
+  GraphQL API, with an HTTPQL filter and a time window, and writes a Caido JSON export. The
+  export can be redacted locally and uploaded to an engagement as you. The Caido token
+  never leaves your machine.
 - **Traffic gateway** (D-039, docs/GATEWAY.md). The worker has no route to the internet.
   Every recon tool and the agent go through one gateway. The gateway:
   - enforces scope, GET/HEAD/OPTIONS only, a rate ceiling shared by all tools, and the
