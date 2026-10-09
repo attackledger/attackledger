@@ -16,6 +16,8 @@ def check_engagement(eng: Engagement, kind: str) -> modules.Module:
     m = modules.get(kind)
     if m is None:
         raise GateError(f"unknown job kind: {kind}")
+    if getattr(eng, "content_deleted_at", None) is not None:
+        raise GateError("this engagement's content was deleted; it takes no new runs")
     if eng.authorized_at is None:
         raise GateError("record your authorization for this program before running jobs")
     if not eng.scope_include:

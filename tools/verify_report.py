@@ -10,7 +10,9 @@ Standard library only, and independent of the AttackLedger code base on
 purpose: it re-derives every hash itself. Checks:
 
   1. the report body matches its recorded SHA-256,
-  2. the evidence chain is unbroken from the genesis value,
+  2. the evidence chain is unbroken from the genesis value, and every summary matches the
+     hash a chain record v2 commits to (a summary deleted with its engagement's key is
+     reported as unavailable, and the chain is still checked),
   3. every lane reported as receipted has a receipt that matches a manifest
      rebuilt from the report's own items and evidence,
   4. (format 2) every signed receipt: the signature verifies with the public key in the
@@ -53,6 +55,8 @@ import sys
 GENESIS = "0" * 64
 FORMATS = ("attackledger-report/1", "attackledger-report/2")
 CHAIN_FIELDS = ("seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary")
+# Chain record v2 commits to the summary's hash, so the summary can be deleted (D-043).
+CHAIN_FIELDS_V2 = ("v", "seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary_sha256", "source")
 KEY_LOG_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
 AUDIT_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
 PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3")   # v3 adds the signer's email
@@ -99,14 +103,40 @@ def check_chain(r: dict) -> list[str]:
             problems.append(f"evidence #{e['seq']}: out of sequence (expected #{n})")
         if e["prev_hash"] != prev:
             problems.append(f"evidence #{e['seq']}: does not link to the previous entry")
-        rec = {k: e[k] for k in CHAIN_FIELDS}
+        version = e.get("v", 1)
+        if version not in (1, 2) or "v" in e and version == 1:
+            problems.append(f"evidence #{e['seq']}: unknown chain record version {e.get('v')!r}")
+            prev = e["chain_hash"]
+            continue
+        try:
+            rec = {k: e[k] for k in (CHAIN_FIELDS_V2 if version == 2 else CHAIN_FIELDS)}
+        except KeyError as missing:
+            problems.append(f"evidence #{e['seq']}: the record has no {missing.args[0]}")
+            prev = e["chain_hash"]
+            continue
         if sha(e["prev_hash"] + canonical(rec)) != e["chain_hash"]:
             problems.append(f"evidence #{e['seq']}: content does not match its chain hash")
+        if version == 2 and e.get("summary") is not None and (
+                not isinstance(e["summary"], str) or sha(e["summary"]) != e["summary_sha256"]):
+            problems.append(f"evidence #{e['seq']}: the summary does not match the hash the chain commits to")
         prev = e["chain_hash"]
     head = r["summary"]["chain_head"]
     if head != prev:
         problems.append("summary chain head does not match the last evidence entry")
     return problems
+
+
+def content_notes(r: dict) -> list[str]:
+    """Summaries a chain record v2 commits to by hash only, because the engagement's key
+    was deleted: the content is gone, the chain and the receipts are still checked."""
+    gone = sum(1 for e in r["evidence"] if e.get("v") == 2 and e.get("summary") is None)
+    if not gone:
+        return []
+    d = r.get("engagement", {}).get("content_deleted") or {}
+    why = (f"key deleted on {(d.get('at') or '')[:10] or 'an unknown date'} by {d.get('by') or 'someone'}"
+           if d else "the report does not say it was deleted")
+    return [f"{gone} evidence entr{'y' if gone == 1 else 'ies'}: content unavailable ({why}); "
+            "the chain and the receipts were still checked"]
 
 
 def manifest(lane: dict, evidence: list[dict]) -> dict:
@@ -506,7 +536,7 @@ def check_key_log(r: dict) -> tuple[list[str], list[str]]:
 # and which scope was in force, at the time each receipt was issued.
 
 _ACTORS = {"token": "the operator token", "cli": "the operator on the server", "open": "open mode",
-           "backfill": "the audit log backfill"}
+           "backfill": "the audit log backfill", "retention": "the retention policy"}
 
 
 def _actor(a) -> str:
@@ -939,6 +969,7 @@ def main(argv: list[str]) -> int:
     # (name, problems, skip): a check with a skip reason found nothing to check.
     results = [("Report body hash", check_body(r), None), ("Evidence chain", check_chain(r), None)]
     receipt_problems, notes = check_receipts(r)
+    notes += content_notes(r)
     results.append(("Lane receipts", receipt_problems, None))
     if r["format"] != "attackledger-report/1":
         for name, field, check in (("Receipt signatures", "signature", lambda: check_signatures(r, require)),

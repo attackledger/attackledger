@@ -7,9 +7,13 @@ services:
     image: attackledger-api:latest
     pull_policy: never
     ports: !override ["127.0.0.1:8098:8000"]
+    environment:
+      ATTACKLEDGER_DEV_KEY: "1"     # fictional data only: the public development key (docs/ENCRYPTION.md)
   worker:
     image: attackledger-worker:latest
     pull_policy: never
+    environment:
+      ATTACKLEDGER_DEV_KEY: "1"
   lab:
     networks:
       default:

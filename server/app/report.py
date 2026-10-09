@@ -19,7 +19,7 @@ from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
-from . import auditlog, gates, keylog, ledger, modules, packs
+from . import auditlog, gates, keylog, ledger, modules, packs, vault
 from .models import Engagement, Evidence, iso_utc
 from .text import plural
 
@@ -68,11 +68,14 @@ def build(session, eng: Engagement, controls: dict) -> dict:
         select(Evidence).where(Evidence.engagement_id == eng.id).order_by(Evidence.seq)
     ).all()
     lane_meta = {l["lane_id"]: (l["host"], l["role"]) for l in lanes}
-    evidence = []
+    evidence, keys = [], vault.Keys()
     for e in rows:
         host, role = lane_meta[e.lane_id]
-        evidence.append({"id": e.id, **ledger.evidence_record(e, host, role),
-                         "created_at": _iso(e.created_at), "prev_hash": e.prev_hash,
+        entry = {"id": e.id, **ledger.evidence_record(e, host, role)}
+        if e.record_version == 2:
+            # null once the engagement's key was deleted; the chain commits to summary_sha256
+            entry["summary"] = vault.summary_of(e, keys)
+        evidence.append({**entry, "created_at": _iso(e.created_at), "prev_hash": e.prev_hash,
                          "chain_hash": e.chain_hash})
 
     jobs = [{"id": j.id, "kind": j.kind, "status": j.status.value, "targets": len(j.targets),
@@ -97,6 +100,8 @@ def build(session, eng: Engagement, controls: dict) -> dict:
             "separation_of_duties": eng.separation_of_duties,
             "require_signatures": eng.require_signatures,
             "redact_evidence": eng.redact_evidence,
+            "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
+            "content_deleted": vault.deleted_info(eng),
         },
         "summary": {
             "hosts_in_scope": sum(1 for h in hosts if h["in_scope"]),
@@ -314,6 +319,7 @@ def _summary(r: dict, lanes: list) -> str:
     return f"""<section id="summary" class="pb"><h2>Summary</h2>
 <div class="tiles">{''.join(f'<div class="tile"><b>{_e(v)}</b><span>{_e(t)}</span></div>' for v, t in tiles)}</div>
 {f'<p class="warn">{plural(void, "receipt is", "receipts are")} void: the ledger changed after the receipt was issued, so it no longer proves that lane.</p>' if void else ''}
+{_deleted_note(r)}
 <p>Of {plural(s['lanes_possible'], 'possible lane', 'possible lanes')} ({plural(s['hosts_in_scope'], 'in-scope host', 'in-scope hosts')}
 × {plural(s['lanes_per_host'], 'lane')}), {s['lanes_opened']} {'was' if s['lanes_opened'] == 1 else 'were'} opened and
 <strong>{s['lanes_receipted']} {'is' if s['lanes_receipted'] == 1 else 'are'} receipted</strong>: every checklist item
@@ -355,6 +361,11 @@ def _scope(r: dict) -> str:
                      "and files, are replaced by a hash marker before raw evidence is stored; each entry "
                      "says what was redacted"
                      if eng["redact_evidence"] else "Off: raw evidence is stored as captured"))
+    if "content_deleted" in eng:
+        d = eng["content_deleted"]
+        rows.append(("Retention", _e(vault.deleted_sentence(d)) if d else
+                     (f"Content kept until {_e(eng['retain_until'])}, then deleted" if eng.get("retain_until")
+                      else "Content kept until an owner deletes it")))
     if out_hosts:
         rows.append(("Hosts recorded as out of scope", _list(out_hosts, "")))
     return f"""<section id="scope"><h2>Scope and authorization</h2>
@@ -479,7 +490,9 @@ def _verify(r: dict) -> str:
     checks = [
         ("Report body hash", "The report has not been edited since it was generated: its SHA-256 matches the recorded value."),
         ("Evidence chain", "Every evidence entry links to the one before it, from the genesis value to the chain head. "
-                           "No entry was removed, reordered or changed."),
+                           "No entry was removed, reordered or changed. Each summary matches the hash the chain "
+                           "commits to; a summary deleted with the engagement's key is reported as unavailable "
+                           "and the chain is still checked."),
         ("Lane receipts", "For every receipted lane, a manifest rebuilt from the report’s own items and evidence has the "
                           "receipt’s hash, every item marked done has evidence, and every not-applicable item has a reason."),
         ("Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its "
@@ -551,10 +564,33 @@ def _controls(r: dict) -> str:
 <p class="note">{_e(c.get('disclaimer', ''))}</p>{body}</section>"""
 
 
+def _summary_html(e: dict, deleted: dict | None) -> str:
+    if e.get("summary") is not None:
+        return _e(e["summary"])
+    if deleted:
+        return f"<span class='muted'>Content deleted on {_e((deleted.get('at') or '')[:10])}</span>"
+    return "<span class='muted'>Content unavailable</span>"
+
+
+def _deleted_note(r: dict) -> str:
+    d = r["engagement"].get("content_deleted")
+    if not d:
+        return ""
+    gone = sum(1 for e in r["evidence"] if e.get("v") == 2 and e.get("summary") is None)
+    kept = sum(1 for e in r["evidence"] if e.get("v") != 2)
+    return (f"<p class='callout'><strong>Content deleted.</strong> {_e(vault.deleted_sentence(d))} Its raw evidence "
+            f"and {plural(gone, 'evidence summary', 'evidence summaries')} can no longer be read; their hashes, the "
+            "receipts and the change history remain, so this report still verifies."
+            + (f" {plural(kept, 'summary', 'summaries')} recorded before chain record v2 "
+               f"{'remains' if kept == 1 else 'remain'}, because the chain covers their text." if kept else "")
+            + "</p>")
+
+
 def _items(r: dict) -> str:
+    deleted = r["engagement"].get("content_deleted")
     in_scope = {h["host"] for h in r["hosts"] if h["in_scope"]}
     ev_by_id = {e["id"]: e for e in r["evidence"]}
-    out = ["<section id='items' class='pb'><h2>Item detail</h2>"]
+    out = ["<section id='items' class='pb'><h2>Item detail</h2>", _deleted_note(r)]
     if not r["lanes"]:
         out.append("<p class='muted'>No lanes were opened.</p>")
     for l in r["lanes"]:
@@ -569,7 +605,7 @@ def _items(r: dict) -> str:
             else:
                 result = _e(result)
             ev_html = "<br>".join(
-                f"#{_e(e['seq'])} {_e(_evidence_label(e))}: {_e(e['summary'])} <code>{_e(e['sha256'][:12])}</code>"
+                f"#{_e(e['seq'])} {_e(_evidence_label(e))}: {_summary_html(e, deleted)} <code>{_e(e['sha256'][:12])}</code>"
                 + (f"<br><span class='muted small'>{_e(e['uri'])}</span>" if e.get("uri") else "") for e in evs)
             rows.append(f"<tr><td><span class='muted'>{_e(i['key'])}</span><br>{_e(i['text'])}</td>"
                         f"<td>{result}</td><td>{ev_html or '<span class=muted>none</span>'}</td></tr>")

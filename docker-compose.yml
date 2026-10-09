@@ -27,6 +27,15 @@ services:
       # RFC 3161 timestamp authority for receipts (D-034). Only a SHA-256 hash is sent, once
       # per closed lane. Set ATTACKLEDGER_TSA_URL=off to send nothing and skip timestamps.
       ATTACKLEDGER_TSA_URL: ${ATTACKLEDGER_TSA_URL:-http://timestamp.digicert.com}
+      # Master key for encryption at rest (D-043, docs/ENCRYPTION.md). Required: without one the
+      # API and the worker refuse to start. Make one with
+      #   docker compose run --rm --no-deps api python -m app.vault generate
+      # and put ATTACKLEDGER_MASTER_KEY=... in .env, or mount a file and set ATTACKLEDGER_MASTER_KEY_FILE
+      # to its path inside the container. Keep a copy apart from the backups. ATTACKLEDGER_DEV_KEY=1
+      # uses a public development key instead: for a local trial with fictional data only.
+      ATTACKLEDGER_MASTER_KEY_FILE: ${ATTACKLEDGER_MASTER_KEY_FILE:-}
+      ATTACKLEDGER_MASTER_KEY: ${ATTACKLEDGER_MASTER_KEY:-}
+      ATTACKLEDGER_DEV_KEY: ${ATTACKLEDGER_DEV_KEY:-}
     volumes:
       - blobs:/data/blobs
     ports:
@@ -47,6 +56,10 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # claude-opus-5-5 (default), claude-sonnet-5-5 or claude-haiku-5-5 (cheaper, for a first test).
       ATTACKLEDGER_AGENT_MODEL: ${ATTACKLEDGER_AGENT_MODEL:-}
+      # The same master key as the API (it encrypts agent evidence and runs retention).
+      ATTACKLEDGER_MASTER_KEY_FILE: ${ATTACKLEDGER_MASTER_KEY_FILE:-}
+      ATTACKLEDGER_MASTER_KEY: ${ATTACKLEDGER_MASTER_KEY:-}
+      ATTACKLEDGER_DEV_KEY: ${ATTACKLEDGER_DEV_KEY:-}
     volumes:
       - blobs:/data/blobs
     depends_on:
@@ -73,4 +86,4 @@ services:
 
 volumes:
   dbdata:
-  blobs:     # raw evidence (agent HTTP exchanges, notes), content-addressed
+  blobs:     # raw evidence (agent HTTP exchanges, notes, files), encrypted per engagement, with the wrapped keys

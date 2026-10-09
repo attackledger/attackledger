@@ -71,7 +71,7 @@ def main(base: str, out: Path, eng_ids: list[int]) -> None:
                         put(f"/jobs/{job['id']}", get(f"/jobs/{job['id']}"))
                     # The raw exchanges and notes behind an agent's evidence, so "View raw" works.
                     for ev in snap["get"][f"/lanes/{lid}"]["evidence"]:
-                        if ev["summary"].startswith("[agent] "):
+                        if ev.get("source") == "agent" or (ev["summary"] or "").startswith("[agent] "):
                             try:
                                 blob = raw(f"/blobs/{ev['sha256']}")
                             except urllib.error.HTTPError:

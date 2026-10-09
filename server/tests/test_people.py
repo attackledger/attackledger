@@ -100,7 +100,8 @@ def test_principal_never_defaults_to_owner():
 # ---- modes and sign-in -------------------------------------------------------------
 
 def test_modes_open_token_people(client, monkeypatch):
-    assert client.get("/health").json() == {"ok": True, "auth_required": False, "mode": "open", "timestamps": False}
+    assert client.get("/health").json() == {"ok": True, "auth_required": False, "mode": "open", "timestamps": False,
+                                              "encryption": {"master_key": "development"}}
     monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", "tok-123")
     assert client.get("/health").json()["mode"] == "token"
     assert client.get("/engagements").status_code == 401
