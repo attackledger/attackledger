@@ -46,11 +46,12 @@ where it finds its settings (`.env`). Replace `attackledger.example.com` and
 17. [Uninstall and delete the data](#17-uninstall-and-delete-the-data)
 18. [Troubleshooting](#18-troubleshooting)
 19. [Practise against the lab](#19-practise-against-the-lab)
+20. [Trying it on a Mac](#20-trying-it-on-a-mac)
 
 ## 1. What you need
 
 **A server.** Ubuntu Server 24.04 LTS (22.04 also works), x86-64 or ARM64, used only for
-AttackLedger.
+AttackLedger. To try it on a Mac first, with fictional data, see section 20.
 
 | | Minimum | Comfortable |
 |---|---|---|
@@ -364,8 +365,8 @@ never follows redirects, and logs every request.
 | `internal` | worker, gateway | the worker's only network: the gateway's proxy, resolver and relay |
 | `control` | gateway, api | rules and the request log for the gateway; the worker's relayed calls |
 | `database` | db, api | only the API reaches the database |
-| `lab` | gateway, lab, lab-proxy | the practice target (section 16) |
-| `default` | api, web, gateway, caddy | the way out: the timestamp authority, targets, Caddy |
+| `lab` | gateway, lab, lab-proxy | the practice target (section 19) |
+| `default` | api, web, gateway, caddy (and lab-proxy, when the lab runs) | the way out: the timestamp authority, targets, Caddy; the published ports |
 
 All but `default` are `internal: true` in Docker: nothing on them has a route out.
 
@@ -425,13 +426,13 @@ unreadable for good, while the evidence chain, receipts and reports still verify
 verifier says the content is unavailable and why).
 
 The API refuses to start without a master key. The production file reads it from a file on
-the host, `/etc/attackledger/master.key`, mounted read-only into the API container as
-`ATTACKLEDGER_MASTER_KEY_FILE`. The worker has no key: everything it produces is encrypted
-by the API (D-042). If that file cannot be read, startup fails;
-there is no fallback to another key.
+the host, `/etc/attackledger/master.key` (or the path in `ATTACKLEDGER_MASTER_KEY_PATH`),
+mounted read-only into the API container only, as `ATTACKLEDGER_MASTER_KEY_FILE`. The worker
+has no key: everything it produces is encrypted by the API (D-042). If that file cannot be
+read, startup fails; there is no fallback to another key.
 
 1. **Create the master key** (256 random bits, base64), readable only by the user the
-   containers run as (uid 10001):
+   API runs as (uid 10001):
 
    ```sh
    install -m 700 -d /etc/attackledger
@@ -442,13 +443,14 @@ there is no fallback to another key.
 
    This is the same format as `python -m app.vault generate` prints (a file with 64 hex
    digits works too). To keep the key somewhere else, set `ATTACKLEDGER_MASTER_KEY_PATH`
-   in `.env` to that path.
+   in `.env` to that path, and use that path wherever this guide says
+   `/etc/attackledger/master.key`.
 
 2. **Keep a copy of the master key somewhere else**, such as your organisation's password
    vault or an offline safe, and not next to the backups (section 14 says why). Without
    it, no evidence content can be read again, from the server or from any backup.
 
-3. After step 8, **check** that the API uses it: `/api/health` answers
+3. After section 8, **check** that the API uses it: `/api/health` answers
    `"encryption":{"master_key":"configured"}`. `development` would mean the public
    development key (`ATTACKLEDGER_DEV_KEY=1`, for trials with fictional data only; the
    production file turns it off), `missing` that there is no key.
@@ -467,18 +469,38 @@ there is no fallback to another key.
 - **Delete this engagement's data** now, confirmed by typing the engagement's name.
 
 Either way the deletion is an entry in the audit log, and afterwards the engagement takes
-no new evidence, jobs or receipts. Its lanes, receipts, hashes and history stay. On the
-server, `docker compose exec api python -m app.vault delete-content --engagement <id>`
-does the same, recorded as "the operator on the server".
+no new evidence, jobs or receipts. On the server,
+`docker compose exec api python -m app.vault delete-content --engagement <id>` does the
+same, recorded as "the operator on the server".
+
+**What deletion removes, and what stays.** Deleted: the engagement's key and its raw
+evidence (HTTP exchanges, notes, attached files), the evidence summaries, the recon results
+(hosts found, URLs, leads), the recon and agent logs, and the imported entries' URLs and
+labels. What stays, in plain text, because the reports and their verification depend on it:
+- the evidence chain, with each entry's host, lane, kind, hash and **URL: host, path and
+  query string** (secrets in it redacted when it was stored), or an attached file's name;
+- the lanes, items and their not-applicable reasons;
+- the receipts, their signatures and timestamps;
+- the logs: the audit log, the key log and the gateway's request log (method, URL and
+  verdict of every request recon and agents sent).
+
+So a URL that names something confidential stays readable after the deletion. Evidence
+summaries written before 0.7 (chain record v1) also stay, because the chain covers their
+text. The details are in `docs/ENCRYPTION.md`, "What is encrypted".
 
 **Rotating the master key.** Do it when someone who had the key leaves, if you think it
 leaked, and after deleting content that must not survive in old backups (see below).
 
-1. Make the new key next to the old one, and stop the API and the worker:
+Run the steps in one shell: step 1 sets `KEY` to the key file's path, the one in
+`ATTACKLEDGER_MASTER_KEY_PATH` or else the default, and the later steps use it.
+
+1. Find the key file, make the new key next to it, and stop the API and the worker:
 
    ```sh
    cd /opt/attackledger
-   (umask 077; openssl rand -base64 32 > /etc/attackledger/master.key.new)
+   KEY=$(sed -n 's/^ATTACKLEDGER_MASTER_KEY_PATH=//p' .env); KEY=${KEY:-/etc/attackledger/master.key}
+   echo "$KEY"
+   (umask 077; openssl rand -base64 32 > "$KEY.new")
    docker compose stop api worker
    ```
 
@@ -486,18 +508,18 @@ leaked, and after deleting content that must not survive in old backups (see bel
    re-wrap:
 
    ```sh
-   mv /etc/attackledger/master.key /etc/attackledger/master.key.old
-   mv /etc/attackledger/master.key.new /etc/attackledger/master.key
-   chown 10001 /etc/attackledger/master.key /etc/attackledger/master.key.old
-   chmod 400 /etc/attackledger/master.key /etc/attackledger/master.key.old
+   mv "$KEY" "$KEY.old"
+   mv "$KEY.new" "$KEY"
+   chown 10001 "$KEY" "$KEY.old"
+   chmod 400 "$KEY" "$KEY.old"
    ```
 
 3. Re-wrap every engagement key under the new master key (the evidence itself is not
-   re-encrypted; only the engagement keys depend on the master key). It can be run again
-   safely:
+   re-encrypted; only the engagement keys depend on the master key). It ends with
+   `re-wrapped <n>, already under <new key id>: <m>`, and can be run again safely:
 
    ```sh
-   docker compose run --rm --no-deps -v /etc/attackledger/master.key.old:/run/secrets/old-master-key:ro api python -m app.vault rotate-master --old-key-file /run/secrets/old-master-key
+   docker compose run --rm --no-deps -v "$KEY.old":/run/secrets/old-master-key:ro api python -m app.vault rotate-master --old-key-file /run/secrets/old-master-key
    ```
 
 4. Start again, take a backup under the new key, and keep a copy of the new key
@@ -508,8 +530,8 @@ leaked, and after deleting content that must not survive in old backups (see bel
    tools/backup.sh /var/backups/attackledger
    ```
 
-5. Destroy the old key (`shred -u /etc/attackledger/master.key.old`, and its stored copy)
-   once you no longer need the backups made with it: those backups open only with it.
+5. Destroy the old key (`shred -u "$KEY.old"`, and its stored copy) once you no longer
+   need the backups made with it: those backups open only with it.
 
 **Backups and deletion.** A backup holds the wrapped engagement keys that existed when it
 was made. Content deleted since can therefore still be recovered from an older backup
@@ -712,7 +734,7 @@ does.
 | Postgres password | `.env` (`POSTGRES_PASSWORD`) | the API to reach the database | no; a new install makes a new one |
 | Operator token (optional) | `.env` (`ATTACKLEDGER_API_TOKEN`) | scripts using the API | no |
 | Anthropic API key (optional) | `.env` (`ANTHROPIC_API_KEY`), passed to the gateway only | agent runs | no |
-| Encryption master key | `/etc/attackledger/master.key` (section 7), mounted read-only into the API only; never in `.env` | reading any evidence content | **no, kept separately** (its id, a hash, is in `info.txt`) |
+| Encryption master key | `/etc/attackledger/master.key`, or `ATTACKLEDGER_MASTER_KEY_PATH` (section 7), mounted read-only into the API only; never in `.env` | reading any evidence content | **no, kept separately** (its id, a hash, is in `info.txt`) |
 | Gateway and worker tokens | the volumes `gateway-control` and `worker-control` (section 6), shared with the API only | the gateway's and the worker's calls to the API | no; new ones are made on the next start |
 | Engagement data keys | the blob store, `e/<id>/key.json`, wrapped by the master key | reading one engagement's content | yes (wrapped) |
 | People's passwords | the database, as scrypt hashes | signing in | yes (hashes only) |
@@ -795,7 +817,15 @@ part. The folder appears under its final name only when it is complete.
 
    It ends with `backup: done: /var/backups/attackledger/attackledger-<UTC time>` and what
    it saved, for example `engagements 1, evidence entries 10, receipts 1, people 3, blob
-   files 10, migration 0016`.
+   files 10, migration <n>`. The migration is the database's own at that moment; it grows
+   with each release that changes the database. To see it for your install, and the
+   newest one your release knows:
+
+   ```sh
+   docker compose exec -T api python -c "from app import migrate; print(migrate.current(), migrate.head())"
+   ```
+
+   A backup's own value is in its `info.txt`, on the line `migration:`.
 
 3. Run it every night at 02:15, and delete backups older than 30 days (set the number of
    days from your retention policy, section 7):
@@ -873,10 +903,16 @@ before it takes jobs. Migrations can change the data, so always back up first.
    ```sh
    git fetch --tags
    git checkout v0.7.1
-   diff <(grep -o '^[A-Z_]*=' deploy/.env.example | sort) <(grep -o '^[A-Z_]*=' .env | sort)
+   keys() { grep -oE '^[# ]*[A-Z][A-Z0-9_]*=' "$1" | tr -d '# =' | sort -u; }
+   diff <(keys deploy/.env.example) <(keys .env)
    ```
 
-   Lines starting with `<` are settings your `.env` does not have yet.
+   It compares setting names only, never values, and counts a commented-out line such as
+   `# ATTACKLEDGER_LAB_PROXY_PORT=3128` as a setting too: the example lists its optional
+   settings that way. Lines starting with `<` are settings your `.env` does not mention yet.
+   Read each one in `deploy/.env.example`: copy a line without `#` to `.env` and set it as
+   its comment says; copy a commented line as it is, so the next comparison finds it, and
+   remove the `#` only if you want to change its default. No output means nothing is new.
 
 4. Build and restart. The API migrates the database while it starts. Coming from 0.6 or
    earlier, first create the master key and run the one-time steps in section 7
@@ -988,7 +1024,8 @@ keep a final backup first if your contract or policy requires one.
    ```
 
 4. Destroy the master key and every copy of it. Once the key is gone, the evidence content
-   in any copy of the data you missed is unreadable:
+   in any copy of the data you missed is unreadable. If you set
+   `ATTACKLEDGER_MASTER_KEY_PATH`, use that file's folder instead:
 
    ```sh
    shred -u /etc/attackledger/master.key*
@@ -1050,9 +1087,9 @@ receipt.
 
 **The API stops at once with "no master key", "cannot be read" or "not a
 256-bit key".** The key file is missing, not readable by uid 10001, or not a key. Check
-section 7, step 1: `ls -l /etc/attackledger/master.key` should show owner `10001` and
-`-r--------`. A missing file makes `docker compose up` itself fail with a "bind source
-path does not exist" error.
+section 7, step 1: `ls -l /etc/attackledger/master.key` (or the file in
+`ATTACKLEDGER_MASTER_KEY_PATH`) should show owner `10001` and `-r--------`. A missing file
+makes `docker compose up` itself fail with a "bind source path does not exist" error.
 
 **The API stops at once with "the configured master key ... did not wrap the keys of
 engagement ..." or "the blob store ... has no key for engagement ...".** The master key is
@@ -1138,21 +1175,38 @@ proxy, set `ATTACKLEDGER_LAB_PROXY_PORT` in `.env` before step 1.
 
 An owner sets it up once:
 
-1. **New engagement** (left), name it `Lab practice`, choose a methodology (for example
-   **Web application pentest (OWASP WSTG)**), **Create**.
+1. **New engagement** (left), name it `Lab practice`, leave **Type** on **Pentest** and
+   **Methodology** on **Web application pentest (OWASP WSTG)**, **Create**.
 2. On the **Recon** tab, under **Rules of engagement**:
    - **In scope**: `shop.lab.test`
-   - **Research header**: `X-Bug-Bounty: lab-practice`
+   - **Research header**: `X-Pentest: lab-practice`
    - **Requests per second**: `5`
-   - Under **Authorization**: **Program policy URL** `https://example.com/policy`, your
-     name, and tick **I am authorized to test this program and will follow its policy**.
+   - Under **Authorization**: **Statement of work or rules of engagement URL**
+     `https://example.com/policy` (it must start with `https://`; for the lab any page will
+     do), **Your name or handle**, and tick **I am authorized by the client to test these
+     hosts under the statement of work and will follow its rules of engagement.**
    - **Save rules**. `shop.lab.test` becomes a row in the ledger.
 3. On the **Team** tab, give the people who practise their roles (section 10).
 
-Recon: on the **Recon** tab, **Find live web servers**, **Run** (or **Run all steps**). Its
+(A bug bounty engagement shows **Program policy URL** and **I am authorized to test this
+program and will follow its policy.** instead.)
+
+Recon: on the **Recon** tab, **Find live web servers**, **Run**, or **Run all steps**. Their
 requests go through the gateway and are listed per engagement at
-`GET /api/engagements/<id>/gateway-log`. The steps that ask public sources (subdomains,
-archived URLs) have nothing to find for a `.test` name; that is expected.
+`GET /api/engagements/<id>/gateway-log`.
+
+**Run all steps** does not queue every step. It says, for example, "Queued 6 steps; 7 steps
+cannot apply and were not queued", and lists each step left out with its reason:
+- **Find subdomains**, **Collect archived URLs** and **Dork checklist**: "needs a wildcard in
+  scope, such as *.example.com". These steps work on the domain under a wildcard rule; the
+  lab's scope is one exact host, so they never run. Their own **Run** buttons say "Needs a
+  wildcard rule such as *.example.com".
+- **Scan ports**, **Discover content**, **Discover hidden parameters** and **Scan for known
+  issues**: off, until an owner ticks them under **Modules the rules of engagement allow**.
+
+The six steps that do run (resolve, find live web servers, well-known files, crawl,
+JavaScript analysis and parameter routing) finished in under a minute on a test install,
+and the gateway log listed 27 entries for them (requests and DNS questions).
 
 ### Capture a HAR of the lab from a browser
 
@@ -1201,11 +1255,18 @@ affected.
    right-click any request, **Save All As HAR**.
 
 6. In AttackLedger, open the practice engagement, **Import** tab, choose the file,
-   **Import**. The result line says how many entries reached the inbox. Repeated page loads
-   count as duplicates, and any request the browser made to another host is refused as out
-   of scope and listed by row and host only.
+   **Import**. The result line says how many entries reached the inbox, how many were
+   duplicates, and how many were refused: any request the browser made to another host is
+   refused as out of scope and listed by row and host only.
 
 7. Map the entries to checklist items, as in `docs/TESTER_GUIDE.md`.
+
+**What counts as a duplicate.** Only an exact copy: the same method, URL and status, and the
+same request and response bytes, after redaction. Loading the same page twice is a
+duplicate only if the shop answered with exactly the same bytes both times. Any difference
+makes a new entry, and the `Date` header alone is enough: it changes every second. A test
+file with one request three times, the second answer identical to the first and the third
+one second later (only its `Date` differed), gave two entries and one duplicate.
 
 Measured on a test install: headless Chrome 155 through the lab proxy, driven by a script
 that clicked through the shop, captured 25 requests. The import added 9 entries to the
@@ -1222,3 +1283,49 @@ tester guide:
 
 When you finish, close the browser and delete its profile folder
 (`$HOME/.attackledger-lab-chrome`, or the Firefox profile on `about:profiles`).
+
+## 20. Trying it on a Mac
+
+For a trial with fictional data, before a server exists, the same production setup runs on
+a Mac with [Colima](https://github.com/abiosoft/colima) (a Linux VM for Docker). It was
+tested with Colima on Apple silicon (4 CPUs, 6 GB of memory for the VM) and Docker Compose
+2.24 or later. Real work belongs on a server: sections 1 to 19 stay the main path. Follow
+them with these differences:
+
+- **No `sudo`, and everything under your home folder.** Colima shares only your home
+  folder with the VM, so the install folder and the master key must be in it. Clone into
+  `~/attackledger` instead of `/opt/attackledger`, and run every command there as yourself.
+- **`sed -i ''` instead of `sed -i`** in sections 4 and 5: macOS `sed` needs the empty
+  argument, and without it says `invalid command code`.
+- **The master key under `~`, and no `chown`** (section 7, step 1):
+
+  ```sh
+  install -m 700 -d ~/.attackledger
+  (umask 077; openssl rand -base64 32 > ~/.attackledger/master.key)
+  chmod 400 ~/.attackledger/master.key
+  sed -i '' "s|^ATTACKLEDGER_MASTER_KEY_PATH=.*|ATTACKLEDGER_MASTER_KEY_PATH=$HOME/.attackledger/master.key|" .env
+  ```
+
+  Colima shows the file to the API container as owned by the API's own user, so it reads
+  it without a `chown`. Leave `chown` out of the rotation steps too.
+- **Option D without a tunnel** (section 5). Publish Caddy on the Mac's loopback address,
+  on ports that are free, and open the page directly:
+
+  ```sh
+  sed -i '' "s|^ATTACKLEDGER_HOSTNAME=.*|ATTACKLEDGER_HOSTNAME=http://attackledger.localhost|" .env
+  sed -i '' "s|^ATTACKLEDGER_TLS=.*|ATTACKLEDGER_TLS=internal|" .env
+  sed -i '' "s|^ATTACKLEDGER_HTTP_PORT=.*|ATTACKLEDGER_HTTP_PORT=127.0.0.1:8080|" .env
+  sed -i '' "s|^ATTACKLEDGER_HTTPS_PORT=.*|ATTACKLEDGER_HTTPS_PORT=127.0.0.1:8443|" .env
+  ```
+
+  After section 8, check with `curl -fsS http://attackledger.localhost:8080/api/health`
+  and open `http://attackledger.localhost:8080` in Chrome.
+- **The lab proxy needs no tunnel either** (section 19): it listens on the Mac's
+  `127.0.0.1:3128`, so start the browser with `--proxy-server=http://127.0.0.1:3128` as
+  shown there and skip the `ssh` step.
+- **Backups and cleanup.** `tools/backup.sh` works with a folder under `~`, such as
+  `~/attackledger-backups`. macOS has no `shred`; delete key files with `rm`. Skip the cron
+  job.
+
+To end the trial: `docker compose --profile lab down --volumes --rmi local` in the install
+folder, then delete the folder, the backups and `~/.attackledger`.
