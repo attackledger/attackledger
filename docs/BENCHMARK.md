@@ -75,13 +75,13 @@ Wall time 390 s, 5,870 requests, all with the research header and user agent (0 
 
 ## What the run showed
 
-1. **nuclei sends writes.** The recon run sent 24 POST, 1 DELETE and 1 DEBUG request, all from nuclei
+1. **nuclei sends writes** (fixed, see the re-run below). The recon run sent 24 POST, 1 DELETE and 1 DEBUG request, all from nuclei
    exposures/misconfiguration templates (`dragonfly-public-signup` signs up, `nacos-create-user` creates and
    then DELETEs a user, `hadoop-unauth-rce`, several login forms). 54 templates in the passes that ran can send
    a non-GET request and are not excluded; the golden pass would add 1,826 more, 11 of which can DELETE.
    `nacos-create-user` is tagged `instrusive` (typo), so the `intrusive` tag exclusion misses it. This
    contradicts D-024 ("the recon side never writes") and the DELETE-approval rule.
-2. **nuclei goes over the rate limit.** It averaged 20.1/s at a limit of 20, but one calendar second had 29
+2. **nuclei goes over the rate limit** (fixed, see the re-run below). It averaged 20.1/s at a limit of 20, but one calendar second had 29
    requests and 1,326 sliding one-second windows were above 20 (peak 40). The other tools stayed at or under
    20 per calendar second.
 3. **A single SPA host is never golden.** Juice Shop scored 3 (ODDPORT, KEYWORD, 200; httpx detected no
@@ -116,3 +116,54 @@ Wall time 390 s, 5,870 requests, all with the research header and user agent (0 
 Separate from recall, and first by risk: **exclude every nuclei template that can send a non-GET request**
 (by content at build time, like the unsafe and out-of-band exclusions), and keep nuclei's per-pass hand-over
 under the limit.
+
+## Re-run after the nuclei fix (2026-10-09)
+
+Machine-readable results: `tools/benchmark/results-2026-10-09-rerun.json`. Same target, settings and
+pipeline as the first run; API and worker images built from branch `fix/nuclei-gates`
+(`BENCH_KEEP_IMAGES=1 run.py up`). Recon only: no agent run, so the agent columns are empty.
+
+What changed in nuclei:
+
+- **Templates are read-only by construction** (`server/app/nucleisafe.py`, run at image build and again
+  before the worker's first scan). A template runs only if every request it can send is provably GET,
+  HEAD or OPTIONS to `{{BaseURL}}`/`{{RootURL}}` or the target's Host, with no body, no method override,
+  no other protocol, no scripted flow, no self-contained third-party URL, no unsafe/pipeline/race/threads/
+  digest/fuzzing key and no out-of-band reference. Unknown keys and unparseable files are excluded too.
+  7,235 of 13,786 template files are kept, 6,551 excluded (the old list had 834). Templates nuclei
+  loads per pass: takeovers 75 → 74, generic 760 → 696, golden 3,906 → 2,449.
+- **One rate-limit token per tick.** nuclei refills all `-rl` tokens at once per tick, so `-rl 20` let 40
+  requests into one sliding second. Now `-rl 1 -rld ceil(1050/(limit-1)) ms` (56 ms at 20/s): a window
+  holds at most one request per tick plus one refilled just before it. `-retries 0`, because a retry is
+  sent without a token (measured: 12 connections for 6 tokens with `-retries 1`). 1.1 s between nuclei
+  processes. nuclei needs a limit of at least 2/s.
+
+| Step | Status | Seconds | Requests | Peak / calendar second | Peak / sliding 1 s |
+|---|---|---|---|---|---|
+| probe | done | 0.2 | 1 | 1 | 1 |
+| crawl | done | 13.2 | 29 | 20 | 22 |
+| content | done, skipped host | 0.1 | 2 | 2 | 2 |
+| jsanalyze | done | 1.6 | 20 | 10 | 13 |
+| params | done | 236.6 | 3,210 | 18 | 19 |
+| nuclei | done | 133.5 | 2,249 | **18** | **19** |
+
+Wall time 405 s, 5,511 requests, **all GET**, all with the research header and user agent. Non-GET
+requests: **0** (first run: 24 POST, 1 DELETE, 1 DEBUG). nuclei: 2,249 requests (first run 2,612), 133.5 s
+(130.3 s). Recall unchanged: the same 5 automated recon matches (4 after review), the same nuclei lead
+(`prometheus-metrics`), errorHandling and exposedMetrics solved by recon traffic.
+
+Pacing measured by hand on the same stack (nuclei in the bench worker, through juice-proxy):
+
+| Templates | Limit | Requests | Peak / calendar second | Peak / sliding 1 s |
+|---|---|---|---|---|
+| exposures + misconfiguration, old flags `-rl 20` | 20 | 2,241 | 20 | **40** |
+| exposures + misconfiguration | 20 | 2,241 | 18 | 19 |
+| all of `http/`, medium and up (5,350 GET, 2 OPTIONS, 1 HEAD) | 20 | 5,353 | 18 | 19 |
+| exposures + misconfiguration | 50 | 2,241 | 46 | 46 |
+| exposures (150 s) | 5 | 569 | 4 | 5 |
+| takeovers | 3 | 8 | 2 | 3 |
+| exposures (150 s) | 2 | 138 | 2 | 2 |
+
+Still open: **katana (crawl) reached 22 in one sliding second** at a limit of 20 in both runs (20 per
+calendar second). It is not nuclei and is left for the gateway proxy, which will enforce one ceiling for
+every tool.
