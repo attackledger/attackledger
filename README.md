@@ -84,6 +84,7 @@ them are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
   app does not need it. Hunt agents inside the app need only an Anthropic API key
   (see [Hunt agents](#hunt-agents-v06-preview)).
 - Optional: [Caido](https://caido.io) together with [caido-mcp-server](https://github.com/c0tton-fluff/caido-mcp-server).
+  To import Caido's HTTP history as evidence, run `tools/caido_pull.py` on your own machine ([docs/IMPORT.md](docs/IMPORT.md#pull-from-caido-toolscaido_pullpy)).
 - To run the scripts in `recon/` and `gates/` outside Docker: the ProjectDiscovery
   stack, ffuf/feroxbuster, jq and Python 3.
 
