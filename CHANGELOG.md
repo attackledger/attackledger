@@ -40,6 +40,22 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **Fixes from a fresh-install trial.**
+  - Exact scope entries become hosts when the rules are saved (`hosts_added` in the
+    response); wildcards stay rules. Recon says when there are no hosts and lets you add
+    one in place.
+  - Steps with nothing to work on end `skipped` with a reason instead of `done`, and
+    Run all steps no longer queues steps that cannot apply (migration `0013`).
+  - Running steps show elapsed time, targets finished and the latest log line; queued
+    steps show their place in the queue.
+  - The verifier prints SKIP, not PASS, when no receipt is signed or timestamped;
+    `--require-signatures` fails unsigned reports.
+  - A clear message for a non-HTTPS policy URL; report evidence labels and counted nouns
+    read correctly; the sidebar host count stays current.
+  - Lane panel: honest item counts, a refused close lists what is still unresolved as it
+    changes, and open items can be marked not applicable in bulk with one reason.
+  - The Ledger and the report use the same words: Not opened, In progress, Receipted, Void.
+  - README: first steps, API docs, database password, requirements and status.
 - **Security policy** at `/security`, `/.well-known/security.txt` (RFC 9116) and `SECURITY.md`:
   scope, testing rules, how to report to murat@attackledger.com, 90-day coordinated
   disclosure and safe harbor (no bounty).

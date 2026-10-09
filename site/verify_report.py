@@ -4,6 +4,7 @@
     python3 tools/verify_report.py report.json
     python3 tools/verify_report.py report.html
     python3 tools/verify_report.py report.json --tsa-root authority-root.pem
+    python3 tools/verify_report.py report.json --require-signatures
 
 Standard library only, and independent of the AttackLedger code base on
 purpose: it re-derives every hash itself. Checks:
@@ -21,13 +22,18 @@ purpose: it re-derives every hash itself. Checks:
      valid at the token's time. Trusted roots are the PEM files in tsa-roots/ next to
      this script and any you pass with --tsa-root.
 
+Checks 4 and 5 print SKIP, which is neither a pass nor a failure, when no receipt in
+the report is signed or timestamped: there is nothing for them to check. With
+--require-signatures, every receipt must be signed, and an unsigned one fails check 4.
+
 Signatures are Ed25519 or ECDSA P-256 with SHA-256, checked with the pure-Python
 code below (RFC 8032 and SEC 1), so no third-party package is needed; timestamp
 authorities may also use RSA (PKCS #1 v1.5) or ECDSA P-384. A signature
 proves the key holder signed; to tie the key to a person, compare its fingerprint
 with the one the signer gives you.
 
-Exit code 0 means every check passed.
+Exit code 0 means no check failed; 1 means one did; 2 means the report or the
+arguments could not be used.
 """
 import hashlib
 import json
@@ -287,7 +293,18 @@ def verify_signature(algorithm: str, spki: bytes, message: bytes, signature: byt
     return ed25519_verify(raw, message, signature) if algorithm == "Ed25519" else p256_verify(raw, message, signature)
 
 
-def check_signatures(r: dict) -> tuple[list[str], list[str]]:
+def _receipts(n: int) -> str:
+    return f"{n} receipt" + ("" if n == 1 else "s")
+
+
+def count_receipts(r: dict, field: str) -> tuple[int, int]:
+    """(receipts carrying field, receipts) over the lanes reported as receipted."""
+    rcs = [l["receipt"] for l in r["lanes"] if l["receipt"] and l["status"] == "closed"]
+    return sum(1 for rc in rcs if rc.get(field)), len(rcs)
+
+
+def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[str]]:
+    """With require, an unsigned receipt is a problem."""
     import base64
     problems, notes, signed, receipted = [], [], 0, 0
     chain = {e["seq"]: e["chain_hash"] for e in r["evidence"]}
@@ -299,6 +316,8 @@ def check_signatures(r: dict) -> tuple[list[str], list[str]]:
         sig = rc.get("signature")
         label = f"{lane['host']} / {lane['name']}"
         if not sig:
+            if require:
+                problems.append(f"{label}: the receipt is not signed")
             continue
         signed += 1
         try:
@@ -327,7 +346,8 @@ def check_signatures(r: dict) -> tuple[list[str], list[str]]:
             notes.append(f"{label}: signed by {(payload.get('signer') or {}).get('name')} with key "
                          f"{sig.get('key_fingerprint', '')[:16]} ({sig.get('algorithm')})")
     if receipted and signed < receipted:
-        notes.append(f"{receipted - signed} of {receipted} receipts are not signed (a name only)")
+        notes.append(f"{receipted - signed} of {_receipts(receipted)} {'is' if receipted - signed == 1 else 'are'} "
+                     "not signed (a name only)")
     return problems, notes
 
 
@@ -623,15 +643,18 @@ def check_timestamps(r: dict, roots: list[dict]) -> tuple[list[str], list[str]]:
         if not mine:
             notes.append(f"{label}: timestamped {t['time'].isoformat()} by {tsa}")
     if receipted and stamped < receipted:
-        notes.append(f"{receipted - stamped} of {receipted} receipts are not timestamped")
+        notes.append(f"{receipted - stamped} of {_receipts(receipted)} {'is' if receipted - stamped == 1 else 'are'} "
+                     "not timestamped")
     return problems, notes
 
 
 def main(argv: list[str]) -> int:
-    args, root_files, rest = [], [], iter(argv[1:])
+    args, root_files, require, rest = [], [], False, iter(argv[1:])
     for a in rest:
         if a == "--tsa-root":
             root_files.append(next(rest, None))
+        elif a == "--require-signatures":
+            require = True
         else:
             args.append(a)
     if len(args) != 1 or None in root_files:
@@ -647,23 +670,32 @@ def main(argv: list[str]) -> int:
         print(f"unsupported report format: {r.get('format')}")
         return 2
 
-    results = [("Report body hash", check_body(r)), ("Evidence chain", check_chain(r))]
+    # (name, problems, skip): a check with a skip reason found nothing to check.
+    results = [("Report body hash", check_body(r), None), ("Evidence chain", check_chain(r), None)]
     receipt_problems, notes = check_receipts(r)
-    results.append(("Lane receipts", receipt_problems))
+    results.append(("Lane receipts", receipt_problems, None))
     if r["format"] != "attackledger-report/1":
-        sig_problems, sig_notes = check_signatures(r)
-        results.append(("Receipt signatures", sig_problems))
-        notes += sig_notes
-        ts_problems, ts_notes = check_timestamps(r, roots)
-        if any(l["receipt"] and l["receipt"].get("timestamp") for l in r["lanes"]):
-            results.append(("Receipt timestamps", ts_problems))
-        notes += ts_notes
+        for name, field, check in (("Receipt signatures", "signature", lambda: check_signatures(r, require)),
+                                   ("Receipt timestamps", "timestamp", lambda: check_timestamps(r, roots))):
+            problems, more = check()
+            have, receipted = count_receipts(r, field)
+            done = "signed" if field == "signature" else "timestamped"
+            skip = None if have else (f"0 of {_receipts(receipted)} {done}" if receipted else "no receipts")
+            results.append((name, problems, skip))
+            notes += more
+    elif require:
+        results.append(("Receipt signatures", ["this report format carries no signatures"], None))
 
     eng, s = r["engagement"], r["summary"]
+    lanes, entries = s["lanes_receipted"], s["evidence_entries"]
     print(f"AttackLedger report: {eng['name']} ({eng['pack']['name']} {eng['pack']['version']})")
-    print(f"  {s['lanes_receipted']} receipted lanes, {s['evidence_entries']} evidence entries\n")
+    print(f"  {lanes} receipted lane{'' if lanes == 1 else 's'}, "
+          f"{entries} evidence entr{'y' if entries == 1 else 'ies'}\n")
     ok = True
-    for name, problems in results:
+    for name, problems, skip in results:
+        if skip and not problems:
+            print(f"  SKIP  {name} ({skip})")
+            continue
         print(f"  {'PASS' if not problems else 'FAIL'}  {name}")
         for p in problems:
             print(f"        - {p}")
