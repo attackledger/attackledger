@@ -24,16 +24,16 @@ gateway is the second (it makes trying useless). The nuclei template classifier 
 ## Architecture
 
 ```
-                      internal network (internal: true, no route out)
+                      internal network (internal: true: the worker and the gateway, nothing else)
   ┌─────────┐                                                     ┌──────────────┐
   │ worker  │── HTTP proxy, CONNECT (job-<id>.<tool>:<secret>) ──►│              │── egress network ──► targets
   │ tools,  │── DNS (A/AAAA/CNAME) ──────────────────────────────►│   gateway    │                      passive sources
   │ agent   │── port probes (CONNECT + X-AttackLedger-Probe) ────►│              │                      api.anthropic.com
-  └────┬────┘                                                     │  - TLS CA    │── lab network ─────► lab targets
-       │ database (today; D-042 moves this to the API)            │  - limiter   │   (internal: true)   (benchmark: countproxy
-  ┌────▼────┐                                                     │  - log queue │                       → Juice Shop)
-  │   db    │◄──── api ◄── /gateway/session, /gateway/log ────────┤              │
-  └─────────┘   (rules, request log; gateway token)               └──────────────┘
+  │         │── control port 8081: /worker/* only (D-042) ───────►│  - TLS CA    │                      (the gateway adds the key)
+  └─────────┘                                                     │  - limiter   │── lab network ─────► lab targets
+  ┌─────────┐   database network       control network            │  - log queue │   (internal: true)   (benchmark: countproxy
+  │   db    │◄──────────────── api ◄── /gateway/*, relayed ───────┤  - relay     │                       → Juice Shop)
+  └─────────┘                          /worker/* (tokens)         └──────────────┘
 ```
 
 | Part | Where | What it does |
@@ -44,6 +44,7 @@ gateway is the second (it makes trying useless). The nuclei template classifier 
 | Rules | `GET`/`POST /gateway/*` on the API | The gateway asks the API who a job credential belongs to and what that engagement's rules are; it holds no database credentials |
 | Request log | table `gateway_requests` (migration `0019`) | One row per request, probe and DNS question, allowed or refused, with the reason. Read with `GET /engagements/{id}/gateway-log` |
 | Worker client | `server/app/egress.py` | Builds each job's credential, the proxy URL and environment per tool, the urllib opener, the resolver address and the port prober |
+| Control relay | same process, port 8081 | Forwards the worker's `GET`/`POST /worker/*` calls to the API, with only `Authorization` and `Content-Type`; refuses every other path (D-042, `WORKER_API.md`) |
 
 ## Decisions
 
@@ -71,9 +72,10 @@ covers it. It is simpler because there is nothing to switch off:
 
 ### 2. Job identity: proxy credentials per job
 
-- When the worker claims a job it creates a 256-bit secret and stores only its SHA-256
-  (`jobs.gateway_secret_sha256`). The secret lives in the worker's memory and in the
-  environment and arguments of that job's tool processes, never in the job log (masked).
+- When the worker claims a job, the API creates a 256-bit secret and stores only its SHA-256
+  (`jobs.gateway_secret_sha256`; before D-042's worker half the worker made it). The secret
+  lives in the worker's memory and in the environment and arguments of that job's tool
+  processes, never in the job log (masked). It is not the job's API token, which tools never get.
 - Every tool authenticates as `job-<id>.<tool>:<secret>` (HTTP Basic proxy authentication).
   The tool name is self-declared and only used for attribution in the log.
 - The gateway asks the API (`POST /gateway/session`) whether the credential is valid. The
@@ -106,7 +108,7 @@ Checked against every tool the modules run:
 
 Each tool also gets `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (both cases) and
 `SSL_CERT_FILE` pointing at the gateway CA, and nothing else from the worker's environment
-(no `DATABASE_URL`, no `ANTHROPIC_API_KEY`). Whether a tool honours the proxy is not taken
+(which no longer holds a database URL or an API key anyway, D-042). Whether a tool honours the proxy is not taken
 on trust: the worker has no other route, so a tool that ignores it fails.
 
 ### 3. Rules come from the API, not the database
@@ -124,10 +126,9 @@ and the API can read (a file the gateway creates in a volume shared with the API
 | `POST /gateway/log` | a batch of request-log rows |
 
 With D-042 in mind: in a later hybrid service the API and ledger may be hosted while the
-worker and gateway stay in the customer's network. The gateway already talks only to the API,
-over an authenticated channel, so it needs no change then. The worker still reads the database
-today; moving it to the API is D-042's other half, and it is what closes the gap named in the
-threat model below.
+worker and gateway stay in the customer's network. The gateway talks only to the API, over an
+authenticated channel, so it needs no change then. Since 2026-10-10 the worker does too
+(`WORKER_API.md`): it has no database, and its calls to the API go through the gateway's relay.
 
 ### 4. DNS and passive sources
 
@@ -149,7 +150,9 @@ threat model below.
 - **The Claude API** (`api.anthropic.com`, or `ATTACKLEDGER_GATEWAY_SERVICE_HOSTS`) is a
   service host: agent jobs only, `POST /v1/messages` and `/v1/messages/count_tokens` only,
   upstream certificate verified, logged with kind `service`, not counted. Headers and bodies
-  are never logged.
+  are never logged. The API key is the gateway's (`ANTHROPIC_API_KEY` on the gateway): it is
+  added as `x-api-key` after any `x-api-key` or `Authorization` the client sent is removed, and
+  without it these calls are refused with 503. The worker holds no key (D-042).
 
 ### 5. Rate ceiling
 
@@ -239,7 +242,8 @@ Nothing is sent when:
 ## Threat model
 
 The question: what can a tool inside the worker do, if it is buggy (nuclei sending a POST) or
-malicious (a compromised binary or template)?
+malicious (a compromised binary or template)? Tools run as the worker's user, so the answer
+covers the whole worker process too.
 
 **It cannot:**
 
@@ -252,7 +256,12 @@ malicious (a compromised binary or template)?
 - send target traffic without the engagement's identification, or with a forged one;
 - use a finished or cancelled job's credential, or name another engagement in its credential;
 - send a request the log does not record (the gateway refuses when the log is not being written);
-- read the CA private key or the gateway token (not mounted in the worker).
+- read the CA private key or the gateway token (not mounted in the worker);
+- **connect to the database** (it is on no network with it and has no credentials), or read the
+  master key, an engagement key, a blob or the Anthropic API key (none is in the worker);
+- call any API route but `/worker/*` (the relay forwards nothing else), or, with a job's token,
+  touch another job or engagement, write rows its job kind does not write, write evidence of
+  another source, close a lane, or change scope, rules or people (`WORKER_API.md`).
 
 **It still can:**
 
@@ -260,11 +269,10 @@ malicious (a compromised binary or template)?
 - put data into URLs of GET requests to the passive sources (an exfiltration channel to a
   fixed list of public services) and into DNS questions for in-scope names. Both are logged.
 - resolve in-scope names of another engagement while that engagement has a running job.
-- **read and write the database**, because the worker still connects to it directly. With
-  write access it could change an engagement's rules or another job's credential hash, or, in
-  open mode, call the API as an owner. This is today's trust boundary and the reason for
-  D-042's second half: once the worker talks to the API instead of the database, a malicious
-  tool in the worker is held to its own job.
+- claim queued jobs with the worker token and run them as the worker would, each held to its
+  own engagement's rules and its kind's capability, and write wrong content inside the jobs it
+  runs (the API cannot know what a target answered; the gateway's log, written by the gateway,
+  is the independent record of what was sent).
 
 The gateway itself does not verify target certificates (as the tools did not), so on the path
 between the gateway and a target a network attacker could read or change traffic. It verifies
@@ -277,8 +285,10 @@ passive sources and the Claude API.
 - Settings (gateway): `ATTACKLEDGER_API_URL` (default `http://api:8000`),
   `ATTACKLEDGER_GATEWAY_TOKEN` or `ATTACKLEDGER_GATEWAY_TOKEN_FILE`,
   `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`, `ATTACKLEDGER_GATEWAY_SERVICE_HOSTS`,
-  `ATTACKLEDGER_GATEWAY_DENY_HOSTS`. Worker: `ATTACKLEDGER_GATEWAY` (proxy address),
-  `ATTACKLEDGER_GATEWAY_DNS`, `ATTACKLEDGER_GATEWAY_CA`.
+  `ATTACKLEDGER_GATEWAY_DENY_HOSTS`, `ATTACKLEDGER_GATEWAY_CONTROL_PORT` (default 8081, 0 turns
+  the relay off), `ANTHROPIC_API_KEY`. Worker: `ATTACKLEDGER_GATEWAY` (proxy address),
+  `ATTACKLEDGER_GATEWAY_DNS`, `ATTACKLEDGER_GATEWAY_CA`, `ATTACKLEDGER_WORKER_API` (default
+  `http://gateway:8081`).
 - The request log: `GET /engagements/{id}/gateway-log` (any role on the engagement), with
   totals by verdict, kind and method and the latest rows.
 
@@ -288,4 +298,4 @@ passive sources and the Claude API.
   targets (a new connection per request).
 - Credential injection and the approval queue (D-040, D-041): hooks only.
 - A UI view of the request log (API only).
-- The worker still uses the database directly (D-042).
+- ~~The worker still uses the database directly (D-042).~~ Done 2026-10-10: `WORKER_API.md`.

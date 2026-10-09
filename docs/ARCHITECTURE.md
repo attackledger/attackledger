@@ -45,8 +45,10 @@ verifiable statement of coverage.
 2. Add a runner `run_<kind>(run, targets) -> int` to `worker/worker.py` and register
    it in `RUNNERS`. The worker refuses to start while the registry and `RUNNERS`
    disagree.
-3. Write only to `Observation`, `Endpoint` or `Lead`, and only for hosts that pass
-   `scope.in_scope`.
+3. Write only to `Observation`, `Endpoint` or `Lead` (`run.observe`, `store_endpoints`,
+   `add_lead`), and only for hosts that pass `scope.in_scope`. The worker has no database:
+   these go to the API, which accepts only what the kind's entry in `workerapi.WRITES`
+   allows (add one; a test fails without it) and checks scope and redaction again.
 4. Respect `engagement.rate_limit_rps` as a ceiling. A test fails if any tool is
    given more.
 
@@ -55,8 +57,8 @@ the registry entry.
 
 ### Gates a job passes (`jobgates.py`)
 
-The API applies these when a job is queued. The worker applies them again when the
-job runs.
+The API applies these when a job is queued, and again when the worker claims it
+(`workerapi.claim`), because the engagement can change in between.
 
 1. The module exists.
 2. Authorization is recorded.
@@ -84,7 +86,9 @@ exactly the same write paths and gets no shortcut that a person does not have.
 An agent run is a job of kind `agent` tied to one lane (`jobs.lane_id`, migration
 `0009`). The worker runs a manual tool-use loop over the Messages API
 (`agentloop.py`, model `claude-opus-5-5`, adaptive thinking, server-side refusal
-fallback). Every tool call goes through `agenttools.Toolbox`:
+fallback). Every tool call goes through the agent's tools (`agenttools.py`): the worker
+checks and sends requests (`RemoteToolbox`), and the API checks them again and makes every
+write (`Toolbox`), because the worker has no database (`WORKER_API.md`):
 
 | Tool | Gate |
 |---|---|
@@ -95,7 +99,7 @@ fallback). Every tool call goes through `agenttools.Toolbox`:
 | `finish` | Ends the run with a summary for the reviewer |
 
 There is no tool that closes a lane. Each exchange is stored in the content-addressed
-blob store (`blobs.py`, volume shared by API and worker), so an evidence hash can be
+blob store (`blobs.py`, the API's volume; the API encrypts and stores what the worker sends), so an evidence hash can be
 opened and checked (`GET /blobs/{sha256}`, served as sandboxed plain text, only for
 hashes that evidence cites). Before an exchange is stored, credentials and some personal
 data are replaced by a hash marker (`redact.py`, D-038); the model sees the same redacted
@@ -104,8 +108,9 @@ prompt and in every tool result. The gates are checked when the run is queued an
 again when it starts. A run that ends without `finish`, at the turn limit or at the
 time limit is `partial`, never `done`; a model refusal fails the job.
 
-The Anthropic API key is set on the worker only. The API learns that agents are
-enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
+The Anthropic API key is set on the gateway only, which adds it to the agent's Claude API
+calls (D-042). The API learns that agents are enabled from `ATTACKLEDGER_AGENTS_ENABLED`,
+which compose derives from the key.
 
 ### Evidence and receipts
 
@@ -127,8 +132,8 @@ enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
 
 ### Traffic gateway (D-039)
 
-The worker has no route to the internet: it is on an internal network with the database,
-the API and the gateway only. Every request a recon tool or an agent sends leaves through
+The worker has no route to the internet and no database: it is on an internal network with
+the gateway only, and reaches the API through the gateway's relay (`WORKER_API.md`). Every request a recon tool or an agent sends leaves through
 the gateway (`gateway.py`), which enforces the engagement's scope, read-only methods, rate
 ceiling (one limiter per engagement for every tool and worker) and identification, answers
 DNS only for in-scope names, makes the port probes, and logs every request, allowed or

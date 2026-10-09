@@ -16,9 +16,17 @@ Job kinds mirror the original pipeline's modules:
   dorks       M10 Google-dork checklist per wildcard root (computed, no traffic)
   agent           a Claude agent working one hunt lane through agenttools (v0.6)
 
-Defense in depth: the API validates targets when a job is created; the worker
-re-checks every target before running and every host or URL a tool reports
-before storing it. Nothing outside the engagement's scope rules is recorded.
+The worker has no database (D-042, docs/WORKER_API.md). It claims a job from the API with
+its worker token and gets the job's specification and a job token: the targets, the
+engagement's rules and what the job kind reads. Everything it writes (observations,
+endpoints, leads, an agent's exchanges and ledger calls, logs, progress, the outcome) goes
+back through the API's /worker/* routes, relayed by the gateway; the API checks each write
+against what the job kind may write, the scope and redaction, and decides the job's status.
+
+Defense in depth: the API validates targets when a job is created and again when it is
+claimed; the worker re-checks every host or URL a tool reports before sending it, and the
+API checks it once more before storing it. Nothing outside the engagement's scope rules is
+recorded.
 
 The worker has no route to the internet (D-039, docs/GATEWAY.md). Each job gets a gateway
 credential when it starts; every tool is pointed at the gateway (GATEWAY_FLAGS plus the proxy
@@ -26,8 +34,8 @@ environment, app.egress) and the gateway enforces scope, methods, rate and ident
 again, in one place. The tools' own flags below stay as the first layer.
 
 Recon output that carries URLs or response data (endpoints, leads, observations) is
-redacted before it is stored (app.redact, D-038): a token in an archived URL is kept
-as a marker, so it is neither stored nor sent again by a later step.
+redacted by the API before it is stored (app.redact, D-038): a token in an archived URL is
+kept as a marker, so it is neither stored nor sent again by a later step.
 """
 import hashlib
 import json
@@ -41,25 +49,24 @@ import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worker
 
-from sqlalchemy import select  # noqa: E402
-
-from app import egress, jobgates, jsanalysis, ledger, migrate, modules, packs, redact, scope, urls  # noqa: E402
-from app import targets as targeting  # noqa: E402
-from app import agentloop, agenttools, nucleisafe, passive, triage, vault  # noqa: E402
+from app import egress, jsanalysis, modules, scope, urls, workerclient  # noqa: E402
+from app import agentloop, agenttools, nucleisafe, passive  # noqa: E402
 from app.text import plural  # noqa: E402
-from app.db import SessionLocal, engine  # noqa: E402
-from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lane, Lead, Observation  # noqa: E402
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
-# A running job older than the time limit plus this grace period has no live worker.
-STALE_GRACE = int(os.environ.get("WORKER_STALE_GRACE", "600"))
+# The API marks a running job interrupted when its worker has not reported for two minutes
+# (workerapi.STALE_SECONDS); this is how often the worker reports while a job runs.
+HEARTBEAT_SECONDS = float(os.environ.get("WORKER_HEARTBEAT_SECONDS", "15"))
 # Targets run in batches so a stopped job knows exactly which targets were not run.
 CHUNK_SIZE = max(1, int(os.environ.get("WORKER_CHUNK_SIZE", "20")))
+# Results are sent to the API in one call per batch, or sooner when this many are waiting.
+FLUSH_ROWS = 2000
 TOOLS = os.environ.get("WORKER_TOOLS_DIR", "/opt/pd/bin")
 
 # Never follow these during a crawl: they can log out, delete or change state.
@@ -84,10 +91,6 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def tool(name: str) -> str:
     return os.path.join(TOOLS, name)
-
-
-def now():
-    return datetime.now(timezone.utc)
 
 
 def identification_flags(eng) -> list[str]:
@@ -184,37 +187,77 @@ def crtsh_names(root: str, gw: "egress.Egress") -> list[str]:
     return sorted(names)
 
 
-class Run:
-    """One job execution: runs tools, tracks output hash, log and cancellation."""
+def engagement_of(spec: dict) -> SimpleNamespace:
+    """The engagement's rules as the claim gave them (the worker reads nothing else)."""
+    e = spec["engagement"]
+    return SimpleNamespace(id=e["id"], scope_include=e["scope_include"], scope_exclude=e["scope_exclude"],
+                           rate_limit_rps=e["rate_limit_rps"], research_header=e["research_header"],
+                           research_user_agent=e["research_user_agent"], crawl_depth=e["crawl_depth"],
+                           enabled_modules=e["enabled_modules"])
 
-    def __init__(self, session, job: Job, gw: "egress.Egress | None" = None):
-        self.session, self.job, self.eng = session, job, job.engagement
-        self.gw = gw or egress.Egress(job.id, "")
+
+class Run:
+    """One job execution: runs tools, tracks output hash, log and cancellation, and sends
+    results to the API in batches."""
+
+    def __init__(self, job: "workerclient.JobChannel", gw: "egress.Egress | None" = None):
+        self.job, self.spec = job, job.spec
+        self.eng = engagement_of(job.spec)
+        self.inputs = job.spec.get("inputs") or {}
+        self.gw = gw or egress.Egress(job.id, job.gateway_secret)
         self._resolver_file: str | None = None
         self.inc, self.exc = self.eng.scope_include, self.eng.scope_exclude
         self.digest = hashlib.sha256()
         self.started = time.monotonic()
-        self.known = {a.host: a for a in self.eng.assets}
         self.failed_tools: list[str] = []
         self.stopped: str | None = None
         self.fetch_failures = 0
-        self.skipped = False
-        self.redact = redact.enabled(self.eng)
-        self.redacted = redact.Report()
+        self.kept = 0
+        self.agent_result: dict | None = None
+        self.lead_fps: set[str] = set()     # within this run; the API deduplicates across runs
+        self.pending = {"observations": [], "endpoints": [], "leads": []}
+        self.totals = {"observations": 0, "endpoints_seen": 0, "endpoints_in_scope": 0, "endpoints_added": 0,
+                       "leads_added": 0, "refused": 0}
+        self.redacted_count = 0
+        self.redacted_kinds: dict[str, None] = {}
+        self.cancelled = threading.Event()
+        self.proc = None
+        job.current = self
 
     def log(self, line: str) -> None:
-        self.job.log = (self.job.log + line + "\n")[-20000:]
-        self.session.commit()
+        self.job.log(self.gw.mask(line))
 
     def remaining_time(self) -> float:
         return JOB_TIMEOUT - (time.monotonic() - self.started)
 
     def check_stop(self) -> None:
-        self.session.refresh(self.job, ["status"])
-        if self.job.status == JobStatus.cancelled:
+        if self.cancelled.is_set() or self.job.heartbeat() == "cancelled":
+            self.cancelled.set()
             raise Cancelled("cancelled")
         if self.remaining_time() <= 0:
             raise Cancelled("timed out")
+
+    @contextmanager
+    def heartbeats(self):
+        """Report every HEARTBEAT_SECONDS while the job runs, also while a tool prints nothing,
+        and stop the running tool at once when the job is cancelled."""
+        stop = threading.Event()
+
+        def beat():
+            while not stop.wait(HEARTBEAT_SECONDS):
+                try:
+                    if self.job.heartbeat() == "cancelled":
+                        self.cancelled.set()
+                        if self.proc is not None:
+                            self.proc.kill()
+                except Exception:  # noqa: BLE001 - the next beat, or the job's own calls, will tell
+                    pass
+        t = threading.Thread(target=beat, daemon=True)
+        t.start()
+        try:
+            yield
+        finally:
+            stop.set()
 
     def resolver_file(self) -> str:
         """A file naming the gateway's resolver, for tools whose resolver flag takes a file."""
@@ -228,11 +271,12 @@ class Run:
 
     def tool_lines(self, name: str, cmd: list[str], stdin_lines: list[str]):
         cmd = [*cmd, *gateway_flags(cmd, self.gw, self)]
-        self.log(self.gw.mask(f"$ {' '.join(cmd)}  ({plural(len(stdin_lines), 'input line')})"))
+        self.log(f"$ {' '.join(cmd)}  ({plural(len(stdin_lines), 'input line')})")
         # Only what the tool needs: the proxy, the gateway's CA, PATH and HOME. Not the
-        # worker's database URL or API key.
+        # worker's own environment or tokens.
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, env=self.gw.env(name))
+        self.proc = proc
         proc.stdin.write("\n".join(stdin_lines) + "\n")
         proc.stdin.close()
         # Enforce the time limit even when a tool prints nothing for a long time.
@@ -249,7 +293,6 @@ class Run:
                 self.digest.update(f"{name}\t{line}".encode())
                 yield line.strip()
                 if n % 50 == 0:
-                    self.session.commit()
                     self.check_stop()
         except Cancelled:
             proc.kill()
@@ -257,11 +300,14 @@ class Run:
         finally:
             watchdog.cancel()
             proc.wait()
+            self.proc = None
         if timed_out.is_set():
             raise Cancelled("timed out")
+        if self.cancelled.is_set():
+            raise Cancelled("cancelled")
         err = proc.stderr.read().strip()
         if err:
-            self.log(self.gw.mask(err[-2000:]))
+            self.log(err[-2000:])
         if proc.returncode not in (0, None):
             self.failed_tools.append(name)
             self.log(f"{name} exited with code {proc.returncode}")
@@ -269,17 +315,38 @@ class Run:
     def in_scope(self, host: str | None) -> bool:
         return bool(host) and scope.in_scope(host, self.inc, self.exc)
 
-    def clean(self, value):
-        """A URL, a string or JSON-like data as it may be stored: redacted unless turned off."""
-        return redact.walk(value, self.redacted) if self.redact else value
+    def observe(self, host: str, data: dict) -> None:
+        self._queue("observations", {"host": scope.normalize_host(host), "data": data})
 
-    def observe(self, host: str, data: dict, create_asset: bool = True) -> None:
-        host = scope.normalize_host(host)
-        self.session.add(Observation(job_id=self.job.id, engagement_id=self.eng.id, host=host,
-                                     data=self.clean(data)))
-        if create_asset and host not in self.known:
-            self.known[host] = Asset(engagement_id=self.eng.id, host=host, in_scope=True)
-            self.session.add(self.known[host])
+    def lead(self, host: str, source_url: str, kind: str, title: str, bucket: str = "", severity: str = "",
+             detail: dict | None = None, key: str = "") -> bool:
+        """Queue a lead; False if this run already has it. The API deduplicates against
+        earlier runs and redacts it."""
+        fp = hashlib.sha256(f"{kind}|{host}|{title}|{key}".encode()).hexdigest()
+        if fp in self.lead_fps:
+            return False
+        self.lead_fps.add(fp)
+        self._queue("leads", {"host": host, "source_url": source_url, "kind": kind, "title": title,
+                              "bucket": bucket, "severity": severity, "detail": detail or {}, "key": key})
+        return True
+
+    def _queue(self, what: str, row: dict) -> None:
+        self.pending[what].append(row)
+        if sum(len(v) for v in self.pending.values()) >= FLUSH_ROWS:
+            self.flush()
+
+    def flush(self) -> dict:
+        """Send what is waiting, at most 5,000 rows of each kind per call."""
+        while any(self.pending.values()):
+            batch = {k: v[:5000] for k, v in self.pending.items()}
+            self.pending = {k: v[5000:] for k, v in self.pending.items()}
+            out = self.job.results(**batch)
+            for k in self.totals:
+                self.totals[k] += out.get(k, 0)
+            red = out.get("redacted") or {}
+            self.redacted_count += red.get("count", 0)
+            self.redacted_kinds.update(dict.fromkeys(red.get("kinds", [])))
+        return self.totals
 
 
 # ---- job kinds ----------------------------------------------------------------
@@ -377,18 +444,8 @@ def run_ports(r: Run, hosts: list[str]) -> int:
     return len(ports)
 
 
-def latest_ports(session, eng_id: int) -> dict[str, list[int]]:
-    rows = session.scalars(select(Observation).where(Observation.engagement_id == eng_id)
-                           .order_by(Observation.id.desc())).all()
-    out: dict[str, list[int]] = {}
-    for o in rows:
-        if "open_ports" in o.data and o.host not in out:
-            out[o.host] = o.data["open_ports"]
-    return out
-
-
 def run_probe(r: Run, hosts: list[str]) -> int:
-    known_ports = latest_ports(r.session, r.eng.id)
+    known_ports = r.inputs.get("ports") or {}       # the latest open ports per host, from the claim
     inputs = []
     for h in hosts:
         ps = [p for p in known_ports.get(h, []) if p != 25]
@@ -407,20 +464,17 @@ def run_probe(r: Run, hosts: list[str]) -> int:
 
 
 def store_endpoints(r: Run, raw_urls: dict[str, set]) -> int:
-    existing = set(r.session.scalars(select(Endpoint.url_sha256).where(Endpoint.engagement_id == r.eng.id)))
-    cleaned = urls.clean(raw_urls.keys(), r.inc, r.exc)
-    added = 0
-    for host, url, is_js in cleaned:
-        url = r.clean(url)
-        h = hashlib.sha256(url.encode()).hexdigest()
-        if h in existing:
-            continue
-        existing.add(h)
-        src = ",".join(sorted(raw_urls.get(url, {"?"})))[:32]
-        r.session.add(Endpoint(engagement_id=r.eng.id, job_id=r.job.id, host=host, url=url,
-                               url_sha256=h, source=src, is_js=is_js))
-        added += 1
-    r.log(f"{plural(len(raw_urls), 'URL')} seen, {len(cleaned)} in scope after clean-up, {added} new")
+    """Send URLs to the API, which cleans them up (urls.clean), checks scope, redacts and
+    deduplicates them. Only URLs whose host is in scope are sent."""
+    r.flush()
+    before = dict(r.totals)
+    rows = [{"url": u, "sources": sorted(src)[:10]} for u, src in raw_urls.items() if r.in_scope(urls.host_of(u))]
+    for i in range(0, len(rows), 5000):
+        r.pending["endpoints"] = rows[i:i + 5000]
+        r.flush()
+    added = r.totals["endpoints_added"] - before["endpoints_added"]
+    in_scope = r.totals["endpoints_in_scope"] - before["endpoints_in_scope"]
+    r.log(f"{plural(len(raw_urls), 'URL')} seen, {in_scope} in scope after clean-up, {added} new")
     return added
 
 
@@ -480,19 +534,18 @@ def fetcher(eng, gw: "egress.Egress | None" = None, tool_name: str = "fetch"):
 
 def add_lead(r: Run, host: str, source_url: str, kind: str, title: str, bucket: str = "",
              severity: str = "", detail: dict | None = None, key: str = "") -> bool:
-    fp = hashlib.sha256(f"{kind}|{host}|{title}|{key}".encode()).hexdigest()
-    if fp in r.lead_fps:
-        return False
-    r.lead_fps.add(fp)
-    r.session.add(Lead(engagement_id=r.eng.id, job_id=r.job.id, host=host, source_url=r.clean(source_url),
-                       kind=kind, title=r.clean(title)[:300], bucket=bucket, severity=severity,
-                       detail=r.clean(detail or {}), fingerprint=fp))
-    return True
+    return r.lead(host, source_url, kind, title, bucket, severity, detail, key)
+
+
+def leads_added(r: Run, before: int) -> int:
+    """New leads since `before`, as the API counted them (it knows earlier runs' leads)."""
+    r.flush()
+    return r.totals["leads_added"] - before
 
 
 def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
     get = fetcher(r.eng, r.gw, "jsanalyze")
-    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
+    before = r.totals["leads_added"]
     js_urls = [u for u in js_urls if r.in_scope(urls.host_of(u))]   # the per-run cap lives in the registry
     endpoints: dict[str, set] = defaultdict(set)
     analysed = leads = noise = 0
@@ -539,8 +592,8 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
                                   detail={"map_url": ref, "sources": srcs[:50],
                                           "sources_content": bool(m.get("sourcesContent"))})
         if n % 10 == 0:
-            r.session.commit()
             r.check_stop()
+    leads = leads_added(r, before)
     added = store_endpoints(r, endpoints) if endpoints else 0
     if failures:
         r.fetch_failures += sum(failures.values())
@@ -620,35 +673,14 @@ def _tpl(*dirs: str) -> list[str]:
     return [os.path.join(NUCLEI_TEMPLATES, "http", d) + "/" for d in dirs]
 
 
-def nuclei_plan(session, eng, urls_: list[str]) -> dict:
-    """Clusters (status, title, server, stack) -> one representative URL; stack tags; golden URLs."""
-    probes = targeting.probes_by_host(session, eng.id)
-    by_url = {p.get("url"): p for ps in probes.values() for p in ps if p.get("url")}
-    reps, seen = [], set()
-    tags: dict[str, set] = defaultdict(set)
-    for u in urls_:
-        p = by_url.get(u, {})
-        stack = tuple(sorted(triage._tech_name(t) for t in (p.get("tech") or [])))
-        key = (p.get("status_code"), (p.get("title") or "").strip().lower(), p.get("webserver"), stack)
-        for t in stack:
-            if t and not triage._BORING.match(t):
-                tags[u].add(re.sub(r"[^a-z0-9-]", "", t))
-        if key in seen and p:
-            continue
-        seen.add(key)
-        reps.append(u)
-    golden_hosts = {r["host"] for r in targeting.ranked(session, eng) if r["golden"]}
-    return {"reps": set(reps), "tags": tags,
-            "golden": {u for u in urls_ if urls.host_of(u) in golden_hosts}}
-
-
 def run_nuclei(r: Run, urls_: list[str]) -> int:
     if not hasattr(r, "nuclei_plan"):
         counts = verify_nuclei_templates()      # before any request; raises if not provably safe
         r.log(f"nuclei templates: {counts['safe']} provably read-only, {counts['excluded']} excluded")
-        r.nuclei_plan = nuclei_plan(r.session, r.eng, r.job.targets)
-        r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
-        r.log(f"{plural(len(r.job.targets), 'live service')}, "
+        plan = r.inputs["nuclei_plan"]     # computed by the API from the probes (workerapi.nuclei_plan)
+        r.nuclei_plan = {"reps": set(plan["reps"]), "golden": set(plan["golden"]),
+                         "tags": {u: set(t) for u, t in plan["tags"].items()}}
+        r.log(f"{plural(len(r.spec['targets']), 'live service')}, "
               f"{plural(len(r.nuclei_plan['reps']), 'cluster representative')}, "
               f"{len(r.nuclei_plan['golden'])} on golden hosts")
     plan = r.nuclei_plan
@@ -665,7 +697,7 @@ def run_nuclei(r: Run, urls_: list[str]) -> int:
     if golden:
         passes.append(("golden", nuclei_cmd(r.eng, _tpl("exposed-panels", "vulnerabilities", "cves")), golden))
 
-    found = 0
+    before = r.totals["leads_added"]
     for name, cmd, inputs in passes:
         if getattr(r, "nuclei_passes", 0):      # also between target batches
             time.sleep(NUCLEI_PASS_GAP)
@@ -681,13 +713,13 @@ def run_nuclei(r: Run, urls_: list[str]) -> int:
                 continue
             info = rec.get("info") or {}
             tid = rec.get("template-id", "?")
-            found += add_lead(r, host, where, "nuclei", f"{info.get('name') or tid}",
+            add_lead(r, host, where, "nuclei", f"{info.get('name') or tid}",
                               severity=str(info.get("severity", "")).lower(),
                               detail={"template": tid, "matched_at": where, "matcher": rec.get("matcher-name"),
                                       "tags": info.get("tags"), "pass": name,
                                       "extracted": (rec.get("extracted-results") or [])[:5]},
                               key=f"{tid}|{where}|{rec.get('matcher-name')}")
-    return found
+    return leads_added(r, before)
 
 
 CONTENT_WORDLIST = os.environ.get("WORKER_CONTENT_WORDLIST", "/opt/wordlists/common.txt")
@@ -785,8 +817,7 @@ def arjun_cmd(eng, url: str, out_file: str) -> list[str]:
 
 def run_params(r: Run, urls_: list[str]) -> int:
     import tempfile
-    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
-    found = 0
+    before = r.totals["leads_added"]
     for u in urls_:
         if not r.in_scope(urls.host_of(u)):
             continue
@@ -803,31 +834,30 @@ def run_params(r: Run, urls_: list[str]) -> int:
             params = sorted(set((res or {}).get("params") or []))
             host = urls.host_of(url)
             if params and r.in_scope(host):
-                found += add_lead(r, host, url, "parameter", f"{plural(len(params), 'hidden parameter')}: "
+                add_lead(r, host, url, "parameter", f"{plural(len(params), 'hidden parameter')}: "
                                   + ", ".join(params[:8]) + ("…" if len(params) > 8 else ""),
                                   detail={"params": params, "method": (res or {}).get("method", "GET")},
                                   key=",".join(params))
-    return found
+    return leads_added(r, before)
 
 
 def run_paramclass(r: Run, urls_: list[str]) -> int:
     """Computed: no request leaves the worker."""
-    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
-    hidden = {l.source_url: (l.detail or {}).get("params", [])
-              for l in r.session.scalars(select(Lead).where(Lead.engagement_id == r.eng.id, Lead.kind == "parameter"))}
+    hidden = r.inputs.get("hidden_params") or {}    # what 'params' found, from the claim
+    before = r.totals["leads_added"]
     params = {}
     for u in urls_:
         if r.in_scope(urls.host_of(u)):
             params[u] = sorted(set(passive.params_of(u)) | set(hidden.get(u, [])))
     rows = passive.route(params)
     r.digest.update(json.dumps(rows, sort_keys=True).encode())
-    found = 0
     for row in rows:
-        found += add_lead(r, row["host"], row["urls"][0], "param-class",
+        add_lead(r, row["host"], row["urls"][0], "param-class",
                           f"{row['class']}-prone parameter: {row['param']}",
                           detail={"class": row["class"], "param": row["param"], "lane": row["lane"],
                                   "urls": row["urls"]},
                           key=f"{row['class']}|{row['param']}")
+    found = leads_added(r, before)
     r.log(f"{plural(len(params), 'URL')} with parameters, {plural(len(rows), 'routed parameter')}, "
           f"{plural(found, 'new lead')}")
     return found
@@ -835,14 +865,13 @@ def run_paramclass(r: Run, urls_: list[str]) -> int:
 
 def run_dorks(r: Run, roots: list[str]) -> int:
     """Computed: no request leaves the worker. The operator runs the dorks by hand."""
-    r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
-    found = 0
+    before = r.totals["leads_added"]
     for root in roots:
         for d in passive.dorks_for(root):
             r.digest.update(d["query"].encode())
-            found += add_lead(r, root, d["url"], "dork", d["title"], detail={"query": d["query"], "url": d["url"]},
-                              key=d["query"])
-    return found
+            add_lead(r, root, d["url"], "dork", d["title"], detail={"query": d["query"], "url": d["url"]},
+                     key=d["query"])
+    return leads_added(r, before)
 
 
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
@@ -859,146 +888,95 @@ def check_registry() -> None:
                          f"runner without module {sorted(extra)}")
 
 
-def credential(session, job: Job) -> "egress.Egress":
-    """A new gateway credential for a job that is about to run (only its hash is stored)."""
-    secret = egress.issue(job)
-    session.commit()
-    return egress.Egress(job.id, secret)
-
-
-def run(session, job: Job, gw: "egress.Egress | None" = None) -> "Run":
-    eng: Engagement = job.engagement
-    try:  # the engagement may have changed since the job was queued
-        m = jobgates.check_engagement(eng, job.kind)
-    except jobgates.GateError as e:
-        raise RuntimeError(str(e))
-    if job.deferred and not job.targets:
-        # Pipeline step: pick targets now, from what the earlier steps produced.
-        job.targets = jobgates.normalize_targets(m, targeting.default_targets(session, eng, m))
-        session.commit()
-        if not job.targets:
-            reason = targeting.skip_reason(m)
-            job.result = {"skipped_reason": reason}
-            job.log += f"skipped, nothing to run: {reason}\n"
-            session.commit()
-            r = Run(session, job)
-            r.skipped = True
-            return r
-    targets, _ = jobgates.split_targets(eng, m, job.targets)
-    over_limit: list[str] = []
-    if m.max_targets and len(targets) > m.max_targets:
-        # Never drop silently: what does not fit is listed as remaining.
-        targets, over_limit = targets[:m.max_targets], targets[m.max_targets:]
-    if len(targets) != len(job.targets):
-        job.log += f"skipped {plural(len(job.targets) - len(targets), 'target')} outside scope\n"
-    if not targets:
-        raise RuntimeError("no in-scope targets")
-
-    gw = gw or credential(session, job)
+def run(job: "workerclient.JobChannel", gw: "egress.Egress | None" = None) -> "Run":
+    """A recon job the API claimed for this worker: its gates passed and its targets were chosen
+    there (workerapi.claim). Runs the targets in batches; each finished batch is reported, so a
+    stopped job lists exactly what it did not run."""
+    spec = job.spec
+    m = modules.get(job.kind)
+    gw = gw or egress.Egress(job.id, job.gateway_secret)
     if not m.computed:
         gw.check()                       # fail closed: no gateway, nothing is sent
-    r = Run(session, job, gw)
-    kept, done, stopped = 0, [], None
+    r = Run(job, gw)
+    targets = list(spec["targets"])
+    done, stopped = [], None
     chunks = [targets[i:i + CHUNK_SIZE] for i in range(0, len(targets), CHUNK_SIZE)]
-    for chunk in chunks:
-        try:
-            r.check_stop()
-            kept += RUNNERS[job.kind](r, chunk)
-        except Cancelled as e:
-            stopped = str(e)
-            break
-        done += chunk                      # a batch counts only once it finished
-        job.targets_done = len(done)
-        session.commit()
+    with r.heartbeats():
+        for chunk in chunks:
+            try:
+                r.check_stop()
+                r.kept += RUNNERS[job.kind](r, chunk)
+                r.flush()
+            except Cancelled as e:
+                stopped = str(e)
+                break
+            done += chunk                      # a batch counts only once it finished
+            job.progress(chunk)
+    over_limit = spec.get("over_limit") or 0
     if over_limit and not stopped:
         stopped = "target limit"
-    remaining = [t for t in targets if t not in set(done)] + over_limit
-    job.remaining_targets = remaining or None
-    job.targets_done = len(done)
-    job.output_sha256 = r.digest.hexdigest()
-    job.result_count = kept
-    session.commit()
-    if r.redacted.count:
-        r.log(f"{plural(r.redacted.count, 'sensitive value')} redacted before storage: "
-              + ", ".join(list(r.redacted.kinds)[:10]))
+    remaining = len(targets) - len(done) + over_limit
+    if r.redacted_count:
+        r.log(f"{plural(r.redacted_count, 'sensitive value')} redacted before storage: "
+              + ", ".join(list(r.redacted_kinds)[:10]))
     if stopped:
         r.log(f"stopped ({stopped}) after {len(done)} of {plural(len(targets), 'target')}; "
-              f"{len(remaining)} not run")
+              f"{remaining} not run")
     r.stopped = stopped
-    if not stopped and kept == 0 and (r.failed_tools or r.fetch_failures):
+    if not stopped and r.kept == 0 and (r.failed_tools or r.fetch_failures):
         # A tool or fetch error that produced nothing is a failure, not an empty result.
         what = ", ".join(sorted(set(r.failed_tools))) or "every fetch"
         raise RuntimeError(f"{what} failed and nothing was found; see the log")
-
-    # Record the run as evidence on each touched host's recon lane, if one is open.
-    # It is attached to the lane, not to a checklist item: a person or agent still
-    # decides which item it proves.
-    recon_lane = packs.get_pack(eng.pack_id).recon_lane
-    touched = {o.host for o in session.scalars(select(Observation).where(Observation.job_id == job.id))}
-    touched |= set(session.scalars(select(Endpoint.host).where(Endpoint.job_id == job.id)))
-    touched |= set(session.scalars(select(Lead.host).where(Lead.job_id == job.id)))
-    for host in touched:
-        asset = r.known.get(host)
-        lane = next((l for l in asset.lanes if l.role == recon_lane), None) if asset and asset.id else None
-        if lane:
-            ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256, source="recon",
-                                   uri=f"job:{job.id}", summary=f"{m.title} run, job {job.id}",
-                                   created_by=job.created_by)
-    session.commit()
     return r
 
 
-# Agent outcomes that leave work undone: the job is partial, never done.
+# Agent outcomes that leave work undone: the API makes the job partial, never done.
 AGENT_PARTIAL = {"ended", "turn_limit", "cost_limit", "cancelled"}
+# The Claude API key is the gateway's (D-042): it replaces this placeholder on every call.
+GATEWAY_HOLDS_THE_KEY = "added-by-the-attackledger-gateway"
 
 
 def anthropic_client(gw: "egress.Egress | None" = None):
-    """The Messages API client, through the gateway (it reaches api.anthropic.com for agent
-    runs only, and checks its real certificate)."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise RuntimeError("ANTHROPIC_API_KEY is not set for the worker")
+    """The Messages API client, through the gateway: it reaches api.anthropic.com for agent
+    runs only, checks its real certificate and adds the API key, which the worker never has."""
     if gw is None:
         raise egress.NoGateway("no gateway credential for the Claude API; nothing is sent")
     import anthropic
-    return anthropic.Anthropic(http_client=anthropic.DefaultHttpxClient(
+    return anthropic.Anthropic(api_key=GATEWAY_HOLDS_THE_KEY, http_client=anthropic.DefaultHttpxClient(
         proxy=gw.proxy_url("claude"), verify=gw.ssl_context(verify=True), trust_env=False))
 
 
-def run_agent(session, job: Job, client=None, transport=None) -> "Run":
-    """An agent run on one lane. Gates are checked again here (agenttools.check_lane):
-    the engagement may have changed since the run was queued."""
-    lane = session.get(Lane, job.lane_id) if job.lane_id else None
-    if lane is None:
-        raise RuntimeError("the lane for this agent run no longer exists")
-    if lane.executor != "agent":
-        raise RuntimeError("this lane's executor is no longer the Claude agent")
-    limits = (job.result or {}).get("limits", {})
+def run_agent(job: "workerclient.JobChannel", client=None, transport=None) -> "Run":
+    """An agent run on one lane. The API checked the lane's gates when it gave out the job, and
+    checks them again on every write (agenttools.Toolbox in the API)."""
+    spec = job.spec
+    limits = spec.get("limits") or {}
     try:
         model = agentloop.configured_model()
     except ValueError as e:
         raise RuntimeError(str(e))
-    gw = credential(session, job).check()     # fail closed: no gateway, nothing is sent
-    r = Run(session, job, gw)
+    gw = egress.Egress(job.id, job.gateway_secret).check()     # fail closed: no gateway, nothing is sent
+    r = Run(job, gw)
     r.log(f"agent model: {model}")
+    tools = agenttools.RemoteToolbox(job, spec["context"], transport=transport or agenttools.urllib_transport(gw),
+                                     max_requests=limits.get("max_requests") or agentloop.DEFAULT_LIMITS["max_requests"])
 
     def should_stop() -> bool:
-        session.refresh(job, ["status"])
-        return job.status == JobStatus.cancelled or r.remaining_time() <= 0
+        try:
+            r.check_stop()
+        except Cancelled:
+            return True
+        return False
 
-    try:
-        res = agentloop.run(session, lane, job.id, client or anthropic_client(gw), model=model,
-                            transport=transport or agenttools.urllib_transport(gw),
-                            **{k: limits.get(k, v) for k, v in agentloop.DEFAULT_LIMITS.items()},
-                            should_stop=should_stop, log=r.log)
-    except agenttools.RunRefused as e:
-        raise RuntimeError(str(e))
-    session.refresh(job, ["status"])
-    if res.status == "cancelled" and job.status != JobStatus.cancelled:
+    with r.heartbeats():
+        res = agentloop.run_loop(tools, spec["context"], client or anthropic_client(gw), model=model,
+                                 **{k: limits.get(k, v) for k, v in agentloop.DEFAULT_LIMITS.items()
+                                    if k != "max_requests"},
+                                 should_stop=should_stop, log=r.log)
+    if res.status == "cancelled" and not r.cancelled.is_set():
         res.status, res.detail = "timed_out", "stopped at the worker time limit"
-    job.result = {"limits": limits, **res.as_dict()}
-    job.result_count = res.evidence_added
-    job.targets_done = 1 if res.status == "finished" else 0
-    session.commit()
+    r.agent_result = res.as_dict()
+    r.kept = res.evidence_added
     r.log(f"agent {res.status}: {plural(res.turns, 'turn')}, {plural(res.requests, 'request')}, "
           f"{plural(res.evidence_added, 'evidence entry', 'evidence entries')}, {plural(res.items_marked, 'item')} marked, "
           f"~${res.cost_usd:.2f} estimated" + (f"; {res.detail}" if res.detail else ""))
@@ -1009,103 +987,57 @@ def run_agent(session, job: Job, client=None, transport=None) -> "Run":
     return r
 
 
-def final_status(r: "Run") -> JobStatus:
-    """How a run that did not raise ends: skipped (nothing to work on), partial (time or
-    target limit), or done."""
-    if r.skipped:
-        return JobStatus.skipped
-    return JobStatus.partial if r.stopped else JobStatus.done   # never "done" with targets left
-
-
-INTERRUPTED = ("interrupted: the worker stopped while this job was running. Results from finished "
-               "batches (and an agent's evidence up to its last turn) were kept; run it again for the rest.")
-
-
-def _aware(t: datetime | None) -> datetime | None:
-    return t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t
-
-
-def recover_interrupted(session, *, all_running: bool) -> list[int]:
-    """Jobs left "running" by a worker that is gone are marked failed, so a run never
-    looks active or complete when it is neither.
-
-    At startup every running job is stale: one worker serves a database (the rate limit
-    is enforced per worker process). Between jobs, a running job past the time limit
-    plus a grace period is stale too, whoever started it."""
-    cutoff = now().timestamp() - JOB_TIMEOUT - STALE_GRACE
-    recovered = []
-    for job in session.scalars(select(Job).where(Job.status == JobStatus.running)):
-        started = _aware(job.started_at)
-        if all_running or started is None or started.timestamp() < cutoff:
-            job.status, job.finished_at = JobStatus.failed, now()
-            job.log = (job.log + INTERRUPTED + "\n")[-20000:]
-            recovered.append(job.id)
-    session.commit()
-    return recovered
-
-
-def claim(session):
-    stmt = select(Job).where(Job.status == JobStatus.queued).order_by(Job.id).limit(1)
-    if engine.dialect.name == "postgresql":
-        stmt = stmt.with_for_update(skip_locked=True)
-    job = session.scalars(stmt).first()
-    if job:
-        job.status, job.started_at = JobStatus.running, now()
-        session.commit()
-    return job
-
-
-RETENTION_SECONDS = 60
-
-
-def retention_pass(session) -> list[int]:
-    """Delete the content of engagements past their retention date (D-043, vault.py), and
-    finish a deletion whose file step was interrupted. A failure is reported, never fatal."""
+def execute(job: "workerclient.JobChannel", client=None, transport=None) -> dict:
+    """Run a claimed job and tell the API how it ended. The API decides the status (done,
+    partial, cancelled or failed) from that and from what it holds."""
+    job.current = None
     try:
-        done = vault.apply_retention(session)
-    except Exception as e:  # noqa: BLE001
-        session.rollback()
-        print(f"retention pass failed: {e}", flush=True)
-        return []
-    for eng_id in done:
-        print(f"retention: deleted the content of engagement {eng_id}", flush=True)
-    return done
+        r = run_agent(job, client=client, transport=transport) if job.kind == "agent" else run(job)
+        body = {"stopped": r.stopped}
+    except Exception as e:  # report, never crash the loop
+        r = job.current
+        body = {"error": str(e)[:4000] or type(e).__name__}
+    if r is not None:
+        try:
+            r.flush()                    # whatever a failed batch left waiting is still evidence of the run
+        except Exception:  # noqa: BLE001
+            pass
+        body |= {"output_sha256": r.digest.hexdigest(), "result_count": r.kept}
+        if r.agent_result is not None:
+            body["agent"] = r.agent_result
+    return job.finish(**body)
 
 
 def main():
     check_registry()
-    vault.master_key()       # fail closed: no master key, no worker (D-043)
-    migrate.wait_for_head()  # the API owns migrations
-    with SessionLocal() as session:
-        vault.check_store(session)
-        stale = recover_interrupted(session, all_running=True)
-    if stale:
-        print(f"marked {plural(len(stale), 'interrupted job')} failed: {stale}", flush=True)
-    print("worker ready", flush=True)
-    next_retention = 0.0
+    worker = workerclient.Worker.from_env(create_token=True)
+    waiting = False
+    while True:                          # the API owns migrations: wait until it answers
+        try:
+            worker.ping()
+            break
+        except workerclient.ApiError as e:
+            if not waiting:
+                print(f"waiting for the API: {e}", flush=True)
+                waiting = True
+            time.sleep(POLL_SECONDS)
+    print(f"worker ready (API through {worker.client.base})", flush=True)
     while True:
-        with SessionLocal() as session:
-            if time.monotonic() >= next_retention:
-                retention_pass(session)
-                next_retention = time.monotonic() + RETENTION_SECONDS
-            recover_interrupted(session, all_running=False)
-            job = claim(session)
-            if not job:
-                time.sleep(POLL_SECONDS)
-                continue
-            print(f"job {job.id} {job.kind}", flush=True)
-            try:
-                r = run_agent(session, job) if job.kind == "agent" else run(session, job)
-                session.refresh(job, ["status"])
-                if job.status != JobStatus.cancelled:
-                    job.status = final_status(r)
-            except Exception as e:  # report, never crash the loop
-                session.rollback()
-                job = session.get(Job, job.id)
-                job.log = (job.log + f"error: {e}\n")[-20000:]
-                job.status = JobStatus.failed
-            job.finished_at = now()
-            session.commit()
+        try:
+            spec = worker.claim()
+        except workerclient.ApiError as e:
+            print(f"claim failed: {e}", flush=True)
+            time.sleep(POLL_SECONDS)
+            continue
+        if not spec:
+            time.sleep(POLL_SECONDS)
+            continue
+        job = workerclient.JobChannel(worker.client, spec)
+        print(f"job {job.id} {job.kind}", flush=True)
+        try:
+            execute(job)
+        except workerclient.ApiError as e:   # e.g. the API ended the job meanwhile
+            print(f"job {job.id}: could not report its outcome: {e}", flush=True)
 
 
 if __name__ == "__main__":

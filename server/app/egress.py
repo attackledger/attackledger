@@ -1,7 +1,8 @@
 """How the worker reaches the outside world: only through the gateway (D-039, docs/GATEWAY.md).
 
-The worker container has no route to the internet. Each job gets a credential when the worker
-claims it (`issue`): a random secret whose SHA-256 is stored on the job. Every tool the job runs
+The worker container has no route to the internet. Each job gets a credential when the API
+gives it to the worker (`issue`, called by workerapi.claim): a random secret whose SHA-256 is
+stored on the job. Every tool the job runs
 authenticates to the gateway as "job-<id>.<tool>" with that secret, and the gateway asks the
 API what the job may do. When the job ends, the credential stops working.
 
@@ -46,7 +47,7 @@ class NoGateway(RuntimeError):
 
 
 def issue(job) -> str:
-    """A new credential for a job the worker just claimed. Only the hash is stored."""
+    """A new credential for a job being claimed. Only the hash is stored."""
     secret = secrets.token_urlsafe(32)
     job.gateway_secret_sha256 = hashlib.sha256(secret.encode()).hexdigest()
     return secret

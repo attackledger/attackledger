@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app import blobs, ledger, redact, vault
 from app.models import Endpoint, Engagement, Evidence, Job, JobStatus, Lead, Observation
 from test_agent import HOST, FakeTransport, api, api_lane, get, load_worker, make_lane, session, toolbox  # noqa: F401
+from harness import stack  # noqa: F401
 
 JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkFsaWNlIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 
@@ -407,46 +408,45 @@ def test_owner_turns_redaction_off_and_it_shows(api):
 
 # ---- end to end: recon output ------------------------------------------------------------
 
-def recon_run(session, kind="archive", redact_on=True):
+def recon_run(stack, kind="archive", redact_on=True, targets=("lab.test",)):
     worker = load_worker()
-    e = Engagement(name=f"recon-{kind}-{redact_on}", scope_include=["*.lab.test"], scope_exclude=[],
-                   authorized_by="op", redact_evidence=redact_on)
-    session.add(e)
-    session.commit()
-    job = Job(engagement_id=e.id, kind=kind, targets=["lab.test"], status=JobStatus.running)
-    session.add(job)
-    session.commit()
-    return worker, worker.Run(session, job)
+    e = stack.engagement(name=f"recon-{kind}-{redact_on}", include=("*.lab.test",), redact=redact_on,
+                         modules=("nuclei",), rps=5)
+    stack.queue(e, kind, list(targets))
+    return worker, worker.Run(stack.claim())
 
 
-def test_recon_urls_leads_and_observations_are_redacted(session):
-    worker, r = recon_run(session)
-    r.lead_fps = set()
+def test_recon_urls_leads_and_observations_are_redacted_by_the_api(stack):
+    worker, r = recon_run(stack)
     seen = {f"https://shop.lab.test/reset?token={SESSION_SECRET}&lang=en": {"wayback"},
             "https://shop.lab.test/search?q=keynote": {"gau"}}
     assert worker.store_endpoints(r, seen) == 2
-    worker.add_lead(r, "shop.lab.test", f"https://shop.lab.test/x?api_key={SESSION_SECRET}", "nuclei", "Exposed key",
-                    detail={"extracted": [f"Authorization: Bearer {BEARER_SECRET}"]})
-    r.observe("shop.lab.test", {"location": f"https://shop.lab.test/sso?id_token={JWT}", "status_code": 302})
-    session.commit()
-    stored = json.dumps([[x.url for x in session.scalars(select(Endpoint))],
-                         [[l.source_url, l.detail] for l in session.scalars(select(Lead))],
-                         [o.data for o in session.scalars(select(Observation))]])
-    for secret in (SESSION_SECRET, BEARER_SECRET, JWT):
-        assert secret not in stored
-    urls_ = sorted(x.url for x in session.scalars(select(Endpoint)))
+    worker2, r2 = recon_run(stack, kind="nuclei", targets=["https://shop.lab.test/"])
+    worker2.add_lead(r2, "shop.lab.test", f"https://shop.lab.test/x?api_key={SESSION_SECRET}", "nuclei",
+                     "Exposed key", detail={"extracted": [f"Authorization: Bearer {BEARER_SECRET}"]})
+    worker3, r3 = recon_run(stack, kind="probe", targets=["shop.lab.test"])
+    r3.observe("shop.lab.test", {"location": f"https://shop.lab.test/sso?id_token={JWT}", "status_code": 302})
+    r2.flush()
+    r3.flush()
+    with stack.Session() as session:
+        stored = json.dumps([[x.url for x in session.scalars(select(Endpoint))],
+                             [[l.source_url, l.detail] for l in session.scalars(select(Lead))],
+                             [o.data for o in session.scalars(select(Observation))]])
+        for secret in (SESSION_SECRET, BEARER_SECRET, JWT):
+            assert secret not in stored
+        urls_ = sorted(x.url for x in session.scalars(select(Endpoint)))
     assert urls_ == [f"https://shop.lab.test/reset?token={m(SESSION_SECRET)}&lang=en",
                      "https://shop.lab.test/search?q=keynote"]
-    assert r.redacted.count == 4
+    assert r.redacted_count + r2.redacted_count + r3.redacted_count == 4
     # The same URL seen again is the same endpoint: the marker is stable.
     assert worker.store_endpoints(r, {f"https://shop.lab.test/reset?token={SESSION_SECRET}&lang=en": {"gau"}}) == 0
 
 
-def test_recon_with_redaction_off_stores_urls_as_seen(session):
-    worker, r = recon_run(session, redact_on=False)
+def test_recon_with_redaction_off_stores_urls_as_seen(stack):
+    worker, r = recon_run(stack, redact_on=False)
     worker.store_endpoints(r, {f"https://shop.lab.test/reset?token={SESSION_SECRET}": {"wayback"}})
-    session.commit()
-    assert session.scalars(select(Endpoint)).one().url.endswith(SESSION_SECRET)
+    with stack.Session() as session:
+        assert session.scalars(select(Endpoint)).one().url.endswith(SESSION_SECRET)
 
 
 def test_content_length_follows_the_redacted_body():

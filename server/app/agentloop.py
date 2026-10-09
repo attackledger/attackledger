@@ -152,7 +152,19 @@ def run(session, lane, job_id: int, client, *, model: str = MODEL,
         raise ValueError(f"unsupported agent model: {model}")
     tools = agenttools.Toolbox(session, lane, job_id, transport=transport, sleep=sleep,
                                max_requests=max_requests)
-    messages = [{"role": "user", "content": first_message(executors.lane_context(session, lane, limit=CONTEXT_LIMIT))}]
+    ctx = executors.lane_context(session, lane, limit=CONTEXT_LIMIT)
+    return run_loop(tools, ctx, client, model=model, max_turns=max_turns, max_cost_usd=max_cost_usd,
+                    should_stop=should_stop, log=log, commit=session.commit)
+
+
+def run_loop(tools, ctx: dict, client, *, model: str = MODEL, max_turns: int = DEFAULT_LIMITS["max_turns"],
+             max_cost_usd: float = DEFAULT_LIMITS["max_cost_usd"], should_stop=lambda: False,
+             log=lambda line: None, commit=lambda: None) -> RunResult:
+    """The loop itself, over any toolbox: agenttools.Toolbox in one process, or
+    agenttools.RemoteToolbox in the worker, whose writes the API makes (D-042)."""
+    if model not in MODELS:
+        raise ValueError(f"unsupported agent model: {model}")
+    messages = [{"role": "user", "content": first_message(ctx)}]
     result = RunResult(status="turn_limit", model=model)
 
     def sync():
@@ -205,7 +217,7 @@ def run(session, lane, job_id: int, client, *, model: str = MODEL,
             results.append({"type": "tool_result", "tool_use_id": _get(call, "id"),
                             "content": text, **({"is_error": True} if is_error else {})})
         messages.append({"role": "user", "content": results})
-        session.commit()
+        commit()
         sync()
 
         if tools.finished is not None:
@@ -213,6 +225,6 @@ def run(session, lane, job_id: int, client, *, model: str = MODEL,
             result.summary = tools.finished
             break
 
-    session.commit()
+    commit()
     sync()
     return result

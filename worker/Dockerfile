@@ -39,10 +39,12 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 10001 worker \
- && mkdir -p /data/blobs && chown worker /data/blobs \
+ && mkdir -p /data/worker-control && chown worker /data/worker-control && chmod 700 /data/worker-control \
  && mkdir -p /data/gateway-public && chown 10002:10002 /data/gateway-public
-# /data/blobs: evidence blobs volume. /data/gateway-public: the gateway's CA certificate
-# (written by the gateway, uid 10002; read-only here). Every tool trusts only that CA.
+# /data/worker-control: the worker's token for the API's /worker/* routes, shared with the API
+# only (D-042). No blob store, no database, no master key here: the API stores everything.
+# /data/gateway-public: the gateway's CA certificate (written by the gateway, uid 10002;
+# read-only here). Every tool trusts only that CA.
 # Absolute paths on purpose: the Python "httpx" package installs a CLI with the same name.
 COPY --from=tools /go/bin/ /opt/pd/bin/
 COPY --from=nuclei /go/bin/nuclei /opt/pd/bin/nuclei
@@ -60,8 +62,6 @@ COPY server/app ./app
 # empty or nothing is left; the worker re-checks the list before its first scan.
 RUN python -m app.nucleisafe build /opt/nuclei-templates /opt/nuclei-exclude.txt \
  && test -s /opt/nuclei-exclude.txt && chmod 444 /opt/nuclei-exclude.txt
-COPY server/alembic.ini ./alembic.ini
-COPY server/migrations ./migrations
 COPY worker/worker.py .
 COPY checklists ./checklists
 COPY packs ./packs

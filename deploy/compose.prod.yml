@@ -11,7 +11,8 @@
 #   - restart policies, healthchecks, memory and CPU limits, and rotated logs for every service;
 #   - the practice target (lab) and its browser proxy start only with --profile lab;
 #   - the encryption master key comes from a root-only file on the host, mounted read-only
-#     into the API and the worker (never from .env, and never the public development key).
+#     into the API only (never from .env, and never the public development key). The worker
+#     has no key and no database (D-042).
 #
 # Needs Docker Compose 2.24 or later (for !reset and !override).
 
@@ -83,18 +84,12 @@ services:
           memory: ${ATTACKLEDGER_API_MEMORY:-1g}
 
   worker:
-    environment:
-      DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/attackledger
-      ATTACKLEDGER_MASTER_KEY_FILE: /run/secrets/attackledger-master-key
-      ATTACKLEDGER_MASTER_KEY: ""
-      ATTACKLEDGER_DEV_KEY: ""
-    volumes:
-      - *master-key
     restart: unless-stopped
     logging: *logging
-    # The worker has no port to ask; this checks that it can still reach the database.
+    # The worker has no port to ask; this checks that it can still reach the API through the
+    # gateway's relay, with its token (D-042).
     healthcheck:
-      test: ["CMD", "python", "-c", "from app.db import engine; engine.connect().close()"]
+      test: ["CMD", "python", "-c", "from app import workerclient; workerclient.Worker.from_env().ping()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -220,6 +215,9 @@ volumes:
     name: ${COMPOSE_PROJECT_NAME:-attackledger}_gateway_public
   gateway-control:
     name: ${COMPOSE_PROJECT_NAME:-attackledger}_gateway_control
+  worker-control:
+    # The worker's token. Not backed up: the worker makes a new one if it is lost.
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_worker_control
   caddy_data:
     # Caddy's certificates and ACME account (or its internal CA). Losing it means new certificates.
     name: ${COMPOSE_PROJECT_NAME:-attackledger}_caddy_data

@@ -11,9 +11,10 @@
 #   - every network is internal: nothing here can reach the internet, and nothing outside this
 #     machine can reach it. Only the API is also attached to a second network, to publish
 #     127.0.0.1:8099 (no timestamp authority: TSA is off);
-#   - the worker is on the internal network only (db, api, gateway). Juice Shop is on the lab
-#     network, which only the gateway joins (D-039): every request the tools and the agent send
-#     goes through the gateway, as in the main stack. The gateway has no egress network here;
+#   - the worker is on the internal network only, with the gateway alone (D-042): no database,
+#     no API except the gateway's relay. Juice Shop is on the lab network, which only the
+#     gateway joins (D-039): every request the tools and the agent send goes through the
+#     gateway, as in the main stack. The gateway has no egress network here;
 #   - Juice Shop's port is not published. On the lab network it answers as juice.lab.test:3000
 #     through juice-proxy, a byte-for-byte TCP relay that logs every request head, downstream of
 #     the gateway, so each request can be counted and checked independently of the gateway's
@@ -26,7 +27,7 @@ name: attackledger-bench
 
 services:
   db:
-    networks: !override [internal]
+    networks: !override [database]
   api:
     image: attackledger-bench-api:latest
     build: !reset null
@@ -35,18 +36,16 @@ services:
     environment:
       ATTACKLEDGER_TSA_URL: "off"
       ATTACKLEDGER_DEV_KEY: "1"     # lab data only: the public development key (docs/ENCRYPTION.md)
-    networks: !override [internal, front]
+    networks: !override [database, control, front]
   gateway:
     image: attackledger-bench-api:latest
     build: !reset null
     pull_policy: never
-    networks: !override [internal, lab]
+    networks: !override [internal, control, lab]
   worker:
     image: attackledger-bench-worker:latest
     build: !reset null
     pull_policy: never
-    environment:
-      ATTACKLEDGER_DEV_KEY: "1"
     networks: !override [internal]
   # Not used by the benchmark; kept off the run (start only the services listed above).
   lab:
@@ -77,6 +76,10 @@ networks:
   default:
     internal: true
   internal:
+    internal: true
+  control:
+    internal: true
+  database:
     internal: true
   lab:
     internal: true

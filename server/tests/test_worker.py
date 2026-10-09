@@ -1,15 +1,10 @@
-import importlib.util
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "server"))
-spec = importlib.util.spec_from_file_location("worker", ROOT / "worker" / "worker.py")
-worker = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(worker)
+from harness import load_worker, stack  # noqa: F401
+
+worker = load_worker()
 
 
 def eng(header=None, ua=None, rps=5, ports=False, depth=3):
@@ -99,30 +94,31 @@ def test_every_tool_is_pointed_at_the_gateway(monkeypatch):
     assert gw.mask("x " + proxy("gau")) == "x " + proxy("gau").replace("s3cret-value-0123456789", "********")
 
 
-def test_tool_runs_get_the_gateway_and_never_log_the_secret(session, tmp_path):
-    from app import egress
-    job = make_job(session, ["a.example.com"])
-    gw = egress.Egress(job.id, "s3cret-value-0123456789")
-    r = worker.Run(session, job, gw)
+def test_tool_runs_get_the_gateway_and_never_log_the_secret_or_the_tokens(stack):
+    job = claim(stack, ["a.example.com"])
+    r = worker.Run(job)
     out = list(r.tool_lines("env", ["/usr/bin/env"], []))
-    assert f"HTTPS_PROXY={gw.proxy_url('env')}" in out and not any(l.startswith("DATABASE_URL") for l in out)
-    assert "s3cret" not in job.log
+    assert f"HTTPS_PROXY={r.gw.proxy_url('env')}" in out
+    # The tool gets the gateway secret (its proxy credential) and nothing else of the worker's.
+    assert not any(job.token in line or "worker-token" in line or line.startswith("DATABASE_URL") for line in out)
+    r.log(f"proxy {r.gw.proxy_url('x')}")
+    log = stack.job(job.id).log
+    assert job.gateway_secret not in log and "********" in log
 
 
-def test_jobs_that_send_traffic_need_the_gateway(session, monkeypatch):
+def test_jobs_that_send_traffic_need_the_gateway(stack, monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_GATEWAY")
-    job = make_job(session, ["a.example.com"])
+    job = claim(stack, ["a.example.com"])
     monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: pytest.fail("ran without a gateway"))
     with pytest.raises(RuntimeError, match="no gateway"):
-        worker.run(session, job)
-    assert job.gateway_secret_sha256                       # a credential was made, and only its hash kept
+        worker.run(job)
+    assert stack.job(job.id).gateway_secret_sha256         # the API made a credential, and kept only its hash
+    assert worker.execute(job)["status"] == "failed" and "no gateway" in stack.job(job.id).log
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY", "gateway.invalid:8080")
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY_CA", "/nonexistent/ca.pem")
-    job2 = Job(engagement_id=job.engagement_id, kind="resolve", targets=["b.example.com"], status=JobStatus.running)
-    session.add(job2)
-    session.commit()
+    job2 = claim(stack, ["b.example.com"], eng_id=stack.job(job.id).engagement_id)
     with pytest.raises(RuntimeError, match="CA certificate"):
-        worker.run(session, job2)
+        worker.run(job2)
 
 
 def test_js_fetcher_requires_identification_and_the_gateway():
@@ -146,51 +142,41 @@ def test_no_step_exceeds_the_engagement_rate_limit(rps):
             assert int(c[c.index(flag) + 1]) <= rps, (kind, c)
 
 
-# ---- batching, time limit and partial runs -----------------------------------
+# ---- batching, time limit and partial runs (through the API, D-042) -----------
 
-from datetime import datetime, timezone
+import itertools  # noqa: E402
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from app.models import JobStatus  # noqa: E402
 
-from app import db
-from app.models import Engagement, Job, JobStatus
+_names = itertools.count()
 
 
-@pytest.fixture()
-def session():
-    eng_ = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    db.Base.metadata.create_all(eng_)
-    s = sessionmaker(bind=eng_, expire_on_commit=False)()
-    yield s
-    s.close()
+def claim(stack, targets, kind="resolve", eng_id=None, **eng):
+    """Queue a job on a fresh engagement (or eng_id) and claim it as the worker does."""
+    if eng_id is None:
+        eng_id = stack.engagement(name=f"t{next(_names)}", **eng)
+    stack.queue(eng_id, kind, targets)
+    return stack.claim()
 
 
-def make_job(s, targets, kind="resolve"):
-    e = Engagement(name="t", scope_include=["*.example.com"], scope_exclude=[],
-                   authorized_by="op", authorized_at=datetime.now(timezone.utc))
-    s.add(e)
-    s.commit()
-    j = Job(engagement_id=e.id, kind=kind, targets=targets, status=JobStatus.running)
-    s.add(j)
-    s.commit()
-    return j
+def finish(stack, job, **kw):
+    """Run the job through worker.execute, which reports the outcome; the API's view of it."""
+    out = worker.execute(job, **kw)
+    return out, stack.job(job.id)
 
 
-def test_watchdog_stops_a_silent_tool(session, monkeypatch):
+def test_watchdog_stops_a_silent_tool(stack, monkeypatch):
     monkeypatch.setattr(worker, "JOB_TIMEOUT", 1)
-    r = worker.Run(session, make_job(session, ["a.example.com"]))
-    r.gw.secret = "s3cret-value-0123456789"
+    r = worker.Run(claim(stack, ["a.example.com"]))
     t0 = __import__("time").monotonic()
     with pytest.raises(worker.Cancelled, match="timed out"):
         list(r.tool_lines("sleep", ["sleep", "30"], []))
     assert __import__("time").monotonic() - t0 < 5
 
 
-def test_time_limit_marks_remaining_targets(session, monkeypatch):
+def test_time_limit_marks_remaining_targets(stack, monkeypatch):
     targets = [f"h{i}.example.com" for i in range(7)]
-    job = make_job(session, targets)
+    job = claim(stack, targets)
     calls = []
 
     def fake_runner(r, chunk):
@@ -201,86 +187,87 @@ def test_time_limit_marks_remaining_targets(session, monkeypatch):
 
     monkeypatch.setattr(worker, "CHUNK_SIZE", 3)
     monkeypatch.setitem(worker.RUNNERS, "resolve", fake_runner)
-    r = worker.run(session, job)
-    assert r.stopped == "timed out"
-    assert job.targets_done == 6 and job.result_count == 6
-    assert job.remaining_targets == ["h6.example.com"]   # the interrupted batch is not counted
+    out, j = finish(stack, job)
+    assert out["status"] == "partial"
+    assert j.targets_done == 6 and j.result_count == 6
+    assert j.remaining_targets == ["h6.example.com"]   # the interrupted batch is not counted
+    assert "stopped (timed out) after 6 of 7 targets; 1 not run" in j.log
 
 
-def test_complete_run_has_no_remaining_targets(session, monkeypatch):
-    job = make_job(session, ["a.example.com", "b.example.com"])
+def test_complete_run_has_no_remaining_targets(stack, monkeypatch):
+    job = claim(stack, ["a.example.com", "b.example.com"])
     monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: len(chunk))
-    r = worker.run(session, job)
-    assert r.stopped is None and job.targets_done == 2 and job.remaining_targets is None
+    out, j = finish(stack, job)
+    assert out["status"] == "done" and j.targets_done == 2 and j.remaining_targets is None
 
 
 def test_worker_runners_match_the_module_registry():
     worker.check_registry()   # raises SystemExit on any mismatch
 
 
-def test_worker_rechecks_gates_at_run_time(session):
-    job = make_job(session, ["a.example.com"], kind="ports")   # port scanning not enabled
-    with pytest.raises(RuntimeError, match="off for this engagement"):
-        worker.run(session, job)
+def test_gates_are_checked_again_when_the_job_is_claimed(stack):
+    e = stack.engagement()
+    j = stack.queue(e, "ports", ["a.example.com"])          # port scanning not enabled
+    assert stack.claim() is None                              # nothing reaches the worker
+    job = stack.job(j)
+    assert job.status == JobStatus.failed and "off for this engagement" in job.log
+    assert job.worker_token_sha256 is None and job.gateway_secret_sha256 is None
 
 
-def test_target_limit_lists_the_overflow_as_remaining(session, monkeypatch):
+def test_target_limit_lists_the_overflow_as_remaining(stack, monkeypatch):
     urls_ = [f"https://app.example.com/js/{i:03d}.js" for i in range(260)]
-    job = make_job(session, urls_, kind="jsanalyze")
-    job.engagement.research_header = "X-Bug-Bounty: r1"
-    session.commit()
+    job = claim(stack, urls_, kind="jsanalyze")
+    assert len(job.spec["targets"]) == 250 and job.spec["over_limit"] == 10
     seen = []
     monkeypatch.setitem(worker.RUNNERS, "jsanalyze", lambda r, chunk: seen.extend(chunk) or len(chunk))
-    r = worker.run(session, job)
-    assert r.stopped == "target limit"
-    assert len(seen) == 250 and job.targets_done == 250
-    assert job.remaining_targets == urls_[250:]          # nothing dropped silently
+    out, j = finish(stack, job)
+    assert out["status"] == "partial"
+    assert len(seen) == 250 and j.targets_done == 250
+    assert j.remaining_targets == urls_[250:]          # nothing dropped silently
 
 
-def test_deferred_job_resolves_targets_at_run_time(session, monkeypatch):
-    job = make_job(session, [], kind="resolve")
-    job.deferred = True
-    from app.models import Asset
-    session.add(Asset(engagement_id=job.engagement_id, host="app.example.com", in_scope=True))
-    session.commit()
-    seen = []
-    monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: seen.extend(chunk) or len(chunk))
-    worker.run(session, job)
-    assert job.targets == ["app.example.com"] and seen == ["app.example.com"]
+def test_deferred_job_resolves_targets_when_claimed(stack, monkeypatch):
+    e = stack.engagement()
+    stack.lane(e, "app.example.com")
+    stack.queue(e, "resolve", [], deferred=True)
+    job = stack.claim()
+    assert job.spec["targets"] == ["app.example.com"] and stack.job(job.id).targets == ["app.example.com"]
 
 
-def test_deferred_job_with_nothing_to_do_is_skipped(session):
-    job = make_job(session, [], kind="crawl")
-    job.deferred = True
-    job.engagement.research_header = "X-Bug-Bounty: r1"
-    session.commit()
-    r = worker.run(session, job)
-    assert r.skipped and "nothing to run" in job.log and "Find live web servers" in job.log
+def test_deferred_job_with_nothing_to_do_is_skipped(stack):
+    e = stack.engagement()
+    j = stack.queue(e, "crawl", [], deferred=True)
+    assert stack.claim() is None
+    job = stack.job(j)
+    assert job.status == JobStatus.skipped and "nothing to run" in job.log and "Find live web servers" in job.log
     assert job.result == {"skipped_reason": "no live web servers from 'Find live web servers'"}
-    assert worker.final_status(r) == JobStatus.skipped and job.output_sha256 is None
+    assert job.output_sha256 is None
 
 
-def test_deferred_root_step_without_a_wildcard_is_skipped(session):
-    job = make_job(session, [], kind="archive")
-    job.deferred = True
-    job.engagement.scope_include = ["shop.example.com"]
-    session.commit()
-    r = worker.run(session, job)
-    assert worker.final_status(r) == JobStatus.skipped and "wildcard" in job.result["skipped_reason"]
+def test_deferred_root_step_without_a_wildcard_is_skipped(stack):
+    e = stack.engagement(include=("shop.example.com",))
+    j = stack.queue(e, "archive", [], deferred=True)
+    assert stack.claim() is None
+    assert stack.job(j).status == JobStatus.skipped and "wildcard" in stack.job(j).result["skipped_reason"]
 
 
-def test_final_status_of_a_run(session, monkeypatch):
-    job = make_job(session, ["a.example.com"])
+def test_final_status_of_a_run(stack, monkeypatch):
+    job = claim(stack, ["a.example.com"])
     monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: 0)
-    r = worker.run(session, job)
-    assert worker.final_status(r) == JobStatus.done and job.result is None   # ran, found nothing
-    r.stopped = "timed out"
-    assert worker.final_status(r) == JobStatus.partial
+    out, j = finish(stack, job)
+    assert out["status"] == "done" and j.result is None   # ran, found nothing
+    job = claim(stack, ["b.example.com"], eng_id=j.engagement_id)
+
+    def failing(r, chunk):
+        r.failed_tools.append("dnsx")
+        return 0
+    monkeypatch.setitem(worker.RUNNERS, "resolve", failing)
+    out, j = finish(stack, job)
+    assert out["status"] == "failed" and "dnsx failed and nothing was found" in j.log
 
 
-def test_noerror_without_records_is_not_resolved(session, monkeypatch):
-    job = make_job(session, ["real.example.com", "ghost.example.com"])
-    r = worker.Run(session, job)
+def test_noerror_without_records_is_not_resolved(stack, monkeypatch):
+    r = worker.Run(claim(stack, ["real.example.com", "ghost.example.com"]))
     lines = {
         "dnsx": ['{"host":"real.example.com","a":["192.0.2.1"],"status_code":"NOERROR"}',
                  '{"host":"ghost.example.com","status_code":"NOERROR"}'],
@@ -289,6 +276,27 @@ def test_noerror_without_records_is_not_resolved(session, monkeypatch):
     monkeypatch.setattr(worker.Run, "tool_lines", lambda self, name, cmd, inp: iter(lines[name]))
     out = worker.resolve_hosts(r, ["real.example.com", "ghost.example.com"])
     assert list(out) == ["real.example.com"]
+
+
+def test_results_reach_the_api_in_one_call_per_batch(stack, monkeypatch):
+    targets = [f"h{i}.example.com" for i in range(5)]
+    job = claim(stack, targets)
+    calls = []
+    real = job.results
+    monkeypatch.setattr(job, "results", lambda **kw: calls.append(kw) or real(**kw))
+
+    def runner(r, chunk):
+        for h in chunk:
+            r.observe(h, {"a": ["192.0.2.1"], "aaaa": [], "cname": []})
+        return len(chunk)
+    monkeypatch.setattr(worker, "CHUNK_SIZE", 2)
+    monkeypatch.setitem(worker.RUNNERS, "resolve", runner)
+    out, j = finish(stack, job)
+    assert out["status"] == "done" and [len(c["observations"]) for c in calls] == [2, 2, 1]
+    from app.models import Asset, Observation
+    with stack.Session() as s:
+        assert sorted(o.host for o in s.query(Observation).filter_by(job_id=job.id)) == targets
+        assert {a.host for a in s.query(Asset).filter_by(engagement_id=j.engagement_id)} == set(targets)
 
 
 @pytest.fixture()
@@ -373,6 +381,7 @@ def test_nuclei_passes_never_share_a_second(monkeypatch, nuclei_exclude):
     u = "http://a.x.test/"
     r = SimpleNamespace(eng=eng("X-Bug-Bounty: r1", rps=20), in_scope=lambda h: True, log=lambda line: None,
                         nuclei_plan={"reps": {u}, "golden": {u}, "tags": {u: {"nginx"}}},
+                        totals={"leads_added": 0}, flush=lambda: None,
                         tool_lines=lambda name, cmd, inputs: passes.append(name) or iter(()))
     worker.run_nuclei(r, [u])
     worker.run_nuclei(r, [u])        # the next target batch

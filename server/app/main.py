@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, object_session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault
+from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault, workerapi
 from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
@@ -37,7 +37,12 @@ async def lifespan(_app: FastAPI):
     migrate.upgrade_head()
     with SessionLocal() as s:
         vault.check_store(s)
-    yield
+    # Retention and interrupted jobs, which the worker ran before it lost its database (D-042).
+    stop = workerapi.start_maintenance()
+    try:
+        yield
+    finally:
+        stop()
 
 
 # Every route passes authz.authorize first: who is calling, and may they use this route.
@@ -46,6 +51,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="AttackLedger", version="0.6.0.dev0", lifespan=lifespan,
               dependencies=[Depends(authz.authorize)], docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(gatewayapi.router)
+app.include_router(workerapi.router)
 COOKIE_SECURE = os.environ.get("ATTACKLEDGER_COOKIE_SECURE", "") == "1"   # set behind HTTPS
 
 
@@ -915,7 +921,7 @@ def _job_view(j: Job, with_log: bool = False) -> dict:
     v = {"id": j.id, "kind": j.kind, "status": j.status.value, "targets": j.targets,
          "result_count": j.result_count, "output_sha256": j.output_sha256,
          "targets_done": j.targets_done, "remaining": len(j.remaining_targets or []),
-         "deferred": j.deferred, "lane_id": j.lane_id, "result": j.result,
+         "deferred": j.deferred, "lane_id": j.lane_id, "result": j.result, "driver": j.driver,
          "created_at": iso_utc(j.created_at),
          "started_at": iso_utc(j.started_at),
          "finished_at": iso_utc(j.finished_at)}
@@ -1256,6 +1262,9 @@ class AgentRunIn(BaseModel):
     max_turns: int = Field(default=15, ge=1, le=100)
     max_requests: int = Field(default=30, ge=1, le=1000)
     max_cost_usd: float = Field(default=0.50, ge=0.05, le=20)   # estimated; checked after each turn
+    # A run made by an outside driver through the same tools (tools/agent_bridge.py, D-031), not
+    # by the worker's Messages API loop: who drives it. The worker's loop never takes it.
+    driver: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 @app.post("/lanes/{lane_id}/agent-runs", status_code=201)
@@ -1266,21 +1275,22 @@ def start_agent_run(lane_id: int, request: Request, body: AgentRunIn | None = No
     lane = _get(session, Lane, lane_id)
     body = body or AgentRunIn()
     ok, why = executors.EXECUTORS["agent"].available()
-    if not ok:
+    if not ok and body.driver is None:        # an outside driver needs no Claude API key
         raise HTTPException(422, why)
-    if lane.executor != "agent":
+    if lane.executor != "agent" and body.driver is None:
         raise HTTPException(422, "set this lane's executor to the Claude agent first")
     try:
         agenttools.check_lane(lane)
     except agenttools.RunRefused as e:
         raise HTTPException(422, str(e))
+    lane.executor = "agent"      # an outside driver works the lane through the agent's tools too
     busy = session.scalar(select(Job.id).where(Job.lane_id == lane.id, Job.kind == "agent",
                                                Job.status.in_([JobStatus.queued, JobStatus.running])))
     if busy is not None:
         raise HTTPException(409, f"an agent run is already queued or running on this lane (job {busy})")
     job = Job(engagement_id=lane.asset.engagement_id, kind="agent", lane_id=lane.id,
               created_by=authz.current(request).user_id,
-              targets=[lane.asset.host],
+              targets=[lane.asset.host], driver=body.driver,
               result={"limits": {"max_turns": body.max_turns, "max_requests": body.max_requests,
                                  "max_cost_usd": body.max_cost_usd}})
     session.add(job)

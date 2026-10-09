@@ -12,7 +12,7 @@ of Docker containers:
 | `caddy` | HTTPS in front of everything. The only container that listens on the network. |
 | `web` | The web app. Forwards `/api/` to the API. |
 | `api` | The API and the ledger. Runs database migrations when it starts. |
-| `worker` | Runs recon jobs and Claude agent runs. |
+| `worker` | Runs recon jobs and Claude agent runs. Has no database access: it reaches the API through the gateway ([section 6](#6-traffic-gateway)). |
 | `db` | PostgreSQL 16. |
 | *gateway* | All traffic to test targets. See [section 6](#6-traffic-gateway). |
 
@@ -180,8 +180,9 @@ may read it, and it is never committed (the repository ignores it).
    ```
 
 6. Optional: Claude agents. Put an Anthropic API key in `ANTHROPIC_API_KEY` (edit `.env`
-   with `nano .env`). The key is passed to the worker only. Without it, everything except
-   agent runs works.
+   with `nano .env`). The key is passed to the gateway only, which adds it to the agent's
+   calls to the Claude API; the worker, where the recon tools run, never has it. Without it,
+   everything except agent runs works.
 
 7. Check that Compose can read the settings. It prints nothing when they are complete,
    and names the missing one otherwise:
@@ -350,11 +351,23 @@ Docker publishes, so `http://attackledger.example.com:8080` sends the browser to
 ## 6. Traffic gateway
 
 Every request that recon tools and Claude agents send leaves through one gateway container
-(D-039, `docs/GATEWAY.md`). The worker has no route to the internet: it sits on the
-internal-only Docker network `internal` with the database, the API and the gateway, and the
-gateway is its only way out. The gateway enforces, in one place, each engagement's scope
-(exclusions win), read-only methods (GET, HEAD, OPTIONS; every write is refused), rate
-ceiling, research header and user agent, never follows redirects, and logs every request.
+(D-039, `docs/GATEWAY.md`). The worker has no route to the internet and no database access
+(D-042, `docs/WORKER_API.md`): it sits on the internal-only Docker network `internal` with the
+gateway and nothing else. The gateway is its only way out, for traffic to targets and for its
+own calls to the API, which the gateway relays (port 8081, `/worker/*` routes only). The
+gateway enforces, in one place, each engagement's scope (exclusions win), read-only methods
+(GET, HEAD, OPTIONS; every write is refused), rate ceiling, research header and user agent,
+never follows redirects, and logs every request.
+
+| Network | Containers | Why |
+|---|---|---|
+| `internal` | worker, gateway | the worker's only network: the gateway's proxy, resolver and relay |
+| `control` | gateway, api | rules and the request log for the gateway; the worker's relayed calls |
+| `database` | db, api | only the API reaches the database |
+| `lab` | gateway, lab, lab-proxy | the practice target (section 16) |
+| `default` | api, web, gateway, caddy | the way out: the timestamp authority, targets, Caddy |
+
+All but `default` are `internal: true` in Docker: nothing on them has a route out.
 
 - **Outbound firewall.** Only the gateway needs to reach targets, passive recon sources and
   the Claude API; it is the only container on both `internal` and the outside network
@@ -376,16 +389,25 @@ ceiling, research header and user agent, never follows redirects, and logs every
   request log there, with a token it creates in the volume `gateway-control` (shared with the
   API only). To set your own instead, put `ATTACKLEDGER_GATEWAY_TOKEN` in `.env` and pass it
   to both the `api` and `gateway` services.
+- **The worker token.** The worker claims jobs with a token it creates on first start in the
+  volume `worker-control` (shared with the API only; the gateway relays the calls but never
+  stores the token). Each job it claims gets its own token from the API, which opens only that
+  job's routes while it runs, and a separate gateway credential for its tools. To set your own
+  worker token, put `ATTACKLEDGER_WORKER_TOKEN` in `.env` and pass it to both the `api` and
+  `worker` services. Neither volume needs a backup: new tokens are made if they are lost.
+- **The Claude API key** (`ANTHROPIC_API_KEY` in `.env`) is passed to the gateway only.
 - **Settings** (all optional, in `.env`): `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`, extra passive
   source hosts, comma-separated, for subfinder sources you configured with your own keys.
-- **Check.** The worker cannot reach the internet directly, and a request through the
-  gateway is logged:
+- **Check.** The worker cannot reach the internet or the database directly, and a request
+  through the gateway is logged:
 
   ```sh
   docker compose exec worker python -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)"
   # OSError: [Errno 101] Network is unreachable
+  docker compose exec worker python -c "import socket; socket.create_connection(('db', 5432), 5)"
+  # socket.gaierror: ... (no network of the worker has the database on it)
   docker compose logs gateway | head -1
-  # gateway ready: proxy 0.0.0.0:8080, dns 53, api http://api:8000
+  # gateway ready: proxy 0.0.0.0:8080, dns 53, control 8081, api http://api:8000, claude key not set
   ```
 
   After a recon run, its requests are listed per engagement at
@@ -402,9 +424,10 @@ engagement's content is deleted, its key and blobs are destroyed: the content be
 unreadable for good, while the evidence chain, receipts and reports still verify (the
 verifier says the content is unavailable and why).
 
-The API and the worker refuse to start without a master key. The production file reads it
-from a file on the host, `/etc/attackledger/master.key`, mounted read-only into both
-containers as `ATTACKLEDGER_MASTER_KEY_FILE`. If that file cannot be read, startup fails;
+The API refuses to start without a master key. The production file reads it from a file on
+the host, `/etc/attackledger/master.key`, mounted read-only into the API container as
+`ATTACKLEDGER_MASTER_KEY_FILE`. The worker has no key: everything it produces is encrypted
+by the API (D-042). If that file cannot be read, startup fails;
 there is no fallback to another key.
 
 1. **Create the master key** (256 random bits, base64), readable only by the user the
@@ -438,7 +461,8 @@ there is no fallback to another key.
 
 **Retention.** An owner decides, per engagement, on the engagement's **Team** tab, under
 **Data and retention**:
-- **Keep the content until (UTC)** a date. The worker deletes the content the day after it.
+- **Keep the content until (UTC)** a date. The API deletes the content the day after it
+  (it checks once a minute).
   No date means the content is kept until someone deletes it.
 - **Delete this engagement's data** now, confirmed by typing the engagement's name.
 
@@ -685,10 +709,11 @@ does.
 
 | Secret | Where | Needed for | In the backup |
 |---|---|---|---|
-| Postgres password | `.env` (`POSTGRES_PASSWORD`) | the API and worker to reach the database | no; a new install makes a new one |
+| Postgres password | `.env` (`POSTGRES_PASSWORD`) | the API to reach the database | no; a new install makes a new one |
 | Operator token (optional) | `.env` (`ATTACKLEDGER_API_TOKEN`) | scripts using the API | no |
-| Anthropic API key (optional) | `.env` (`ANTHROPIC_API_KEY`), passed to the worker only | agent runs | no |
-| Encryption master key | `/etc/attackledger/master.key` (section 7), mounted read-only into the API and worker; never in `.env` | reading any evidence content | **no, kept separately** (its id, a hash, is in `info.txt`) |
+| Anthropic API key (optional) | `.env` (`ANTHROPIC_API_KEY`), passed to the gateway only | agent runs | no |
+| Encryption master key | `/etc/attackledger/master.key` (section 7), mounted read-only into the API only; never in `.env` | reading any evidence content | **no, kept separately** (its id, a hash, is in `info.txt`) |
+| Gateway and worker tokens | the volumes `gateway-control` and `worker-control` (section 6), shared with the API only | the gateway's and the worker's calls to the API | no; new ones are made on the next start |
 | Engagement data keys | the blob store, `e/<id>/key.json`, wrapped by the master key | reading one engagement's content | yes (wrapped) |
 | People's passwords | the database, as scrypt hashes | signing in | yes (hashes only) |
 | Session cookies | the database, as SHA-256 hashes | staying signed in (12 hours) | yes (hashes only) |
@@ -831,8 +856,8 @@ restored is a hope, not a backup.
 ## 15. Upgrade and rollback
 
 The API applies database migrations itself when it starts (Alembic, forward to the newest
-the code knows). The worker waits until the database is at that migration before it takes
-jobs. Migrations can change the data, so always back up first.
+the code knows). The worker, which has no database access, waits until the API answers
+before it takes jobs. Migrations can change the data, so always back up first.
 
 1. Read the release notes (`CHANGELOG.md`) of every version between yours and the new one.
 2. Back up:
@@ -1023,7 +1048,7 @@ Any status code means it is reachable; an error means outbound port 80 to the TS
 blocked. Allow it (or set your own TSA, section 12), then use **Timestamp now** on each
 receipt.
 
-**The API or the worker stops at once with "no master key", "cannot be read" or "not a
+**The API stops at once with "no master key", "cannot be read" or "not a
 256-bit key".** The key file is missing, not readable by uid 10001, or not a key. Check
 section 7, step 1: `ls -l /etc/attackledger/master.key` should show owner `10001` and
 `-r--------`. A missing file makes `docker compose up` itself fail with a "bind source
@@ -1035,7 +1060,7 @@ not the one the data was encrypted with (put the right one in place), or the blo
 volume does not belong to this database (only one of the two parts was restored). The
 message names the engagement.
 
-**The API or the worker stops with "this process (uid 10001) cannot write to ... in the blob
+**The API stops with "this process (uid 10001) cannot write to ... in the blob
 store".** The volume comes from a version before encryption, when the API wrote as root.
 Run the one-time `chown` in section 7 ("Upgrading an install from before encryption").
 
@@ -1047,9 +1072,11 @@ that was in use when the backup was made in place, restore, and then rotate if y
 `docker compose logs api | tail -n 100`. A migration error names the migration. Roll back
 (section 15) and send the log to whoever supports your install.
 
-**The worker is `unhealthy`.** It cannot reach the database: check that `db` is healthy
-and that `POSTGRES_PASSWORD` has not changed since the database was created (the password
-is set only on the first start; changing it in `.env` later locks the API and worker out).
+**The worker is `unhealthy`, or its log says "waiting for the API".** It cannot reach the API
+through the gateway's relay. Check that `gateway` and `api` are healthy
+(`docker compose ps`) and read `docker compose logs gateway | tail`. "the worker token is
+required" in the worker's log means the API and the worker do not share the `worker-control`
+volume or the same `ATTACKLEDGER_WORKER_TOKEN`.
 
 **`restore.sh` says "this install is not empty".** It protects existing data. Back up the
 current state, then add `--force` (section 14).

@@ -16,10 +16,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import auditlog, blobs, ledger, vault
+from app import auditlog, blobs, ledger, vault, workerapi
 from app.main import app
 from app.models import AuditEntry, Endpoint, Engagement, Evidence, Job, JobStatus, Lane, Lead, Observation
 from test_agent import HOST, FakeTransport, api, get, load_worker, make_lane, session, toolbox  # noqa: F401
+from harness import stack  # noqa: F401
 from test_people import PW, client, setup_team, sign_in  # noqa: F401
 
 spec = importlib.util.spec_from_file_location("verify_report", ROOT / "tools" / "verify_report.py")
@@ -84,10 +85,9 @@ def test_missing_master_key_fails_closed(monkeypatch, tmp_path):
     with pytest.raises(vault.MasterKeyError):                 # the API does not start
         with TestClient(app):
             pass
-    worker = load_worker()
-    monkeypatch.setattr(worker.migrate, "wait_for_head", lambda: pytest.fail("the worker went on without a key"))
-    with pytest.raises(vault.MasterKeyError):                 # nor does the worker
-        worker.main()
+    # The worker holds no key at all (D-042): it never reads or writes the blob store.
+    worker_src = (ROOT / "worker" / "worker.py").read_text()
+    assert "vault" not in worker_src and "blobs" not in worker_src and "app.db" not in worker_src
     assert blobs.get(blobs.put(b"plain")) == b"plain"         # the plaintext store does not need a key
 
 
@@ -221,22 +221,24 @@ def test_agent_evidence_is_v2_and_its_exchanges_are_encrypted(session):
     assert blobs.get(ev.sha256, engagement_id=lane.asset.engagement_id).endswith(b"Disallow: /secret-admin/")
 
 
-def test_recon_run_evidence_has_the_recon_source(session):
+def test_recon_run_evidence_has_the_recon_source(stack, monkeypatch):
     worker = load_worker()
-    lane, _ = make_lane(session)
-    eng = lane.asset.engagement
-    job = Job(engagement_id=eng.id, kind="archive", targets=["lab.test"], status=JobStatus.running)
-    session.add(job)
-    session.commit()
+    e = stack.engagement(name="recon-source", include=("*.lab.test",))
+    stack.lane(e, HOST)
+    stack.queue(e, "archive", ["lab.test"])
+    job = stack.claim()
 
     def fake_archive(r, chunk):
-        r.observe(HOST, {"status_code": 200}, create_asset=False)
         r.digest.update(b"one url")
-        return 1
-    worker.RUNNERS["archive"] = fake_archive
-    worker.run(session, job)
-    ev = session.scalars(select(Evidence)).one()
-    assert ev.source == "recon" and ev.record_version == 2 and vault.summary_of(ev).endswith(f"job {job.id}")
+        return worker.store_endpoints(r, {f"https://{HOST}/a?q=1": {"gau"}})
+    monkeypatch.setitem(worker.RUNNERS, "archive", fake_archive)
+    assert worker.execute(job)["status"] == "done"
+    with stack.Session() as s:
+        ev = s.scalars(select(Evidence)).one()       # written by the API when the run finished
+        assert ev.source == "recon" and ev.record_version == 2 and vault.summary_of(ev).endswith(f"job {job.id}")
+        assert ev.sha256 == stack.job(job.id).output_sha256 and ev.uri == f"job:{job.id}"
+        assert ledger.verify_chain([{**ledger.evidence_record(x, HOST, "recon"), "prev_hash": x.prev_hash,
+                                     "chain_hash": x.chain_hash} for x in s.scalars(select(Evidence))]) == []
 
 
 def v1_row(s, lane: Lane, summary: str, digest: str) -> Evidence:
@@ -445,7 +447,7 @@ def test_only_an_owner_deletes_content(client):
 
 # ---- retention and the audit log ----------------------------------------------------------------
 
-def test_retention_date_is_executed_by_the_worker_and_audited(api):
+def test_retention_date_is_executed_by_the_api_and_audited(api):
     e, lane = engagement(api)
     note = attach_note(api, lane["id"], 1, "kept until the date")
     yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
@@ -457,15 +459,14 @@ def test_retention_date_is_executed_by_the_worker_and_audited(api):
     assert api.get(f"/engagements/{e}/scope").json()["retain_until"] == tomorrow
     assert api.patch(f"/engagements/{e}", json={"separation_of_duties": True}).json()["retain_until"] == tomorrow
 
-    worker = load_worker()
     with api.Session() as s:
-        assert worker.retention_pass(s) == []                  # the date has not passed
+        assert workerapi.retention_pass(s) == []               # the date has not passed
     assert vault.has_key(e)
     with api.Session() as s:                                   # a day later
         s.get(Engagement, e).retain_until = date.fromisoformat(yesterday)
         s.commit()
-        assert worker.retention_pass(s) == [e]
-        assert worker.retention_pass(s) == []                  # once
+        assert workerapi.retention_pass(s) == [e]
+        assert workerapi.retention_pass(s) == []               # once
     assert not vault.has_key(e) and blobs.get(note["sha256"], engagement_id=e) is None
     info = api.get(f"/lanes/{lane['id']}").json()["content_deleted"]
     assert info["reason"] == "retention" and info["by"] == "the retention policy"
@@ -496,7 +497,7 @@ def test_owner_deletion_is_audited(api):
         assert ch["after"]["reason"] == "owner" and ch["removed"]["summaries"] == 1
 
 
-def test_interrupted_deletion_is_finished_by_the_worker(api, monkeypatch):
+def test_interrupted_deletion_is_finished_by_the_api(api, monkeypatch):
     e, lane = engagement(api)
     note = attach_note(api, lane["id"], 1, "note")
     with monkeypatch.context() as m, api.Session() as s:
@@ -504,9 +505,8 @@ def test_interrupted_deletion_is_finished_by_the_worker(api, monkeypatch):
         vault.delete_content(s, s.get(Engagement, e), actor=auditlog.CLI, reason="operator")
     assert vault.has_key(e) and blobs.get(note["sha256"], engagement_id=e) == b"note"
     assert api.get(f"/lanes/{lane['id']}").json()["evidence"][0]["content"] == "deleted"   # the database says so already
-    worker = load_worker()
     with api.Session() as s:
-        worker.retention_pass(s)
+        workerapi.retention_pass(s)
     assert not vault.has_key(e) and not blobs.encrypted_path(note["sha256"], e).exists()
 
 
@@ -547,3 +547,25 @@ def test_a_blob_store_this_process_cannot_write_stops_startup():
     finally:
         folder.chmod(0o755)
     vault.check_store()
+
+
+def test_retention_runs_in_the_api_background(api, monkeypatch):
+    """The worker used to run retention; with no database it cannot, so the API's maintenance
+    thread does, once a minute (and at once when it starts)."""
+    import time
+    e, lane = engagement(api, "background")
+    note = attach_note(api, lane["id"], 1, "kept until the date")
+    with api.Session() as s:
+        s.get(Engagement, e).retain_until = date.today() - timedelta(days=1)
+        s.commit()
+    monkeypatch.setattr(workerapi, "SessionLocal", api.Session)
+    stop = workerapi.start_maintenance(seconds=0.05)
+    try:
+        end = time.time() + 10
+        while vault.has_key(e) and time.time() < end:
+            time.sleep(0.05)
+    finally:
+        stop()
+    assert not vault.has_key(e) and blobs.get(note["sha256"], engagement_id=e) is None
+    assert api.get(f"/lanes/{lane['id']}").json()["content_deleted"]["reason"] == "retention"
+    assert workerapi.start_maintenance(seconds=0) is not None    # off: nothing starts

@@ -13,13 +13,18 @@ Permissions
   handler    the handler checks, because the engagement is in the request body
   gateway    the traffic gateway only, with the gateway token (gatewayapi.py, D-039);
              no person or operator token can use these routes
+  worker     the worker only, with the worker token (workerapi.py, D-042): ping and claim
+  job        one job's own routes, with the job token the claim issued, while the job is
+             held by its worker (running, or cancelled and not yet finished). "running" in
+             the second column: only while it runs. No person, operator or worker token opens
+             them, and a job token opens no other job
 """
 import hmac
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 
-from . import auth, gateway
+from . import auth, gateway, workerclient
 from .db import get_session
 from .models import Evidence, Job, Lane
 
@@ -109,6 +114,16 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/gateway/dns-scopes"): ("gateway", None),
     ("POST", "/gateway/log"): ("gateway", None),
 
+    ("GET", "/worker/ping"): ("worker", None),
+    ("POST", "/worker/claim"): ("worker", None),
+    ("POST", "/worker/jobs/{job_id}/heartbeat"): ("job", None),
+    ("POST", "/worker/jobs/{job_id}/log"): ("job", None),
+    ("POST", "/worker/jobs/{job_id}/progress"): ("job", None),
+    ("POST", "/worker/jobs/{job_id}/results"): ("job", None),
+    ("POST", "/worker/jobs/{job_id}/finish"): ("job", None),
+    ("POST", "/worker/jobs/{job_id}/agent/exchange"): ("job", "running"),
+    ("POST", "/worker/jobs/{job_id}/agent/call"): ("job", "running"),
+
     ("POST", "/lanes/{lane_id}/close"): ("reviewer", LANE),
     ("GET", "/lanes/{lane_id}/receipt-payload"): ("reviewer", LANE),
     ("POST", "/lanes/{lane_id}/receipt/timestamp"): ("reviewer", LANE),
@@ -144,6 +159,12 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
         return
     if rule and rule[0] == "gateway":
         _gateway_caller(request)
+        return
+    if rule and rule[0] == "worker":
+        _worker_caller(request)
+        return
+    if rule and rule[0] == "job":
+        _job_caller(request, session, running_only=rule[1] == "running")
         return
     who = auth.principal(session, request)
     if who is None:
@@ -184,6 +205,42 @@ def _gateway_caller(request: Request) -> None:
     header = request.headers.get("authorization", "")
     if not (header.lower().startswith("bearer ") and hmac.compare_digest(header[7:].strip(), tok)):
         raise HTTPException(401, "the gateway token is required")
+
+
+def _bearer(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    return header[7:].strip() if header.lower().startswith("bearer ") else ""
+
+
+def _worker_caller(request: Request) -> None:
+    """The worker's token, and nothing else, opens ping and claim. Without a configured token
+    they are closed (fail closed: the worker then runs nothing)."""
+    tok = workerclient.worker_token()
+    if not tok:
+        raise HTTPException(503, "no worker token is configured")
+    if not hmac.compare_digest(_bearer(request), tok):
+        raise HTTPException(401, "the worker token is required")
+
+
+def _job_caller(request: Request, session, running_only: bool) -> None:
+    """A job token opens its own job's routes only, while its worker holds the job. Every call
+    is a heartbeat."""
+    from datetime import datetime, timezone
+
+    from . import workerapi
+    from .models import JobStatus
+    try:
+        job = session.get(Job, int(request.path_params["job_id"]))
+    except (KeyError, ValueError):
+        job = None
+    token = _bearer(request)
+    if job is None or not token or not workerapi.token_matches(job, token):
+        raise HTTPException(401, "this job's token is required")
+    if job.status not in (JobStatus.running, JobStatus.cancelled) or (
+            running_only and job.status != JobStatus.running):
+        raise HTTPException(403, f"job {job.id} is {job.status.value}; its token no longer writes")
+    job.heartbeat_at = datetime.now(timezone.utc)
+    session.commit()
 
 
 def current(request: Request) -> auth.Principal:

@@ -213,7 +213,34 @@ class Job(Base):
     # SHA-256 of the secret the worker made when it claimed the job. The job's tools present
     # the secret to the gateway (D-039), which asks the API; it is valid while the job runs.
     gateway_secret_sha256: Mapped[str | None] = mapped_column(String(64))
+    # SHA-256 of the job token the API issued when the worker claimed the job: it opens this
+    # job's /worker/jobs/{id}/... routes only, while the job runs (docs/WORKER_API.md). Cleared
+    # when the job ends, with the gateway secret.
+    worker_token_sha256: Mapped[str | None] = mapped_column(String(64))
+    # The last time the worker reported on this job. A running job whose heartbeat is too old
+    # has no live worker and is marked interrupted by the API.
+    heartbeat_at: Mapped[datetime | None]
+    # An agent run made by an outside driver (tools/agent_bridge.py, D-031): who drives it. The
+    # worker's own loop never claims these.
+    driver: Mapped[str | None] = mapped_column(String(200))
     engagement: Mapped[Engagement] = relationship(back_populates="jobs")
+
+
+class AgentExchange(Base):
+    """An HTTP exchange of a running agent job, as the API stored it: the id the model cites
+    (x1, x2, ...) and the blob it names. Kept only while the job runs; add_evidence may cite
+    only these, so evidence never points at a blob the API did not store for this run."""
+    __tablename__ = "agent_exchanges"
+    __table_args__ = (UniqueConstraint("job_id", "xid"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), index=True)
+    xid: Mapped[str] = mapped_column(String(16))
+    sha256: Mapped[str] = mapped_column(String(64))
+    method: Mapped[str] = mapped_column(String(16))
+    url: Mapped[str] = mapped_column(Text)
+    status: Mapped[int]
+    redaction: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class GatewayRequest(Base):

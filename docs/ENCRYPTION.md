@@ -36,24 +36,25 @@ instead; that is not in the MVP.
 - **Development key.** `ATTACKLEDGER_DEV_KEY=1` uses a built-in key whose value is public
   (it is in the source code). It is for tests, local trials and the demo, and gives no
   confidentiality. A configured master key wins over it. `/health` says which is in use.
-- **Fail closed.** With no master key and no `ATTACKLEDGER_DEV_KEY=1`, the API and the
-  worker refuse to start, and so do the CLI commands that need a key.
+- **Fail closed.** With no master key and no `ATTACKLEDGER_DEV_KEY=1`, the API refuses to
+  start, and so do the CLI commands that need a key. The worker has no key since D-042's
+  worker half (`WORKER_API.md`): the API encrypts what agent runs send.
 - **Engagement data key.** Random 256 bits per engagement, created the first time the
   engagement stores encrypted content. It is stored wrapped (AES-256-GCM under the master
   key, the engagement id as associated data, so a key file copied to another engagement
   does not open) in the blob store, at `<blobs>/e/<engagement id>/key.json`, next to the
   blobs it protects. The file names the master key's id (a hash of the key, not the key).
 - **Why in the blob store and not the database.** The blob store's interface
-  (`put/get(..., engagement_id=)`) has no database session, and the API and the worker
-  share the folder. Keeping the key there means the store needs nothing else to encrypt or
+  (`put/get(..., engagement_id=)`) has no database session (and until D-042 the API and the
+  worker shared the folder; now only the API mounts it). Keeping the key there means the store needs nothing else to encrypt or
   decrypt, and deleting one engagement's folder deletes its key and blobs together without
   touching any other engagement. Consequence for backups: the database and the blob store
   must be backed up together (they always had to be; the evidence is in the blob store).
-- **One user for the blob store.** The API and the worker both run as uid 10001, because
-  each reads the keys and writes into the engagement folders the other made. A blob volume
+- **One user for the blob store.** The API runs as uid 10001 (the worker, which wrote there
+  before D-042, did too). A blob volume
   from an earlier version holds folders made by the API as root; give it to that user once
   when upgrading: `docker compose run --rm --user 0 --no-deps api chown -R 10001 /data/blobs`.
-- **Startup checks.** The API and the worker check that they can write to the blob store,
+- **Startup checks.** The API checks that it can write to the blob store,
   that every key file was wrapped by the configured master key, and the API checks that every engagement with encrypted
   summaries still has its key file (unless its content was deleted). Either failing stops
   startup with the fix in the message, so a wrong key or an unmounted volume never looks
@@ -115,7 +116,8 @@ an explicit command encrypts it.**
   (`POST /engagements/{id}/content/delete`) refuses unless `confirm_name` equals the name
   exactly. It cannot be undone.
 - **Delete after a date.** In the same place, an owner sets "Keep the content until (UTC)"
-  (`PATCH /engagements/{id}` with `retain_until`). The worker checks once a minute and
+  (`PATCH /engagements/{id}` with `retain_until`). The API checks once a minute (a
+  background thread, `workerapi.start_maintenance`; the worker did it before D-042) and
   deletes the content of every engagement whose date has passed (the day after it). No date
   means the content is kept until someone deletes it. The decision's default of one year
   after an engagement closes needs an engagement close event, which does not exist yet; a
@@ -126,7 +128,7 @@ an explicit command encrypts it.**
   log entry (`engagement.content_deleted`, by the person or by "the retention policy");
   then it writes a tombstone in the engagement's folder, deletes the key file and every
   blob in the folder, and deletes plaintext blobs only this engagement cites. If the
-  process stops between the two steps, the worker finishes the file step on its next pass.
+  process stops between the two steps, the API's next retention pass finishes the file step.
 - **Afterwards** the engagement takes no new evidence, jobs or agent runs, and no new
   receipts, because nobody can review evidence that can no longer be read (refused with a
   message, not an error). Receipts issued before stay valid. Its lanes, items, receipts, hashes and audit history stay; every
