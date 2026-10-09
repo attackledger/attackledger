@@ -86,8 +86,9 @@ def fill(c, *, tag: str, owner_email: str, worker_token: str, gateway_token: str
     # A note on item 1, the rest not applicable; then the reviewer signs with their key.
     note = _ok(c.post(f"/lanes/{out['lane']}/attach", json={"item_idx": 1, "kind": "note",
                                                           "text": f"canary note {tag}", "summary": f"note {tag}"}))
-    out["note_evidence"] = note["id"]
-    out["note_digest"] = next(ev["sha256"] for ev in note["evidence"] if ev["id"] == note["id"])
+    # (The attach answer's "id" is the lane's: the lane view is spread over the evidence id.)
+    ev = next(ev for ev in note["evidence"] if ev["kind"] == "note")
+    out["note_evidence"], out["note_digest"] = ev["id"], ev["sha256"]
     for it in note["items"]:
         state = {"state": "done"} if it["idx"] == 1 else {"state": "na", "na_reason": f"lab {tag}"}
         _ok(c.patch(f"/lanes/{out['lane']}/items/{it['idx']}", json=state))

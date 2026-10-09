@@ -6,7 +6,8 @@ everyone but owners, so a new route is closed until someone decides who may use 
 Permissions
   public     no sign-in (health, sign-in, sign-out)
   signed_in  any signed-in caller (lists that are filtered, or reference data)
-  owner      owners only: engagements, rules, authorization, people, roles, the whole audit log
+  owner      owners only: engagements, rules, authorization, people, roles, the whole audit log,
+             of their own organization (there is no role above it)
   read       any role on the engagement (viewer, tester, reviewer)
   tester     the tester role on the engagement: recon, lanes, evidence, agent runs
   reviewer   the reviewer role on the engagement: sign receipts
@@ -70,7 +71,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/people"): ("owner", None),
     ("POST", "/people"): ("owner", None),
     ("PATCH", "/people/{user_id}"): ("owner", USER),
-    ("GET", "/audit"): ("owner", None),                       # every engagement's history and every person's
+    ("GET", "/audit"): ("owner", None),                       # the organization's whole history, its chain
     ("POST", "/engagements/{eng_id}/content/delete"): ("owner", ENG),   # cannot be undone; confirmed by name
 
     ("GET", "/engagements/{eng_id}/coverage"): ("read", ENG),
@@ -169,6 +170,14 @@ def _engagements(session, kind: str, params: dict) -> set[int] | None:
     return None
 
 
+def _person(session, params: dict):
+    from .models import User
+    try:
+        return session.get(User, int(params["user_id"]))
+    except (KeyError, ValueError):
+        return None
+
+
 # What a missing object is called when it is not there (or is another organization's), the
 # same words the handlers use, so the answer does not depend on whose it is.
 _MISSING = {ENG: ("Engagement", "eng_id"), LANE: ("Lane", "lane_id"), JOB: ("Job", "job_id")}
@@ -212,9 +221,17 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
     if perm in ("signed_in", "handler"):
         return
     if perm == "owner":
-        if not who.is_owner:
-            raise HTTPException(403, "only an owner can do this")
-        return
+        if who.is_owner:
+            return                      # the handler answers 404 for what is not theirs
+        # Whether an id exists says nothing to someone who could not see it: 404 then, and
+        # 403 only for what they can see (an engagement they have a role on, a person of theirs).
+        if kind == ENG:
+            engs = _engagements(session, kind, request.path_params)
+            if not engs or not any(who.can_read(e) for e in engs):
+                raise HTTPException(404, "not found")
+        elif kind == USER and _person(session, request.path_params) is None:
+            raise HTTPException(404, "not found")
+        raise HTTPException(403, "only an owner can do this")
     engs = _engagements(session, kind, request.path_params)
     if engs is None:                    # never made, or another organization's: the same answer
         raise _not_found(kind, request.path_params) if who.is_owner else HTTPException(404, "not found")

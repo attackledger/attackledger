@@ -457,7 +457,10 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
         <div className="index-foot">
           {me && me.mode !== "open" && (
             <div className="whoami">
-              <span>Signed in as <strong>{me.name}</strong></span>
+              <span>
+                Signed in as <strong>{me.name}</strong>
+                {me.organization && <> of <strong>{me.organization.name}</strong></>}
+              </span>
               <button className="link-button" onClick={async () => {
                 try { await api.logout(); } catch (e) { return setNotice((e as Error).message); }
                 onSignedOut(me.mode === "people" ? "people" : "token");

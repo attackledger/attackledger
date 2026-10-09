@@ -421,8 +421,8 @@ ROLES = ("viewer", "tester", "reviewer")
 
 
 class User(OrgOwned, Base):
-    """A person who signs in. Owners manage people and engagements and can do everything;
-    everyone else gets roles per engagement (Membership)."""
+    """A person who signs in, in one organization. Owners manage its people and engagements and
+    can do everything there; everyone else gets roles per engagement (Membership)."""
     __tablename__ = "users"
     # An email is unique within an organization; sign-in finds the account whose password matches.
     __table_args__ = (UniqueConstraint("organization_id", "email"),)
@@ -476,8 +476,9 @@ class SigningKey(Base):
 
 
 class KeyLogEntry(OrgOwned, Base):
-    """Append-only, hash-chained record of every key registration and revocation (keylog.py).
-    Nothing updates or deletes a row. Reports carry the entries of the keys that signed them."""
+    """Append-only, hash-chained record of every key registration and revocation (keylog.py),
+    one chain per organization. Nothing updates or deletes a row. Reports carry the entries of
+    the keys that signed them."""
     __tablename__ = "key_log"
     __table_args__ = (UniqueConstraint("organization_id", "seq"),)   # one chain per organization
     __org_index__ = False
@@ -497,8 +498,9 @@ class KeyLogEntry(OrgOwned, Base):
 
 class AuditEntry(OrgOwned, Base):
     """Append-only, hash-chained record of administrative changes (auditlog.py): scope and
-    rules, authorization, engagement settings, roles, and people. Nothing updates or deletes
-    a row. Reports carry the entries of their engagement and of its people."""
+    rules, authorization, engagement settings, roles, and people, one chain per organization.
+    Nothing updates or deletes a row. Reports carry the entries of their engagement and of its
+    people."""
     __tablename__ = "audit_log"
     __table_args__ = (UniqueConstraint("organization_id", "seq"),)   # one chain per organization
     __org_index__ = False

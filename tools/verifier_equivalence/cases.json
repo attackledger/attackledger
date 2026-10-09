@@ -76,6 +76,10 @@
     {"name": "v2: a record field missing", "file": "tools/verifier_equivalence/fixtures/v2-field-missing.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
     {"name": "v2: unknown record version (3)", "file": "tools/verifier_equivalence/fixtures/v2-unknown-version.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
     {"name": "v2: explicit \"v\": 1", "file": "tools/verifier_equivalence/fixtures/v2-explicit-v1.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
-    {"name": "v2: entry passed off as v1", "file": "tools/verifier_equivalence/fixtures/v2-passed-off-as-v1.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}}
+    {"name": "v2: entry passed off as v1", "file": "tools/verifier_equivalence/fixtures/v2-passed-off-as-v1.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "organizations: report issued at migration 0021", "file": "tools/verifier_equivalence/fixtures/org-before-0022.json", "v2": true, "expect": {"status": "verified", "T": "SKIP"}},
+    {"name": "organizations: the same engagement after 0022", "file": "tools/verifier_equivalence/fixtures/org-after-0022.json", "v2": true, "expect": {"status": "verified", "T": "SKIP"}},
+    {"name": "organizations: a second organization's own chains", "file": "tools/verifier_equivalence/fixtures/org-second.json", "v2": true, "expect": {"status": "verified", "T": "SKIP"}},
+    {"name": "organizations: another organization's audit log head", "file": "tools/verifier_equivalence/fixtures/org-second-foreign-head.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}}
   ]
 }

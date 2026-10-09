@@ -55,10 +55,18 @@ def upgrade() -> None:
     )
     conn.execute(orgs.insert().values(name=DEFAULT, created_at=datetime.now(timezone.utc).replace(tzinfo=None)))
     default = conn.scalar(sa.select(orgs.c.id).where(orgs.c.name == DEFAULT))
+    sqlite = conn.dialect.name == 'sqlite'
     for table in DIRECT:
+        if sqlite and table not in PER_ORG:
+            # SQLite adds a NOT NULL column with a foreign key in place only with a default, so the
+            # default organization's id stays the column default there (the application always sets
+            # it). The alternative, rebuilding thirteen tables, made every test start much slower.
+            op.execute(f'ALTER TABLE {table} ADD COLUMN organization_id INTEGER NOT NULL DEFAULT {int(default)} '
+                       'REFERENCES organizations (id)')
+            op.create_index(f'ix_{table}_organization_id', table, ['organization_id'])
+            continue
         op.add_column(table, sa.Column('organization_id', sa.Integer(), nullable=True))
         conn.execute(sa.text(f'UPDATE {table} SET organization_id = :org'), {'org': default})
-    for table in DIRECT:
         with op.batch_alter_table(table, naming_convention=NAMES) as b:
             b.alter_column('organization_id', existing_type=sa.Integer(), nullable=False)
             b.create_foreign_key(f'{table}_organization_id_fkey', 'organizations', ['organization_id'], ['id'])
