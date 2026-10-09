@@ -103,7 +103,9 @@ What a job may **write** (`POST results`, `agent/*`) is set by its kind, in one 
 | subdomains, resolve | observations: `sources`, `a`, `aaaa`, `cname` |
 | ports | observations: `open_ports` |
 | probe | observations: the probe fields (`url`, `port`, `scheme`, `status_code`, `title`, `tech`, `webserver`, `cdn`, `location`, `live`) |
-| crawl, archive, content | endpoints |
+| wellknown | endpoints; leads of kind `robots`, `security-txt`, `listing` |
+| crawl, archive | endpoints |
+| content | endpoints; leads of kind `listing` |
 | jsanalyze | endpoints; leads of kind `graphql`, `secret`, `sourcemap` |
 | nuclei | leads of kind `nuclei` |
 | params | leads of kind `parameter` |

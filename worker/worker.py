@@ -759,45 +759,6 @@ def ferox_cmd(eng) -> list[str]:
     return cmd
 
 
-def baseline_status(get_status, url: str) -> tuple[str, str]:
-    """Two random non-existent paths: if both answer the same non-404 code, the host
-    answers everything that way and content discovery would only produce noise."""
-    a = get_status(url.rstrip("/") + f"/zzq-al-{os.urandom(4).hex()}")
-    b = get_status(url.rstrip("/") + f"/xnf-al-{os.urandom(4).hex()}/{os.urandom(2).hex()}")
-    return a, b
-
-
-def run_content(r: Run, urls_: list[str]) -> int:
-    get = fetcher(r.eng, r.gw, "content")
-
-    def status(u: str) -> str:
-        body, why = get(u)
-        return "200" if body is not None else (why.split()[1] if why.startswith("HTTP ") else "000")
-
-    keep = []
-    for u in urls_:
-        if not r.in_scope(urls.host_of(u)):
-            continue
-        a, b = baseline_status(status, u)
-        if a == b and a not in ("404", "000"):
-            r.log(f"skipped {u}: every path answers {a}")
-            continue
-        keep.append(u)
-    if not keep:
-        return 0
-    seen: dict[str, set] = defaultdict(set)
-    for u in keep:
-        time.sleep(1.5)   # let the previous budget drain before the next scan starts
-        for line in r.tool_lines("feroxbuster", ferox_cmd(r.eng), [u]):
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("type") == "response" and rec.get("url"):
-                seen[rec["url"]].add("ferox")
-    return store_endpoints(r, seen)
-
-
 ARJUN_PATH = os.environ.get("WORKER_ARJUN_PATH", "/opt/arjun")
 
 
@@ -875,7 +836,7 @@ def run_dorks(r: Run, roots: list[str]) -> int:
 
 RUNNERS = {"subdomains": run_subdomains, "resolve": run_resolve, "ports": run_ports,
            "probe": run_probe, "crawl": run_crawl, "archive": run_archive, "jsanalyze": run_jsanalyze,
-           "nuclei": run_nuclei, "content": run_content, "params": run_params,
+           "nuclei": run_nuclei, "params": run_params,
            "paramclass": run_paramclass, "dorks": run_dorks}
 RUNNERS.update(__import__("app.reconsteps").reconsteps.runners(globals()))  # wellknown, content (app/reconsteps.py)
 def check_registry() -> None:
