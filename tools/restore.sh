@@ -8,7 +8,8 @@
 #   1. checks MANIFEST.sha256: every part is present and has the recorded SHA-256. A backup
 #      that fails this is not touched any further;
 #   2. checks that this version of AttackLedger knows the backup's migration (a backup from
-#      a newer version needs that version's code);
+#      a newer version needs that version's code), and that the install has the master key
+#      the backup's engagement keys are wrapped with (info.txt names its id);
 #   3. refuses to restore over a database that holds any rows, or a blob store that holds
 #      any files, unless --force is given. A fresh install that only ran its migrations is
 #      empty and needs no --force;
@@ -17,7 +18,7 @@
 #      forward to this version, as on any upgrade.
 #
 # The encryption master key is not in the backup; put the original one in place before
-# restoring (docs/INSTALL.md, "Backup and restore"). The script works on the install folder
+# restoring (docs/INSTALL.md, sections 7 and 14). The script works on the install folder
 # it lives in (or ATTACKLEDGER_DIR). Compatible with bash 3.2 and later. Stops at the first error.
 set -euo pipefail
 
@@ -74,13 +75,19 @@ try:
 except Exception:
     sys.exit('restore: this version does not know migration ' + sys.argv[1] + '; check out the version that made the backup (or a newer one)')
 " "$MIGRATION"
+WANT_KEY=$(sed -n 's/^master_key_id: //p' "$SRC/info.txt")
+if [ -n "$WANT_KEY" ]; then
+  HAVE_KEY=$(dc run --rm --no-deps -T api python -c "from app import vault; print(vault.master_key().id)" | tr -d '\r') \
+    || die "this install has no usable master key (docs/INSTALL.md, section 7)"
+  [ "$HAVE_KEY" = "$WANT_KEY" ] || die "the backup's engagement keys are wrapped by master key $WANT_KEY, but this install has $HAVE_KEY. Put the original master key in place (docs/INSTALL.md, section 7) and run again"
+fi
 
 # ---- 3. is the target empty? -------------------------------------------------------------
 dc up -d --wait db
 ROWS=$(dc exec -T db psql -U attackledger -d attackledger -tA -c "
   select coalesce(sum((xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text::bigint), 0)
   from pg_tables where schemaname = 'public' and tablename <> 'alembic_version'" | tr -d '\r')
-BLOBS=$(dc run --rm --no-deps -T --entrypoint sh api -c "find /data/blobs -type f | wc -l" | tr -d ' \r')
+BLOBS=$(dc run --rm --no-deps -T --user 0 --entrypoint sh api -c "find /data/blobs -type f | wc -l" | tr -d ' \r')
 if [ "$ROWS" != "0" ] || [ "$BLOBS" != "0" ]; then
   if [ "$FORCE" != "1" ]; then
     die "this install is not empty ($ROWS database rows, $BLOBS blob files). Restoring replaces all of it. Back it up first, then run again with --force"
@@ -98,8 +105,9 @@ dc exec -T -e PGOPTIONS=--client-min-messages=warning db psql -U attackledger -d
 dc exec -T db pg_restore -U attackledger -d attackledger --no-owner --exit-on-error < "$SRC/postgres.dump"
 
 echo "restore: restoring the blob store"
-dc run --rm --no-deps -T --entrypoint sh api -c \
-  "find /data/blobs -mindepth 1 -delete && tar -C /data/blobs -xzf - && find /data/blobs -type f | wc -l" \
+# As root, then handed to uid 10001, which the API and the worker both run as.
+dc run --rm --no-deps -T --user 0 --entrypoint sh api -c \
+  "find /data/blobs -mindepth 1 -delete && tar -C /data/blobs -xzf - && chown -R 10001 /data/blobs && find /data/blobs -type f | wc -l" \
   < "$SRC/blobs.tar.gz" | tr -d ' \r' | sed 's/^/restore: blob files restored: /'
 
 echo "restore: starting the stack"

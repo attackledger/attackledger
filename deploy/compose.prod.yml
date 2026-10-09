@@ -9,9 +9,21 @@
 #   - the API is closed until the first owner is created on the server
 #     (ATTACKLEDGER_REQUIRE_SIGN_IN=1) and session cookies are sent only over HTTPS;
 #   - restart policies, healthchecks, memory and CPU limits, and rotated logs for every service;
-#   - the practice target (lab) does not start.
+#   - the practice target (lab) does not start;
+#   - the encryption master key comes from a root-only file on the host, mounted read-only
+#     into the API and the worker (never from .env, and never the public development key).
 #
 # Needs Docker Compose 2.24 or later (for !reset and !override).
+
+# The master key file (docs/INSTALL.md, section 7). Compose refuses to start if it is missing,
+# instead of creating an empty folder in its place.
+x-master-key: &master-key
+  type: bind
+  source: ${ATTACKLEDGER_MASTER_KEY_PATH:-/etc/attackledger/master.key}
+  target: /run/secrets/attackledger-master-key
+  read_only: true
+  bind:
+    create_host_path: false
 
 x-logging: &logging
   driver: json-file
@@ -49,6 +61,11 @@ services:
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/attackledger
       ATTACKLEDGER_REQUIRE_SIGN_IN: "1"
       ATTACKLEDGER_COOKIE_SECURE: "1"
+      ATTACKLEDGER_MASTER_KEY_FILE: /run/secrets/attackledger-master-key
+      ATTACKLEDGER_MASTER_KEY: ""
+      ATTACKLEDGER_DEV_KEY: ""
+    volumes:
+      - *master-key
     ports: !reset []
     restart: unless-stopped
     logging: *logging
@@ -68,6 +85,11 @@ services:
   worker:
     environment:
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/attackledger
+      ATTACKLEDGER_MASTER_KEY_FILE: /run/secrets/attackledger-master-key
+      ATTACKLEDGER_MASTER_KEY: ""
+      ATTACKLEDGER_DEV_KEY: ""
+    volumes:
+      - *master-key
     restart: unless-stopped
     logging: *logging
     # The worker has no port to ask; this checks that it can still reach the database.

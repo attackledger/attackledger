@@ -261,42 +261,115 @@ header and user agent, and redirect policy, and logs every request.
 
 ## 7. Encryption at rest
 
-> **TODO(encryption):** this section is completed when the encryption branch (D-043) is
-> merged. Names, formats and commands below are placeholders.
+Raw evidence (HTTP exchanges, notes, attached files) and evidence summaries are encrypted
+with AES-256-GCM, with a key per engagement (D-043, `docs/ENCRYPTION.md`). Each engagement
+key is stored wrapped (encrypted) by one **master key** for the deployment, in the blob
+store at `<blobs>/e/<engagement id>/key.json`, next to the blobs it protects. When an
+engagement's content is deleted, its key and blobs are destroyed: the content becomes
+unreadable for good, while the evidence chain, receipts and reports still verify (the
+verifier says the content is unavailable and why).
 
-Raw evidence and captured traffic are encrypted with a key per engagement. Each
-engagement key is wrapped (encrypted) by one **master key** for the deployment. When an
-engagement's retention period ends (default one year after it closes), its key is
-destroyed: the content becomes unreadable for good, while the evidence chain, receipts and
-reports still verify (the verifier says the content was removed under the retention
-policy).
+The API and the worker refuse to start without a master key. The production file reads it
+from a file on the host, `/etc/attackledger/master.key`, mounted read-only into both
+containers as `ATTACKLEDGER_MASTER_KEY_FILE`. If that file cannot be read, startup fails;
+there is no fallback to another key.
 
-1. **Create the master key** before the first start, and keep it out of `.env`:
+1. **Create the master key** (256 random bits, base64), readable only by the user the
+   containers run as (uid 10001):
 
    ```sh
-   # TODO(encryption): the exact key format and command.
    install -m 700 -d /etc/attackledger
-   openssl rand -out /etc/attackledger/master.key 32
+   (umask 077; openssl rand -base64 32 > /etc/attackledger/master.key)
+   chown 10001 /etc/attackledger/master.key
    chmod 400 /etc/attackledger/master.key
    ```
 
-2. **Give it to the containers.** The API (and TODO(encryption): the worker?) read it from
-   `ATTACKLEDGER_MASTER_KEY_FILE` (a file mounted read-only into the container; preferred) or
-   `ATTACKLEDGER_MASTER_KEY` (the value itself, in `.env`; simpler, but then anyone who can
-   read `.env` or `docker inspect` the container has it). TODO(encryption): the mount and
-   setting in `deploy/compose.prod.yml`.
+   This is the same format as `python -m app.vault generate` prints (a file with 64 hex
+   digits works too). To keep the key somewhere else, set `ATTACKLEDGER_MASTER_KEY_PATH`
+   in `.env` to that path.
 
-3. **Keep a copy of the master key somewhere else**, such as your organisation's password
-   vault or an offline safe. Without it, no evidence content can ever be read again, from
-   the server or from any backup. Do not store it next to the backups (section 14 says why).
+2. **Keep a copy of the master key somewhere else**, such as your organisation's password
+   vault or an offline safe, and not next to the backups (section 14 says why). Without
+   it, no evidence content can be read again, from the server or from any backup.
 
-4. **Retention.** TODO(encryption): where the default period is set, how an owner changes
-   it per engagement, and how a key deletion shows in the audit log.
+3. After step 8, **check** that the API uses it: `/api/health` answers
+   `"encryption":{"master_key":"configured"}`. `development` would mean the public
+   development key (`ATTACKLEDGER_DEV_KEY=1`, for trials with fictional data only; the
+   production file turns it off), `missing` that there is no key.
 
-Backups and retention: a backup holds the wrapped engagement keys that existed when it was
-made. Content deleted under the retention policy can therefore still be recovered from
-backups made before the deletion, with the master key, until those backups expire. Keep
-backups only as long as your retention policy allows (section 14).
+4. **See what is encrypted**, per engagement:
+
+   ```sh
+   docker compose exec api python -m app.vault status
+   ```
+
+**Retention.** An owner decides, per engagement, on the engagement's **Team** tab, under
+**Data and retention**:
+- **Keep the content until (UTC)** a date. The worker deletes the content the day after it.
+  No date means the content is kept until someone deletes it.
+- **Delete this engagement's data** now, confirmed by typing the engagement's name.
+
+Either way the deletion is an entry in the audit log, and afterwards the engagement takes
+no new evidence, jobs or receipts. Its lanes, receipts, hashes and history stay. On the
+server, `docker compose exec api python -m app.vault delete-content --engagement <id>`
+does the same, recorded as "the operator on the server".
+
+**Rotating the master key.** Do it when someone who had the key leaves, if you think it
+leaked, and after deleting content that must not survive in old backups (see below).
+
+1. Make the new key next to the old one, and stop the API and the worker:
+
+   ```sh
+   cd /opt/attackledger
+   (umask 077; openssl rand -base64 32 > /etc/attackledger/master.key.new)
+   docker compose stop api worker
+   ```
+
+2. Swap them, so the new key is the configured one and the old one is kept for the
+   re-wrap:
+
+   ```sh
+   mv /etc/attackledger/master.key /etc/attackledger/master.key.old
+   mv /etc/attackledger/master.key.new /etc/attackledger/master.key
+   chown 10001 /etc/attackledger/master.key /etc/attackledger/master.key.old
+   chmod 400 /etc/attackledger/master.key /etc/attackledger/master.key.old
+   ```
+
+3. Re-wrap every engagement key under the new master key (the evidence itself is not
+   re-encrypted; only the engagement keys depend on the master key). It can be run again
+   safely:
+
+   ```sh
+   docker compose run --rm --no-deps -v /etc/attackledger/master.key.old:/run/secrets/old-master-key:ro api python -m app.vault rotate-master --old-key-file /run/secrets/old-master-key
+   ```
+
+4. Start again, take a backup under the new key, and store the new key's copy (step 2
+   above):
+
+   ```sh
+   docker compose up -d --wait
+   tools/backup.sh /var/backups/attackledger
+   ```
+
+5. Destroy the old key (`shred -u /etc/attackledger/master.key.old`, and its stored copy)
+   once you no longer need the backups made with it: those backups open only with it.
+
+**Backups and deletion.** A backup holds the wrapped engagement keys that existed when it
+was made. Content deleted since can therefore still be recovered from an older backup
+together with the master key of that time. To make a deletion final in the backups too,
+either keep backups no longer than your retention policy allows, or rotate the master key
+after the deletion and destroy the old one.
+
+**Upgrading an install from before encryption (0.6 or earlier).** The API now runs as uid
+10001, like the worker. Before the first start of the new version, give the blob store to
+that user once, then encrypt the evidence stored before (new evidence is always
+encrypted; old evidence stays as it was until you do this):
+
+```sh
+docker compose run --rm --user 0 --no-deps api chown -R 10001 /data/blobs
+docker compose up -d --wait
+docker compose exec api python -m app.vault encrypt-existing
+```
 
 ## 8. Build and start
 
@@ -327,7 +400,8 @@ backups only as long as your retention policy allows (section 14).
    ```
 
    The answer has `"mode":"setup"`: the API is up and refuses everyone until there is an
-   owner. Opening the address in a browser says the same.
+   owner. Opening the address in a browser says the same. It also has
+   `"encryption":{"master_key":"configured"}` (section 7).
 
 ## 9. Create the first owner
 
@@ -458,28 +532,33 @@ docker compose up -d --wait
 | Postgres password | `.env` (`POSTGRES_PASSWORD`) | the API and worker to reach the database | no; a new install makes a new one |
 | Operator token (optional) | `.env` (`ATTACKLEDGER_API_TOKEN`) | scripts using the API | no |
 | Anthropic API key (optional) | `.env` (`ANTHROPIC_API_KEY`), passed to the worker only | agent runs | no |
-| Encryption master key | see [section 7](#7-encryption-at-rest), outside `.env` | reading any evidence content | **no, kept separately** |
+| Encryption master key | `/etc/attackledger/master.key` (section 7), mounted read-only into the API and worker; never in `.env` | reading any evidence content | **no, kept separately** (its id, a hash, is in `info.txt`) |
+| Engagement data keys | the blob store, `e/<id>/key.json`, wrapped by the master key | reading one engagement's content | yes (wrapped) |
 | People's passwords | the database, as scrypt hashes | signing in | yes (hashes only) |
 | Session cookies | the database, as SHA-256 hashes | staying signed in (12 hours) | yes (hashes only) |
 | Reviewers' private signing keys | each reviewer's browser only | signing receipts | no, and they never reach the server |
 | TLS private key | `deploy/certs/key.pem` (option B) or the `caddy_data` volume (options A and C) | HTTPS | no; re-issue or copy it yourself |
 
-`.env` and `deploy/certs/` are readable by root only. Docker shows environment variables
+`.env`, `/etc/attackledger/` and `deploy/certs/` are readable by root only (the key file
+also by uid 10001, the containers' user). Docker shows environment variables
 to anyone who can run `docker inspect`, so membership of the `docker` group is the same as
 root on this server: give it to administrators only.
 
 ## 14. Backup and restore
 
 A backup has two parts that must be taken together: the **Postgres database** (people,
-engagements, the evidence chain, receipts, the key and audit logs) and the **evidence blob
-store** (the raw bytes each evidence entry's hash refers to). The **master key** (section
-7) is kept separately.
+engagements, the evidence chain, receipts, encrypted summaries, the key and audit logs) and
+the **evidence blob store** (the encrypted raw evidence, and each engagement's wrapped data
+key). The **master key** (section 7) is kept separately.
 
-Why separately: the backup is encrypted content plus the wrapped keys; the master key is
-what unwraps them. Stored together, anyone who gets the backup can read every engagement.
-Stored apart, a stolen backup alone reveals no evidence content. Lose the master key, and
-the backups' evidence content is lost too, even though the chain and receipts still
-verify. `.env` is not needed for a restore; a new install generates its own.
+Why separately: the backup holds encrypted content plus the engagement keys, wrapped; the
+master key is what unwraps them. Stored together, anyone who gets the backup can read every
+engagement. Stored apart, a stolen backup alone reveals no evidence content. Lose the master
+key, and the backups' evidence content is lost too, even though the chain and receipts
+still verify. `.env` is not needed for a restore; a new install generates its own.
+
+Why the two parts together: the database's encrypted summaries open only with the data keys
+in the blob store, and the API refuses to start when an engagement's key file is missing.
 
 ### Make a backup
 
@@ -531,7 +610,9 @@ everything again.
 
 1. Install as in sections 2 to 8, with the same release as the backup or a newer one.
    Do not create an owner: the people come back with the backup.
-2. Put the original master key in place (section 7).
+2. Put the original master key in place (section 7, step 1, with the saved key instead of
+   a new one). The restore checks it against the key id the backup names, before it
+   changes anything.
 3. Copy the backup folder to the server, for example to `/var/backups/attackledger/`, and
    restore it:
 
@@ -582,7 +663,9 @@ jobs. Migrations can change the data, so always back up first.
 
    Lines starting with `<` are settings your `.env` does not have yet.
 
-4. Build and restart. The API migrates the database while it starts:
+4. Build and restart. The API migrates the database while it starts. Coming from 0.6 or
+   earlier, first create the master key and run the one-time steps in section 7
+   ("Upgrading an install from before encryption"):
 
    ```sh
    docker compose build
@@ -688,8 +771,13 @@ keep a final backup first if your contract or policy requires one.
    rm -rf /var/backups/attackledger /var/log/attackledger-backup.log
    ```
 
-4. Destroy the master key and every copy of it (section 7). Once the key is gone, any
-   copy of the data you missed is unreadable.
+4. Destroy the master key and every copy of it. Once the key is gone, the evidence content
+   in any copy of the data you missed is unreadable:
+
+   ```sh
+   shred -u /etc/attackledger/master.key*
+   rmdir /etc/attackledger
+   ```
 
 Deleting files does not reliably erase them from SSDs. If the data must be unrecoverable
 from the disk itself, follow your organisation's disk sanitisation procedure (or destroy
@@ -742,6 +830,26 @@ did not do it, revoke it under **Your account** and tell an owner.
 Any status code means it is reachable; an error means outbound port 80 to the TSA is
 blocked. Allow it (or set your own TSA, section 12), then use **Timestamp now** on each
 receipt.
+
+**The API or the worker stops at once with "no master key", "cannot be read" or "not a
+256-bit key".** The key file is missing, not readable by uid 10001, or not a key. Check
+section 7, step 1: `ls -l /etc/attackledger/master.key` should show owner `10001` and
+`-r--------`. A missing file makes `docker compose up` itself fail with a "bind source
+path does not exist" error.
+
+**The API stops at once with "the configured master key ... did not wrap the keys of
+engagement ..." or "the blob store ... has no key for engagement ...".** The master key is
+not the one the data was encrypted with (put the right one in place), or the blob store
+volume does not belong to this database (only one of the two parts was restored). The
+message names the engagement.
+
+**The API or the worker stops with "this process (uid 10001) cannot write to ... in the blob
+store".** The volume comes from a version before encryption, when the API wrote as root.
+Run the one-time `chown` in section 7 ("Upgrading an install from before encryption").
+
+**`restore.sh` says the backup's keys "are wrapped by master key ...".** Put the master key
+that was in use when the backup was made in place, restore, and then rotate if you need to
+(section 7).
 
 **The API stays `unhealthy` or restarts after an upgrade.** Read
 `docker compose logs api | tail -n 100`. A migration error names the migration. Roll back
