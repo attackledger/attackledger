@@ -663,12 +663,23 @@ def put_scope(eng_id: int, body: ScopeIn, session: Session = Depends(get_session
     if unknown:
         raise HTTPException(422, f"not an opt-in module: {', '.join(sorted(unknown))}")
     eng.enabled_modules, eng.crawl_depth = sorted(enabled), body.crawl_depth
-    # Re-evaluate existing assets: rules can move hosts out of scope, never into it silently.
+    added = _apply_scope_to_assets(eng, inc, exc)
+    session.commit()
+    return {**_scope_view(eng), "hosts_added": added}
+
+
+def _apply_scope_to_assets(eng: Engagement, inc: list[str], exc: list[str]) -> list[str]:
+    """Rules can move existing hosts out of scope, never into it silently. Each exact
+    include rule that no exclusion matches becomes a host, if it is not one already;
+    wildcards stay rules, and recon finds their hosts. Returns the hosts added."""
     for a in eng.assets:
         if not scope.in_scope(a.host, inc, exc):
             a.in_scope = False
-    session.commit()
-    return _scope_view(eng)
+    known = {a.host for a in eng.assets}
+    added = [p for p in inc if not p.startswith("*.") and p not in known and scope.in_scope(p, inc, exc)]
+    for host in added:
+        eng.assets.append(Asset(host=host, in_scope=True))
+    return added
 
 
 @app.post("/engagements/{eng_id}/attest")
@@ -1230,9 +1241,7 @@ def import_scope(eng_id: int, body: ScopeImportIn, session: Session = Depends(ge
     result = {**parsed, "result": {"include": inc, "exclude": exc}, "applied": False}
     if body.apply:
         eng.scope_include, eng.scope_exclude = inc, exc
-        for a in eng.assets:            # rules can move hosts out of scope, never into it silently
-            if not scope.in_scope(a.host, inc, exc):
-                a.in_scope = False
+        result["hosts_added"] = _apply_scope_to_assets(eng, inc, exc)
         session.commit()
         result["applied"] = True
     return result

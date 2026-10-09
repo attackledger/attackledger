@@ -178,6 +178,10 @@ A job is refused unless the engagement has:
 The worker re-checks scope on every target and on every host a tool reports.
 Redirects are not followed.
 
+Saving the scope adds each exact entry (`shop.lab.test`) as a host, unless an
+exclusion matches it. Wildcards stay rules: recon finds their hosts. Saving never
+removes a host or brings one back into scope; you can also add hosts on the Ledger tab.
+
 ## Hunt agents (v0.6, preview)
 
 A lane can be worked by a Claude agent. Put `ANTHROPIC_API_KEY=...` in `.env` (it is

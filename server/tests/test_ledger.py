@@ -169,7 +169,40 @@ def test_scope_rules_decide_asset_scope(client):
     a = client.post(f"/engagements/{eng}/assets", json={"host": "evil.test"}).json()
     b = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
     cov = {r["host"]: r["in_scope"] for r in client.get(f"/engagements/{eng}/coverage").json()["assets"]}
-    assert cov == {"evil.test": False, "app.example.com": True}
+    assert cov == {"evil.test": False, "app.example.com": True, "example.com": True}   # example.com: exact rule
+
+
+def test_exact_scope_entries_become_hosts(client):
+    e = client.post("/engagements", json={"name": "exact"}).json()["id"]
+    client.post(f"/engagements/{e}/assets", json={"host": "old.lab.test", "in_scope": False})
+    rules = {"include": ["Shop.Lab.Test", "*.lab.test", "lab.test", "admin.lab.test", "old.lab.test",
+                         "x.legacy.lab.test"],
+             "exclude": ["admin.lab.test", "*.legacy.lab.test"]}
+    r = client.put(f"/engagements/{e}/scope", json=rules)
+    assert r.status_code == 200 and r.json()["hosts_added"] == ["lab.test", "shop.lab.test"]
+    cov = {a["host"]: a["in_scope"] for a in client.get(f"/engagements/{e}/coverage").json()["assets"]}
+    # Exclusions win, wildcards stay rules, and an existing host is left as the operator set it.
+    assert cov == {"lab.test": True, "shop.lab.test": True, "old.lab.test": False}
+    assert client.put(f"/engagements/{e}/scope", json=rules).json()["hosts_added"] == []
+    assert client.get(f"/engagements/{e}/recon/summary").json()["hosts"] == 2
+    attested(client, e)
+    assert client.post(f"/engagements/{e}/jobs", json={"kind": "resolve"}).json()["targets"] == \
+        ["lab.test", "shop.lab.test"]
+
+
+def test_wildcard_only_scope_adds_no_hosts(client):
+    e = client.post("/engagements", json={"name": "wild"}).json()["id"]
+    assert client.put(f"/engagements/{e}/scope", json={"include": ["*.lab.test"]}).json()["hosts_added"] == []
+    assert client.get(f"/engagements/{e}/coverage").json()["assets"] == []
+
+
+def test_scope_import_adds_exact_hosts(client):
+    e = client.post("/engagements", json={"name": "imp-hosts"}).json()["id"]
+    csv_ = ("identifier,asset_type,eligible_for_submission\n*.example.com,WILDCARD,true\n"
+            "api.example.com,URL,true\nold.example.com,URL,false\n")
+    assert client.post(f"/engagements/{e}/scope/import", json={"csv": csv_}).json().get("hosts_added") is None
+    done = client.post(f"/engagements/{e}/scope/import", json={"csv": csv_, "apply": True}).json()
+    assert done["hosts_added"] == ["api.example.com"]
 
 
 def attested(c, eng):
