@@ -363,3 +363,33 @@ network. They were not sent through the gateway, and the agent loop was not run.
   discovery), all through the gateway as GET with the identification.
 - Recon still finds nothing beyond depth 1 and `common.txt`. A larger or app-aware wordlist, or recursion that
   keeps to the rate ceiling, is the next step for /api-docs, /encryptionkeys, /metrics and /support/logs.
+
+## Worker without a database (2026-10-10)
+
+Machine-readable results: `tools/benchmark/results-2026-10-10-worker-api.json`. Same target, settings and
+pipeline as the run above (`results-2026-10-09-recon-after.json`); API, gateway and worker images built
+from branch `feat/worker-api` after it was rebased on the recon changes (`BENCH_KEEP_IMAGES=1 run.py up`).
+Recon only, no agent run. What changed (D-042, `docs/WORKER_API.md`): the worker has no database
+network or credentials and no master key; it is on a network with the gateway alone, claims jobs and
+writes every result through the API's `/worker/*` routes, which the gateway relays.
+
+| | Before (recon-after) | Worker without a database |
+|---|---|---|
+| Requests seen by juice-proxy | 13,352 | 13,344 (params: 3,222 instead of 3,230; Arjun's own variation) |
+| Non-read-only requests | 0 | 0 |
+| Peak, sliding 1 s / calendar second (limit 20) | 20 / 20 | 20 / 20 |
+| Missing identification | 0 | 0 |
+| Endpoints / leads | 198 / 28 | 198 / 28, the same rows |
+| Recon recall (automated) | 15 of 32 | 15 of 32, the same items |
+| Solved by recon traffic | errorHandling, exposedMetrics, securityPolicy | the same |
+| Wall time | 840 s | 826 s |
+
+The worker's channel for the whole run, from the API's access log: 24 claims, 10 finishes, 122 heartbeats,
+43 log calls, 10 progress calls and 13 result calls (one per target batch: results are batched). A TCP
+connection from the bench worker to `db:5432` or `api:8000` failed (the names do not resolve there);
+only `gateway:8081` answered.
+
+One earlier run of the same images, before the rebase and while another stack ran content discovery on
+the same machine, saw one window of 21 requests within 0.90 s at juice-proxy (calendar-second peak 20); the
+gateway's limiter is unchanged by this branch, and the run above peaked at 20. Delivery jitter between the gateway and juice-proxy under load is the likely cause; not investigated
+further.

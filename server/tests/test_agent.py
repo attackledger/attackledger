@@ -420,69 +420,90 @@ def test_blob_store_rejects_tampered_bytes(tmp_path):
     assert blobs.get("../../etc/passwd") is None
 
 
-# ---- worker: agent jobs ------------------------------------------------------
+# ---- worker: agent jobs, through the API (D-042) --------------------------------
 
-def load_worker():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("worker_for_agent", ROOT.parent / "worker" / "worker.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+from harness import load_worker, stack  # noqa: E402,F401
 
 
-def agent_job(session, lane, **limits):
-    lane.executor = "agent"
-    job = Job(engagement_id=lane.asset.engagement_id, kind="agent", lane_id=lane.id,
-              targets=[lane.asset.host], result={"limits": limits}, status=JobStatus.running)
-    session.add(job)
-    session.commit()
-    return job
+def agent_job(stack, **limits):
+    """An engagement with an agent lane on HOST and a queued agent run, claimed as the worker does."""
+    e = stack.engagement(name=f"agent-{len(stack.api.get('/engagements').json())}", include=("*.lab.test",),
+                         header="X-Bug-Bounty: lab-researcher")
+    lane = stack.lane(e, HOST, executor="agent")
+    stack.queue(e, "agent", [HOST], lane_id=lane, result={"limits": limits})
+    return stack.claim(), lane
 
 
-def test_worker_agent_job_records_result_and_is_partial_when_unfinished(session, monkeypatch):
+def test_worker_agent_job_records_result_and_is_partial_when_unfinished(stack):
     worker = load_worker()
-    lane, _ = make_lane(session)
-    job = agent_job(session, lane, max_turns=1, max_requests=5)
+    job, _ = agent_job(stack, max_turns=1, max_requests=5)
     client = FakeClient([reply(tool_use("t1", "record_lead", {"title": "x", "detail": "d", "severity": "",
                                                               "url": ""}))])
-    r = worker.run_agent(session, job, client=client)
-    assert r.stopped == "turn_limit"                      # main() turns this into partial, never done
-    assert job.result["status"] == "turn_limit" and job.result["limits"]["max_requests"] == 5
-    assert job.result["leads_added"] == 1 and "cost_usd_estimate" in job.result
-    assert "agent turn_limit" in job.log
+    out = worker.execute(job, client=client)
+    j = stack.job(job.id)
+    assert out["status"] == "partial"                    # never done when the agent did not finish
+    assert j.result["status"] == "turn_limit" and j.result["limits"]["max_requests"] == 5
+    assert j.result["leads_added"] == 1 and "cost_usd_estimate" in j.result
+    assert "agent turn_limit" in j.log
+    assert j.worker_token_sha256 is None and j.gateway_secret_sha256 is None   # the run's tokens ended
 
 
-def test_worker_agent_job_refusal_fails_the_job(session):
+def test_worker_agent_job_refusal_fails_the_job(stack):
     worker = load_worker()
-    lane, _ = make_lane(session)
-    job = agent_job(session, lane)
+    job, _ = agent_job(stack)
     refusal = SimpleNamespace(content=[], stop_reason="refusal", usage=None,
                               stop_details=SimpleNamespace(category="cyber"))
-    with pytest.raises(RuntimeError, match="declined"):
-        worker.run_agent(session, job, client=FakeClient([refusal]))
-    assert job.result["status"] == "refused"
+    assert worker.execute(job, client=FakeClient([refusal]))["status"] == "failed"
+    j = stack.job(job.id)
+    assert j.result["status"] == "refused" and "declined" in j.log
 
 
-def test_worker_agent_job_rechecks_gates(session):
+def test_agent_gates_are_checked_again_when_the_run_is_claimed(stack):
+    e = stack.engagement(name="gates", include=("*.lab.test",), authorized=False)
+    lane = stack.lane(e, HOST, executor="agent")
+    j = stack.queue(e, "agent", [HOST], lane_id=lane, result={"limits": {}})
+    assert stack.claim() is None
+    assert stack.job(j).status == JobStatus.failed and "authorization" in stack.job(j).log
+    e2 = stack.engagement(name="gates2", include=("*.lab.test",))
+    lane2 = stack.lane(e2, HOST, executor="manual")
+    j2 = stack.queue(e2, "agent", [HOST], lane_id=lane2, result={"limits": {}})
+    assert stack.claim() is None and "executor" in stack.job(j2).log
+
+
+def test_worker_agent_requests_and_evidence_go_through_the_api(stack):
     worker = load_worker()
-    lane, _ = make_lane(session)
-    job = agent_job(session, lane)
-    lane.asset.engagement.authorized_at = None
-    session.commit()
-    with pytest.raises(RuntimeError, match="authorization"):
-        worker.run_agent(session, job, client=FakeClient([]))
-    lane.asset.engagement.authorized_at = datetime.now(timezone.utc)
-    lane.executor = "manual"
-    session.commit()
-    with pytest.raises(RuntimeError, match="executor"):
-        worker.run_agent(session, job, client=FakeClient([]))
+    job, lane = agent_job(stack, max_requests=5)
+    transport = FakeTransport(body=b"User-agent: *\nDisallow: /secret-admin/")
+    client = FakeClient([
+        reply(tool_use("t1", "http_request", {"method": "GET", "url": f"https://{HOST}/robots.txt", "headers": []})),
+        reply(tool_use("t2", "add_evidence", {"item_idx": 1, "exchange_ids": ["x1"], "summary": "robots lists a path"}),
+              tool_use("t3", "mark_item", {"item_idx": 1, "state": "done", "reason": ""})),
+        reply(tool_use("t4", "finish", {"summary": "item 1 done"})),
+    ])
+    assert worker.execute(job, client=client, transport=transport)["status"] == "done"
+    assert transport.calls[0]["headers"]["X-Bug-Bounty"] == "lab-researcher"
+    shown = json.loads(client.requests[1]["messages"][2]["content"][0]["content"])
+    assert shown["exchange_id"] == "x1" and "secret-admin" in shown["body"]
+    with stack.Session() as s:
+        ev = s.scalars(select(Evidence)).one()
+        assert ev.source == "agent" and ev.record_version == 2 and ev.kind == "response"
+        assert blobs.get(ev.sha256, engagement_id=ev.engagement_id).endswith(b"Disallow: /secret-admin/")
+        assert s.get(Lane, lane).items[0].state == ItemState.done
+        assert s.scalars(select(Receipt)).first() is None          # nothing closes a lane
+    j = stack.job(job.id)
+    assert j.result["status"] == "finished" and j.result["evidence_added"] == 1 and j.result_count == 1
 
 
-def test_worker_needs_an_api_key_for_a_real_client(monkeypatch):
+def test_worker_has_no_anthropic_key_and_the_gateway_adds_it(monkeypatch):
     worker = load_worker()
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-        worker.anthropic_client()
+    from app import egress
+    import ssl
+    monkeypatch.setattr(egress.Egress, "ssl_context", lambda self, verify: ssl.create_default_context())
+    client = worker.anthropic_client(egress.Egress(1, "s3cret-value-0123456789"))
+    assert client.api_key == worker.GATEWAY_HOLDS_THE_KEY      # a placeholder the gateway replaces
+    with pytest.raises(egress.NoGateway):
+        worker.anthropic_client(None)
 
 
 # ---- API: agent runs and evidence blobs --------------------------------------
@@ -585,43 +606,46 @@ def test_haiku_requests_no_fallback_and_costs_are_per_model():
     assert cost == {"claude-opus-5-5": 6.0, "claude-sonnet-5-5": 3.0, "claude-haiku-5-5": 0.15}
 
 
-def test_worker_runs_the_configured_model_and_records_it(session, monkeypatch):
+def test_worker_runs_the_configured_model_and_records_it(stack, monkeypatch):
     worker = load_worker()
     monkeypatch.setenv("ATTACKLEDGER_AGENT_MODEL", "claude-sonnet-5-5")
-    lane, _ = make_lane(session)
-    job = agent_job(session, lane)
+    job, _ = agent_job(stack)
     client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
-    worker.run_agent(session, job, client=client)
-    assert client.requests[0]["model"] == "claude-sonnet-5-5" and job.result["model"] == "claude-sonnet-5-5"
+    worker.execute(job, client=client)
+    assert client.requests[0]["model"] == "claude-sonnet-5-5" and stack.job(job.id).result["model"] == "claude-sonnet-5-5"
     monkeypatch.setenv("ATTACKLEDGER_AGENT_MODEL", "gpt-x")
-    job2 = agent_job(session, lane)
-    with pytest.raises(RuntimeError, match="not supported"):
-        worker.run_agent(session, job2, client=FakeClient([]))
+    job2, _ = agent_job(stack)
+    assert worker.execute(job2, client=FakeClient([]))["status"] == "failed"
+    assert "not supported" in stack.job(job2.id).log
 
 
-# ---- worker: interrupted jobs ------------------------------------------------
+# ---- interrupted jobs (the API marks them, D-042) ------------------------------
 
 def test_jobs_left_running_are_marked_failed(session):
-    worker = load_worker()
+    from app import workerapi
     lane, _ = make_lane(session)
     eng_id = lane.asset.engagement_id
     now = datetime.now(timezone.utc)
     from datetime import timedelta
-    fresh = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running, started_at=now)
-    old = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running,
-              started_at=now - timedelta(seconds=worker.JOB_TIMEOUT + worker.STALE_GRACE + 60))
+    old = now - timedelta(seconds=workerapi.STALE_SECONDS + 5)
+    fresh = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running, started_at=old,
+                heartbeat_at=now, worker_token_sha256="a" * 64)
+    silent = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running, started_at=old,
+                 heartbeat_at=old, worker_token_sha256="b" * 64, gateway_secret_sha256="c" * 64)
+    upgraded = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running, started_at=old)
+    driven = Job(engagement_id=eng_id, kind="agent", targets=["a"], status=JobStatus.running, started_at=old,
+                 heartbeat_at=old, driver="someone")             # an outside driver gets the long window
     queued = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.queued)
-    done = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.done, started_at=now)
-    session.add_all([fresh, old, queued, done])
+    done = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.done, started_at=old)
+    session.add_all([fresh, silent, upgraded, driven, queued, done])
     session.commit()
-    # Between jobs: only a run past the time limit plus the grace period.
-    assert worker.recover_interrupted(session, all_running=False) == [old.id]
-    assert old.status == JobStatus.failed and "interrupted" in old.log and old.finished_at
-    assert fresh.status == JobStatus.running
-    # At startup: every running job belonged to a worker that is gone.
-    assert worker.recover_interrupted(session, all_running=True) == [fresh.id]
-    assert {j.status for j in (fresh, old)} == {JobStatus.failed}
+    assert workerapi.sweep(session) == [silent.id, upgraded.id]
+    assert silent.status == JobStatus.failed and "interrupted" in silent.log and silent.finished_at
+    assert silent.worker_token_sha256 is None and silent.gateway_secret_sha256 is None   # its tokens end
+    assert fresh.status == driven.status == JobStatus.running
     assert queued.status == JobStatus.queued and done.status == JobStatus.done
+    later = now + timedelta(seconds=workerapi.DRIVER_STALE_SECONDS)
+    assert workerapi.sweep(session, at=later) == [fresh.id, driven.id]
 
 
 # ---- keeping runs small --------------------------------------------------------

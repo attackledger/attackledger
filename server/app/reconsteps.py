@@ -13,7 +13,9 @@ on single-page apps (docs/BENCHMARK.md, gaps 3 and 4).
 
 The runners use the worker's own helpers (fetcher, add_lead, store_endpoints, ferox_cmd),
 so every request goes through the same gateway, identification, rate spacing and scope
-checks as the other steps; the worker registers them with one line (`runners`).
+checks as the other steps; the worker registers them with one line (`runners`). What they
+record goes to the API like every other step's (D-042): the API checks it against what the
+kind may write (workerapi.WRITES), the scope and redaction, and deduplicates leads.
 Requests are GET only and never follow redirects (the fetcher refuses them).
 """
 import hashlib
@@ -25,10 +27,7 @@ from collections import defaultdict
 from functools import partial
 from urllib.parse import urljoin, urlsplit
 
-from sqlalchemy import select
-
 from . import pagetext, urls
-from .models import Lead
 from .text import plural
 
 LISTING_CHECKS = 10            # directories checked for a listing, per host and step
@@ -53,10 +52,6 @@ def runners(worker_globals: dict) -> dict:
     """The runners this module provides, bound to the worker's helpers (its globals())."""
     w = _Live(worker_globals)
     return {"wellknown": partial(run_wellknown, w), "content": partial(run_content, w)}
-
-
-def _lead_fps(r) -> set[str]:
-    return set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
 
 
 def _text(body: bytes | None) -> str:
@@ -99,9 +94,8 @@ def check_listing(w, r, get, url: str, endpoints: dict) -> bool:
 
 def run_wellknown(w, r, urls_: list[str]) -> int:
     get = w.fetcher(r.eng, r.gw, "wellknown")
-    r.lead_fps = _lead_fps(r)
+    before = r.totals["leads_added"]
     endpoints: dict[str, set] = defaultdict(set)
-    found = 0
     skip = re.compile(w.CRAWL_OUT_OF_SCOPE, re.I)
     for base in urls_:
         host = urls.host_of(base)
@@ -126,9 +120,9 @@ def run_wellknown(w, r, urls_: list[str]) -> int:
                 if u and r.in_scope(urls.host_of(u)):
                     endpoints[u].add("robots")
             shown = ", ".join(rb["disallow"][:5]) + ("…" if len(rb["disallow"]) > 5 else "")
-            found += w.add_lead(r, host, root + "/robots.txt", "robots",
-                                f"robots.txt: {plural(len(rb['disallow']), 'disallowed path')}"
-                                + (f": {shown}" if shown else ""), detail=rb, key=root)
+            w.add_lead(r, host, root + "/robots.txt", "robots",
+                       f"robots.txt: {plural(len(rb['disallow']), 'disallowed path')}"
+                       + (f": {shown}" if shown else ""), detail=rb, key=root)
         for path in SECURITY_TXT:
             body, _ = get(root + path)
             st = pagetext.security_txt(_text(body)) if body else None
@@ -142,12 +136,13 @@ def run_wellknown(w, r, urls_: list[str]) -> int:
                     if u and r.in_scope(urls.host_of(u)) and not skip.search(u):
                         endpoints[u].add("security.txt")
             contact = (st.get("contact") or [""])[0]
-            found += w.add_lead(r, host, root + path, "security-txt",
-                                f"security.txt at {path}: contact {contact}"[:300], detail=st, key=root)
+            w.add_lead(r, host, root + path, "security-txt",
+                       f"security.txt at {path}: contact {contact}"[:300], detail=st, key=root)
             break
         for u in list(dict.fromkeys(candidates))[:LISTING_CHECKS]:
-            found += check_listing(w, r, get, u, endpoints)
+            check_listing(w, r, get, u, endpoints)
         r.check_stop()
+    found = w.leads_added(r, before)        # as the API counted them: it knows earlier runs' leads
     added = w.store_endpoints(r, endpoints) if endpoints else 0
     r.log(f"{plural(found, 'new lead')}, {plural(added, 'new endpoint')}")
     return found + added
@@ -213,7 +208,6 @@ def is_catch_all(rec: dict, plan: dict) -> bool:
 
 def run_content(w, r, urls_: list[str]) -> int:
     get = w.fetcher(r.eng, r.gw, "content")
-    r.lead_fps = _lead_fps(r)
     plans = []
     for u in urls_:
         if not r.in_scope(urls.host_of(u)):

@@ -30,6 +30,14 @@ How a tool reaches it:
 Credentials are HTTP Basic: user "job-<id>.<tool>", password the job's secret. The tool name
 is self-declared and only used for the log.
 
+The Claude API key (ANTHROPIC_API_KEY) is held here, not in the worker: the gateway adds it to
+an agent job's Claude API calls, after removing any key the client sent (D-042,
+docs/WORKER_API.md). Without one, those calls are refused.
+
+The worker's channel to the API (D-042): a second port (8081) relays /worker/* requests to the
+API and nothing else, so the worker's network holds the gateway only. The API checks every
+token; the relay passes only Authorization and Content-Type.
+
 Everything is HTTP/1.1, parsed and written by h11. One upstream connection per request, opened
 only after every check passed, to the address the gateway resolved and checked itself.
 
@@ -105,6 +113,12 @@ SERVICE_HOSTS = frozenset({"api.anthropic.com"})
 # The Claude API calls an agent run makes (agentloop: client.beta.messages.create).
 SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"))
 DENY_HOSTS = ("db", "api", "web", "worker", "gateway")
+# Removed from an agent's Claude API call; the gateway's own key goes in their place.
+SERVICE_KEY_HEADERS = frozenset({"x-api-key", "authorization"})
+# The worker's channel (D-042): what the control port relays to the API, and nothing else.
+CONTROL_PATH = re.compile(r"^/worker/[a-z0-9/_-]{0,200}$")
+CONTROL_METHODS = frozenset({"GET", "POST"})
+MAX_CONTROL_BODY = 16 * 1024 * 1024
 DNS_TYPES = {1: "A", 5: "CNAME", 28: "AAAA"}
 
 
@@ -330,6 +344,20 @@ class Api:
         except (OSError, ValueError) as e:
             return 0, {"detail": f"API unreachable: {str(e)[:120] or type(e).__name__}"}
 
+    def relay(self, method: str, path: str, headers: dict[str, str], body: bytes) -> tuple[int, str, bytes]:
+        """One worker call to the API: (status, content type, body)."""
+        req = urllib.request.Request(self.base + path, method=method, data=body if method == "POST" else None,
+                                     headers=headers)
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(req, timeout=120) as r:
+                return r.status, r.headers.get("content-type", "application/json"), r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers.get("content-type", "application/json"), e.read()
+        except (OSError, ValueError) as e:
+            detail = json.dumps({"detail": f"API unreachable: {str(e)[:120] or type(e).__name__}"}).encode()
+            return 502, "application/json", detail
+
     async def session(self, job_id: int, secret: str):
         return await asyncio.to_thread(self._call, "POST", "/gateway/session", {"job_id": job_id, "secret": secret})
 
@@ -395,8 +423,9 @@ def split_authority(authority: str, default_port: int | None = None) -> tuple[st
 class Policy:
     """What may be sent. One place, so the hooks for D-040 and D-041 have one home too."""
 
-    def __init__(self, passive_hosts=PASSIVE_HOSTS, service_hosts=SERVICE_HOSTS):
+    def __init__(self, passive_hosts=PASSIVE_HOSTS, service_hosts=SERVICE_HOSTS, service_key: str | None = None):
         self.passive_hosts, self.service_hosts = frozenset(passive_hosts), frozenset(service_hosts)
+        self.service_key = (service_key or "").strip() or None
 
     def classify(self, rules: Rules, host: str, port: int, scheme: str) -> str:
         """target, passive or service; Refused otherwise."""
@@ -423,6 +452,8 @@ class Policy:
         if kind == "service":
             if not any(method == m and (path == p or path.startswith(p + "?")) for m, p in SERVICE_ROUTES):
                 raise Refused(403, f"{method} {path.split('?')[0][:100]} is not a Claude API call an agent run makes")
+            if not self.service_key:
+                raise Refused(503, "no Claude API key is configured at the gateway (ANTHROPIC_API_KEY)")
             return
         if method not in READ_ONLY:
             if self.approved_write(rules, method, path, None) is None:
@@ -457,6 +488,9 @@ class Policy:
         drop |= {t.strip().lower() for t in conn.split(",") if t.strip()}
         ident = [(n.encode(), v.encode()) for n, v in rules.identification()] if kind == "target" else []
         drop |= {n.decode().lower() for n, _ in ident}
+        if kind == "service":       # the client's key, if any, never leaves; the gateway's goes instead
+            drop |= SERVICE_KEY_HEADERS
+            ident = [(b"x-api-key", self.service_key.encode())] if self.service_key else []
         out = [(b"Host", host_header.encode("idna" if not host_header.isascii() else "ascii"))]
         out += [(k, v) for k, v in headers if k.decode("latin-1") not in drop]
         out += ident
@@ -873,6 +907,45 @@ class Gateway:
                         started=started)
         return keep
 
+    # ---- the worker's channel (D-042) ------------------------------------------------------
+
+    async def handle_control(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        """One request on the control port: a /worker/* call relayed to the API, or refused."""
+        conn = h11.Connection(h11.SERVER, max_incomplete_event_size=MAX_HEAD)
+        try:
+            ev = await _next(conn, reader)
+            if not isinstance(ev, h11.Request):
+                return
+            method, path = ev.method.decode("latin-1"), ev.target.decode("latin-1")
+            try:
+                if method not in CONTROL_METHODS:
+                    raise Refused(405, "the control port relays GET and POST only")
+                if not CONTROL_PATH.match(path):
+                    raise Refused(404, "the control port relays the worker's /worker/ routes only")
+                body = await _read_body(conn, reader, MAX_CONTROL_BODY)
+                headers = {}
+                for name in (b"authorization", b"content-type"):
+                    v = _header(ev.headers, name)
+                    if v is not None:
+                        headers[name.decode()] = v
+                status, ctype, data = await asyncio.to_thread(self.api.relay, method, path, headers, body)
+            except Refused as e:
+                await self._refuse(conn, writer, ev.method, e)
+                return
+            writer.write(conn.send(h11.Response(status_code=status, headers=[
+                ("Content-Type", ctype), ("Content-Length", str(len(data))), ("Connection", "close")])))
+            if data:
+                writer.write(conn.send(h11.Data(data=data)))
+            writer.write(conn.send(h11.EndOfMessage()))
+            await writer.drain()
+        except (ConnectionError, asyncio.TimeoutError, asyncio.IncompleteReadError, h11.ProtocolError, OSError):
+            pass
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
     # ---- DNS ------------------------------------------------------------------------
 
     async def dns_scopes(self) -> list:
@@ -943,8 +1016,11 @@ class Gateway:
 
     # ---- run ------------------------------------------------------------------------
 
-    async def serve(self, host: str = "0.0.0.0", port: int = 8080, dns_port: int | None = 53) -> None:
+    async def serve(self, host: str = "0.0.0.0", port: int = 8080, dns_port: int | None = 53,
+                    control_port: int | None = 8081) -> None:
         server = await asyncio.start_server(self.handle_client, host, port, limit=MAX_HEAD)
+        control = (await asyncio.start_server(self.handle_control, host, control_port, limit=MAX_HEAD)
+                   if control_port else None)
         loop = asyncio.get_running_loop()
         if dns_port:
             gw = self
@@ -961,12 +1037,15 @@ class Gateway:
                     loop.create_task(answer())
             await loop.create_datagram_endpoint(_Dns, local_addr=(host, dns_port))
         flusher = loop.create_task(self.flush_forever())
-        print(f"gateway ready: proxy {host}:{port}, dns {dns_port}, api {self.api.base}", flush=True)
+        print(f"gateway ready: proxy {host}:{port}, dns {dns_port}, control {control_port}, api {self.api.base}, "
+              f"claude key {'set' if self.policy.service_key else 'not set'}", flush=True)
         try:
             async with server:
                 await server.serve_forever()
         finally:
             flusher.cancel()
+            if control is not None:
+                control.close()
 
 
 async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
@@ -1059,10 +1138,13 @@ def main() -> None:
                  if h.strip())
     gw = Gateway(Api(os.environ.get("ATTACKLEDGER_API_URL", "http://api:8000"), token), ca,
                  policy=Policy(_env_hosts("ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS", PASSIVE_HOSTS),
-                               _env_hosts("ATTACKLEDGER_GATEWAY_SERVICE_HOSTS", SERVICE_HOSTS)),
+                               _env_hosts("ATTACKLEDGER_GATEWAY_SERVICE_HOSTS", SERVICE_HOSTS),
+                               service_key=os.environ.get("ANTHROPIC_API_KEY")),
                  deny_hosts=deny, upstream_dns=os.environ.get("ATTACKLEDGER_GATEWAY_UPSTREAM_DNS") or None)
     dns_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_DNS_PORT", "53"))
-    asyncio.run(gw.serve(port=int(os.environ.get("ATTACKLEDGER_GATEWAY_PORT", "8080")), dns_port=dns_port or None))
+    control_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_CONTROL_PORT", "8081"))
+    asyncio.run(gw.serve(port=int(os.environ.get("ATTACKLEDGER_GATEWAY_PORT", "8080")), dns_port=dns_port or None,
+                         control_port=control_port or None))
 
 
 if __name__ == "__main__":

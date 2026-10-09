@@ -17,8 +17,6 @@ services:
   worker:
     image: attackledger-worker:latest
     pull_policy: never
-    environment:
-      ATTACKLEDGER_DEV_KEY: "1"
   lab:
     networks: !override
       lab:

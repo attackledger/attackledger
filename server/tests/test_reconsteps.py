@@ -11,6 +11,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from harness import stack  # noqa: F401
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "server"))
 import app.reconsteps  # noqa: E402,F401 - this tree's app package, before the worker adds /srv to the path
@@ -54,18 +56,15 @@ class Site:
         return get
 
 
-def run_for(session, kind, monkeypatch, site, ferox_lines=()):
-    e = Engagement(name="t", scope_include=["*.example.com"], scope_exclude=["out.example.com"],
-                   authorized_by="op", authorized_at=datetime.now(timezone.utc), rate_limit_rps=20,
-                   research_header="X-Bug-Bounty: r1", enabled_modules=["content"])
-    session.add(e)
-    session.commit()
-    job = Job(engagement_id=e.id, kind=kind, targets=[BASE], status=JobStatus.running)
-    session.add(job)
-    session.commit()
+def run_for(stack, kind, monkeypatch, site, ferox_lines=(), header="X-Bug-Bounty: r1"):
+    """A job claimed from the API (D-042) and run with a fake site; what the API stored."""
+    e = stack.engagement(name=f"t-{kind}", exclude=("out.example.com",), rps=20, header=header,
+                         modules=("content",))
+    stack.queue(e, kind, [BASE])
+    job = stack.claim()
     monkeypatch.setattr(worker, "fetcher", site.fetcher)
     monkeypatch.setattr(reconsteps.time, "sleep", lambda s: None)
-    r = worker.Run(session, job, egress.Egress(job.id, "s3cret-value-0123456789"))
+    r = worker.Run(job, egress.Egress(job.id, "s3cret-value-0123456789"))
     commands = []
 
     def tool_lines(name, cmd, stdin):
@@ -73,9 +72,11 @@ def run_for(session, kind, monkeypatch, site, ferox_lines=()):
         yield from (json.dumps(x) for x in ferox_lines)
     r.tool_lines = tool_lines
     count = worker.RUNNERS[kind](r, [BASE])
-    session.commit()
-    eps = {x.url.removeprefix(BASE): x.source for x in session.scalars(select(Endpoint))}
-    leads = {l.kind: l for l in session.scalars(select(Lead))}
+    r.flush()
+    with stack.Session() as s:
+        eps = {x.url.removeprefix(BASE): x.source for x in s.scalars(select(Endpoint))}
+        leads = {l.kind: l for l in s.scalars(select(Lead))}
+    r.job.log_text = stack.job(job.id).log
     return count, commands, eps, leads, r
 
 
@@ -102,11 +103,11 @@ def test_catch_all_decisions():
     assert "skip" in reconsteps.catch_all_filter([fp("200", 100, 7, 2), fp("200", 140, 9, 3)])
 
 
-def test_content_discovery_runs_on_an_spa_and_drops_the_catch_all_page(session, monkeypatch):
+def test_content_discovery_runs_on_an_spa_and_drops_the_catch_all_page(stack, monkeypatch):
     site = Site({"/ftp": (200, LISTING)})
     lines = [ferox("/zzz", 200, len(INDEX)),            # the catch-all, had feroxbuster let it through
              ferox("/ftp", 200, len(LISTING)), ferox("/api-docs", 301, 0), ferox("/support", 403, 50)]
-    count, commands, eps, leads, r = run_for(session, "content", monkeypatch, site, lines)
+    count, commands, eps, leads, r = run_for(stack, "content", monkeypatch, site, lines)
     (_, cmd, stdin), = commands
     assert cmd[cmd.index("--filter-size") + 1] == str(len(INDEX)) and stdin == [BASE]
     assert "X-Bug-Bounty: r1" in cmd and "--dont-scan" in cmd           # the worker's own ferox flags
@@ -116,22 +117,22 @@ def test_content_discovery_runs_on_an_spa_and_drops_the_catch_all_page(session, 
     assert leads["listing"].detail["entries"] == ["acquisitions.md", "eastere.gg"]
     # Two baseline paths and one listing check, through the worker's fetcher; the files are not fetched.
     assert len(site.requested) == 3 and site.requested[2] == "/ftp"
-    assert "filtering it out by size" in r.job.log
+    assert "filtering it out by size" in r.job.log_text
 
 
-def test_a_host_that_answers_every_path_with_an_error_is_still_skipped(session, monkeypatch):
-    count, commands, eps, leads, r = run_for(session, "content", monkeypatch, Site({}, catch_all=(403, b"")))
-    assert count == 0 and commands == [] and eps == {} and "every path answers 403" in r.job.log
+def test_a_host_that_answers_every_path_with_an_error_is_still_skipped(stack, monkeypatch):
+    count, commands, eps, leads, r = run_for(stack, "content", monkeypatch, Site({}, catch_all=(403, b"")))
+    assert count == 0 and commands == [] and eps == {} and "every path answers 403" in r.job.log_text
 
 
-def test_wellknown_records_robots_security_txt_and_listings(session, monkeypatch):
+def test_wellknown_records_robots_security_txt_and_listings(stack, monkeypatch):
     site = Site({
         "/robots.txt": (200, b"User-agent: *\nDisallow: /ftp\nDisallow: /logout\nDisallow: /private/*\n"
                              b"Sitemap: https://out.example.com/s.xml\n"),
         "/.well-known/security.txt": (200, b"Contact: mailto:sec@example.com\nAcknowledgements: /#/score-board\n"
                                            b"Csaf: http://localhost:3000/csaf.json\n"),
         "/ftp": (200, LISTING)})
-    count, commands, eps, leads, r = run_for(session, "wellknown", monkeypatch, site)
+    count, commands, eps, leads, r = run_for(stack, "wellknown", monkeypatch, site)
     assert commands == []                                                 # no external tool
     assert site.requested == ["/robots.txt", "/.well-known/security.txt", "/ftp"]   # /logout never requested
     assert eps == {"/robots.txt": "robots", "/ftp": "listing,robots", "/.well-known/security.txt": "security.txt",
@@ -143,25 +144,27 @@ def test_wellknown_records_robots_security_txt_and_listings(session, monkeypatch
     assert count == 3 + len(eps)
 
 
-def test_wellknown_on_an_spa_takes_the_index_page_for_nothing(session, monkeypatch):
+def test_wellknown_on_an_spa_takes_the_index_page_for_nothing(stack, monkeypatch):
     site = Site({})
-    count, commands, eps, leads, r = run_for(session, "wellknown", monkeypatch, site)
+    count, commands, eps, leads, r = run_for(stack, "wellknown", monkeypatch, site)
     assert count == 0 and eps == {} and leads == {}
     assert site.requested == ["/robots.txt", "/.well-known/security.txt", "/security.txt"]
 
 
-def test_wellknown_needs_identification(session, monkeypatch):
+def test_wellknown_needs_identification(stack, monkeypatch):
     site = Site({})
-    e = Engagement(name="t", scope_include=["*.example.com"], authorized_by="op",
-                   authorized_at=datetime.now(timezone.utc))
-    session.add(e)
-    session.commit()
-    job = Job(engagement_id=e.id, kind="wellknown", targets=[BASE], status=JobStatus.running)
-    session.add(job)
-    session.commit()
+    e = stack.engagement(name="t-noident", header=None)
+    j = stack.queue(e, "wellknown", [BASE])
+    assert stack.claim() is None                     # the API's gate, when the job is claimed
+    assert "research header" in stack.job(j).log
+    spec = {"id": 1, "kind": "wellknown", "token": "t", "gateway_secret": "s3cret-value-0123456789",
+            "targets": [BASE], "engagement": {"id": e, "scope_include": ["*.example.com"], "scope_exclude": [],
+                                              "rate_limit_rps": 5, "research_header": None,
+                                              "research_user_agent": None, "crawl_depth": 3, "enabled_modules": []}}
+    from app import workerclient
+    r = worker.Run(workerclient.JobChannel(stack.client, spec))
     monkeypatch.setattr(worker, "fetcher", site.fetcher)
-    r = worker.Run(session, job, egress.Egress(job.id, "s3cret-value-0123456789"))
-    with pytest.raises(RuntimeError, match="research header"):
+    with pytest.raises(RuntimeError, match="research header"):  # and the worker's own refusal
         worker.RUNNERS["wellknown"](r, [BASE])
     assert site.requested == []
 

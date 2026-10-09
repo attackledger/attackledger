@@ -29,3 +29,12 @@ def _gateway_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY_CA", str(ca))
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN_FILE", str(tmp_path / "gateway-token"))
     monkeypatch.delenv("ATTACKLEDGER_GATEWAY_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _worker_settings(tmp_path, monkeypatch):
+    """The worker's token lives in a test folder, and the API's background passes (retention,
+    interrupted jobs) are off: tests call them directly (workerapi.sweep, retention_pass)."""
+    monkeypatch.setenv("ATTACKLEDGER_WORKER_TOKEN_FILE", str(tmp_path / "worker-token"))
+    monkeypatch.delenv("ATTACKLEDGER_WORKER_TOKEN", raising=False)
+    monkeypatch.setenv("ATTACKLEDGER_MAINTENANCE_SECONDS", "0")

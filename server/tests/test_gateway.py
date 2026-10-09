@@ -37,6 +37,7 @@ class FakeApi:
         self.down = False
         self.log_down = False
         self.calls = 0
+        self.relayed: list[dict] = []
 
     def add(self, job_id, secret=SECRET, running=True, **rules):
         self.jobs[job_id] = {"secret": secret, "running": running, "rules": {**RULES, **rules, "job_id": job_id}}
@@ -56,6 +57,10 @@ class FakeApi:
 
     async def dns_scopes(self):
         return 200, self.scopes
+
+    def relay(self, method, path, headers, body):
+        self.relayed.append({"method": method, "path": path, "headers": headers, "body": body})
+        return 201, "application/json", b'{"job": null}'
 
     async def post_log(self, rows):
         if self.log_down:
@@ -104,7 +109,7 @@ class Stack:
         self.ca = gateway.CA(str(tmp_path / "gw-private"), str(tmp_path / "gw-public"))
         self.ca_file = str(tmp_path / "gw-public" / "ca.pem")
         upstream_ca = gateway.CA(str(tmp_path / "up-private"))
-        self.gw = gateway.Gateway(self.api, self.ca, deny_hosts=())
+        self.gw = gateway.Gateway(self.api, self.ca, deny_hosts=(), policy=gateway.Policy(service_key="sk-gateway"))
         self.connects: list[dict] = []
 
         async def resolve(host):
@@ -128,11 +133,13 @@ class Stack:
             tls = await asyncio.start_server(self.up.handle, "127.0.0.1", 0,
                                              ssl=upstream_ca.server_context("app.example.com"))
             proxy = await asyncio.start_server(self.gw.handle_client, "127.0.0.1", 0)
-            return [plain, tls, proxy]
+            control = await asyncio.start_server(self.gw.handle_control, "127.0.0.1", 0)
+            return [plain, tls, proxy, control]
         self.servers = self.run(start())
         self.up.port = self.servers[0].sockets[0].getsockname()[1]
         self.up.tls_port = self.servers[1].sockets[0].getsockname()[1]
         self.port = self.servers[2].sockets[0].getsockname()[1]
+        self.control_port = self.servers[3].sockets[0].getsockname()[1]
 
     def client_ssl(self, ctx):
         """The gateway's verifying context cannot verify the fake upstream's test CA; the
@@ -524,14 +531,16 @@ def test_the_claude_api_is_reachable_from_agent_runs_only(stack):
         c = http.client.HTTPSConnection("127.0.0.1", stack.port, context=ctx, timeout=10)
         c.set_tunnel("api.anthropic.com", 443, headers={"Proxy-Authorization": stack.auth(job=job, tool="claude")})
         try:
-            c.request(method, path, body=body or None, headers={"x-api-key": "sk-test"})
+            c.request(method, path, body=body or None, headers={"x-api-key": "sk-test", "Authorization": "Bearer x"})
             return c.getresponse().status
         except (ssl.SSLError, ConnectionError, http.client.HTTPException, OSError):
             return 0
         finally:
             c.close()
     assert call(6, "POST", "/v1/messages?beta=true", b'{"model":"m"}') == 200
-    assert stack.up.requests[0]["body"] == b'{"model":"m"}' and stack.up.header(0, "x-api-key") == ["sk-test"]
+    assert stack.up.requests[0]["body"] == b'{"model":"m"}'
+    # The key is the gateway's: whatever the client sent under those names never leaves (D-042).
+    assert stack.up.header(0, "x-api-key") == ["sk-gateway"] and stack.up.header(0, "Authorization") == []
     assert stack.up.header(0, "X-Bug-Bounty") == [] and stack.connects[0]["ssl"] is stack.gw.verify_ctx
     assert call(6, "GET", "/v1/models") == 403
     assert call(1, "POST", "/v1/messages") != 200             # a recon job: refused at CONNECT
@@ -623,3 +632,51 @@ def test_gateway_token_is_created_by_the_gateway_and_read_by_the_api(tmp_path, m
     assert len(tok) > 30 and gateway.gateway_token() == tok and gateway.gateway_token(create=True) == tok
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", "from-env")
     assert gateway.gateway_token() == "from-env"
+
+
+def test_without_a_key_at_the_gateway_no_claude_api_call_is_sent(stack):
+    stack.api.add(6, kind="agent", traffic="agent")
+    stack.gw.policy = gateway.Policy(service_key="")
+    ctx = ssl.create_default_context(cafile=stack.ca_file)
+    c = http.client.HTTPSConnection("127.0.0.1", stack.port, context=ctx, timeout=10)
+    c.set_tunnel("api.anthropic.com", 443, headers={"Proxy-Authorization": stack.auth(job=6, tool="claude")})
+    c.request("POST", "/v1/messages", body=b"{}", headers={"x-api-key": "sk-from-the-worker"})
+    r = c.getresponse()
+    assert r.status == 503 and b"no Claude API key" in r.read()
+    c.close()
+    assert stack.up.requests == []
+
+
+# ---- the worker's channel (D-042) ---------------------------------------------------------
+
+def control(stack, method, path, body=b"", headers=None) -> tuple[int, dict, bytes]:
+    h = {"Host": "gateway", "Connection": "close", "Content-Length": str(len(body)), **(headers or {})}
+    head = f"{method} {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in h.items())
+    with socket.create_connection(("127.0.0.1", stack.control_port), timeout=10) as s:
+        s.sendall(head.encode() + b"\r\n" + body)
+        out = b""
+        while chunk := s.recv(65536):
+            out += chunk
+    return parse(out)
+
+
+def test_the_control_port_relays_worker_routes_with_only_their_credentials(stack):
+    status, headers, body = control(stack, "POST", "/worker/claim", b'{"job_id": null}',
+                                    {"Authorization": "Bearer wt", "Content-Type": "application/json",
+                                     "Cookie": "attackledger_session=x", "X-Forwarded-For": "10.0.0.1"})
+    assert status == 201 and body == b'{"job": null}' and headers["content-type"] == "application/json"
+    [call] = stack.api.relayed
+    assert call == {"method": "POST", "path": "/worker/claim", "body": b'{"job_id": null}',
+                    "headers": {"authorization": "Bearer wt", "content-type": "application/json"}}
+
+
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/gateway/log"), ("POST", "/gateway/session"), ("GET", "/engagements"), ("POST", "/auth/login"),
+    ("POST", "/lanes/1/close"), ("GET", "/worker/../gateway/dns-scopes"), ("GET", "/worker/%2e%2e/audit"),
+    ("GET", "http://api:8000/worker/ping"), ("DELETE", "/worker/jobs/1/finish"), ("PUT", "/worker/claim"),
+    ("GET", "/worker/ping?x=1"),
+])
+def test_the_control_port_relays_nothing_else(stack, method, path):
+    status, headers, _ = control(stack, method, path)
+    assert status in (404, 405) and headers.get("x-attackledger-gateway") == "refused"
+    assert stack.api.relayed == []

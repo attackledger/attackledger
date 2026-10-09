@@ -1,7 +1,11 @@
-# Networks (D-039, docs/GATEWAY.md):
-#   internal  db, api, worker, gateway. No route out: the worker reaches nothing but the
-#             database, the API and the gateway.
-#   lab       the gateway and the local practice target only, no route out.
+# Networks (D-039, D-042, docs/GATEWAY.md, docs/WORKER_API.md), each internal (no route out)
+# unless said otherwise:
+#   internal  the worker and the gateway only. The worker reaches nothing else: no database,
+#             no API, no internet. Its channel to the API is the gateway's relay (port 8081,
+#             /worker/* only), its traffic the gateway's proxy and resolver.
+#   control   the gateway and the API (rules, request log, the relayed worker calls).
+#   database  the database and the API only.
+#   lab       the gateway and the local practice target only.
 #   default   api (published port, timestamp authority), web and the gateway: the way out.
 # Every request a recon tool or an agent sends leaves through the gateway, which enforces the
 # engagement's scope, read-only methods, rate ceiling and identification, and logs it.
@@ -14,7 +18,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
       - dbdata:/var/lib/postgresql/data
-    networks: [internal]
+    networks: [database]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U attackledger"]
       interval: 3s
@@ -28,7 +32,7 @@ services:
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
       # Set to require a token on every API call (strongly recommended beyond localhost).
       ATTACKLEDGER_API_TOKEN: ${ATTACKLEDGER_API_TOKEN:-}
-      # "1" when ANTHROPIC_API_KEY is set. The key itself stays in the worker.
+      # "1" when ANTHROPIC_API_KEY is set. The key itself is passed to the gateway only.
       ATTACKLEDGER_AGENTS_ENABLED: ${ANTHROPIC_API_KEY:+1}
       # "1" behind HTTPS, so session cookies are only sent over it.
       ATTACKLEDGER_COOKIE_SECURE: ${ATTACKLEDGER_COOKIE_SECURE:-}
@@ -47,7 +51,8 @@ services:
     volumes:
       - blobs:/data/blobs
       - gateway-control:/data/gateway-control:ro   # the gateway's token, for its routes only
-    networks: [internal, default]
+      - worker-control:/data/worker-control:ro     # the worker's token, for its routes only (D-042)
+    networks: [database, control, default]
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -67,11 +72,14 @@ services:
       ATTACKLEDGER_API_URL: http://api:8000
       # Extra passive-source hosts (comma-separated), for sources configured with your own keys.
       ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS: ${ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS:-}
+      # Optional: enables Claude agents on hunt lanes. Put it in .env, never in this file. The
+      # gateway adds it to the agent's Claude API calls; the worker never sees it (D-042).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - gateway-private:/data/gateway
       - gateway-public:/data/gateway-public
       - gateway-control:/data/gateway-control
-    networks: [internal, default, lab]
+    networks: [internal, control, default, lab]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 2)"]
       interval: 3s
@@ -82,30 +90,26 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
+    # No database URL, master key, blob store or Anthropic key (D-042): the API stores and
+    # encrypts what the worker sends, and the gateway holds the Claude API key.
     environment:
       # Every tool and the agent go through the gateway: its proxy, its resolver, its CA.
       ATTACKLEDGER_GATEWAY: gateway:8080
       ATTACKLEDGER_GATEWAY_DNS: gateway:53
       ATTACKLEDGER_GATEWAY_CA: /data/gateway-public/ca.pem
-      DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
-      # Optional: enables Claude agents on hunt lanes (v0.6). Put it in .env, never in this file.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # The worker's channel to the API: the gateway's relay, which forwards /worker/* only.
+      ATTACKLEDGER_WORKER_API: http://gateway:8081
       # claude-opus-5-5 (default), claude-sonnet-5-5 or claude-haiku-5-5 (cheaper, for a first test).
       ATTACKLEDGER_AGENT_MODEL: ${ATTACKLEDGER_AGENT_MODEL:-}
-      # The same master key as the API (it encrypts agent evidence and runs retention).
-      ATTACKLEDGER_MASTER_KEY_FILE: ${ATTACKLEDGER_MASTER_KEY_FILE:-}
-      ATTACKLEDGER_MASTER_KEY: ${ATTACKLEDGER_MASTER_KEY:-}
-      ATTACKLEDGER_DEV_KEY: ${ATTACKLEDGER_DEV_KEY:-}
     volumes:
-      - blobs:/data/blobs
+      - worker-control:/data/worker-control       # its token for the API, made on first start
       - gateway-public:/data/gateway-public:ro
-    # No route out (internal network only). Docker does not forward outside DNS questions for
-    # such containers; this unroutable resolver (TEST-NET-1) keeps it so on engines that would.
+    # No route out, and no other container but the gateway on its network. Docker does not
+    # forward outside DNS questions for such containers; this unroutable resolver (TEST-NET-1)
+    # keeps it so on engines that would.
     networks: [internal]
     dns: [192.0.2.1]
     depends_on:
-      db:
-        condition: service_healthy
       gateway:
         condition: service_healthy
     restart: unless-stopped
@@ -130,6 +134,10 @@ services:
 networks:
   internal:
     internal: true
+  control:
+    internal: true
+  database:
+    internal: true
   lab:
     internal: true
   default: {}
@@ -140,3 +148,4 @@ volumes:
   gateway-private:   # the gateway's CA key: mounted by the gateway only
   gateway-public:    # the gateway's CA certificate, read by the worker
   gateway-control:   # the gateway's token for the API's gateway routes
+  worker-control:    # the worker's token for the API's worker routes (D-042)
