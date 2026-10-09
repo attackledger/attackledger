@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Security policy · AttackLedger</title>
+<meta name="description" content="How to report a security vulnerability in AttackLedger, what is in scope, and what to expect.">
+<meta name="color-scheme" content="light dark">
+<link rel="canonical" href="https://attackledger.com/security">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Zilla+Slab:wght@500;700&display=swap">
+<style>
+/* Same ledger paper and tokens as index.html. */
+:root {
+  --paper: #eef3e6; --sheet: #f6f9f1; --rule: #c9d8bf; --rule-strong: #8e9c86;
+  --text: #2b2f2a; --text-soft: #5d6559; --text-faint: #7d8679;
+  --ink: #1f3a93; --ink-hover: #182e78; --margin: #c9796f; --stamp: #2e7d4f; --code-bg: #e3ead8;
+  --slab: "Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.875rem; --step-0: 1.0625rem; --step-1: 1.3rem; --step-2: 1.75rem; --step-3: clamp(2rem, 4.6vw, 2.9rem);
+  --radius: 3px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+    --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+    --ink: #a9baf5; --ink-hover: #c3cff8; --margin: #8a4b44; --stamp: #86d3a2; --code-bg: #1d3226;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+  --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+  --ink: #a9baf5; --ink-hover: #c3cff8; --margin: #8a4b44; --stamp: #86d3a2; --code-bg: #1d3226;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background-color: var(--paper);
+  background-image: linear-gradient(to right, transparent calc(2.25rem - 1px), var(--margin) calc(2.25rem - 1px), var(--margin) 2.25rem, transparent 2.25rem);
+  color: var(--text);
+  font: var(--step-0) / 1.6 var(--body);
+}
+a { color: var(--ink); text-underline-offset: 0.18em; }
+a:hover { color: var(--ink-hover); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 0.05em 0.3em; border-radius: var(--radius); overflow-wrap: anywhere; }
+
+.wrap { max-width: 68rem; margin: 0 auto; padding-inline: max(1rem, 3.25rem) 1.25rem; }
+@media (max-width: 40rem) { body { background-image: none; } .wrap { padding-inline: 1rem; } }
+
+.top { padding-block: 1.25rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; }
+.brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: var(--text); margin-right: auto; }
+.brand svg { width: 2rem; height: 2rem; color: var(--stamp); transform: rotate(-6deg); flex: none; }
+.brand span { font: 700 var(--step-1) / 1 var(--slab); letter-spacing: 0.01em; }
+.top nav { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-size: var(--step--1); }
+.top nav a { color: var(--text-soft); text-decoration: none; }
+.top nav a:hover { color: var(--ink); text-decoration: underline; }
+
+.doc { max-width: 42rem; padding-block: 2rem 3rem; }
+h1 { font: 700 var(--step-3) / 1.1 var(--slab); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { font-size: var(--step-1); line-height: 1.5; color: var(--text-soft); margin: 1rem 0 0; }
+.meta { font-size: var(--step--1); color: var(--text-faint); margin: 1rem 0 0; }
+.report { margin-top: 2rem; padding: 1rem 1.15rem; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--margin); border-radius: var(--radius); }
+.report p { margin: 0; }
+.report p + p { margin-top: 0.4rem; font-size: var(--step--1); color: var(--text-soft); }
+.report a { font-weight: 700; }
+section { padding-block: 2rem 0.5rem; border-top: 1px solid var(--rule); margin-top: 2rem; }
+h2 { font: 700 var(--step-2) / 1.15 var(--slab); margin: 0 0 0.9rem; text-wrap: balance; }
+p { margin: 0 0 1rem; }
+ul, ol { margin: 0 0 1rem; padding-left: 1.3rem; }
+li { margin-bottom: 0.45rem; }
+li::marker { color: var(--text-faint); }
+.note { font-size: var(--step--1); color: var(--text-soft); }
+
+.foot { padding-block: 2rem 3rem; border-top: 1px solid var(--rule-strong); font-size: var(--step--1); color: var(--text-soft); display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; justify-content: space-between; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/" aria-label="AttackLedger home">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="4" y="4" width="32" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"/>
+        <rect x="8" y="8" width="24" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M13 20.5l4.5 4.5L27 15" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>AttackLedger</span>
+    </a>
+    <nav aria-label="Site">
+      <a href="/">Home</a>
+      <a href="/demo/">Demo</a>
+      <a href="/sample-report.html">Sample report</a>
+    </nav>
+  </header>
+
+  <main class="doc">
+    <h1>Security policy</h1>
+    <p class="lede">How to report a security vulnerability in AttackLedger, what you may test, and what happens
+      after you report.</p>
+    <p class="meta">Last updated 9 October 2026. Machine-readable contact:
+      <a href="/.well-known/security.txt">/.well-known/security.txt</a>.</p>
+
+    <div class="report">
+      <p>Report a vulnerability to <a href="mailto:murat@attackledger.com">murat@attackledger.com</a></p>
+      <p>Please do not report security issues in public GitHub issues or pull requests.</p>
+    </div>
+
+    <section aria-labelledby="about">
+      <h2 id="about">About this project</h2>
+      <p>AttackLedger is a small project run by one person, Murat Kabak. I read every report myself. There is no bug
+        bounty: I cannot pay for reports, but I will fix what you find, keep you informed, and credit you if you
+        want to be credited.</p>
+    </section>
+
+    <section aria-labelledby="scope">
+      <h2 id="scope">In scope</h2>
+      <ul>
+        <li>The website at <code>attackledger.com</code>, including the read-only demo at
+          <a href="/demo/">/demo/</a> and the sample report.</li>
+        <li>The AttackLedger application (API, web app and worker) and its source code, once the source is published.
+          Test it on an installation you run yourself.</li>
+        <li>The offline verifier, <code>verify_report.py</code>, and the report format it checks. For example, a
+          report that was changed after signing but still verifies, or a receipt that verifies without a valid
+          signature or timestamp.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="out-of-scope">
+      <h2 id="out-of-scope">Out of scope</h2>
+      <ul>
+        <li>Third-party services that AttackLedger uses or depends on, such as Cloudflare, GitHub, DigiCert's
+          timestamp service and Google Fonts. Report issues in those to the vendor.</li>
+        <li>Installations of AttackLedger that other people run. Only their owner can allow you to test them.</li>
+        <li>Social engineering, phishing, or any attempt to get access through people.</li>
+        <li>Denial of service, and anything that degrades the site for other visitors.</li>
+        <li>Volume testing: high-rate automated scanning, brute force, or load and stress testing.</li>
+        <li>Findings that need a compromised device, a malicious browser extension, or physical access.</li>
+        <li>Scanner output or missing best-practice settings with no demonstrated security impact.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="rules">
+      <h2 id="rules">Rules for testing</h2>
+      <ul>
+        <li>Do not access, change or delete other people's data. Use only accounts, installations and data that
+          are your own.</li>
+        <li>Do not test third-party systems, even when they are connected to AttackLedger.</li>
+        <li>If you come across someone else's data or a secret, stop, do not use it, do not keep a copy beyond what
+          the report needs, and tell me.</li>
+        <li>Keep request rates low. A proof of concept is enough; there is no need to show the full extent of an
+          issue.</li>
+        <li>Keep the details confidential until the issue is fixed or the disclosure date has passed.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="how">
+      <h2 id="how">How to report</h2>
+      <p>Email <a href="mailto:murat@attackledger.com">murat@attackledger.com</a> in English or Turkish. Please
+        include:</p>
+      <ul>
+        <li>what is affected: the URL, or the version or commit of the application or verifier;</li>
+        <li>the steps to reproduce it, with requests, responses or a short script where that helps;</li>
+        <li>what an attacker could do with it, as you understand it;</li>
+        <li>whether and how you would like to be credited.</li>
+      </ul>
+      <p class="note">There is no PGP key yet. If the details are too sensitive for plain email, send a short first
+        message and we will agree on another way to share them.</p>
+    </section>
+
+    <section aria-labelledby="expect">
+      <h2 id="expect">What you can expect</h2>
+      <ul>
+        <li>An acknowledgement within 3 working days.</li>
+        <li>A first assessment within 10 working days: whether I can reproduce the issue and how I plan to fix it.</li>
+        <li>Updates while the fix is in progress, and a note when it is released.</li>
+        <li>Credit in the release notes if you want it.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="disclosure">
+      <h2 id="disclosure">Coordinated disclosure</h2>
+      <p>I ask for 90 days from your report before details are published, or less if the fix is released sooner and
+        we agree on a date. If a fix needs more time, I will explain why and ask; you do not have to agree. Once the
+        issue is fixed, I will publish a short advisory and credit you if you want it.</p>
+    </section>
+
+    <section aria-labelledby="safe-harbor">
+      <h2 id="safe-harbor">Safe harbor</h2>
+      <p>If you make a good-faith effort to follow this policy, I consider your research authorized. I will not take
+        legal action against you or report you to law enforcement for it. If someone else takes action against you
+        over research that followed this policy, I will make it known that it was authorized.</p>
+      <p>This covers AttackLedger's own site and software only. I cannot give permission on behalf of Cloudflare,
+        GitHub, DigiCert or anyone else who runs an installation. If you are unsure whether something is allowed,
+        ask first.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>AttackLedger, made by Murat Kabak.</span>
+    <a href="/security" aria-current="page">Security</a>
+    <span>Proving what was tested.</span>
+  </footer>
+</div>
+</body>
+</html>

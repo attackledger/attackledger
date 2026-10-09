@@ -1,0 +1,6 @@
+# AttackLedger security contact (RFC 9116). The policy explains scope and what to expect.
+Contact: mailto:murat@attackledger.com
+Expires: 2027-10-09T00:00:00Z
+Preferred-Languages: en, tr
+Canonical: https://attackledger.com/.well-known/security.txt
+Policy: https://attackledger.com/security

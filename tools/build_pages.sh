@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Build the folder that goes to Cloudflare Pages (attackledger.com): the site, the demo,
-# the sample report, and the security headers. The inline-script hashes in the CSP are
-# computed from the files, so a changed script cannot run until the headers are rebuilt.
+# the sample report, the security policy and security.txt, and the security headers. The
+# inline-script hashes in the CSP are computed from the files, so a changed script cannot run
+# until the headers are rebuilt.
 # Usage: tools/build_pages.sh [OUT]   (default: dist/pages)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:-dist/pages}
 rm -rf "$OUT"
 mkdir -p "$OUT"
-cp site/index.html site/404.html site/sample-report.html site/sample-report.json site/verify_report.py \
+cp site/index.html site/404.html site/security.html site/sample-report.html site/sample-report.json site/verify_report.py \
    site/digicert-trusted-root-g4.pem site/favicon.svg site/favicon-32.png site/apple-touch-icon.png "$OUT"/
+mkdir -p "$OUT"/.well-known
+cp site/.well-known/security.txt "$OUT"/.well-known/    # RFC 9116; Pages serves /security for security.html
 cp -R site/demo "$OUT"/demo
 python3 -I - "$OUT" <<'PY'
 import base64, hashlib, pathlib, re, sys
@@ -45,6 +48,9 @@ csp = "; ".join([
   Content-Type: text/plain; charset=utf-8
 
 /digicert-trusted-root-g4.pem
+  Content-Type: text/plain; charset=utf-8
+
+/.well-known/security.txt
   Content-Type: text/plain; charset=utf-8
 """)
 print(f"{out}: {sum(1 for _ in out.rglob('*') if _.is_file())} files, {len(hashes)} inline script hashes")
