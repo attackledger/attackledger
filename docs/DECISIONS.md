@@ -553,6 +553,17 @@ options considered and who decided.
 - **Why:** the chain commits to hashes, not content, so content can go without breaking
   it; clients and KVKK/GDPR expect a retention limit.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
+- **Built 2026-10-09** (docs/ENCRYPTION.md, migration 0017). Details settled while
+  building, proposed and built by Claude:
+  - **Wrapped key location.** It is kept in the engagement's blob folder, not the
+    database, so the database and the blob volume must be backed up together.
+  - **Older rows.** Rows from before chain record v2 keep their plaintext summary,
+    because the v1 chain covers the text.
+  - **Recon results and job logs** are deleted rather than encrypted.
+  - **Evidence URIs and N/A reasons** stay, because the chain and receipts commit to them.
+  - **Retention** is an explicit date until engagements have a close event, so the
+    one-year default is not built yet.
+  - **Old backups** become unreadable only after the master key is rotated.
 
 ### D-044 · How AttackLedger is offered (2026-10-09, decided by Murat)
 - **Decision:** the whole product is open source (AGPL-3.0); organisations that cannot use

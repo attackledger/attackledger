@@ -10,6 +10,17 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Encryption at rest** (D-043): evidence blobs and summaries are encrypted with a key
+  per engagement, wrapped by a deployment master key (`ATTACKLEDGER_MASTER_KEY_FILE` or
+  `ATTACKLEDGER_MASTER_KEY`; `ATTACKLEDGER_DEV_KEY=1` for trials). The API and worker
+  refuse to start without one. Migration `0017`.
+- **Retention**: owners set a "keep until" date, which the worker executes, or delete an
+  engagement's data now with a typed-name confirmation. Both go into the audit log.
+  Reports built afterwards still verify, with summaries marked unavailable.
+- **Evidence chain record v2** commits to `summary_sha256` and `source` (manual, recon,
+  agent, `import:<tool>`). v1 rows and old reports verify as before.
+- `python -m app.vault`: generate, status, encrypt-existing, rotate-master,
+  delete-content.
 - **Guided first run**: the five setup steps from scope to first lane, each step's
   status computed from the engagement itself.
 - **Role-based home**: each engagement opens on a tab chosen by role: Report for

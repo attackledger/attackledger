@@ -1,6 +1,6 @@
 """encryption at rest and retention: chain record v2, evidence source, retention date
 
-Revision ID: 0018
+Revision ID: 0017
 Revises: 0016 on this branch (becomes 0017 when the gateway branch, which adds 0017, is merged first)
 Create Date: 2026-10-09 23:00:00
 
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0018'
+revision = '0017'
 down_revision = '0016'
 branch_labels = None
 depends_on = None

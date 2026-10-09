@@ -1,6 +1,6 @@
 # Encryption at rest and retention (D-043)
 
-Status: built on branch `feat/encryption`, migration `0018`. This page records the design
+Status: built 2026-10-09, migration `0017`. This page records the design
 choices; the code is `server/app/vault.py`, `server/app/blobs.py` and `server/app/ledger.py`.
 
 ## What is encrypted
@@ -9,7 +9,7 @@ choices; the code is `server/app/vault.py`, `server/app/blobs.py` and `server/ap
 |---|---|---|---|
 | Raw evidence: HTTP exchanges, notes, attached files | blob store | AES-256-GCM, engagement key | key, blobs and the engagement's folder are deleted |
 | Evidence summary (chain v2 rows) | `evidence.summary_enc` | AES-256-GCM, engagement key | ciphertext set to null; `summary_sha256` stays |
-| Evidence summary (chain v1 rows, written before 0018) | `evidence.summary` | plaintext | **kept**: the v1 chain hash covers the text itself, so removing it would make the chain unverifiable; reports issued before already carry it |
+| Evidence summary (chain v1 rows, written before 0017) | `evidence.summary` | plaintext | **kept**: the v1 chain hash covers the text itself, so removing it would make the chain unverifiable; reports issued before already carry it |
 | Recon results: observations, endpoints, leads | their tables | plaintext | **deleted** |
 | Job logs, an agent run's closing summary | `jobs.log`, `jobs.result.summary` | plaintext | **replaced** by a deletion note |
 | Evidence URI (`evidence.uri`) | evidence row | plaintext | kept: the chain record (v1 and v2) commits to it |
@@ -86,13 +86,13 @@ backups, rotate the master key and destroy the old one.
 - `blobs.get(digest, engagement_id=N)` decrypts and checks the sha256 again; a wrong key,
   a tampered file or a mismatch returns `None`. For an engagement whose content was
   deleted it returns `None`; `put` raises `ContentDeleted`.
-- Without `engagement_id`, both behave as before 0018 (plaintext, `<blobs>/<dd>/<digest>`).
+- Without `engagement_id`, both behave as before 0017 (plaintext, `<blobs>/<dd>/<digest>`).
 - `get(..., engagement_id=N)` falls back to that plaintext location for blobs written
-  before 0018, so old evidence opens as before.
+  before 0017, so old evidence opens as before.
 
 ## Existing data
 
-Rule: **new content is always encrypted; content stored before 0018 stays as it was until
+Rule: **new content is always encrypted; content stored before 0017 stays as it was until
 an explicit command encrypts it.**
 
 - Old evidence rows stay chain v1, with their plaintext summary (see the table above).
@@ -138,7 +138,7 @@ an explicit command encrypts it.**
 
 ## Evidence chain record v2
 
-Rows written before 0018 keep the v1 record (nine fields, no `v`). New rows:
+Rows written before 0017 keep the v1 record (nine fields, no `v`). New rows:
 
 ```
 {"v": 2, "seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri",

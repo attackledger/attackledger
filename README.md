@@ -90,6 +90,7 @@ them are in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 ## Quick start
 
 ```bash
+echo "ATTACKLEDGER_DEV_KEY=1" >> .env  # trial only: a public development encryption key
 docker compose up -d --build        # api, worker, web, postgres, local lab target
 python3 tools/seed_demo.py          # optional demo engagements
 open http://localhost:8080
@@ -107,6 +108,13 @@ All ports bind to `127.0.0.1`. To require a token (do this before exposing the A
 anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`.
 The `lab` service is a local practice target that answers as `shop.lab.test` inside
 the compose network.
+
+Evidence is encrypted at rest with a key per engagement, wrapped by a master key
+(docs/ENCRYPTION.md). The API and worker refuse to start without one. For anything
+beyond a trial, generate a key with
+`docker compose run --rm --no-deps api python -m app.vault generate`, store it in a file
+and set `ATTACKLEDGER_MASTER_KEY_FILE`, instead of `ATTACKLEDGER_DEV_KEY=1`. Keep the
+master key out of your backups of the database and blob volume.
 
 The database password defaults to `change-me`. Set `POSTGRES_PASSWORD` in `.env`
 before the first start; Postgres keeps the password it was created with, so changing
