@@ -1,0 +1,71 @@
+{
+  "_about": "Reports run through verify_report.py and web/src/verify_report.ts by run.sh. file is relative to the repository; roots are extra trusted roots (--tsa-root), on top of tools/tsa-roots/; expect is what the case is made to show (B body, C chain, R receipts, S signatures, K key log, H change history, T timestamps; '-' means the check is not shown). v2 marks reports with evidence chain record v2 entries.",
+  "cases": [
+    {"name": "sample report (JSON)", "file": "site/sample-report.json", "expect": {"status": "verified"}},
+    {"name": "sample report (HTML)", "file": "site/sample-report.html", "expect": {"status": "verified"}},
+    {"name": "demo export: lab, with a void receipt", "file": "site/demo/reports/1.json", "expect": {"status": "verified"}},
+    {"name": "demo export: lab recon, no receipts", "file": "site/demo/reports/2.json", "expect": {"status": "verified", "S": "SKIP", "T": "SKIP"}},
+    {"name": "demo export: client web app", "file": "site/demo/reports/3.json", "expect": {"status": "verified"}},
+    {"name": "demo export: lab, as HTML", "file": "site/demo/reports/1.html", "expect": {"status": "verified"}},
+    {"name": "server test token (DigiCert) in a made-up receipt", "file": "tools/verifier_equivalence/fixtures/digicert-token.json", "expect": {"status": "failed", "R": "FAIL", "S": "FAIL", "T": "PASS"}},
+
+    {"name": "ECDSA P-256 and Ed25519 signers, EC timestamp chain", "file": "tools/verifier_equivalence/fixtures/signed.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "S": "PASS", "T": "PASS"}},
+    {"name": "same, with --require-signatures", "file": "tools/verifier_equivalence/fixtures/signed.json", "roots": ["ec-root.pem"], "require": true, "expect": {"status": "verified"}},
+    {"name": "untrusted TSA chain (EC root not given)", "file": "tools/verifier_equivalence/fixtures/signed.json", "expect": {"status": "failed", "T": "FAIL"}},
+    {"name": "RSA timestamp chain, key revoked after signing, owner's unsigned close", "file": "tools/verifier_equivalence/fixtures/rsa-timestamps.json", "roots": ["rsa-root.pem"], "expect": {"status": "verified"}},
+    {"name": "untrusted TSA chain (RSA root not given)", "file": "tools/verifier_equivalence/fixtures/rsa-timestamps.json", "expect": {"status": "failed", "T": "FAIL"}},
+    {"name": "wrong root given (EC root for an RSA chain)", "file": "tools/verifier_equivalence/fixtures/rsa-timestamps.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "T": "FAIL"}},
+    {"name": "unsigned receipt", "file": "tools/verifier_equivalence/fixtures/unsigned.json", "expect": {"status": "verified", "S": "SKIP", "T": "SKIP", "K": "-"}},
+    {"name": "unsigned receipt, --require-signatures", "file": "tools/verifier_equivalence/fixtures/unsigned.json", "require": true, "expect": {"status": "failed", "S": "FAIL"}},
+    {"name": "operator-token close", "file": "tools/verifier_equivalence/fixtures/operator-token.json", "expect": {"status": "verified", "S": "SKIP"}},
+
+    {"name": "one changed evidence byte", "file": "tools/verifier_equivalence/fixtures/evidence-byte.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL", "R": "FAIL"}},
+    {"name": "changed evidence, body not rehashed", "file": "tools/verifier_equivalence/fixtures/evidence-byte-no-rehash.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "B": "FAIL", "C": "FAIL"}},
+    {"name": "reordered chain", "file": "tools/verifier_equivalence/fixtures/chain-reordered.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "chain entry removed", "file": "tools/verifier_equivalence/fixtures/chain-entry-removed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL", "R": "FAIL"}},
+    {"name": "chain head changed", "file": "tools/verifier_equivalence/fixtures/chain-head-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "chain genesis changed", "file": "tools/verifier_equivalence/fixtures/chain-genesis-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "item marked done without evidence", "file": "tools/verifier_equivalence/fixtures/item-done-without-evidence.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "R": "FAIL"}},
+    {"name": "N/A with a blank reason", "file": "tools/verifier_equivalence/fixtures/na-without-reason.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "R": "FAIL"}},
+    {"name": "receipt manifest changed", "file": "tools/verifier_equivalence/fixtures/receipt-manifest-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "R": "FAIL", "S": "FAIL", "T": "FAIL"}},
+    {"name": "receipt marked void", "file": "tools/verifier_equivalence/fixtures/lane-status-stale.json", "roots": ["ec-root.pem"], "expect": {"status": "verified"}},
+
+    {"name": "forged signature (ECDSA P-256)", "file": "tools/verifier_equivalence/fixtures/signature-forged-ecdsa.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "S": "FAIL", "T": "FAIL"}},
+    {"name": "forged signature (Ed25519)", "file": "tools/verifier_equivalence/fixtures/signature-forged-ed25519.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "S": "FAIL", "T": "FAIL"}},
+    {"name": "signed payload names another signer", "file": "tools/verifier_equivalence/fixtures/signature-payload-renamed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "S": "FAIL", "H": "FAIL"}},
+    {"name": "another signer's public key", "file": "tools/verifier_equivalence/fixtures/signature-key-swapped.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "S": "FAIL"}},
+    {"name": "public key not base64", "file": "tools/verifier_equivalence/fixtures/signature-bad-base64.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "S": "FAIL"}},
+    {"name": "signature removed", "file": "tools/verifier_equivalence/fixtures/signature-removed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "S": "PASS", "T": "FAIL"}},
+    {"name": "signature removed, --require-signatures", "file": "tools/verifier_equivalence/fixtures/signature-removed.json", "roots": ["ec-root.pem"], "require": true, "expect": {"status": "failed", "S": "FAIL"}},
+
+    {"name": "wrong key-log link", "file": "tools/verifier_equivalence/fixtures/keylog-link-wrong.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
+    {"name": "key-log record edited", "file": "tools/verifier_equivalence/fixtures/keylog-record-edited.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
+    {"name": "key registered after it signed (log rewritten)", "file": "tools/verifier_equivalence/fixtures/keylog-registered-later.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
+    {"name": "no key log", "file": "tools/verifier_equivalence/fixtures/keylog-removed.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "K": "-"}},
+
+    {"name": "audit-log role change", "file": "tools/verifier_equivalence/fixtures/audit-role-edited.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "audit-log role change, log rewritten", "file": "tools/verifier_equivalence/fixtures/audit-role-rewritten.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "signer renamed in the audit log, log rewritten", "file": "tools/verifier_equivalence/fixtures/audit-signer-renamed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "floats and big ints in the audit log", "file": "tools/verifier_equivalence/fixtures/audit-floats-and-big-ints.json", "roots": ["ec-root.pem"], "expect": {"status": "verified"}},
+    {"name": "5.0 changed to 5 in the audit log", "file": "tools/verifier_equivalence/fixtures/audit-floats-edited.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "no audit log", "file": "tools/verifier_equivalence/fixtures/audit-removed.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "H": "-"}},
+
+    {"name": "timestamp over a different hash (tokens swapped)", "file": "tools/verifier_equivalence/fixtures/timestamp-other-receipt.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "T": "FAIL"}},
+    {"name": "timestamp time changed", "file": "tools/verifier_equivalence/fixtures/timestamp-time-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "T": "FAIL"}},
+    {"name": "timestamp token signature byte changed", "file": "tools/verifier_equivalence/fixtures/timestamp-token-byte.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "T": "FAIL"}},
+    {"name": "timestamp token unreadable", "file": "tools/verifier_equivalence/fixtures/timestamp-token-garbage.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "T": "FAIL"}},
+
+    {"name": "format 1", "file": "tools/verifier_equivalence/fixtures/format-1.json", "expect": {"status": "verified", "S": "-", "T": "-"}},
+    {"name": "format 1, --require-signatures", "file": "tools/verifier_equivalence/fixtures/format-1.json", "require": true, "expect": {"status": "failed", "S": "FAIL"}},
+    {"name": "unknown format", "file": "tools/verifier_equivalence/fixtures/format-unknown.json", "expect": {"status": "unusable"}},
+    {"name": "malformed: no lanes", "file": "tools/verifier_equivalence/fixtures/malformed-no-lanes.json", "expect": {"status": "error"}},
+    {"name": "malformed: seq as a string", "file": "tools/verifier_equivalence/fixtures/malformed-seq-string.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
+
+    {"name": "v2: chain with v1 and v2 entries", "file": "tools/verifier_equivalence/fixtures/v2-chain.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
+    {"name": "v2: summary_sha256 mismatch", "file": "tools/verifier_equivalence/fixtures/v2-summary-mismatch.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: null summaries (content removed)", "file": "tools/verifier_equivalence/fixtures/v2-summary-null.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified", "C": "PASS"}},
+    {"name": "v2: null summary on a v1 entry", "file": "tools/verifier_equivalence/fixtures/v2-summary-null-on-v1-entry.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: source changed", "file": "tools/verifier_equivalence/fixtures/v2-source-changed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "v2: unknown record version", "file": "tools/verifier_equivalence/fixtures/v2-unknown-version.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}}
+  ]
+}

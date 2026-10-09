@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- CSP -->
+<meta name="referrer" content="no-referrer">
+<title>Verify a report · AttackLedger</title>
+<meta name="description" content="Check an AttackLedger report in your browser, with the same checks as verify_report.py. The file is not uploaded.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='4' y='4' width='32' height='32' rx='4' fill='none' stroke='%232e7d4f' stroke-width='2.5'/%3E%3Cpath d='M13 20.5l4.5 4.5L27 15' fill='none' stroke='%232e7d4f' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+/* FONTS */
+/* The landing page's ledger paper (site/index.html): same tokens, fonts and dark mode. */
+:root {
+  --paper: #eef3e6;
+  --sheet: #f6f9f1;
+  --rule: #c9d8bf;
+  --rule-strong: #8e9c86;
+  --text: #2b2f2a;
+  --text-soft: #5d6559;
+  --text-faint: #5f6a5b;
+  --ink: #1f3a93;
+  --ink-hover: #182e78;
+  --on-ink: #ffffff;
+  --margin: #c9796f;
+  --stamp: #2e7d4f;
+  --stamp-wash: #e3f0e6;
+  --open: #b8322a;
+  --open-wash: #f8e4e0;
+  --code-bg: #e3ead8;
+  --shadow: 0 1px 0 rgba(43, 47, 42, 0.04), 0 18px 40px -22px rgba(43, 47, 42, 0.35);
+  --slab: "Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.875rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.3rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2.2rem, 5.2vw, 3.4rem);
+  --radius: 3px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+    --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+    --ink: #a9baf5; --ink-hover: #c3cff8; --on-ink: #14221a; --margin: #8a4b44;
+    --stamp: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --open-wash: #3a2320; --code-bg: #1d3226;
+    --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+  --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+  --ink: #a9baf5; --ink-hover: #c3cff8; --on-ink: #14221a; --margin: #8a4b44;
+  --stamp: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --open-wash: #3a2320; --code-bg: #1d3226;
+  --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background-color: var(--paper);
+  background-image: linear-gradient(to right, transparent calc(2.25rem - 1px), var(--margin) calc(2.25rem - 1px), var(--margin) 2.25rem, transparent 2.25rem);
+  color: var(--text);
+  font: var(--step-0) / 1.6 var(--body);
+}
+a { color: var(--ink); text-underline-offset: 0.18em; }
+a:hover { color: var(--ink-hover); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+code { font-family: var(--mono); font-size: 0.86em; overflow-wrap: anywhere; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+.wrap { max-width: 68rem; margin: 0 auto; padding-inline: max(1rem, 3.25rem) 1.25rem; }
+@media (max-width: 40rem) { body { background-image: none; } .wrap { padding-inline: 1rem; } }
+
+.skip { position: absolute; left: 1rem; top: -3rem; background: var(--ink); color: var(--on-ink); padding: 0.5rem 0.8rem; border-radius: var(--radius); z-index: 1; }
+.skip:focus { top: 0.75rem; color: var(--on-ink); }
+
+/* ---- header ---- */
+.top { padding-block: 1.25rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; }
+.brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: var(--text); margin-right: auto; }
+.brand svg { width: 2rem; height: 2rem; color: var(--stamp); transform: rotate(-6deg); flex: none; }
+.brand span { font: 700 var(--step-1) / 1 var(--slab); letter-spacing: 0.01em; }
+.top nav { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-size: var(--step--1); }
+.top nav a { color: var(--text-soft); text-decoration: none; }
+.top nav a:hover { color: var(--ink); text-decoration: underline; }
+
+h1 { font: 700 var(--step-3) / 1.06 var(--slab); margin: 1.5rem 0 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { font-size: var(--step-1); line-height: 1.5; color: var(--text-soft); margin: 1rem 0 0; max-width: 40rem; }
+h2 { font: 700 var(--step-2) / 1.15 var(--slab); margin: 0 0 1rem; text-wrap: balance; }
+h3 { font: 700 var(--step-0) / 1.3 var(--body); margin: 1.5rem 0 0.4rem; }
+section { padding-block: 2.5rem; border-top: 1px solid var(--rule); }
+.intro { padding-block: 0 2.5rem; border-top: 0; }
+
+/* ---- the input ---- */
+.check { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 2rem; align-items: start; }
+@media (max-width: 52rem) { .check { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; } }
+.drop { background: var(--sheet); border: 2px dashed var(--rule-strong); border-radius: var(--radius); padding: 2rem 1.25rem; text-align: center; box-shadow: var(--shadow); }
+.drop.over { border-color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, var(--sheet)); }
+.drop-title { font: 700 var(--step-1) / 1.2 var(--slab); margin: 0; }
+.drop-hint { margin: 0.4rem 0 1.25rem; color: var(--text-soft); font-size: var(--step--1); }
+.btn { display: inline-block; padding: 0.7rem 1.15rem; border-radius: var(--radius); border: 1px solid var(--ink); font: 700 var(--step--1) / 1.2 var(--body); text-decoration: none; cursor: pointer; background: transparent; color: var(--ink); }
+.btn.primary { background: var(--ink); color: var(--on-ink); }
+.btn.primary:hover { background: var(--ink-hover); border-color: var(--ink-hover); color: var(--on-ink); }
+.btn:not(.primary):hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.btn.small { padding: 0.4rem 0.7rem; font-weight: 400; }
+/* The file inputs stay in the tab order; their labels look like buttons and show the focus ring. */
+.file { position: absolute; opacity: 0; width: 1px; height: 1px; overflow: hidden; }
+.file:focus-visible + label { outline: 2px solid var(--ink); outline-offset: 3px; }
+.paste { margin-top: 1rem; text-align: left; }
+.paste summary { cursor: pointer; color: var(--ink); font-size: var(--step--1); }
+.paste textarea { display: block; width: 100%; min-height: 7rem; margin: 0.6rem 0; padding: 0.6rem; font: 0.8rem / 1.45 var(--mono); color: var(--text); background: var(--paper); border: 1px solid var(--rule-strong); border-radius: var(--radius); resize: vertical; }
+
+.options { font-size: var(--step--1); }
+.options h3:first-child { margin-top: 0; }
+.option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.1rem 0.6rem; align-items: start; }
+.option input { width: 1.1rem; height: 1.1rem; margin: 0.2rem 0 0; accent-color: var(--ink); }
+.hint { color: var(--text-soft); margin: 0.2rem 0 0; font-size: var(--step--1); }
+.option .hint { grid-column: 2; }
+.roots { list-style: none; margin: 0.6rem 0; padding: 0; display: grid; gap: 0.4rem; }
+.roots li { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; justify-content: space-between; padding: 0.45rem 0.6rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); }
+.roots .fp { display: block; color: var(--text-faint); font-family: var(--mono); font-size: 0.75rem; overflow-wrap: anywhere; }
+.field-error { color: var(--open); margin: 0.4rem 0 0; }
+
+/* ---- the result ---- */
+.result:empty { display: none; }
+.verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem; padding: 1.1rem 1.25rem; background: var(--sheet); border: 1px solid var(--rule); border-left: 4px solid var(--rule-strong); border-radius: var(--radius); box-shadow: var(--shadow); }
+.verdict.ok { border-left-color: var(--stamp); }
+.verdict.bad { border-left-color: var(--open); background: var(--open-wash); }
+.verdict-stamp { font: 700 1.35rem / 1 var(--slab); letter-spacing: 0.12em; text-transform: uppercase; color: var(--stamp); border: 3px double currentColor; border-radius: 4px; padding: 0.35rem 0.6rem 0.3rem; transform: rotate(-4deg); }
+.verdict.bad .verdict-stamp { color: var(--open); }
+.verdict.plain .verdict-stamp { color: var(--text-soft); }
+.verdict-text { flex: 1 1 18rem; min-width: 0; }
+.verdict-text p { margin: 0; }
+.verdict-text .what { font-weight: 700; overflow-wrap: anywhere; }
+.verdict-text .meta { color: var(--text-soft); font-size: var(--step--1); overflow-wrap: anywhere; }
+.checks { list-style: none; margin: 1.25rem 0 0; padding: 0; border-top: 1px solid var(--rule-strong); }
+.checks > li { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr); gap: 0.2rem 1rem; padding: 0.85rem 0; border-bottom: 1px solid var(--rule); }
+.badge { align-self: start; text-align: center; font: 700 var(--step--1) / 1.2 var(--mono); letter-spacing: 0.04em; padding: 0.2rem 0; border: 2px solid currentColor; border-radius: 3px; }
+.badge.pass { color: var(--stamp); }
+.badge.fail { color: var(--open); }
+.badge.skip { color: var(--text-soft); border-style: dashed; }
+.check-name { font-weight: 700; margin: 0; }
+.check-what { margin: 0.1rem 0 0; color: var(--text-soft); font-size: var(--step--1); }
+.problems, .notes { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: var(--step--1); overflow-wrap: anywhere; }
+.problems { color: var(--open); }
+.notes { color: var(--text-soft); }
+.notes li + li, .problems li + li { margin-top: 0.25rem; }
+.after { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; margin-top: 1.25rem; }
+.selftest { margin: 1rem 0 0; color: var(--text-soft); font-size: var(--step--1); }
+details.cli { margin-top: 1rem; }
+details.cli summary { cursor: pointer; color: var(--ink); font-size: var(--step--1); }
+pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border-radius: var(--radius); overflow-x: auto; font: 0.8rem / 1.55 var(--mono); }
+
+/* ---- how it works ---- */
+.prose { max-width: 44rem; }
+.prose p { margin: 0 0 1rem; }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2.5rem; }
+@media (max-width: 52rem) { .cols { grid-template-columns: minmax(0, 1fr); gap: 1rem; } }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 0.7rem 0; border-bottom: 1px solid var(--rule); font-size: var(--step--1); }
+.list li:first-child { border-top: 1px solid var(--rule-strong); }
+.list strong { display: block; color: var(--text); }
+.csp { font: 0.75rem / 1.55 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.foot { padding-block: 2rem 3rem; border-top: 1px solid var(--rule-strong); font-size: var(--step--1); color: var(--text-soft); display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; justify-content: space-between; }
+</style>
+</head>
+<body>
+<a class="skip" href="#check-title">Skip to the verifier</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/" aria-label="AttackLedger home">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="4" y="4" width="32" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"/>
+        <rect x="8" y="8" width="24" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M13 20.5l4.5 4.5L27 15" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>AttackLedger</span>
+    </a>
+    <nav aria-label="Site">
+      <a href="/">Home</a>
+      <a href="/sample-report.html">Sample report</a>
+      <a href="/demo/">Demo</a>
+      <a href="#how">How this works</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="intro">
+      <h1>Verify a report</h1>
+      <p class="lede">Check an AttackLedger report yourself: its evidence chain, receipts, signatures, key and change
+        history, and timestamps. The checks run in this browser. The file is not uploaded.</p>
+    </div>
+
+    <section aria-labelledby="check-title">
+      <h2 id="check-title" tabindex="-1">Check a report</h2>
+      <div class="check">
+        <div>
+          <div class="drop" id="drop">
+            <p class="drop-title" aria-hidden="true">Drop a report file here</p>
+            <p class="drop-hint">The JSON or HTML file AttackLedger exports. It stays on your computer.</p>
+            <input class="file" type="file" id="report-file" accept=".json,.html,.htm,application/json,text/html">
+            <label class="btn primary" for="report-file">Choose a report file</label>
+            <details class="paste">
+              <summary>Or paste the report</summary>
+              <label class="visually-hidden" for="paste-text">Report JSON or HTML</label>
+              <textarea id="paste-text" spellcheck="false" autocomplete="off" placeholder="{&quot;format&quot;: &quot;attackledger-report/2&quot;, …}"></textarea>
+              <button class="btn" type="button" id="paste-check">Check the pasted report</button>
+            </details>
+          </div>
+        </div>
+        <div class="options">
+          <h3>Options</h3>
+          <div class="option">
+            <input type="checkbox" id="require" aria-describedby="require-hint">
+            <label for="require">Require every receipt to be signed</label>
+            <p class="hint" id="require-hint">As <code>--require-signatures</code>: a receipt that carries only a name fails the
+              signature check.</p>
+          </div>
+          <h3 id="roots-title">Trusted roots</h3>
+          <p class="hint">Timestamps must chain to a root you trust. This page trusts the roots that
+            <code>verify_report.py</code> trusts by default:</p>
+          <ul class="roots" id="roots" aria-labelledby="roots-title"></ul>
+          <input class="file" type="file" id="root-file" accept=".pem,.crt,application/x-pem-file,text/plain" aria-describedby="root-hint">
+          <label class="btn small" for="root-file">Add a root certificate (PEM)</label>
+          <p class="hint" id="root-hint">As <code>--tsa-root</code>, for a timestamp authority other than DigiCert. Check its
+            fingerprint with the authority first.</p>
+          <p class="field-error" id="root-error" role="alert"></p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="result-title" id="result-section">
+      <h2 id="result-title" tabindex="-1">Result</h2>
+      <p id="status" role="status" aria-live="polite">No report checked yet.</p>
+      <div id="result" class="result"></div>
+    </section>
+
+    <section aria-labelledby="how-title" id="how">
+      <h2 id="how-title">How this works</h2>
+      <div class="cols">
+        <div class="prose">
+          <h3>Nothing is uploaded</h3>
+          <p>Your browser reads the file and the script in this page checks it. The page cannot send it anywhere: its
+            Content-Security-Policy, sent with the page and repeated in it, sets <code>connect-src 'none'</code> and
+            <code>default-src 'none'</code>, so the browser refuses every connection the page might try after it has
+            loaded, to us or to anyone. The script, styles and fonts are all inside this one file; nothing else is
+            fetched. To see it for yourself, open your browser's developer tools on the Network tab while you check a
+            report, or save this page and open it offline.</p>
+          <details class="cli">
+            <summary>The policy this page is served with</summary>
+            <p class="csp"><!-- CSP TEXT --></p>
+          </details>
+          <h3>The same checks as the command line</h3>
+          <p>The checks are a line-for-line port of <a href="/verify_report.py"><code>verify_report.py</code></a>, the
+            offline verifier, and give the same verdicts and messages: the two are compared on the sample report, the
+            demo exports and dozens of tampered copies. Signatures and hashes use your browser's WebCrypto.</p>
+          <p>If you would rather not trust this page, run the verifier yourself. It needs only Python and no
+            AttackLedger install:</p>
+<pre tabindex="0" aria-label="Command"><code>python3 verify_report.py report.json \
+    --tsa-root digicert-trusted-root-g4.pem</code></pre>
+          <p class="hint">Download <a href="/verify_report.py">verify_report.py</a> and
+            <a href="/digicert-trusted-root-g4.pem">digicert-trusted-root-g4.pem</a>, or try it on the
+            <a href="/sample-report.json">sample report</a>.</p>
+          <h3>Browser support</h3>
+          <p id="support">Any current browser. Ed25519 signatures use WebCrypto where the browser has it (Chrome and Edge 137,
+            Firefox 129, Safari 17 and later); elsewhere the page uses the verifier's own RFC 8032 code, so they are checked
+            either way.</p>
+        </div>
+        <div>
+          <h3>What each check means</h3>
+          <ul class="list" id="explain"></ul>
+          <p class="hint">A skipped check neither passes nor fails: there was nothing for it to check. A signature proves
+            the key holder signed; to tie a key to a person, compare its fingerprint with the one the signer gives
+            you.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>AttackLedger, made by Murat Kabak.</span>
+    <a href="/security">Security</a>
+    <span>Proving what was tested.</span>
+  </footer>
+</div>
+<!-- SCRIPT -->
+</body>
+</html>
