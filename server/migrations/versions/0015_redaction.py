@@ -1,6 +1,6 @@
 """redaction: per-engagement setting, and what was redacted from each evidence entry
 
-Revision ID: 0016
+Revision ID: 0015
 Revises: 0014 (becomes 0015 when the audit log branch, which adds 0015, is merged first)
 Create Date: 2026-10-09 21:00:00
 """
@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0016'
+revision = '0015'
 down_revision = '0014'
 branch_labels = None
 depends_on = None
