@@ -137,6 +137,7 @@ How AttackLedger is offered is not decided. The architecture keeps every option 
 ## Order of work
 
 1. **Identity and roles.** People, roles, sign-in. Signatures need an identity first.
+   Built 2026-10-09 (D-032).
 2. **Signed and timestamped receipts.** Browser keys, timestamp client, chain and report
    format version 2, verifier update.
 3. **Import inbox and the Caido adapter.** Then Burp and nuclei.

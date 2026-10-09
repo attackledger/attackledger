@@ -46,6 +46,8 @@ class Engagement(Base):
     # Opt-in modules (see modules.py) the operator enabled because the program allows them.
     enabled_modules: Mapped[list] = mapped_column(JSON, default=list)
     crawl_depth: Mapped[int] = mapped_column(default=3, server_default="3")
+    # When on, the person who attached a lane's evidence cannot sign its receipt.
+    separation_of_duties: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     assets: Mapped[list["Asset"]] = relationship(back_populates="engagement")
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
@@ -110,6 +112,7 @@ class Evidence(Base):
     uri: Mapped[str | None] = mapped_column(String(1000))
     summary: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))   # who attached it, or started the run
     lane: Mapped[Lane] = relationship(back_populates="evidence")
 
 
@@ -120,6 +123,7 @@ class Receipt(Base):
     manifest_sha256: Mapped[str] = mapped_column(String(64))
     # The person who reviewed the lane and closed it. Executors never issue receipts (D-018).
     closed_by: Mapped[str | None] = mapped_column(String(200))
+    closed_by_user: Mapped[int | None] = mapped_column(ForeignKey("users.id"))   # set when people sign in
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     lane: Mapped[Lane] = relationship(back_populates="receipts")
 
@@ -154,6 +158,7 @@ class Job(Base):
     # An agent run (kind "agent") works one lane; result holds its limits, outcome and token use.
     lane_id: Mapped[int | None] = mapped_column(ForeignKey("lanes.id"))
     result: Mapped[dict | None] = mapped_column(JSON)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
@@ -204,3 +209,41 @@ class Lead(Base):
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
     fingerprint: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+# ---- people -----------------------------------------------------------------
+
+ROLES = ("viewer", "tester", "reviewer")
+
+
+class User(Base):
+    """A person who signs in. Owners manage people and engagements and can do everything;
+    everyone else gets roles per engagement (Membership)."""
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    password_hash: Mapped[str] = mapped_column(String(300))
+    is_owner: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    disabled: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class UserSession(Base):
+    """A signed-in browser. Only the hash of the cookie value is stored."""
+    __tablename__ = "user_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    expires_at: Mapped[datetime]
+
+
+class Membership(Base):
+    """A person's roles on one engagement: viewer (read), tester (work), reviewer (sign)."""
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("engagement_id", "user_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    roles: Mapped[list] = mapped_column(JSON, default=list)

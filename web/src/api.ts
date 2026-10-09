@@ -24,6 +24,7 @@ export interface LaneInfo {
 
 export interface Coverage {
   engagement: string;
+  separation_of_duties?: boolean;
   pack: { id: string; name: string };
   roles: string[];
   lanes: LaneInfo[];
@@ -113,6 +114,7 @@ export interface Scope {
   crawl_depth: number;
   authorized_by: string | null;
   authorized_at: string | null;
+  separation_of_duties?: boolean;
 }
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "partial";
@@ -148,6 +150,30 @@ export interface AgentResult {
   summary?: string;
   detail?: string;
   cost_usd_estimate?: number;
+}
+
+export interface Me {
+  kind: "open" | "token" | "person";
+  user_id: number | null;
+  name: string;
+  is_owner: boolean;
+  mode: "open" | "token" | "people";
+  roles: Record<string, string[]>;
+}
+
+export interface Person {
+  id: number;
+  email: string;
+  name: string;
+  is_owner: boolean;
+  disabled: boolean;
+}
+
+export interface Member {
+  user_id: number;
+  name: string;
+  email: string;
+  roles: string[];
 }
 
 export interface ExecutorInfo {
@@ -290,6 +316,20 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   login: (token: string) => call<{ ok: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
+  loginPerson: (email: string, password: string) =>
+    call<{ ok: boolean; name: string }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  health: () => call<{ ok: boolean; auth_required: boolean; mode: "open" | "token" | "people" }>("/health"),
+  me: () => call<Me>("/auth/me"),
+  people: () => call<Person[]>("/people"),
+  createPerson: (body: { email: string; name: string; password: string; is_owner: boolean }) =>
+    call<Person>("/people", { method: "POST", body: JSON.stringify(body) }),
+  updatePerson: (id: number, body: Partial<{ name: string; password: string; is_owner: boolean; disabled: boolean }>) =>
+    call<Person>(`/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  members: (engId: number) => call<Member[]>(`/engagements/${engId}/members`),
+  setMembers: (engId: number, members: { user_id: number; roles: string[] }[]) =>
+    call<Member[]>(`/engagements/${engId}/members`, { method: "PUT", body: JSON.stringify({ members }) }),
+  updateEngagement: (engId: number, body: { separation_of_duties?: boolean }) =>
+    call<{ id: number; separation_of_duties: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
   createEngagement: (name: string, pack_id: string) =>
@@ -360,6 +400,6 @@ export const api = {
   }) => call<LaneDetail>(`/lanes/${laneId}/attach`, { method: "POST", body: JSON.stringify(body) }),
   updateItem: (laneId: number, idx: number, state: "open" | "done" | "na", na_reason?: string) =>
     call<LaneDetail>(`/lanes/${laneId}/items/${idx}`, { method: "PATCH", body: JSON.stringify({ state, na_reason }) }),
-  closeLane: (laneId: number, closed_by: string, reviewed: boolean) =>
+  closeLane: (laneId: number, closed_by: string | null, reviewed: boolean) =>
     call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST", body: JSON.stringify({ closed_by, reviewed }) }),
 };

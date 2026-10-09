@@ -1,23 +1,24 @@
 import base64
 import binascii
 import hmac
+import os
 from contextlib import asynccontextmanager
 
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import (agenttools, auth, blobs, executors, gates, jobgates, ledger, migrate, modules, packs, report,
+from . import (agenttools, auth, authz, blobs, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import targets as targeting
 from .db import get_session
-from .models import (Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
-                     Lane, Lead, Observation, Receipt)
+from .models import (ROLES, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
+                     Lane, Lead, Membership, Observation, Receipt, User)
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 
@@ -29,8 +30,10 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="AttackLedger", version="0.6.0.dev0", lifespan=lifespan)
-app.middleware("http")(auth.middleware)
+# Every route passes authz.authorize first: who is calling, and may they use this route.
+app = FastAPI(title="AttackLedger", version="0.6.0.dev0", lifespan=lifespan,
+              dependencies=[Depends(authz.authorize)])
+COOKIE_SECURE = os.environ.get("ATTACKLEDGER_COOKIE_SECURE", "") == "1"   # set behind HTTPS
 
 
 # ---- schemas ---------------------------------------------------------------
@@ -108,12 +111,13 @@ def _lane_view(lane: Lane) -> dict:
         "evidence": [
             {"id": e.id, "item_idx": next((i.idx for i in lane.items if i.id == e.item_id), None),
              "kind": e.kind, "sha256": e.sha256, "uri": e.uri, "summary": e.summary,
-             "created_at": e.created_at.isoformat()}
+             "created_at": e.created_at.isoformat(), "created_by": e.created_by}
             for e in lane.evidence
         ],
         "receipt": (
             {"sha256": lane.receipts[-1].manifest_sha256,
              "closed_by": lane.receipts[-1].closed_by,
+             "closed_by_user": lane.receipts[-1].closed_by_user,
              "created_at": lane.receipts[-1].created_at.isoformat()}
             if lane.receipts else None
         ),
@@ -123,33 +127,66 @@ def _lane_view(lane: Lane) -> dict:
 # ---- routes ----------------------------------------------------------------
 
 @app.get("/health")
-def health():
-    # Says whether the API requires a token: an open API must not leave localhost.
-    return {"ok": True, "auth_required": auth.token() is not None}
+def health(session: Session = Depends(get_session)):
+    # Says how callers sign in. An open API (no people, no token) must not leave localhost.
+    m = auth.mode(session)
+    return {"ok": True, "auth_required": m != "open", "mode": m}
 
 
 class LoginIn(BaseModel):
-    token: str = Field(min_length=1, max_length=500)
+    token: str | None = Field(default=None, max_length=500)
+    email: str | None = Field(default=None, max_length=254)
+    password: str | None = Field(default=None, max_length=256)
+
+
+def _session_cookie(resp: JSONResponse, value: str) -> JSONResponse:
+    resp.set_cookie(auth.COOKIE, value, httponly=True, samesite="strict", secure=COOKIE_SECURE,
+                    max_age=auth.SESSION_HOURS * 3600, path="/")
+    return resp
 
 
 @app.post("/auth/login")
-def login(body: LoginIn):
+def login(body: LoginIn, request: Request, session: Session = Depends(get_session)):
+    m = auth.mode(session)
+    if body.email is not None:
+        if m != "people":
+            raise HTTPException(422, "nobody has an account yet; sign in with the operator token or create the first owner")
+        email, addr = body.email.strip().lower(), request.client.host if request.client else ""
+        if auth.locked(email, addr):
+            raise HTTPException(429, "too many failed sign-ins; try again in 15 minutes")
+        user = session.scalar(select(User).where(User.email == email))
+        ok = auth.verify_password(body.password or "", user.password_hash if user else auth._DUMMY_HASH)
+        if not ok or user is None or user.disabled:
+            auth.record_failure(email, addr)
+            raise HTTPException(401, "wrong email or password")
+        auth.clear_failures(email, addr)
+        return _session_cookie(JSONResponse({"ok": True, "mode": m, "name": user.name}),
+                               auth.new_session(session, user.id))
     tok = auth.token()
     if tok is None:
-        return {"ok": True, "auth_required": False}
-    if not hmac.compare_digest(body.token.strip(), tok):
+        if m == "open":
+            return {"ok": True, "mode": m}
+        raise HTTPException(422, "sign in with your email and password")
+    if not hmac.compare_digest((body.token or "").strip(), tok):
         raise HTTPException(401, "wrong token")
-    resp = JSONResponse({"ok": True, "auth_required": True})
-    resp.set_cookie(auth.COOKIE, auth.session_value(tok), httponly=True, samesite="strict",
-                    secure=False, max_age=12 * 3600, path="/")
-    return resp
+    return _session_cookie(JSONResponse({"ok": True, "mode": m}), auth.token_session_value(tok))
 
 
 @app.post("/auth/logout")
-def logout():
+def logout(request: Request, session: Session = Depends(get_session)):
+    value = request.cookies.get(auth.COOKIE, "")
+    if value:
+        auth.end_session(session, value)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.COOKIE, path="/")
     return resp
+
+
+@app.get("/auth/me")
+def me(request: Request, session: Session = Depends(get_session)):
+    who = authz.current(request)
+    return {"kind": who.kind, "user_id": who.user_id, "name": who.name, "is_owner": who.is_owner,
+            "mode": auth.mode(session), "roles": {str(k): list(v) for k, v in who.roles.items()}}
 
 
 @app.post("/engagements", status_code=201)
@@ -191,8 +228,12 @@ def add_asset(eng_id: int, body: AssetIn, session: Session = Depends(get_session
 
 
 @app.post("/lanes", status_code=201)
-def open_lane(body: LaneIn, session: Session = Depends(get_session)):
+def open_lane(body: LaneIn, request: Request, session: Session = Depends(get_session)):
     asset = _get(session, Asset, body.asset_id)
+    who = authz.current(request)
+    if not who.has(asset.engagement_id, "tester"):
+        raise HTTPException(403 if who.can_read(asset.engagement_id) else 404,
+                            "this needs the tester role on the engagement")
     if not asset.in_scope:
         raise HTTPException(422, f"{asset.host} is out of scope")
     pack = _pack_of(asset.engagement)
@@ -218,11 +259,12 @@ def get_lane(lane_id: int, session: Session = Depends(get_session)):
 
 
 @app.post("/lanes/{lane_id}/evidence", status_code=201)
-def add_evidence(lane_id: int, body: EvidenceIn, session: Session = Depends(get_session)):
+def add_evidence(lane_id: int, body: EvidenceIn, request: Request, session: Session = Depends(get_session)):
     lane = _get(session, Lane, lane_id)
     item_id = _item(lane, body.item_idx).id if body.item_idx is not None else None
     ev = ledger.append_evidence(session, lane, kind=body.kind, sha256_hex=body.sha256,
-                                summary=body.summary, uri=body.uri, item_id=item_id)
+                                summary=body.summary, uri=body.uri, item_id=item_id,
+                                created_by=authz.current(request).user_id)
     session.commit()
     return {"id": ev.id}
 
@@ -242,7 +284,7 @@ class AttachIn(BaseModel):
 
 
 @app.post("/lanes/{lane_id}/attach", status_code=201)
-def attach_evidence(lane_id: int, body: AttachIn, session: Session = Depends(get_session)):
+def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Session = Depends(get_session)):
     """Attach a note, a file or a recon run to one checklist item. Notes and files are
     stored in the blob store, so the evidence hash can be opened and checked later."""
     lane = _get(session, Lane, lane_id)
@@ -277,7 +319,7 @@ def attach_evidence(lane_id: int, body: AttachIn, session: Session = Depends(get
         digest, uri, kind = job.output_sha256, f"job:{job.id}", "file"
         summary = f"{label}: {summary}" if summary else label
     ev = ledger.append_evidence(session, lane, kind=kind, sha256_hex=digest, summary=summary, uri=uri,
-                                item_id=item.id)
+                                item_id=item.id, created_by=authz.current(request).user_id)
     session.commit()
     session.refresh(lane)
     return {"id": ev.id, **_lane_view(lane)}
@@ -298,24 +340,33 @@ def update_item(lane_id: int, idx: int, body: ItemUpdate, session: Session = Dep
 
 
 class CloseIn(BaseModel):
-    closed_by: str = Field(min_length=1, max_length=200)   # the person signing the receipt
+    # The person signing. Taken from the account when people sign in; typed otherwise.
+    closed_by: str | None = Field(default=None, max_length=200)
     reviewed: bool                                         # "I reviewed this lane's evidence"
 
 
 @app.post("/lanes/{lane_id}/close")
-def close_lane(lane_id: int, body: CloseIn, session: Session = Depends(get_session)):
+def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session = Depends(get_session)):
     """Issue a receipt. Only a person does this (D-018): executors, agents included,
     attach evidence and mark items, but the receipt carries a human signature."""
     lane = _get(session, Lane, lane_id)
+    who = authz.current(request)
     if not body.reviewed:
         raise HTTPException(422, "confirm that you reviewed this lane's evidence before closing it")
-    if not body.closed_by.strip():
+    signer = who.name if who.kind == "person" else (body.closed_by or "").strip()
+    if not signer:
         raise HTTPException(422, "a receipt needs the name of the person signing it")
+    if lane.asset.engagement.separation_of_duties:
+        if who.kind != "person":
+            raise HTTPException(422, "separation of duties is on: sign in as a person to sign receipts")
+        if any(e.created_by == who.user_id for e in lane.evidence):
+            raise HTTPException(422, "separation of duties is on: you attached evidence to this lane, "
+                                     "so someone else must sign its receipt")
     problems = gates.unresolved(lane)
     if problems:
         raise HTTPException(422, {"error": "lane cannot close", "unresolved": problems})
     receipt = Receipt(lane_id=lane.id, manifest_sha256=gates.manifest_hash(lane),
-                      closed_by=body.closed_by.strip())
+                      closed_by=signer, closed_by_user=who.user_id)
     session.add(receipt)
     session.commit()
     session.refresh(lane)
@@ -323,8 +374,10 @@ def close_lane(lane_id: int, body: CloseIn, session: Session = Depends(get_sessi
 
 
 @app.get("/engagements")
-def list_engagements(session: Session = Depends(get_session)):
-    engs = session.scalars(select(Engagement).order_by(Engagement.created_at.desc())).all()
+def list_engagements(request: Request, session: Session = Depends(get_session)):
+    who = authz.current(request)
+    engs = [e for e in session.scalars(select(Engagement).order_by(Engagement.created_at.desc()))
+            if who.can_read(e.id)]
     return [{"id": e.id, "name": e.name, "policy_url": e.policy_url, "assets": len(e.assets),
              "pack_id": e.pack_id, "engagement_type": e.engagement_type} for e in engs]
 
@@ -357,6 +410,7 @@ def coverage(eng_id: int, session: Session = Depends(get_session)):
     total = sum(len(r["roles"]) for r in in_scope)
     closed = sum(1 for r in in_scope for c in r["roles"].values() if c["status"] == "closed")
     return {"engagement": eng.name, "pack": {"id": pack.id, "name": pack.name},
+            "separation_of_duties": eng.separation_of_duties,
             "roles": keys,
             "lanes": [{"key": l.key, "name": l.name, "needs": list(l.needs)} for l in pack.lanes],
             "closed_cells": closed, "total_cells": total, "assets": rows}
@@ -390,6 +444,7 @@ def _scope_view(eng: Engagement) -> dict:
         "enabled_modules": sorted(eng.enabled_modules or []), "crawl_depth": eng.crawl_depth,
         "authorized_by": eng.authorized_by,
         "authorized_at": eng.authorized_at.isoformat() if eng.authorized_at else None,
+        "separation_of_duties": eng.separation_of_duties,
     }
 
 
@@ -492,7 +547,7 @@ def recon_summary(eng_id: int, session: Session = Depends(get_session)):
 
 
 @app.post("/engagements/{eng_id}/jobs", status_code=201)
-def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)):
+def create_job(eng_id: int, body: JobIn, request: Request, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
     try:
         m = jobgates.check_engagement(eng, body.kind)
@@ -507,7 +562,7 @@ def create_job(eng_id: int, body: JobIn, session: Session = Depends(get_session)
     _, bad = jobgates.split_targets(eng, m, targets)
     if bad:
         raise HTTPException(422, f"out of scope: {', '.join(bad[:10])}")
-    job = Job(engagement_id=eng.id, kind=body.kind, targets=targets)
+    job = Job(engagement_id=eng.id, kind=body.kind, targets=targets, created_by=authz.current(request).user_id)
     session.add(job)
     session.commit()
     return _job_view(job)
@@ -518,7 +573,8 @@ class PipelineIn(BaseModel):
 
 
 @app.post("/engagements/{eng_id}/pipeline", status_code=201)
-def run_pipeline(eng_id: int, body: PipelineIn | None = None, session: Session = Depends(get_session)):
+def run_pipeline(eng_id: int, request: Request, body: PipelineIn | None = None,
+                 session: Session = Depends(get_session)):
     """Queue every step that passes its gates, in registry order. Each step resolves
     its targets when it starts, from what the steps before it produced."""
     eng = _get(session, Engagement, eng_id)
@@ -535,7 +591,8 @@ def run_pipeline(eng_id: int, body: PipelineIn | None = None, session: Session =
         except jobgates.GateError as e:
             skipped.append({"kind": m.kind, "reason": str(e)})
             continue
-        job = Job(engagement_id=eng.id, kind=m.kind, targets=[], deferred=True)
+        job = Job(engagement_id=eng.id, kind=m.kind, targets=[], deferred=True,
+                  created_by=authz.current(request).user_id)
         session.add(job)
         queued.append(m.kind)
     if not queued:
@@ -556,14 +613,14 @@ def get_job(job_id: int, session: Session = Depends(get_session)):
 
 
 @app.post("/jobs/{job_id}/resume", status_code=201)
-def resume_job(job_id: int, session: Session = Depends(get_session)):
+def resume_job(job_id: int, request: Request, session: Session = Depends(get_session)):
     """Run the targets a stopped job did not reach. Every gate is checked again."""
     job = _get(session, Job, job_id)
     if job.kind == "agent":
         raise HTTPException(422, "an agent run is not resumed; start a new run on the lane")
     if job.status not in (JobStatus.partial, JobStatus.cancelled) or not job.remaining_targets:
         raise HTTPException(422, "this run has no remaining targets")
-    return create_job(job.engagement_id, JobIn(kind=job.kind, targets=job.remaining_targets), session)
+    return create_job(job.engagement_id, JobIn(kind=job.kind, targets=job.remaining_targets), request, session)
 
 
 @app.post("/jobs/{job_id}/cancel")
@@ -773,7 +830,8 @@ class AgentRunIn(BaseModel):
 
 
 @app.post("/lanes/{lane_id}/agent-runs", status_code=201)
-def start_agent_run(lane_id: int, body: AgentRunIn | None = None, session: Session = Depends(get_session)):
+def start_agent_run(lane_id: int, request: Request, body: AgentRunIn | None = None,
+                    session: Session = Depends(get_session)):
     """Queue a Claude agent on this lane. It attaches evidence and marks items; it never
     closes the lane (D-018). Every gate is checked again when the worker starts it."""
     lane = _get(session, Lane, lane_id)
@@ -792,6 +850,7 @@ def start_agent_run(lane_id: int, body: AgentRunIn | None = None, session: Sessi
     if busy is not None:
         raise HTTPException(409, f"an agent run is already queued or running on this lane (job {busy})")
     job = Job(engagement_id=lane.asset.engagement_id, kind="agent", lane_id=lane.id,
+              created_by=authz.current(request).user_id,
               targets=[lane.asset.host],
               result={"limits": {"max_turns": body.max_turns, "max_requests": body.max_requests,
                                  "max_cost_usd": body.max_cost_usd}})
@@ -821,6 +880,125 @@ def get_blob(digest: str, session: Session = Depends(get_session)):
     return Response(data, media_type="text/plain; charset=utf-8",
                     headers={"Content-Security-Policy": "default-src 'none'; sandbox",
                              "X-Content-Type-Options": "nosniff"})
+
+
+# ---- people and roles ---------------------------------------------------------
+
+class PersonIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+$")
+    name: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=1, max_length=256)
+    is_owner: bool = False
+
+
+class PersonPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    password: str | None = Field(default=None, max_length=256)
+    is_owner: bool | None = None
+    disabled: bool | None = None
+
+
+def _person_view(u: User) -> dict:
+    return {"id": u.id, "email": u.email, "name": u.name, "is_owner": u.is_owner, "disabled": u.disabled}
+
+
+def _active_owners(session) -> int:
+    return len([u for u in session.scalars(select(User).where(User.is_owner.is_(True))) if not u.disabled])
+
+
+@app.get("/people")
+def list_people(session: Session = Depends(get_session)):
+    return [_person_view(u) for u in session.scalars(select(User).order_by(User.name))]
+
+
+@app.post("/people", status_code=201)
+def create_person(body: PersonIn, session: Session = Depends(get_session)):
+    """Add a person. The first one must be an owner: from then on, everyone signs in."""
+    if not auth.people_exist(session) and not body.is_owner:
+        raise HTTPException(422, "the first person must be an owner, or nobody could manage the ledger")
+    why = auth.check_password_rules(body.password)
+    if why:
+        raise HTTPException(422, f"password: {why}")
+    user = User(email=body.email.strip().lower(), name=body.name.strip(),
+                password_hash=auth.hash_password(body.password), is_owner=body.is_owner)
+    session.add(user)
+    try:
+        session.commit()
+    except IntegrityError:
+        raise HTTPException(409, "someone with that email already exists")
+    return _person_view(user)
+
+
+@app.patch("/people/{user_id}")
+def update_person(user_id: int, body: PersonPatch, session: Session = Depends(get_session)):
+    user = _get(session, User, user_id)
+    losing_owner = (body.is_owner is False or body.disabled is True) and user.is_owner and not user.disabled
+    if losing_owner and _active_owners(session) <= 1:
+        raise HTTPException(422, "this is the last active owner; make someone else an owner first")
+    if body.password is not None:
+        why = auth.check_password_rules(body.password)
+        if why:
+            raise HTTPException(422, f"password: {why}")
+        user.password_hash = auth.hash_password(body.password)
+    if body.name is not None:
+        user.name = body.name.strip()
+    if body.is_owner is not None:
+        user.is_owner = body.is_owner
+    if body.disabled is not None:
+        user.disabled = body.disabled
+    session.commit()
+    return _person_view(user)
+
+
+class MemberIn(BaseModel):
+    user_id: int
+    roles: list[str]
+
+
+class MembersIn(BaseModel):
+    members: list[MemberIn]
+
+
+@app.get("/engagements/{eng_id}/members")
+def list_members(eng_id: int, session: Session = Depends(get_session)):
+    _get(session, Engagement, eng_id)
+    rows = session.scalars(select(Membership).where(Membership.engagement_id == eng_id)).all()
+    users = {u.id: u for u in session.scalars(select(User))}
+    return [{"user_id": m.user_id, "name": users[m.user_id].name, "email": users[m.user_id].email,
+             "roles": m.roles} for m in rows if m.user_id in users]
+
+
+@app.put("/engagements/{eng_id}/members")
+def set_members(eng_id: int, body: MembersIn, session: Session = Depends(get_session)):
+    """Replace who works on this engagement and in which roles."""
+    _get(session, Engagement, eng_id)
+    for m in body.members:
+        bad = [r for r in m.roles if r not in ROLES]
+        if bad:
+            raise HTTPException(422, f"unknown role: {', '.join(bad)} (roles: {', '.join(ROLES)})")
+        if session.get(User, m.user_id) is None:
+            raise HTTPException(422, f"no person with id {m.user_id}")
+    for old in session.scalars(select(Membership).where(Membership.engagement_id == eng_id)):
+        session.delete(old)
+    session.flush()
+    for m in body.members:
+        if m.roles:
+            session.add(Membership(engagement_id=eng_id, user_id=m.user_id, roles=sorted(set(m.roles))))
+    session.commit()
+    return list_members(eng_id, session)
+
+
+class EngagementPatch(BaseModel):
+    separation_of_duties: bool | None = None
+
+
+@app.patch("/engagements/{eng_id}")
+def update_engagement(eng_id: int, body: EngagementPatch, session: Session = Depends(get_session)):
+    eng = _get(session, Engagement, eng_id)
+    if body.separation_of_duties is not None:
+        eng.separation_of_duties = body.separation_of_duties
+    session.commit()
+    return {"id": eng.id, "separation_of_duties": eng.separation_of_duties}
 
 
 # ---- scope import ----------------------------------------------------------

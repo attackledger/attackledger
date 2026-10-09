@@ -34,7 +34,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 
 from . import blobs, gates, ledger, scope
-from .models import Evidence, ItemState, Lane, Lead
+from .models import Evidence, ItemState, Job, Lane, Lead
 
 READ_ONLY_METHODS = ("GET", "HEAD", "OPTIONS")
 # Hop-by-hop and identity headers: set by the transport or by the engagement, never by the agent.
@@ -215,6 +215,8 @@ class Toolbox:
                  sleep=time.sleep, clock=time.monotonic, max_requests: int = 200):
         check_lane(lane)
         self.session, self.lane, self.job_id = session, lane, job_id
+        job = session.get(Job, job_id)
+        self.created_by = job.created_by if job else None   # the person who started the run
         self.eng = lane.asset.engagement
         self.host = lane.asset.host
         self.ident = identification(self.eng)
@@ -351,7 +353,8 @@ class Toolbox:
         if not ids:
             digest = blobs.put(summary.encode())
             ev = ledger.append_evidence(self.session, self.lane, kind="note", sha256_hex=digest,
-                                        summary=MARK + summary, item_id=item.id)
+                                        summary=MARK + summary, item_id=item.id,
+                                        created_by=self.created_by)
             added.append(ev.id)
         existing = {(e.item_id, e.sha256) for e in self.session.scalars(
             select(Evidence).where(Evidence.lane_id == self.lane.id))}
@@ -361,7 +364,8 @@ class Toolbox:
                 continue
             ev = ledger.append_evidence(
                 self.session, self.lane, kind="response", sha256_hex=x["sha256"], uri=x["url"][:1000],
-                summary=f"{MARK}{x['method']} {x['url'][:300]} -> {x['status']}. {summary}", item_id=item.id)
+                summary=f"{MARK}{x['method']} {x['url'][:300]} -> {x['status']}. {summary}", item_id=item.id,
+                created_by=self.created_by)
             added.append(ev.id)
         self.evidence_added += len(added)
         return {"evidence_added": len(added), "item_idx": item.idx}

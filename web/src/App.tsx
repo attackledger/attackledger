@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, PackSummary } from "./api";
+import { api, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, Me, PackSummary } from "./api";
+import { People, Team } from "./People";
 import { Executor } from "./Agent";
 import { ItemWork } from "./LaneWork";
 import { DEMO, demoUrl } from "./demo";
@@ -14,8 +15,8 @@ const TYPE_NAMES: Record<string, string> = {
   internal: "Internal assessment",
 };
 
-type Tab = "recon" | "ledger" | "controls" | "report";
-const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report" };
+type Tab = "recon" | "ledger" | "controls" | "report" | "team";
+const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", team: "Team" };
 
 export function App() {
   const [needLogin, setNeedLogin] = useState(false);
@@ -30,10 +31,43 @@ export function App() {
 
 function Login({ onDone }: { onDone: () => void }) {
   const [token, setToken] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"token" | "people" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.health().then((h) => setMode(h.mode === "people" ? "people" : "token")).catch(() => setMode("token"));
+  }, []);
   async function submit(ev: FormEvent) {
     ev.preventDefault();
-    try { await api.login(token); onDone(); } catch (e) { setError((e as Error).message); }
+    try {
+      if (mode === "people") await api.loginPerson(email, password);
+      else await api.login(token);
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  if (mode === "people") {
+    return (
+      <main className="login">
+        <form className="panel login-card" onSubmit={submit}>
+          <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
+          <label className="sign-name">
+            Email
+            <input id="login-email" type="email" autoComplete="username" value={email}
+                   onChange={(e) => setEmail(e.target.value)} autoFocus />
+          </label>
+          <label className="sign-name">
+            Password
+            <input id="login-password" type="password" autoComplete="current-password" value={password}
+                   onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          {error && <p className="field-error">{error}</p>}
+          <button className="btn primary" disabled={!email || !password}>Sign in</button>
+        </form>
+      </main>
+    );
   }
   return (
     <main className="login">
@@ -58,6 +92,10 @@ function Workspace() {
   const [laneId, setLaneId] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("recon");
+  const [me, setMe] = useState<Me | null>(null);
+  const [page, setPage] = useState<"work" | "people">("work");
+  useEffect(() => { if (!DEMO) api.me().then(setMe).catch(() => {}); }, []);
+  const owner = !DEMO && !!me?.is_owner;
 
   const loadEngagements = useCallback(async () => {
     try {
@@ -110,7 +148,7 @@ function Workspace() {
                   <button
                     className="engagement"
                     aria-current={e.id === current ? "page" : undefined}
-                    onClick={() => { setCurrent(e.id); setLaneId(null); }}
+                    onClick={() => { setCurrent(e.id); setLaneId(null); setPage("work"); }}
                   >
                     <span className="engagement-name">
                       {e.name}
@@ -122,10 +160,26 @@ function Workspace() {
               ))}
             </ul>
           )}
-          <NewEngagement onCreated={async (id) => { await loadEngagements(); setCurrent(id); }} />
+          {(!me || me.is_owner) && (
+            <NewEngagement onCreated={async (id) => { await loadEngagements(); setCurrent(id); setPage("work"); }} />
+          )}
         </nav>
 
         <div className="index-foot">
+          {me && me.mode !== "open" && (
+            <div className="whoami">
+              <span>Signed in as <strong>{me.name}</strong></span>
+              <button className="link-button" onClick={async () => { await api.logout(); window.location.reload(); }}>
+                Sign out
+              </button>
+            </div>
+          )}
+          {owner && (
+            <button className={`btn ghost small${page === "people" ? " on" : ""}`}
+                    onClick={() => setPage(page === "people" ? "work" : "people")}>
+              {page === "people" ? "Back to engagements" : "People"}
+            </button>
+          )}
           <ThemeToggle />
         </div>
       </aside>
@@ -150,7 +204,7 @@ function Workspace() {
             <button className="link-button" onClick={() => setNotice(null)}>Dismiss</button>
           </p>
         )}
-        {engagements && engagements.length === 0 && !notice && (
+        {engagements && engagements.length === 0 && !notice && page === "work" && (
           <section className="empty">
             <h2>Start your first engagement</h2>
             <p>
@@ -160,12 +214,14 @@ function Workspace() {
             </p>
           </section>
         )}
-        {coverage && current != null && (
+        {page === "people" && owner && <People mode={me?.mode ?? "open"} />}
+        {coverage && current != null && page === "work" && (
           <>
             <header className="eng-head">
               <h2 className="eng-title">{coverage.engagement}</h2>
               <div className="tabs" role="tablist" aria-label="Engagement views">
-                {(["recon", "ledger", "controls", "report"] as const).map((t) => (
+                {(owner ? (["recon", "ledger", "controls", "report", "team"] as const)
+                        : (["recon", "ledger", "controls", "report"] as const)).map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -184,19 +240,22 @@ function Workspace() {
               </div>
             </header>
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-              {tab === "recon" && <Recon engId={current} onAssetsChanged={loadCoverage} />}
+              {tab === "recon" && <Recon engId={current} onAssetsChanged={loadCoverage} canManage={DEMO || !me || me.is_owner} />}
               {tab === "ledger" && (
                 <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage} />
               )}
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
               {tab === "report" && <Report engId={current} />}
+              {tab === "team" && owner && (
+                <Team engId={current} separation={!!coverage.separation_of_duties} onChanged={loadCoverage} />
+              )}
             </div>
           </>
         )}
       </main>
 
       {laneId != null && (
-        <Folio laneId={laneId} onClose={() => setLaneId(null)} onChanged={loadCoverage} />
+        <Folio laneId={laneId} me={me} onClose={() => setLaneId(null)} onChanged={loadCoverage} />
       )}
     </div>
   );
@@ -506,7 +565,9 @@ function CellMark({ cell, label, lockedBy, disabled, onClick }: {
 
 const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○" };
 
-function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => void; onChanged: () => void }) {
+function Folio({ laneId, me, onClose, onChanged }: {
+  laneId: number; me: Me | null; onClose: () => void; onChanged: () => void;
+}) {
   const [lane, setLane] = useState<LaneDetail | null>(null);
   const [ctx, setCtx] = useState<LaneContext | null>(null);
   const [runs, setRuns] = useState<Job[]>([]);
@@ -545,7 +606,7 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
   async function close() {
     try {
       try { localStorage.setItem("attackledger-signer", signer.trim()); } catch { /* ignore */ }
-      setLane(await api.closeLane(laneId, signer.trim(), reviewed));
+      setLane(await api.closeLane(laneId, me?.kind === "person" ? null : signer.trim(), reviewed));
       setReviewed(false);
       setError(null);
       onChanged();
@@ -677,15 +738,19 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
               </p>
             ) : (
               <div className="sign">
-                <label className="sign-name">
-                  Your name, as it appears on the receipt
-                  <input value={signer} onChange={(e) => setSigner(e.target.value)} placeholder="Full name" />
-                </label>
+                {me?.kind === "person" ? (
+                  <p className="muted">You sign as <strong>{me.name}</strong>.</p>
+                ) : (
+                  <label className="sign-name">
+                    Your name, as it appears on the receipt
+                    <input value={signer} onChange={(e) => setSigner(e.target.value)} placeholder="Full name" />
+                  </label>
+                )}
                 <label className="check">
                   <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
                   I reviewed this lane's evidence. Only a person closes a lane.
                 </label>
-                <button className="btn primary" disabled={!signer.trim() || !reviewed} onClick={close}>
+                <button className="btn primary" disabled={(me?.kind !== "person" && !signer.trim()) || !reviewed} onClick={close}>
                   Sign and close lane
                 </button>
               </div>

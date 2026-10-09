@@ -122,12 +122,14 @@ enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
 all. They derive leads from what earlier modules stored. A lab test confirms that zero
 requests reach the target.
 
-### Authentication
+### Authentication and permissions
 
-`ATTACKLEDGER_API_TOKEN` turns on token authentication for every route except
-`/health` and login, using a bearer header or an HttpOnly, SameSite=Strict cookie that
-holds an HMAC of the token. `/health` reports `auth_required`. An API without a token
-must stay on localhost.
+Three modes (`auth.py`): open (no people, no token: localhost only), token
+(`ATTACKLEDGER_API_TOKEN`) and people (email and password, sessions stored as hashes).
+Every route passes `authz.authorize`, which looks the route up in one permission table:
+public, signed in, owner, or a role on the route's engagement (viewer, tester,
+reviewer). Routes without an entry are open to owners only, and a test checks that
+every route has one. See D-032.
 
 ## Invariants worth keeping
 

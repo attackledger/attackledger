@@ -346,6 +346,28 @@ options considered and who decided.
   and the decisions are real; the API executor (D-025) runs the same tools.
 - **Proposed by:** Murat ("make the keyless demo with an Opus agent"). **Built by:** Claude.
 
+### D-032 · People, roles and separation of duties (2026-10-09, step 1 of the target architecture)
+- **Decision:** people sign in with email and password; roles are given per engagement
+  (viewer reads, tester works, reviewer signs) and owners do everything. One table in
+  `authz.py` names the permission of every route; a route without an entry is closed to
+  everyone but owners, and a test fails if any route lacks one.
+- **Compatibility:** with no people and no token the API stays open for local use (as
+  before); with only `ATTACKLEDGER_API_TOKEN` it works as before; once the first person
+  exists, everyone signs in, and the token keeps working as an owner for automation.
+- **Security choices:** scrypt password hashes (standard library); session cookies hold a
+  random value and only its SHA-256 is stored; HttpOnly, SameSite=Strict, Secure when
+  `ATTACKLEDGER_COOKIE_SECURE=1`; failed sign-ins locked per email and address after 5
+  in 15 minutes; unknown emails cost the same time as wrong passwords; a non-member gets
+  404, not 403, so engagements are not confirmed to exist; the last active owner cannot
+  be disabled or demoted. Passwords for the CLI come from the terminal or an environment
+  variable, never from an argument.
+- **Separation of duties:** an engagement setting. When on, whoever attached a lane's
+  evidence (recorded per entry, and for recon and agent runs, the person who started
+  them) cannot sign its receipt, and the operator token cannot sign at all.
+- **Receipts:** a signed-in reviewer signs under their account name, linked to their id.
+  This is still not a cryptographic signature: that is step 2 (D-027).
+- **Proposed and built by:** Claude, at Murat's request ("complete what is missing").
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

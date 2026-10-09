@@ -27,6 +27,13 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **People, roles and separation of duties** (D-032). Sign in with email and password;
+  per-engagement roles (viewer, tester, reviewer) and owners; a People page and a Team
+  tab for owners; every route checked against one permission table; non-members do not
+  see an engagement at all. Separation of duties is a per-engagement switch: the person
+  who attached a lane's evidence cannot sign its receipt. Evidence, jobs and receipts
+  record who made them. The first owner is added from the People page (open or token
+  mode) or with `python -m app.people create --owner`. Migration `0010`.
 - **A real Claude agent run in the demo.** With no API key yet, Claude Opus worked the
   Lab recon lane from Claude Code through `tools/agent_bridge.py`, which runs every call
   through the same gated tools inside the worker (D-031). 23 requests (22 reached the lab,

@@ -45,7 +45,8 @@ def chain_hash(prev_hash: str, record: dict) -> str:
 
 
 def append_evidence(session, lane: Lane, *, kind: str, sha256_hex: str, summary: str,
-                    uri: str | None = None, item_id: int | None = None) -> Evidence:
+                    uri: str | None = None, item_id: int | None = None,
+                    created_by: int | None = None) -> Evidence:
     eng_id = lane.asset.engagement_id
     # Serialize appends per engagement so two writers cannot fork the chain.
     lock = select(Engagement).where(Engagement.id == eng_id)
@@ -60,7 +61,7 @@ def append_evidence(session, lane: Lane, *, kind: str, sha256_hex: str, summary:
     prev = last.chain_hash if last else GENESIS
 
     ev = Evidence(engagement_id=eng_id, lane_id=lane.id, item_id=item_id, kind=kind,
-                  sha256=sha256_hex, uri=uri, summary=summary, seq=seq, prev_hash=prev)
+                  sha256=sha256_hex, uri=uri, summary=summary, seq=seq, prev_hash=prev, created_by=created_by)
     ev.chain_hash = chain_hash(prev, evidence_record(ev, lane.asset.host, lane.role))
     session.add(ev)
     session.flush()

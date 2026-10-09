@@ -41,7 +41,9 @@ function ago(iso: string | null) {
   return new Date(iso).toLocaleDateString();
 }
 
-export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChanged: () => void }) {
+export function Recon({ engId, onAssetsChanged, canManage = true }: {
+  engId: number; onAssetsChanged: () => void; canManage?: boolean;
+}) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [triage, setTriage] = useState<TriageReport | null>(null);
@@ -153,9 +155,13 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
 
   return (
     <div className="recon">
-      <TargetBar scope={scope} mods={mods} editing={editing || needsRules} canClose={!needsRules}
-                 onToggle={() => setEditing(!editing)} />
-      {(editing || needsRules) && (
+      <TargetBar scope={scope} mods={mods} editing={canManage && (editing || needsRules)}
+                 canClose={canManage && !needsRules} onToggle={() => setEditing(!editing)} />
+      {!canManage && needsRules && (
+        <p className="notice-inline">The rules for this engagement are not complete yet (scope, research identification
+          or authorization). An owner has to record them before anything runs.</p>
+      )}
+      {canManage && (editing || needsRules) && (
         <RulesOfEngagement engId={engId} scope={scope} mods={mods}
                            onSaved={(sc) => { setScope(sc); onAssetsChanged(); refresh().catch(() => {}); }} />
       )}

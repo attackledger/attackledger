@@ -199,6 +199,21 @@ cost (default $0.50, checked after each turn) and the worker time limit. The mod
 only the first 4,000 characters of each response, and 40,000 per run; the full response
 is kept as evidence. The loop has not yet run against the live API: try it on the lab first.
 
+## People and roles
+
+With no accounts, the API is open on localhost (or guarded by `ATTACKLEDGER_API_TOKEN`).
+Add the first owner on the People page, or from the command line:
+
+```bash
+docker compose exec -it api python -m app.people create --email you@example.com --name "Your Name" --owner
+```
+
+From then on everyone signs in with email and password. Owners add people and give them
+roles per engagement on its Team tab: **viewer** (reads coverage, evidence and reports),
+**tester** (runs recon, works lanes, attaches evidence) and **reviewer** (signs receipts).
+Turn on *separation of duties* there to stop anyone signing a lane they attached
+evidence to. Behind HTTPS, set `ATTACKLEDGER_COOKIE_SECURE=1`.
+
 ## Database migrations
 
 The API applies Alembic migrations at startup. The worker waits until the database

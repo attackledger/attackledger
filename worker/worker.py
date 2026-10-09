@@ -809,7 +809,8 @@ def run(session, job: Job) -> "Run":
         lane = next((l for l in asset.lanes if l.role == recon_lane), None) if asset and asset.id else None
         if lane:
             ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256,
-                                   uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}")
+                                   uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}",
+                                   created_by=job.created_by)
     session.commit()
     return r
 
