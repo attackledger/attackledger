@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AttackLedger</title>
+<meta name="description" content="Recon and hunting for authorized security testing, with hash-chained evidence and human-signed receipts for every lane.">
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Zilla+Slab:wght@500;700&display=swap">
+<style>
+/* Layout: green ledger paper. One folio (the lane) carries the hero; everything else is
+   quiet columns on the sheet, with the red margin rule of a bookkeeping page. */
+:root {
+  --paper: #eef3e6;
+  --sheet: #f6f9f1;
+  --rule: #c9d8bf;
+  --rule-strong: #8e9c86;
+  --text: #2b2f2a;
+  --text-soft: #5d6559;
+  --text-faint: #7d8679;
+  --ink: #1f3a93;
+  --ink-hover: #182e78;
+  --on-ink: #ffffff;
+  --margin: #c9796f;
+  --stamp: #2e7d4f;
+  --stamp-wash: #e3f0e6;
+  --open: #b8322a;
+  --code-bg: #e3ead8;
+  --shadow: 0 1px 0 rgba(43, 47, 42, 0.04), 0 18px 40px -22px rgba(43, 47, 42, 0.35);
+  --slab: "Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --step--1: 0.875rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.3rem;
+  --step-2: 1.75rem;
+  --step-3: clamp(2.2rem, 5.2vw, 3.4rem);
+  --radius: 3px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+    --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+    --ink: #a9baf5; --ink-hover: #c3cff8; --on-ink: #14221a; --margin: #8a4b44;
+    --stamp: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --code-bg: #1d3226;
+    --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+  --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+  --ink: #a9baf5; --ink-hover: #c3cff8; --on-ink: #14221a; --margin: #8a4b44;
+  --stamp: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --code-bg: #1d3226;
+  --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background-color: var(--paper);
+  background-image: linear-gradient(to right, transparent calc(2.25rem - 1px), var(--margin) calc(2.25rem - 1px), var(--margin) 2.25rem, transparent 2.25rem);
+  color: var(--text);
+  font: var(--step-0) / 1.6 var(--body);
+}
+a { color: var(--ink); text-underline-offset: 0.18em; }
+a:hover { color: var(--ink-hover); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; border-radius: 2px; }
+code, .hash { font-family: var(--mono); font-size: 0.86em; }
+
+.wrap { max-width: 68rem; margin: 0 auto; padding-inline: max(1rem, 3.25rem) 1.25rem; }
+@media (max-width: 40rem) { body { background-image: none; } .wrap { padding-inline: 1rem; } }
+
+/* ---- header ---- */
+.top { padding-block: 1.25rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; }
+.brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: var(--text); margin-right: auto; }
+.brand svg { width: 2rem; height: 2rem; color: var(--stamp); transform: rotate(-6deg); flex: none; }
+.brand span { font: 700 var(--step-1) / 1 var(--slab); letter-spacing: 0.01em; }
+.top nav { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-size: var(--step--1); }
+.top nav a { color: var(--text-soft); text-decoration: none; }
+.top nav a:hover { color: var(--ink); text-decoration: underline; }
+
+/* ---- hero ---- */
+.hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 3rem; align-items: center; padding-block: 2.5rem 4rem; }
+@media (max-width: 56rem) { .hero { grid-template-columns: minmax(0, 1fr); gap: 2.25rem; padding-block: 1.5rem 3rem; } }
+h1 { font: 700 var(--step-3) / 1.06 var(--slab); margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.lede { font-size: var(--step-1); line-height: 1.5; color: var(--text-soft); margin: 1.25rem 0 0; max-width: 34rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; }
+.btn { display: inline-block; padding: 0.7rem 1.15rem; border-radius: var(--radius); border: 1px solid var(--ink); font-weight: 700; text-decoration: none; font-size: var(--step--1); }
+.btn.primary { background: var(--ink); color: var(--on-ink); }
+.btn.primary:hover { background: var(--ink-hover); border-color: var(--ink-hover); color: var(--on-ink); }
+.btn.quiet { color: var(--ink); }
+
+/* the folio: one receipted lane from the sample report */
+.folio { position: relative; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--margin); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.25rem 1.25rem 1.1rem; min-width: 0; }
+.folio header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; border-bottom: 1px solid var(--rule-strong); padding-bottom: 0.6rem; }
+.folio h2 { font: 700 var(--step-1) / 1.1 var(--slab); margin: 0; }
+.folio .host { font-size: var(--step--1); color: var(--text-soft); }
+.folio ol { list-style: none; margin: 0; padding: 0; }
+.folio li { display: grid; grid-template-columns: 1.2rem minmax(0, 1fr) auto; gap: 0.2rem 0.7rem; align-items: baseline; padding: 0.6rem 0; border-bottom: 1px solid var(--rule); font-size: var(--step--1); }
+.folio .tick { color: var(--stamp); font-weight: 700; }
+.folio .key { display: block; color: var(--text-faint); font-size: 0.78rem; letter-spacing: 0.03em; }
+.folio .hash { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.folio footer { margin-top: 0.8rem; font-size: 0.8rem; color: var(--text-soft); display: grid; gap: 0.15rem; }
+.folio footer .hash { color: var(--text-soft); word-break: break-all; }
+.stamp {
+  position: absolute; right: 1rem; bottom: 2.6rem;
+  font: 700 1.35rem / 1 var(--slab); letter-spacing: 0.14em; color: var(--stamp);
+  border: 3px double var(--stamp); border-radius: 4px; padding: 0.35rem 0.6rem 0.3rem;
+  transform: rotate(-9deg); background: color-mix(in srgb, var(--stamp-wash) 55%, transparent);
+  pointer-events: none;
+  animation: stamp 420ms cubic-bezier(.2, .9, .3, 1.25) 500ms both;
+}
+@keyframes stamp { from { transform: rotate(-9deg) scale(1.7); opacity: 0.15; } to { transform: rotate(-9deg) scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .stamp { animation: none; } }
+.caption { font-size: 0.8rem; color: var(--text-faint); margin: 0.6rem 0 0; }
+
+/* ---- sections ---- */
+section { padding-block: 3.25rem; border-top: 1px solid var(--rule); }
+h2.section { font: 700 var(--step-2) / 1.15 var(--slab); margin: 0 0 1rem; text-wrap: balance; }
+.prose { max-width: 40rem; }
+.prose p { margin: 0 0 1rem; }
+.cols { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 2.5rem; }
+@media (max-width: 52rem) { .cols { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; } }
+
+.gaps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.gaps li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; padding: 0.85rem 0; border-bottom: 1px solid var(--rule); font-size: var(--step--1); }
+.gaps li:first-child { border-top: 1px solid var(--rule-strong); }
+.gaps .what { color: var(--text); }
+.gaps .how { color: var(--text-soft); }
+@media (max-width: 34rem) { .gaps li { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; } }
+.gaps-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; font-size: 0.8rem; color: var(--text-faint); padding-bottom: 0.4rem; }
+@media (max-width: 34rem) { .gaps-head { display: none; } }
+
+.steps { list-style: none; margin: 1.5rem 0 0; padding: 0; counter-reset: step; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 2rem; }
+@media (max-width: 56rem) { .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 36rem) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.steps li { counter-increment: step; padding: 1rem 0 1.25rem; border-top: 1px solid var(--rule-strong); }
+.steps li::before { content: counter(step); font: 700 var(--step-1) / 1 var(--slab); color: var(--ink); display: block; margin-bottom: 0.5rem; font-variant-numeric: tabular-nums; }
+.steps h3 { font: 700 var(--step-0) / 1.3 var(--body); margin: 0 0 0.35rem; }
+.steps p { margin: 0; font-size: var(--step--1); color: var(--text-soft); }
+
+.rules { list-style: none; margin: 0; padding: 0; columns: 2 20rem; column-gap: 2.5rem; }
+.rules li { break-inside: avoid; padding: 0.7rem 0 0.7rem 1.6rem; position: relative; font-size: var(--step--1); border-bottom: 1px solid var(--rule); }
+.rules li::before { content: ""; position: absolute; left: 0.1rem; top: 1.05rem; width: 0.7rem; height: 0.4rem; border-left: 2px solid var(--stamp); border-bottom: 2px solid var(--stamp); transform: rotate(-45deg); }
+.rules strong { color: var(--text); }
+.measured { margin-top: 1.5rem; padding: 1rem 1.15rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); font-size: var(--step--1); max-width: 46rem; }
+.measured p { margin: 0 0 0.4rem; }
+.measured p:last-child { margin: 0; color: var(--text-faint); font-size: 0.8rem; }
+.num { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border-radius: var(--radius); overflow-x: auto; font: 0.85rem / 1.55 var(--mono); }
+.verify-out { color: var(--stamp); }
+.frameworks { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.frameworks li { font-size: var(--step--1); padding: 0.25rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 999px; }
+.note { font-size: 0.8rem; color: var(--text-faint); margin-top: 0.75rem; }
+
+.contact { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 1rem; }
+.contact output { font-family: var(--mono); font-size: var(--step--1); padding: 0.45rem 0.7rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); user-select: all; }
+.contact button { font: 700 var(--step--1) / 1 var(--body); padding: 0.55rem 0.8rem; border-radius: var(--radius); border: 1px solid var(--ink); color: var(--ink); background: transparent; cursor: pointer; }
+.contact button:hover { background: var(--ink); color: var(--on-ink); }
+
+.foot { padding-block: 2rem 3rem; border-top: 1px solid var(--rule-strong); font-size: var(--step--1); color: var(--text-soft); display: flex; flex-wrap: wrap; gap: 0.5rem 2rem; justify-content: space-between; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#top" aria-label="AttackLedger home">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="4" y="4" width="32" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"/>
+        <rect x="8" y="8" width="24" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M13 20.5l4.5 4.5L27 15" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>AttackLedger</span>
+    </a>
+    <nav aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#guardrails">Guardrails</a>
+      <a href="#auditors">For auditors</a>
+      <a href="#sample">Sample report</a>
+      <a href="#licence">Licence</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <div class="hero">
+      <div>
+        <h1>Nothing counts as tested until it has a receipt.</h1>
+        <p class="lede">AttackLedger runs recon and hunting for authorized security testing, keeps every test as
+          hash-chained evidence, and lets a person sign off each lane. The report shows what was tested,
+          and anyone can verify it offline.</p>
+        <div class="actions">
+          <a class="btn primary" href="sample-report.html" target="_blank" rel="noopener">Open the sample report</a>
+          <a class="btn quiet" href="#how">See how it works</a>
+        </div>
+      </div>
+
+      <figure style="margin:0;min-width:0">
+        <article class="folio" aria-label="A receipted lane from the sample report">
+          <header>
+            <h2>Authorization</h2>
+            <span class="host">app.client.test</span>
+          </header>
+          <ol>
+            <li><span class="tick" aria-label="done">✓</span><span><span class="key">WSTG-ATHZ-01</span>Directory traversal and file inclusion</span><span class="hash">7eafbd2f</span></li>
+            <li><span class="tick" aria-label="done">✓</span><span><span class="key">WSTG-ATHZ-02</span>Bypass of the authorization schema</span><span class="hash">0853f816</span></li>
+            <li><span class="tick" aria-label="done">✓</span><span><span class="key">WSTG-ATHZ-03</span>Privilege escalation</span><span class="hash">d99f6940</span></li>
+            <li><span class="tick" aria-label="done">✓</span><span><span class="key">WSTG-ATHZ-04</span>Insecure direct object references</span><span class="hash">35faa313</span></li>
+          </ol>
+          <footer>
+            <span>Receipt signed by the reviewer after reading the evidence</span>
+            <span>Manifest <span class="hash">946cdab94a48863e843dd93674295c6dbc830804ec88871c6fa9a6a0c2c5579e</span></span>
+          </footer>
+          <div class="stamp" aria-hidden="true">RECEIPTED</div>
+        </article>
+        <figcaption class="caption">One lane of the sample report, with fictional hosts. Change any evidence entry and the
+          receipt goes void.</figcaption>
+      </figure>
+    </div>
+
+    <section aria-labelledby="problem">
+      <div class="cols">
+        <div class="prose">
+          <h2 class="section" id="problem">“Done” is easy to claim</h2>
+          <p>Scanners, checklists and AI agents all report that the work is finished. Few of them can show which hosts
+            were tested, which checks ran, and what the evidence was. Agents in particular tend to stop early and
+            call it complete.</p>
+          <p>AttackLedger treats “tested” as something you compute from evidence, not something you declare.</p>
+        </div>
+        <div>
+          <div class="gaps-head"><span>Where coverage goes missing</span><span>What AttackLedger does</span></div>
+          <ul class="gaps">
+            <li><span class="what">Hosts found in recon never reach testing</span><span class="how">Every in-scope host has a row in the coverage matrix until each lane on it is receipted</span></li>
+            <li><span class="what">A checklist is closed with items still open</span><span class="how">A lane closes only when every item has evidence or a written reason</span></li>
+            <li><span class="what">The work changes after it was signed off</span><span class="how">The receipt is a hash of the lane; any later change makes it void</span></li>
+            <li><span class="what">Nobody can check the report afterwards</span><span class="how">The report carries its own evidence chain and verifies offline</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="how-title" id="how">
+      <h2 class="section" id="how-title">How it works</h2>
+      <ol class="steps">
+        <li><h3>Record the rules</h3><p>Scope rules, rate limit, the research header the program requires, and your authorization. Nothing runs without them.</p></li>
+        <li><h3>Run recon</h3><p>Subdomains, DNS, live web servers, crawling, archives, JavaScript analysis, and opt-in ports, content, parameter and nuclei scans.</p></li>
+        <li><h3>Open lanes</h3><p>Each host gets lanes from a methodology pack: bug bounty roles or the OWASP WSTG. Each lane is a checklist.</p></li>
+        <li><h3>Collect evidence</h3><p>You, or a Claude agent within the lane's rules, attach evidence to each item. Every entry is hash-chained to the one before.</p></li>
+        <li><h3>Sign the receipt</h3><p>A person reviews the lane and signs. Only a person can close a lane; an agent never can.</p></li>
+        <li><h3>Hand over the report</h3><p>JSON or HTML with the full chain and every receipt, mapped to controls, verifiable with the Python standard library.</p></li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="guardrails-title" id="guardrails">
+      <h2 class="section" id="guardrails-title">Guardrails it enforces</h2>
+      <ul class="rules">
+        <li><strong>Fail-closed scope.</strong> Unknown hosts are out of scope, exclusions win, and a wildcard does not cover its apex.</li>
+        <li><strong>Research identification on every request.</strong> Tools refuse to send traffic to a target without the header or user agent the program asks for.</li>
+        <li><strong>The rate limit is a ceiling.</strong> It applies to every step, port scanning included, with no multiplier.</li>
+        <li><strong>No redirects followed.</strong> A 3xx is recorded as it is, so nothing wanders off scope.</li>
+        <li><strong>Risky modules are opt-in.</strong> Port scans, content discovery, parameter discovery and vulnerability scanning stay off until the policy allows them.</li>
+        <li><strong>Unsafe templates are excluded.</strong> No DoS, fuzzing, brute force, default logins or out-of-band callbacks.</li>
+        <li><strong>Secrets are never used.</strong> Candidates found in JavaScript are stored masked and hashed, and are never tested.</li>
+        <li><strong>Agents stay read-only.</strong> A Claude agent works one lane with GET, HEAD and OPTIONS on that host only, and cannot sign a receipt.</li>
+      </ul>
+      <div class="measured">
+        <p>Vulnerability scan on the lab: <span class="num">8,899 of 8,899</span> requests carried the research identification.</p>
+        <p>Content discovery on the lab: peak of <span class="num">20</span> requests per second at a limit of <span class="num">20</span>, over <span class="num">9,504</span> requests.</p>
+        <p>Measured against a local lab target with a raw request logger, not against a live program.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="auditors-title" id="auditors">
+      <div class="cols">
+        <div class="prose">
+          <h2 class="section" id="auditors-title">For auditors and reviewers</h2>
+          <p>Each checklist item carries the controls it gives evidence for. The report lists which controls are
+            evidenced, partly evidenced or not covered, per host.</p>
+          <ul class="frameworks" aria-label="Control frameworks">
+            <li>PCI DSS 4.0</li>
+            <li>ISO/IEC 27001:2022</li>
+            <li>DORA</li>
+          </ul>
+          <p class="note">The control mappings are indicative and need review against the current text of each standard.</p>
+        </div>
+        <div style="min-width:0">
+          <p style="margin:0">Verifying a report needs no AttackLedger installation, only Python:</p>
+<pre><code>$ python3 verify_report.py sample-report.json
+AttackLedger report: Client web app (Web application pentest (OWASP WSTG) 0.1)
+  5 receipted lanes, 43 evidence entries
+
+<span class="verify-out">  PASS  Report body hash
+  PASS  Evidence chain
+  PASS  Lane receipts</span>
+
+Verified.</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="sample-title" id="sample">
+      <div class="prose">
+        <h2 class="section" id="sample-title">Sample report</h2>
+        <p>A web application pentest on two fictional hosts, <code>app.client.test</code> and
+          <code>api.client.test</code>, worked through the OWASP WSTG pack: 6 lanes opened, 5 receipted, 43 evidence
+          entries. All data in it is sample data.</p>
+        <p><a class="btn primary" href="sample-report.html" target="_blank" rel="noopener">Open the sample report</a></p>
+        <p>To check it yourself, take <a href="sample-report.json">sample-report.json</a> and
+          <a href="verify_report.py">verify_report.py</a> and run the command above.</p>
+      </div>
+    </section>
+
+    <section aria-labelledby="licence-title" id="licence">
+      <div class="prose">
+        <h2 class="section" id="licence-title">Licence and status</h2>
+        <p>AttackLedger is open source under the <strong>AGPL-3.0</strong>, with a commercial licence for teams that
+          cannot use AGPL software. The current version is a preview: recon is complete, and agent-assisted hunting
+          has been tested on a local lab. The source code will be published here.</p>
+        <p>AttackLedger is for authorized testing only: programs whose scope you are in, or systems you own or have
+          written permission to test.</p>
+        <p style="margin-bottom:0">Questions, early access or a commercial licence:</p>
+        <div class="contact">
+          <output id="email">murat@attackledger.com</output>
+          <button type="button" id="copy-email">Copy address</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>AttackLedger, made by Murat Kabak.</span>
+    <span>Proving what was tested.</span>
+  </footer>
+</div>
+<script>
+  document.getElementById("copy-email").addEventListener("click", function () {
+    var btn = this, text = document.getElementById("email").textContent;
+    function done(label) { btn.textContent = label; setTimeout(function () { btn.textContent = "Copy address"; }, 1800); }
+    function select() {
+      var r = document.createRange(); r.selectNodeContents(document.getElementById("email"));
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); done("Selected, press copy");
+    }
+    try {
+      navigator.clipboard.writeText(text).then(function () { done("Copied"); }, select);
+    } catch (e) { select(); }
+  });
+</script>
+</body>
+</html>
