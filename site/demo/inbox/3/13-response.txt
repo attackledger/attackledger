@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Thu, 08 Oct 2026 09:53:04 GMT
+Content-Type: text/html
+Content-Length: 74
+Connection: keep-alive
+
+<html><body>results for shoes (debug: verbose trace enabled)</body></html>

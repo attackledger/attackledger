@@ -1,0 +1,7 @@
+{"at":"2026-10-09T20:03:14.978532+00:00","redaction":{"kinds":[],"not_redacted":[],"redacted":0},"request":{"headers":{"User-Agent":"AttackLedger/0.6 (lab-researcher)","X-Bug-Bounty":"lab-researcher"},"method":"GET","url":"http://shop.lab.test/.git/config"},"response":{"body_bytes":116,"headers":[["server","nginx/1.27.5"],["date","Fri, 09 Oct 2026 20:03:15 GMT"],["content-type","text/plain"],["content-length","116"],["Connection","close"]],"status":200,"truncated":false}}
+
+[core]
+	repositoryformatversion = 0
+	bare = false
+[remote "origin"]
+	url = https://git.lab.test/shop/storefront.git

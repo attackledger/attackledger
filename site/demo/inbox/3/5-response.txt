@@ -1,0 +1,8 @@
+HTTP/1.1 404 Not Found
+Server: nginx/1.27.5
+Date: Thu, 08 Oct 2026 09:12:32 GMT
+Content-Type: image/x-icon
+Content-Length: 9
+Connection: keep-alive
+
+not found

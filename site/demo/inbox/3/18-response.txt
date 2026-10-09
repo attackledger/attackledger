@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Thu, 08 Oct 2026 10:03:04 GMT
+Content-Type: text/plain
+Content-Length: 119
+Connection: keep-alive
+
+[core]
+	repositoryformatversion = 0
+	bare = false
+[remote "origin"]
+	url = https://git.client.test/shop/storefront.git

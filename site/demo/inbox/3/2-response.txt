@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Thu, 08 Oct 2026 09:12:11 GMT
+Content-Type: application/javascript
+Content-Length: 241
+Connection: keep-alive
+
+fetch("/api/v1/items?page=1"); fetch("/api/v1/cart");
+const ORDERS = gql`query ListOrders { orders { id } }`;
+const cfg = { awsKeyId: "[redacted:sha256:849382dac65b]", stripe: "pk_live_51LabShopPublishable" };
+//# sourceMappingURL=app.js.map

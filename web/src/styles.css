@@ -269,6 +269,7 @@ code { font-family: var(--body); letter-spacing: 0.02em; }
 
 /* Columnar ledger paper: ruled rows, green column rules, red double margin. */
 .sheet {
+  position: relative;   /* screen-reader-only text in its cells scrolls with it, not the page */
   overflow-x: auto;
   background: var(--sheet);
   border: 1px solid var(--rule);

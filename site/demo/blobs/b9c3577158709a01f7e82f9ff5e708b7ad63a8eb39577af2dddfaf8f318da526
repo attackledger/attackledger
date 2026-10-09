@@ -1,3 +1,0 @@
-{"at":"2026-10-09T09:33:03.056597+00:00","request":{"headers":{"User-Agent":"AttackLedger/0.6 (lab-researcher)","X-Bug-Bounty":"lab-researcher"},"method":"GET","url":"http://shop.lab.test/api/experiments/configurations"},"response":{"body_bytes":11,"headers":[["Server","nginx/1.27.5"],["Date","Fri, 09 Oct 2026 09:33:03 GMT"],["Content-Type","application/json"],["Content-Length","11"],["Connection","close"]],"status":200,"truncated":false}}
-
-{"ok":true}

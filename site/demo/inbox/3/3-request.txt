@@ -1,0 +1,9 @@
+GET /api/v1/items?page=1 HTTP/1.1
+Host: api.client.test
+User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36
+Accept: application/json
+Accept-Language: en-GB,en;q=0.9
+Accept-Encoding: identity
+Referer: https://app.client.test/
+Authorization: Bearer [redacted:sha256:d5d9cbb823ce]
+

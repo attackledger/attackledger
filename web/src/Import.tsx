@@ -3,6 +3,7 @@ import {
   api, ApiError, type AlreadyImported, type ImportBatch, type ImportFormats, type InboxEntry, type InboxEntryDetail,
   type InboxFilter, type InboxPage, type MapTarget, type RefusedRow,
 } from "./api";
+import { DEMO, demoInboxRaw } from "./demo";
 import { plural } from "./words";
 
 // Evidence import (D-029). A tester uploads an export from Burp, Caido or a browser; its
@@ -193,7 +194,7 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
   const mapped = new Set(e.mappings.map((m) => `${roleOf(m.lane_id)}:${m.item_idx}`));
   const toggle = (k: string) => setChosen((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]));
   const others = selectedSameHost.filter((x) => x !== e.id);
-  const raw = (part: string) => `/api/engagements/${engId}/inbox/${e.id}/raw/${part}`;
+  const raw = (part: string) => DEMO ? demoInboxRaw(engId, e.id, part) : `/api/engagements/${engId}/inbox/${e.id}/raw/${part}`;
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -280,7 +281,7 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
         <div className="import-dismissed">
           <p>
             Dismissed by {e.dismissed.by_name ?? "someone"} on {when(e.dismissed.at)}
-            {e.dismissed.reason ? `: ${e.dismissed.reason}` : ""}. The dismissal is in the change history.
+            {e.dismissed.reason ? `: ${e.dismissed.reason.replace(/[.!?]+$/, "")}` : ""}. The dismissal is in the change history.
           </p>
           {canWork && (
             <button type="button" className="btn ghost small" disabled={busy}

@@ -1,0 +1,9 @@
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Thu, 08 Oct 2026 09:59:04 GMT
+Content-Type: text/plain
+Content-Length: 33
+Connection: keep-alive
+
+User-agent: *
+Disallow: /backup/

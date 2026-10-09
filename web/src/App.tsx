@@ -40,9 +40,8 @@ function homeOf(me: Me | null, engId: number): Home {
 }
 
 // Readers (clients, auditors) come for the report and its proof; the work tabs follow.
-// Import has no demo data, so the demo leaves it out.
-const VIEWER_TABS: Tab[] = ["report", "verify", "history", "ledger", "controls", "recon", ...(DEMO ? [] : ["import" as const])];
-const WORK_TABS: Tab[] = ["recon", ...(DEMO ? [] : ["import" as const]), "ledger", "controls", "report", "verify", "history"];
+const VIEWER_TABS: Tab[] = ["report", "verify", "history", "ledger", "controls", "recon", "import"];
+const WORK_TABS: Tab[] = ["recon", "import", "ledger", "controls", "report", "verify", "history"];
 
 type LoginMode = "token" | "people" | "setup";
 
@@ -419,6 +418,8 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
               {tab === "report" && <Report engId={current} />}
               {tab === "verify" && <Verify engId={current} />}
               {tab === "history" && <History engId={current} />}
+              {/* The demo has no Team tab, so its retention panel is shown with the history. */}
+              {tab === "history" && DEMO && <Retention engId={current} onChanged={hostsChanged} />}
               {tab === "team" && owner && (
                 <>
                   <Team engId={current} separation={!!coverage.separation_of_duties}
