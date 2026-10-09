@@ -146,6 +146,44 @@ each; export fewer items if a file is bigger.
    it needs a paid Caido plan), **As JSON**.
 3. Open the **Exports** page and download the file when it is ready.
 
+**Caido, pulled from its API instead** (`tools/caido_pull.py`). Run this on your own
+machine, next to Caido. It needs Python 3.9 or later and nothing else; copy the file from
+the repository if you do not have a checkout.
+
+1. Get a Caido access token. In Caido (signed in), open the developer tools
+   (Ctrl+Shift+I), and in the **Console** run
+   `JSON.parse(localStorage.CAIDO_AUTHENTICATION).accessToken`. Copy the value. It
+   expires after 7 days. A personal access token from the Caido dashboard (it starts with
+   `caido_`) does not work here.
+2. Put it in an environment variable without typing it on the command line, so your shell
+   history does not keep it: `read -rs CAIDO_TOKEN && export CAIDO_TOKEN`, then paste and
+   press Enter. Or save it in a file only you can read (`chmod 600`) and pass
+   `--token-file <file>`.
+3. Pull the requests for the host you are working on:
+
+   ```bash
+   python3 tools/caido_pull.py --filter 'req.host.eq:"shop.example.com"' \
+       --since 2026-10-01 --redact-locally --out shop.json
+   ```
+
+   `--filter` is any HTTPQL query, as in Caido's search bar. `--since` and `--until` take a
+   date or time (UTC unless you give a zone). `--caido` is Caido's address if it is not
+   `http://127.0.0.1:8080`. `--redact-locally` replaces cookies, authorization headers and
+   other secrets before the file is written, so they never land on your disk;
+   AttackLedger redacts them again when it imports the file.
+4. Upload it, or add `--upload` to the same command to send it straight away:
+   `--upload https://attackledger.example.com --engagement "<engagement name>" --al-email you@example.com`.
+   The engagement is the name in the **Engagements** list (or its number). The tool asks for your AttackLedger password, signs in as you, uploads the file and
+   signs out. It then prints the same counts as the Import tab.
+
+What it sends where: the Caido token goes only to your Caido, never to AttackLedger, and
+never appears in the file or in what the tool prints. The file goes only to the
+AttackLedger address you give. The tool uses no proxy from your environment (your proxy
+may be Caido itself, which would record the token) and follows no redirects. If Caido
+answers in a shape the tool does not know (Caido's API changes between releases), it
+stops and says so without writing a file; use Caido's own export above until the tool is
+updated. The details are in [`IMPORT.md`](IMPORT.md), "Pull from Caido".
+
 **A browser**, HAR (Chrome, Edge or Firefox):
 
 1. Open the developer tools (F12), the **Network** tab, and tick **Preserve log** (Firefox:
