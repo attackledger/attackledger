@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ExecutorInfo, type Job, type LaneDetail } from "./api";
 import { JobLog } from "./Recon";
+import { DEMO } from "./demo";
 
 const OUTCOME: Record<string, string> = {
   finished: "Finished",
@@ -51,7 +52,7 @@ export function Executor({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChan
         ))}
       </div>
       {error && <p className="field-error" role="alert">{error}</p>}
-      {lane.executor === "agent" && agent?.available && <AgentRuns lane={lane} onLaneChanged={onLaneChanged} />}
+      {lane.executor === "agent" && (agent?.available || DEMO) && <AgentRuns lane={lane} onLaneChanged={onLaneChanged} />}
     </section>
   );
 }
@@ -98,7 +99,7 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
 
   return (
     <div className="agent-runs">
-      {lane.status !== "closed" && (
+      {lane.status !== "closed" && !DEMO && (
         <div className="agent-start">
           <label>
             Turns
@@ -135,9 +136,10 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
                 <div className="job-row">
                   <span className={`chip ${j.status}`}>{j.status}</span>
                   <span className="job-kind">{r.status ? OUTCOME[r.status] ?? r.status : "Agent run"}</span>
-                  {r.turns !== undefined && (
+                  {(r.turns != null || r.tool_calls != null) && (
                     <span className="muted">
-                      {plural(r.turns, "turn")}, {plural(r.requests ?? 0, "request")},{" "}
+                      {r.turns != null ? plural(r.turns, "turn") : plural(r.tool_calls ?? 0, "tool call")},{" "}
+                      {plural(r.requests ?? 0, "request")},{" "}
                       {plural(r.evidence_added ?? 0, "evidence entry", "evidence entries")},{" "}
                       {plural(r.items_marked ?? 0, "item")} marked
                       {r.cost_usd_estimate !== undefined && `, about $${r.cost_usd_estimate.toFixed(2)}`}

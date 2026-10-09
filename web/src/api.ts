@@ -139,7 +139,8 @@ export interface AgentResult {
   limits?: { max_turns?: number; max_requests?: number; max_cost_usd?: number };
   status?: "finished" | "ended" | "turn_limit" | "cost_limit" | "cancelled" | "refused" | "timed_out";
   model?: string;
-  turns?: number;
+  turns?: number | null;
+  tool_calls?: number;   // runs driven outside the Messages API count tool calls, not turns
   requests?: number;
   evidence_added?: number;
   items_marked?: number;

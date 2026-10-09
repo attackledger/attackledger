@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, PackSummary } from "./api";
 import { Executor } from "./Agent";
 import { ItemWork } from "./LaneWork";
-import { DEMO } from "./demo";
+import { DEMO, demoUrl } from "./demo";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
@@ -220,12 +220,19 @@ function DemoGuide({ engagements, go }: {
     try { return localStorage.getItem("attackledger-demo-guide") !== "hidden"; } catch { return true; }
   });
   const [receipted, setReceipted] = useState<{ engId: number; laneId: number } | null>(null);
+  const [agentLane, setAgentLane] = useState<{ engId: number; laneId: number } | null>(null);
   useEffect(() => {
     // The engagement with the most receipted lanes shows the ledger, the receipt and the report best.
     Promise.all(engagements.map((e) => api.coverage(e.id).then((c) => ({ e, c })))).then((rows) => {
       const best = rows.sort((a, b) => b.c.closed_cells - a.c.closed_cells)[0];
       const lane = best?.c.assets.flatMap((a) => Object.values(a.roles)).find((cell) => cell.status === "closed");
       if (best && lane?.lane_id) setReceipted({ engId: best.e.id, laneId: lane.lane_id });
+      // A lane worked by the Claude agent, if the demo has one.
+      const cells = rows.flatMap(({ e, c }) => c.assets.flatMap((a) => Object.values(a.roles))
+        .filter((cell) => cell.lane_id).map((cell) => ({ engId: e.id, laneId: cell.lane_id as number })));
+      Promise.all(cells.map((x) => api.lane(x.laneId).then((l) => ({ ...x, agent: l.executor === "agent" }))))
+        .then((ls) => { const hit = ls.find((x) => x.agent); if (hit) setAgentLane({ engId: hit.engId, laneId: hit.laneId }); })
+        .catch(() => {});
     }).catch(() => {});
   }, [engagements]);
 
@@ -242,6 +249,8 @@ function DemoGuide({ engagements, go }: {
       text: "Every live host is scored from what it answers. The highest scores are where testing starts." },
     { title: "The coverage ledger", action: receipted ? () => go(receipted.engId, "ledger") : undefined,
       text: "One row per host, one column per lane. A cell is receipted only when every item has evidence or a reason; a change afterwards makes it void." },
+    ...(agentLane ? [{ title: "A Claude agent run", action: () => go(agentLane.engId, "ledger", agentLane.laneId),
+      text: "Claude worked a recon lane through the same gated tools: its requests, the evidence it attached, and what it left open for a person." }] : []),
     { title: "A receipted lane", action: receipted ? () => go(receipted.engId, "ledger", receipted.laneId) : undefined,
       text: "The checklist, the hash-chained evidence behind each item and the reviewer's signature." },
     { title: "The report", action: receipted ? () => go(receipted.engId, "report") : undefined,
@@ -501,6 +510,7 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
   const [lane, setLane] = useState<LaneDetail | null>(null);
   const [ctx, setCtx] = useState<LaneContext | null>(null);
   const [runs, setRuns] = useState<Job[]>([]);
+  const [raw, setRaw] = useState<{ title: string; text: string } | null>(null);   // demo: evidence bytes shown in place
   const [titles, setTitles] = useState<Record<string, string>>({});
   useEffect(() => {
     api.modules().then((ms) => setTitles(Object.fromEntries(ms.map((m) => [m.kind, m.title])))).catch(() => {});
@@ -631,6 +641,13 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
                       {!DEMO && (e.summary.startsWith("[agent] ") || e.uri?.startsWith("file:") || (e.kind === "note" && !e.uri)) && (
                         <a href={`/api/blobs/${e.sha256}`} target="_blank" rel="noopener noreferrer">View raw</a>
                       )}
+                      {DEMO && e.summary.startsWith("[agent] ") && (
+                        <button className="linklike" onClick={() => {
+                          fetch(demoUrl(`blobs/${e.sha256}`)).then((r) => (r.ok ? r.text() : Promise.reject()))
+                            .then((t) => setRaw({ title: e.summary, text: t }))
+                            .catch(() => setError("The raw evidence is not in the demo data."));
+                        }}>View raw</button>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -638,6 +655,15 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
             )}
 
             <Executor lane={lane} onLaneChanged={(l) => { setLane(l); onChanged(); }} />
+          </div>
+        )}
+        {raw && (
+          <div className="raw-viewer" role="dialog" aria-modal="true" aria-label="Raw evidence">
+            <div className="report-viewer-bar">
+              <span>{raw.title}</span>
+              <button className="btn ghost small" onClick={() => setRaw(null)}>Close</button>
+            </div>
+            <pre>{raw.text}</pre>
           </div>
         )}
 

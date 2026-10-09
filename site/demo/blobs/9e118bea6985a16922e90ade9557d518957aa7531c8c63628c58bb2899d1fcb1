@@ -1,0 +1,1 @@
+The lane context lists scope *.lab.test excluding admin.lab.test, header X-Bug-Bounty: lab-researcher and 20 rps, and the bridge applied them to every request. The live policy at https://example.com/policy is off-host and was not fetched, so a person must confirm these against it.

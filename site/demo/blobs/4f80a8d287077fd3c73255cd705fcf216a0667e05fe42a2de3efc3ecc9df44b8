@@ -1,0 +1,4 @@
+{"at":"2026-10-09T09:32:36.674621+00:00","request":{"headers":{"User-Agent":"AttackLedger/0.6 (lab-researcher)","X-Bug-Bounty":"lab-researcher"},"method":"GET","url":"http://shop.lab.test/robots.txt"},"response":{"body_bytes":33,"headers":[["Server","nginx/1.27.5"],["Date","Fri, 09 Oct 2026 09:32:36 GMT"],["Content-Type","text/plain"],["Content-Length","33"],["Connection","close"]],"status":200,"truncated":false}}
+
+User-agent: *
+Disallow: /backup/

@@ -13,6 +13,7 @@ Usage: python3 tools/export_demo.py API_BASE OUT_DIR ENGAGEMENT_ID [ENGAGEMENT_I
 import json
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -59,7 +60,19 @@ def main(base: str, out: Path, eng_ids: list[int]) -> None:
                     lid = cell["lane_id"]
                     put(f"/lanes/{lid}", get(f"/lanes/{lid}"))
                     put(f"/lanes/{lid}/context", get(f"/lanes/{lid}/context"))
-                    put(f"/lanes/{lid}/agent-runs", [])
+                    runs = get(f"/lanes/{lid}/agent-runs")
+                    put(f"/lanes/{lid}/agent-runs", runs)
+                    for job in runs:
+                        put(f"/jobs/{job['id']}", get(f"/jobs/{job['id']}"))
+                    # The raw exchanges and notes behind an agent's evidence, so "View raw" works.
+                    for ev in snap["get"][f"/lanes/{lid}"]["evidence"]:
+                        if ev["summary"].startswith("[agent] "):
+                            try:
+                                blob = raw(f"/blobs/{ev['sha256']}")
+                            except urllib.error.HTTPError:
+                                continue
+                            (out / "blobs").mkdir(exist_ok=True)
+                            (out / "blobs" / ev["sha256"]).write_bytes(blob)
 
         # Endpoints and leads are filtered in the browser, so each row records its module.
         module_of: dict[str, str] = {}

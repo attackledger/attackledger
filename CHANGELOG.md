@@ -27,6 +27,12 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **A real Claude agent run in the demo.** With no API key yet, Claude Opus worked the
+  Lab recon lane from Claude Code through `tools/agent_bridge.py`, which runs every call
+  through the same gated tools inside the worker (D-031). 23 requests (22 reached the lab,
+  all with the research header and user agent; peak 2/s), 10 items done, 2 N/A, 5 left open
+  with reasons, 8 leads, no receipt. The demo shows the run, its log and the raw exchanges,
+  and says how it was driven and that token use was not measured.
 - **"Start here" guide in the demo:** five steps (recon steps, golden targets, the coverage
   ledger, a receipted lane, the report), each with a button that opens the right view.
 - **Work a lane from the lane panel.** On a manually worked lane, each item now has Add

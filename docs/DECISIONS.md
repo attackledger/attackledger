@@ -334,6 +334,18 @@ options considered and who decided.
   hosted. The architecture keeps workers separable so that every option stays possible.
 - **Decided by:** Murat Kabak, later.
 
+### D-031 · The demo's agent run is driven from Claude Code, through the same tools (2026-10-09, requested by Murat)
+- **Decision:** until an API key is available, the demo's agent run is made by Claude Opus
+  working in Claude Code. It acts only through `tools/agent_bridge.py`, which runs each call
+  through `agenttools.Toolbox` inside the worker: the same five tools and the same gates
+  (lane host, scope, read-only methods, research identification, no redirects, rate limit,
+  request budget, no tool that closes a lane). The lab is reachable only inside the Docker
+  network, so the model cannot reach it any other way.
+- **Disclosure:** the run records who drove it, and the demo shows that it did not go
+  through the Messages API and that token use was not measured. The evidence, the requests
+  and the decisions are real; the API executor (D-025) runs the same tools.
+- **Proposed by:** Murat ("make the keyless demo with an Opus agent"). **Built by:** Claude.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or
