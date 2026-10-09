@@ -99,6 +99,7 @@ export function Recon({ engId, onAssetsChanged }: { engId: number; onAssetsChang
     if (m.input === "roots" && !hasWildcard) return "Needs a wildcard rule such as *.example.com";
     if (m.opt_in && !scope!.enabled_modules.includes(kind)) return "Off in the rules: enable it only if the program allows it";
     if (m.needs_identification && !identified) return "Set the research header or user agent first";
+    if (scope!.rate_limit_rps < m.min_rps) return `Needs a rate limit of at least ${m.min_rps} per second to stay within it`;
     if (kind === "crawl" && liveHosts === 0) return "Find live web servers first";
     return null;
   }

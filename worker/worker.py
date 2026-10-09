@@ -577,16 +577,28 @@ CONTENT_WORDLIST = os.environ.get("WORKER_CONTENT_WORDLIST", "/opt/wordlists/com
 CONTENT_TIME_LIMIT = os.environ.get("WORKER_CONTENT_TIME_LIMIT", "10m")
 
 
+# feroxbuster sends this many requests to the start URL, unthrottled, when each scan begins
+# (measured on the lab). Its own rate is lowered by as much, so the total stays at the limit.
+FEROX_UNTHROTTLED = 2
+
+
 def ferox_cmd(eng) -> list[str]:
     flags = require_identification(eng)
+    if eng.rate_limit_rps < FEROX_UNTHROTTLED + 1:
+        raise RuntimeError(f"content discovery needs a rate limit of at least {FEROX_UNTHROTTLED + 1}/s: "
+                           f"feroxbuster sends {FEROX_UNTHROTTLED} unthrottled requests when each scan starts")
+    rate = eng.rate_limit_rps - FEROX_UNTHROTTLED
     headers = [v for i, v in enumerate(flags) if i % 2 == 1]
     cmd = [tool("feroxbuster"), "--stdin", "--silent", "--json", "-k", "--no-state",
            "-w", CONTENT_WORDLIST,
            # One scan per process. --rate-limit is per scan, and every new scan (each recursed
            # directory) starts with a full budget, so recursion bursts above the limit at the
            # hand-over (measured: 29/s at a limit of 20). Depth 1, one URL at a time, stays at it.
-           "--depth", "1", "--scan-limit", "1", "--rate-limit", str(eng.rate_limit_rps),
-           "-t", str(min(10, eng.rate_limit_rps)),
+           "--depth", "1", "--scan-limit", "1", "--rate-limit", str(rate),
+           "-t", str(min(10, rate)),
+           # Its wildcard detection sends a burst of unthrottled requests (measured: 9 in the
+           # first second at a limit of 2). The baseline check before each scan does that job.
+           "--dont-filter",
            "--time-limit", CONTENT_TIME_LIMIT, "--auto-tune",
            "--filter-status", "404", "500", "502", "503",
            "--dont-extract-links",                      # only wordlist paths under the given URL

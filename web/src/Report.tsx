@@ -25,6 +25,7 @@ function plural(n: number, one: string, many: string) {
 export function Report({ engId }: { engId: number }) {
   const [r, setR] = useState<ReportSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [printable, setPrintable] = useState<string | null>(null);   // demo: the report shown in place
 
   useEffect(() => {
     setR(null);
@@ -43,6 +44,16 @@ export function Report({ engId }: { engId: number }) {
 
   return (
     <div className="report">
+      {printable && (
+        <div className="report-viewer" role="dialog" aria-modal="true" aria-label="Printable report">
+          <div className="report-viewer-bar">
+            <span>Printable report, as delivered</span>
+            <button className="btn ghost small" onClick={() => setPrintable(null)}>Close</button>
+          </div>
+          {/* The report is a self-contained HTML file; shown inert, scripts off. */}
+          <iframe title="Printable report" sandbox="" srcDoc={printable} />
+        </div>
+      )}
       <section className="panel report-hero">
         <div>
           <h3 className="panel-title">Coverage report</h3>
@@ -58,7 +69,13 @@ export function Report({ engId }: { engId: number }) {
           )}
         </div>
         <div className="report-actions">
-          <a className="btn" href={links.html} {...(DEMO ? {} : { target: "_blank", rel: "noopener" })}>Open printable report</a>
+          {DEMO ? (
+            <button className="btn" onClick={() => {
+              fetch(links.html).then((res) => res.text()).then(setPrintable).catch(() => setError("The report could not be loaded."));
+            }}>Open printable report</button>
+          ) : (
+            <a className="btn" href={links.html} target="_blank" rel="noopener">Open printable report</a>
+          )}
           <a className="btn ghost" href={links.htmlDl} download>Download HTML</a>
           <a className="btn ghost" href={links.json} download>Download JSON</a>
         </div>

@@ -194,6 +194,7 @@ export interface ReconModule {
   needs_identification: boolean;
   tools: string[];
   phase: string;
+  min_rps: number;
 }
 
 export interface ReconPhase {

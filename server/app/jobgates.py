@@ -23,6 +23,9 @@ def check_engagement(eng: Engagement, kind: str) -> modules.Module:
     if m.opt_in and kind not in (eng.enabled_modules or []):
         raise GateError(f"{m.title.lower()} is off for this engagement; enable it only if the "
                         f"program policy allows it")
+    if eng.rate_limit_rps < m.min_rps:
+        raise GateError(f"{m.title.lower()} needs a rate limit of at least {m.min_rps} per second to stay "
+                        f"within it; this engagement allows {eng.rate_limit_rps}")
     if m.needs_identification and not (eng.research_header or eng.research_user_agent):
         raise GateError("set the research header or user agent the program requires "
                         "before sending traffic to its hosts")

@@ -61,6 +61,14 @@ local lab.
   the API. Positive controls: removing the host check, the pacing, the reserved
   headers or the identification precedence each makes a test fail.
 
+### Fixed
+- **Content discovery went over low rate limits.** feroxbuster's wildcard detection and
+  its two start requests are not rate-limited: at a limit of 2/s the first second carried
+  9 requests. It now runs with `--dont-filter` (the baseline check does that job) at the
+  limit minus 2, and needs a limit of at least 3/s (a new `min_rps` gate in the registry,
+  shown in the UI). Measured on the lab: peak 3/s at a limit of 3, 18/s at 20. The 0.5.0
+  note "peak of exactly the 20/s limit" was true only at that limit.
+
 ### Verified on the lab
 - Real transport: 5 of 5 requests carried the research header and user agent; a 302
   came back with its Location and was not followed; 2 rps gave 0.51 s spacing.

@@ -256,10 +256,23 @@ def test_nuclei_template_paths_exist_in_the_pinned_layout():
 def test_ferox_stays_within_the_rate_limit_and_skips_destructive_paths(monkeypatch, tmp_path):
     c = worker.ferox_cmd(eng("X-Bug-Bounty: r1", "AL (r1)", rps=4))
     assert c[c.index("--scan-limit") + 1] == "1" and c[c.index("--depth") + 1] == "1"   # one scan per process
-    assert c[c.index("--rate-limit") + 1] == "4"
+    # Two unthrottled start requests per scan, so ferox gets the limit minus two.
+    assert c[c.index("--rate-limit") + 1] == "2" and "--dont-filter" in c
     assert "--dont-extract-links" in c and "-r" not in c and "--redirects" not in c
     assert "logout" in c[c.index("--dont-scan") + 1]
     assert c[c.index("-H") + 1] == "X-Bug-Bounty: r1" and c[c.index("-a") + 1] == "AL (r1)"
+
+
+def test_ferox_refuses_limits_it_cannot_keep():
+    with pytest.raises(RuntimeError, match="at least 3"):
+        worker.ferox_cmd(eng("X-Bug-Bounty: r1", rps=2))
+    from app import jobgates, modules
+    e = SimpleNamespace(authorized_at=1, scope_include=["*.x.test"], enabled_modules=["content"], rate_limit_rps=2,
+                        research_header="X-Bug-Bounty: r1", research_user_agent=None)
+    with pytest.raises(jobgates.GateError, match="at least 3"):
+        jobgates.check_engagement(e, "content")
+    e.rate_limit_rps = 3
+    assert jobgates.check_engagement(e, "content") is modules.get("content")
 
 
 def test_ferox_refuses_without_identification():

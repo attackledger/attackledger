@@ -203,7 +203,7 @@ options considered and who decided.
   taken from the highest-scoring hosts first instead of alphabetically.
 - **Decided by:** Murat Kabak, who asked for it after the architecture work.
 
-### D-020 · What nuclei may never run (2026-10-08, made autonomously, review pending)
+### D-020 · What nuclei may never run (2026-10-08, made autonomously, reviewed 2026-10-09)
 - **Decision:** On top of the tag exclusions, AttackLedger excludes nuclei templates
   by **content** at build time: raw/unsafe requests, hard-coded out-of-band hosts
   (oast.*, interact.sh) and interactsh URLs, and digest authentication. Templates for
@@ -213,13 +213,13 @@ options considered and who decided.
   digest-auth template sent requests without the research header, and that static OOB
   hosts could make a vulnerable target call a third party. After the exclusions,
   8,899 of 8,899 requests carried the identification.
-- **Also found:** the original pipeline's golden pass uses `-t http/cve/`. The
-  templates directory is `http/cves/`, so that pass likely ran no CVE templates. The
-  original was not changed; this needs Murat's attention.
+- **Also found:** the original pipeline's golden pass (Mac copy) used `-t http/cve/`,
+  which matches 2 templates; the directory is `http/cves/` (4,345). Fixed there on
+  2026-10-09 at Murat's request. The VPS copy's golden pass has no CVE templates at all.
 - **Made by:** Claude, overnight under Murat's standing permission ("you may do
-  everything"). **Review:** pending, Murat Kabak.
+  everything"). **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
 
-### D-021 · Content discovery without recursion (2026-10-08, made autonomously, review pending)
+### D-021 · Content discovery without recursion (2026-10-08, made autonomously, reviewed 2026-10-09)
 - **Decision:** feroxbuster runs at depth 1, one URL per process with a pause between
   them, instead of depth 2 with recursion.
 - **Evidence:** feroxbuster's rate limit is per scan, and each recursed directory starts
@@ -228,26 +228,35 @@ options considered and who decided.
   over 9,504 requests.
 - **Trade-off:** subdirectories are not explored automatically. A follow-up run can
   target discovered directories.
-- **Also found in the original pipeline:** its ferox baseline probes use curl
-  **without** the research header, and `--scan-limit 3` lets three per-directory
-  budgets run at once (up to 3× the program limit). The original was not changed.
-- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+- **Also found in the original pipeline:** `--scan-limit 3` lets three per-directory
+  budgets run at once. (An earlier version of this entry also said its baseline probes
+  were sent without the research header. That was wrong: both copies send it.)
+- **Correction, 2026-10-09:** the 20/s peak was measured at a limit of 20 only. At lower
+  limits, feroxbuster went over: its wildcard detection and two start requests are not
+  rate-limited (measured on the lab: 9 requests in the first second at a limit of 2).
+  Content discovery now runs with `--dont-filter` (the baseline check already does that
+  job) and a ferox rate of the limit minus 2, and needs a limit of at least 3/s.
+  Measured: peak 3/s at a limit of 3, 18/s at a limit of 20. The original pipeline got
+  the same fix, plus a second depth-1 pass over the directories the first pass finds;
+  AttackLedger does not have that second pass yet (roadmap).
+- **Made by:** Claude, overnight. **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
 
-### D-022 · Operator-token authentication now, user accounts later (2026-10-09, made autonomously, review pending)
+### D-022 · Operator-token authentication now, user accounts later (2026-10-09, made autonomously, reviewed 2026-10-09)
 - **Decision:** A single operator token (`ATTACKLEDGER_API_TOKEN`) guards the API as a
   bearer header or an HMAC session cookie (HttpOnly, SameSite=Strict). It stays off by
   default for local use, and `/health` says when it is off.
 - **Why now:** it is the minimum before the API leaves localhost (VPS, demo). Real
   multi-user accounts remain on the roadmap, and with them authenticated receipt signers.
-- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+  The public demo is static, so no API is exposed by it.
+- **Made by:** Claude, overnight. **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
 
-### D-023 · Scope import turns ineligible assets into exclusions (2026-10-09, made autonomously, review pending)
+### D-023 · Scope import turns ineligible assets into exclusions (2026-10-09, made autonomously, reviewed 2026-10-09)
 - **Decision:** In a HackerOne CSV, an asset with `eligible_for_submission=false` becomes
   an exclude rule. The original csv_to_scope.py skipped it, which leaves it covered by a
   wildcard.
-- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+- **Made by:** Claude, overnight. **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
 
-### D-024 · Agents send read-only requests only, for now (2026-10-09, made autonomously, review pending)
+### D-024 · Agents send read-only requests only, for now (2026-10-09, made autonomously, reviewed 2026-10-09)
 - **Decision:** In v0.6 the agent's HTTP tool allows GET, HEAD and OPTIONS. POST, PUT,
   PATCH and DELETE are refused before anything is sent.
 - **Why:** a state-changing request on a live program can create, modify or delete
@@ -256,24 +265,26 @@ options considered and who decided.
   and a per-request preview or allow-list.
 - **Cost:** most authorization, logic and injection checks need writes, so in these
   lanes the agent will leave items open and say why. That is intended.
-- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+- **Made by:** Claude, overnight. **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
 
-### D-025 · Agent loop on the Messages API, not the Agent SDK (2026-10-09, made autonomously, review pending)
+### D-025 · Agent loop on the Messages API, not the Agent SDK (2026-10-09, made autonomously, reviewed 2026-10-09)
 - **Decision:** The agent executor is a manual tool-use loop over the Messages API
   (`anthropic` Python SDK 1.12.1), instead of the Claude Agent SDK named in the roadmap.
 - **Why:** the Agent SDK brings built-in file, shell and web tools. Here the agent must
   have exactly five gated tools and nothing else. A manual loop also lets the worker
   stop between turns (cancel, time limit) and commit evidence after every turn.
-- **Settings:** `claude-opus-5-5`, adaptive thinking at effort `high`, top-level
-  prompt caching, and server-side refusal fallback (`fallbacks: "default"`). The
-  conversation is append-only. A refusal stops the run and fails the job.
+- **Settings:** `claude-opus-5-5` by default (`ATTACKLEDGER_AGENT_MODEL` also allows
+  Sonnet 5.5 and Haiku 5.5), adaptive thinking at effort `high`, top-level prompt caching,
+  and server-side refusal fallback (`fallbacks: "default"`; none on Haiku). Runs stop at
+  turn, request and estimated-cost limits (defaults 15, 30, $0.50). The conversation is
+  append-only. A refusal stops the run and fails the job.
 - **Not yet tested against the live API:** no API key was available. The loop is
   tested with a scripted fake model (shape-compatible responses) and the real
   transport against the local lab. The first live run should be on the lab.
 - **Security work and classifiers:** offensive-security prompts can trigger the cyber
-  safety classifier. If refusals block legitimate testing, apply to Anthropic's Cyber
-  Verification Program.
-- **Made by:** Claude, overnight. **Review:** pending, Murat Kabak.
+  safety classifier. Murat is enrolled in Anthropic's Cyber Verification Program; the API
+  key must belong to the enrolled organization. Other users can apply to the program.
+- **Made by:** Claude, overnight. **Review (2026-10-09):** Murat asked Claude to review the autonomous decisions; re-checked against the current code, tests and lab measurements, and kept.
 
 ### D-026 · Recon shown as six phases, like ars0n (2026-10-09, requested by Murat)
 - **Request:** Murat asked for the recon screen to be organised the way ars0n-framework-v2

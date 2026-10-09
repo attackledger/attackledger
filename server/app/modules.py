@@ -48,6 +48,7 @@ class Module:
     caution: str = ""  # shown next to the opt-in switch
     max_targets: int | None = None
     tools: tuple[str, ...] = ()
+    min_rps: int = 1      # lowest engagement rate limit the module can keep to
 
     def __post_init__(self):
         assert self.input in INPUTS, self.kind
@@ -92,7 +93,7 @@ MODULES: tuple[Module, ...] = (
            "answer every path the same way, never follows redirects or extracted links, never requests "
            "logout, delete or similar paths, and stays within the rate limit in total.",
            input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("endpoints",),
-           pipeline="M3", max_targets=10,
+           pipeline="M3", max_targets=10, min_rps=3,
            caution="Brute-forces paths: thousands of requests per host. Enable only if the program allows "
                    "content discovery.", tools=("feroxbuster",)),
     Module("jsanalyze", "Analyse JavaScript",
@@ -197,7 +198,7 @@ def as_dict(m: Module) -> dict:
             "traffic": m.traffic, "http": m.http, "opt_in": m.opt_in, "after": list(m.after),
             "produces": list(m.produces), "pipeline": m.pipeline, "caution": m.caution,
             "needs_identification": m.needs_identification, "max_targets": m.max_targets,
-            "tools": list(m.tools), "phase": PHASE_OF[m.kind]}
+            "tools": list(m.tools), "phase": PHASE_OF[m.kind], "min_rps": m.min_rps}
 
 
 def phase_dict(p: Phase) -> dict:

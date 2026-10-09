@@ -31,6 +31,7 @@ record records why. This file lists what comes next.
 - [ ] **First live run on the lab** (needs an Anthropic API key in `.env`).
 - [ ] A fuller review screen: side-by-side request and response, per-item diff.
 - [ ] Write requests for agents: opt-in per engagement, own test accounts, preview.
+- [ ] Content discovery: a second depth-1 pass over the directories the first pass finds (as in the original pipeline).
 - [x] Stale-job recovery: jobs left `running` by a worker crash are marked failed.
 - [x] Agent model setting, so a first live test can run on a cheaper model.
 
