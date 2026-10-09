@@ -522,6 +522,15 @@ options considered and who decided.
   answers of 2026-10-09); a hosted service would put their test data with us and needs
   operations a 5-10 hour week cannot carry.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak.
+- **Keeping a hosted service possible (asked by Murat):** a later SaaS, most likely a hybrid
+  in which the web app and ledger are hosted while the worker and gateway stay in the
+  customer's network, stays possible if two rules hold from now on: every record belongs to
+  an organization (add the organization id to the data model before more tables depend on
+  a single tenant), and the worker talks to the API over an authenticated channel instead
+  of reading the database directly (design it with the gateway, D-039). Per-engagement
+  encryption keys (D-043) already fit per-customer isolation. Backups, monitoring, data
+  processing agreements, a security certification and billing are operational work that
+  starts only when a hosted service is chosen.
 
 ### D-043 · Evidence and test accounts encrypted, with retention by key deletion (2026-10-09, decided by Murat)
 - **Decision:** raw evidence and test-account credentials are encrypted with a key per

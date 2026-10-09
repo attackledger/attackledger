@@ -202,6 +202,8 @@ keeps this possible:
    gateway; an approval queue for agent-proposed writes.
 7. **Encryption and retention** (D-043): per-engagement keys, retention by key deletion.
 8. **Public verifier page** (D-042) on attackledger.com.
+9. **Keep SaaS possible** (D-042): an organization id on every record; the worker reaches
+   the API over an authenticated channel, not the database.
 
 Later (D-035): the import inbox and adapters for Caido, Burp and nuclei. Each is an
 optional integration that an operator turns on at setup with their own credentials.
