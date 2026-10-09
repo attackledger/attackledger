@@ -194,6 +194,11 @@ local lab.
   the API. Positive controls: removing the host check, the pacing, the reserved
   headers or the identification precedence each makes a test fail.
 
+### Changed
+- **The repository is public** (D-048) at https://github.com/attackledger/attackledger,
+  after a full-history scan. Secret scanning with push protection, private vulnerability
+  reporting and CodeQL are on.
+
 ### Changed (design-partner review, 2026-10-10)
 - **Lanes are worked in parallel** (D-047): a lane opens at once, and it can be signed only
   after the lanes it needs are receipted (pack `needs_gate`; the bug bounty pack keeps
@@ -232,6 +237,9 @@ local lab.
     fits on phones.
 
 ### Fixed
+- **The release gate refused every git worktree**: a worktree's `.git` is a file holding an
+  absolute path, which the personal-path check matched. It is now skipped like the `.git`
+  directory; nothing committed is skipped.
 - **Sign-in right after Sign out was lost**: signing out reloaded the page, so input typed
   at once was dropped. It now switches to the sign-in form in place.
 - **Content-Length after redaction**: a stored message whose body was redacted kept its

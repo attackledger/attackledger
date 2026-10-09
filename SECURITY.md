@@ -4,7 +4,8 @@ How to report a security vulnerability in AttackLedger, what you may test, and w
 after you report. The same policy is published at <https://attackledger.com/security>, and the
 machine-readable contact is at <https://attackledger.com/.well-known/security.txt> (RFC 9116).
 
-**Report a vulnerability to [murat@attackledger.com](mailto:murat@attackledger.com).**
+**Report a vulnerability to [murat@attackledger.com](mailto:murat@attackledger.com)**, or
+privately through GitHub ([Report a vulnerability](https://github.com/attackledger/attackledger/security/advisories/new)).
 Please do not report security issues in public GitHub issues or pull requests.
 
 ## About this project
@@ -17,8 +18,8 @@ informed, and credit you if you want to be credited.
 
 - The website at `attackledger.com`, including the read-only demo at `/demo/` and the sample
   report.
-- The AttackLedger application (API, web app and worker) and its source code, once the source
-  is published. Test it on an installation you run yourself.
+- The AttackLedger application (API, web app and worker) and its source code
+  (<https://github.com/attackledger/attackledger>). Test it on an installation you run yourself.
 - The offline verifier, `verify_report.py`, and the report format it checks. For example, a
   report that was changed after signing but still verifies, or a receipt that verifies without
   a valid signature or timestamp.

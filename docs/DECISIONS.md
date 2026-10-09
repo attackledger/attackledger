@@ -118,6 +118,7 @@ options considered and who decided.
   Murat's personal profile names him as founder.
 - **Decided by:** Murat Kabak. He asked for a private repository with versioning
   and wanted it to be clear that the application is his.
+- **Changed 2026-10-10: the repository is public** (D-048).
 
 ### D-011 · AI assistance is disclosed (2026-10-08)
 - **Decision:** Commits written with Claude keep their `Co-Authored-By` trailer.
@@ -607,7 +608,7 @@ options considered and who decided.
 - **Why:** before this, an install with no people was open, so whoever reached it first
   over the network could make themselves owner. Creating the owner on the server also
   removes the need for a shared operator token to bootstrap.
-- **Made by:** Claude, for MVP item 6, under Murat's overnight permission. To be reviewed.
+- **Made by:** Claude, for MVP item 6, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-10 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
 
 ### D-046 · The browser verifier is a port of verify_report.py (2026-10-09, made autonomously)
 - **Decision:** the browser verifier is a line-for-line port of `verify_report.py`, not a
@@ -622,7 +623,7 @@ options considered and who decided.
     differences.
 - **Why:** an auditor must get the same answer from the page as from the script; two
   independent implementations would drift.
-- **Made by:** Claude, for MVP item 5, under Murat's overnight permission. To be reviewed.
+- **Made by:** Claude, for MVP item 5, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-10 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
 
 ### D-047 · Lane dependencies gate the receipt, not the opening (2026-10-10, made autonomously)
 - **Decision:**
@@ -635,8 +636,23 @@ options considered and who decided.
   map an `/admin/` request to Authentication because that lane was locked.
 - **Also:** the verifier downloads from the API are for signed-in people. The independent
   copy for clients is on attackledger.com.
-- **Made by:** Claude, from the MVP review, under Murat's overnight permission. To be
-  reviewed.
+- **Made by:** Claude, from the MVP review, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-10 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
+
+### D-048 · The repository is public (2026-10-10, decided by Murat)
+- **Decision:** github.com/attackledger/attackledger is public under the AGPL-3.0. It went
+  public after a scan of the full history (152 commits) found nothing to remove:
+  - **Both denylists:** no target names. The one hit is four random letters inside a
+    base64 signature in an old demo build, the same false positive as before.
+  - **Personal paths:** none; only a fake test URL and a container path.
+  - **trufflehog over the history:** only a fake test URL in `test_redact.py`.
+  - **Other identifiers:** no VPS address. Notification tokens and HackerOne credentials
+    appear as setting names only.
+- **Also turned on:** secret scanning with push protection, private vulnerability
+  reporting, CodeQL default setup, Dependabot alerts and security updates.
+- **Why:** D-044 (everything open source) and the portfolio goal; the public verifier
+  page and the reports point readers to the source.
+- **Decided by:** Murat Kabak (2026-10-10, "bunları da hallet, iznim var"). Scanned and
+  published by Claude.
 
 ## Adding entries
 

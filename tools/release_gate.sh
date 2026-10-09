@@ -6,6 +6,8 @@
 #   ATTACKLEDGER_DENYLIST (default: ~/.attackledger_denylist), one ERE per line.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# In a git worktree, .git is a file pointing at the main repository (an absolute path).
+# It is never committed, so it is skipped like the .git directory.
 DENY="${ATTACKLEDGER_DENYLIST:-$HOME/.attackledger_denylist}"
 FDENY="${ATTACKLEDGER_FINDINGS_DENYLIST:-$HOME/.attackledger_findings_denylist}"  # fingerprints of open/unreported findings
 fail=0
@@ -17,13 +19,13 @@ fi
 echo "[gate] 1/3 denylist scan (targets + open-finding fingerprints)"
 for f in "$DENY" "$FDENY"; do
   [ -s "$f" ] || { echo "[gate] FAIL: missing $f (fail-closed)"; fail=1; continue; }
-  if grep -rnIiE -f "$f" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist "$ROOT"; then
+  if grep -rnIiE -f "$f" --exclude-dir=.git --exclude=.git --exclude-dir=node_modules --exclude-dir=dist "$ROOT"; then
     echo "[gate] FAIL: denylisted strings present ($f)"; fail=1
   fi
 done
 
 echo "[gate] 2/3 absolute personal paths"
-if grep -rnIE '/Users/[A-Za-z0-9_]+|/home/[A-Za-z0-9_]+' --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist --exclude=release_gate.sh "$ROOT"; then
+if grep -rnIE '/Users/[A-Za-z0-9_]+|/home/[A-Za-z0-9_]+' --exclude-dir=.git --exclude=.git --exclude-dir=node_modules --exclude-dir=dist --exclude=release_gate.sh "$ROOT"; then
   echo "[gate] FAIL: absolute user paths present"; fail=1
 fi
 
