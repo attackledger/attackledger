@@ -105,6 +105,16 @@ services:
           cpus: "${ATTACKLEDGER_WORKER_CPUS:-2}"
           memory: ${ATTACKLEDGER_WORKER_MEMORY:-4g}
 
+  # The worker's only way out (D-039, docs/GATEWAY.md). Its healthcheck is in docker-compose.yml.
+  gateway:
+    restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${ATTACKLEDGER_GATEWAY_CPUS:-1}"
+          memory: ${ATTACKLEDGER_GATEWAY_MEMORY:-512m}
+
   web:
     ports: !reset []
     restart: unless-stopped
@@ -164,6 +174,13 @@ volumes:
     name: ${COMPOSE_PROJECT_NAME:-attackledger}_postgres
   blobs:
     name: ${COMPOSE_PROJECT_NAME:-attackledger}_evidence_blobs
+  gateway-private:
+    # The gateway's CA key. Not backed up: a new CA is made if it is lost (docs/INSTALL.md, section 6).
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_gateway_private
+  gateway-public:
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_gateway_public
+  gateway-control:
+    name: ${COMPOSE_PROJECT_NAME:-attackledger}_gateway_control
   caddy_data:
     # Caddy's certificates and ACME account (or its internal CA). Losing it means new certificates.
     name: ${COMPOSE_PROJECT_NAME:-attackledger}_caddy_data
