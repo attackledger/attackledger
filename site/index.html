@@ -160,6 +160,15 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
 .frameworks li { font-size: var(--step--1); padding: 0.25rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 999px; }
 .note { font-size: 0.8rem; color: var(--text-faint); margin-top: 0.75rem; }
 
+.audiences { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2rem; }
+@media (max-width: 52rem) { .audiences { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; } }
+.audiences div { border-top: 1px solid var(--rule-strong); padding-top: 0.9rem; min-width: 0; }
+.audiences h3 { font: 700 var(--step-0) / 1.3 var(--body); margin: 0 0 0.4rem; }
+.audiences p { margin: 0; font-size: var(--step--1); color: var(--text-soft); }
+.roles { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; align-self: center; }
+.roles li { padding: 0.9rem 0; border-bottom: 1px solid var(--rule); font-size: var(--step-0); }
+.roles li:first-child { border-top: 1px solid var(--rule-strong); }
+.roles strong { font: 700 var(--step-1) / 1.2 var(--slab); display: block; color: var(--ink); }
 .contact { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 1rem; }
 .contact output { font-family: var(--mono); font-size: var(--step--1); padding: 0.45rem 0.7rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius); user-select: all; }
 .contact button { font: 700 var(--step--1) / 1 var(--body); padding: 0.55rem 0.8rem; border-radius: var(--radius); border: 1px solid var(--ink); color: var(--ink); background: transparent; cursor: pointer; }
@@ -181,6 +190,7 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
     </a>
     <nav aria-label="Sections">
       <a href="#how">How it works</a>
+      <a href="#who">Who it's for</a>
       <a href="#guardrails">Guardrails</a>
       <a href="#auditors">For auditors</a>
       <a href="#sample">Sample report</a>
@@ -192,9 +202,9 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
     <div class="hero">
       <div>
         <h1>Nothing counts as tested until it has a receipt.</h1>
-        <p class="lede">AttackLedger runs recon and hunting for authorized security testing, keeps every test as
-          hash-chained evidence, and lets a person sign off each lane. The report shows what was tested,
-          and anyone can verify it offline.</p>
+        <p class="lede">AttackLedger proves what a security test actually covered. It runs recon and hunting within
+          the program's rules, keeps every test as hash-chained evidence, and has a person sign off each lane.
+          Anyone can verify the report offline.</p>
         <div class="actions">
           <a class="btn primary" href="sample-report.html" target="_blank" rel="noopener">Open the sample report</a>
           <a class="btn quiet" href="#how">See how it works</a>
@@ -257,6 +267,27 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
       </ol>
     </section>
 
+    <section aria-labelledby="who-title" id="who">
+      <h2 class="section" id="who-title">Who it's for</h2>
+      <div class="audiences">
+        <div>
+          <h3>Bug bounty hunters</h3>
+          <p>Know which hosts and checks you have covered on each program, and which are still open, instead of
+            keeping it in your head. The program's scope, header and rate limit are enforced for you.</p>
+        </div>
+        <div>
+          <h3>Pentest firms and red teams</h3>
+          <p>Hand the client evidence of what was tested, not only a list of findings. Each lane carries the
+            reviewer's signature, and the client can check the report without trusting your tools.</p>
+        </div>
+        <div>
+          <h3>Auditors and regulated firms</h3>
+          <p>Check a penetration test against the controls it is meant to satisfy, such as PCI DSS requirement 11.4,
+            DORA threat-led testing or ISO/IEC 27001, and verify the evidence chain yourself.</p>
+        </div>
+      </div>
+    </section>
+
     <section aria-labelledby="guardrails-title" id="guardrails">
       <h2 class="section" id="guardrails-title">Guardrails it enforces</h2>
       <ul class="rules">
@@ -314,6 +345,25 @@ Verified.</code></pre>
         <p>To check it yourself, take <a href="sample-report.json">sample-report.json</a> and
           <a href="verify_report.py">verify_report.py</a> and run the command above.</p>
       </div>
+    </section>
+
+    <section aria-labelledby="direction-title" id="direction">
+      <div class="cols">
+        <div class="prose">
+          <h2 class="section" id="direction-title">Where it's going</h2>
+          <p>More and more security testing will be done by AI agents. That makes one question more important:
+            who tested what, and can anyone check it?</p>
+          <p>The aim is a ledger for offensive security: a record of each test that the client, the auditor or the
+            regulator can verify independently, whoever or whatever did the testing.</p>
+        </div>
+        <ol class="roles" aria-label="Who does what">
+          <li><strong>Agents test</strong> They work inside the lane's rules and attach what they observed.</li>
+          <li><strong>People sign</strong> They review the evidence first. Only a person closes a lane.</li>
+          <li><strong>Auditors verify</strong> Offline, without trusting the tool or the tester.</li>
+        </ol>
+      </div>
+      <p class="note">Planned for teams: multiple users with authenticated signatures, signed and timestamped reports,
+        and compliance packs reviewed against the current standards.</p>
     </section>
 
     <section aria-labelledby="licence-title" id="licence">
