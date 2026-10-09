@@ -37,6 +37,7 @@ ACTIONS = (
     "engagement.retention", "engagement.content_deleted",
     "person.created", "person.renamed", "person.owner", "person.disabled", "person.enabled",
     "person.password_reset", "person.password_changed",
+    "import.batch", "import.dismissed", "import.restored",
 )
 RECORD_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
 CLI = {"kind": "cli", "user_id": None, "name": "operator CLI", "email": None}
@@ -227,6 +228,10 @@ def _roles(roles) -> str:
     return ", ".join(roles) if roles else "none"
 
 
+def _n(n, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
 def describe(rec: dict) -> str:
     """One sentence for an entry, for the History view and the report."""
     a, ch = rec.get("action"), rec.get("change") or {}
@@ -296,6 +301,21 @@ def describe(rec: dict) -> str:
             elif o["roles"] != n["roles"]:
                 parts.append(f"{_who(n)}: {_roles(n['roles'])} (was {_roles(o['roles'])})")
         return "Changed the roles: " + ("; ".join(parts) or "no change")
+    if a == "import.batch":
+        name = f"“{after.get('filename')}”" if after.get("filename") else "a file"
+        out = (f"Imported {name} ({after.get('format')}{', ' + after['creator'] if after.get('creator') else ''}): "
+               f"{_n(after.get('accepted'), 'entry', 'entries')} to the inbox, "
+               f"{after.get('out_of_scope', 0)} refused as out of scope, {_n(after.get('duplicates', 0), 'duplicate', 'duplicates')}, "
+               f"{after.get('unreadable', 0)} unreadable")
+        if after.get("out_of_scope_hosts"):
+            out += f"; refused hosts {', '.join(after['out_of_scope_hosts'][:20])}"
+        return out
+    if a in ("import.dismissed", "import.restored"):
+        ids = after.get("entries") or []
+        verb = "Dismissed" if a == "import.dismissed" else "Restored"
+        out = f"{verb} {_n(len(ids), 'inbox entry', 'inbox entries')} ({', '.join(str(i) for i in ids[:20])}"
+        out += f" and {len(ids) - 20} more)" if len(ids) > 20 else ")"
+        return out + (f": {after['reason']}" if after.get("reason") else "")
     person = _who(ch.get("person"))
     if a == "person.created":
         if snapshot:

@@ -353,3 +353,65 @@ class AuditEntry(Base):
     record_sha256: Mapped[str] = mapped_column(String(64))
     prev_hash: Mapped[str] = mapped_column(String(64))
     entry_hash: Mapped[str] = mapped_column(String(64))
+
+
+# ---- evidence import (D-029) ------------------------------------------------------------
+
+class ImportBatch(Base):
+    """One uploaded export file: who uploaded it, when, from which tool, and what became of
+    each row. Rows refused as out of scope are listed by row number and host only; nothing
+    else about them is kept."""
+    __tablename__ = "import_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"), index=True)
+    tool: Mapped[str] = mapped_column(String(16))                 # adapter id: har, burp, caido
+    creator: Mapped[str | None] = mapped_column(String(200))      # the tool the file names, with its version
+    filename: Mapped[str | None] = mapped_column(String(200))
+    file_sha256: Mapped[str] = mapped_column(String(64))          # of the file as uploaded
+    file_bytes: Mapped[int]
+    rows: Mapped[int]
+    accepted: Mapped[int]
+    out_of_scope: Mapped[int]
+    duplicates: Mapped[int]
+    unreadable: Mapped[int]
+    refused: Mapped[list] = mapped_column(JSON, default=list)     # [{row, host, reason, detail}]
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_by_name: Mapped[str] = mapped_column(String(300))     # who it was at the time
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class InboxEntry(Base):
+    """One imported request and response, waiting for a person to map it to checklist items.
+    Nothing here is evidence until it is mapped; mapping appends to the ledger and lists the
+    evidence here. A dismissed entry stays, with who dismissed it and why."""
+    __tablename__ = "inbox_entries"
+    __table_args__ = (UniqueConstraint("engagement_id", "content_sha256"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"), index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"), index=True)
+    row: Mapped[int]
+    tool: Mapped[str] = mapped_column(String(16))
+    tool_id: Mapped[str | None] = mapped_column(String(100))
+    tool_time: Mapped[str | None] = mapped_column(String(64))
+    host: Mapped[str] = mapped_column(String(255))
+    method: Mapped[str] = mapped_column(String(20))
+    url: Mapped[str] = mapped_column(Text)                        # redacted
+    status: Mapped[int | None]
+    label: Mapped[str | None] = mapped_column(String(300))        # redacted
+    # Blob digests of the redacted raw bytes, and of the record that names them (what
+    # evidence commits to when the entry is mapped).
+    request_sha256: Mapped[str | None] = mapped_column(String(64))
+    response_sha256: Mapped[str | None] = mapped_column(String(64))
+    record_sha256: Mapped[str] = mapped_column(String(64))
+    content_sha256: Mapped[str] = mapped_column(String(64))       # dedupe key, see inbox.content_hash
+    request_bytes: Mapped[int] = mapped_column(default=0)
+    response_bytes: Mapped[int] = mapped_column(default=0)
+    facts: Mapped[dict] = mapped_column(JSON, default=dict)       # content type, cookies set: for suggestions
+    redaction: Mapped[dict | None] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(16), default="new", server_default="new")   # new, mapped, dismissed
+    mappings: Mapped[list] = mapped_column(JSON, default=list)    # [{evidence_id, lane_id, item_idx, item_key, by, at}]
+    dismissed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    dismissed_by_name: Mapped[str | None] = mapped_column(String(300))
+    dismissed_at: Mapped[datetime | None]
+    dismiss_reason: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)

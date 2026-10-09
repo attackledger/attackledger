@@ -16,6 +16,7 @@ import { Recon } from "./Recon";
 import { Report } from "./Report";
 import { Verify } from "./Verify";
 import { History } from "./History";
+import { Import } from "./Import";
 import { can, readOnly, rolesOn } from "./access";
 import { ThemeToggle } from "./theme";
 
@@ -25,9 +26,9 @@ const TYPE_NAMES: Record<string, string> = {
   internal: "Internal assessment",
 };
 
-type Tab = "recon" | "ledger" | "controls" | "report" | "verify" | "history" | "team";
+type Tab = "recon" | "import" | "ledger" | "controls" | "report" | "verify" | "history" | "team";
 const TAB_NAMES: Record<Tab, string> = {
-  recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History", team: "Team",
+  recon: "Recon", import: "Import", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History", team: "Team",
 };
 
 /** Who the caller is on an engagement, for the tab it opens on and the order of the tabs. */
@@ -39,8 +40,9 @@ function homeOf(me: Me | null, engId: number): Home {
 }
 
 // Readers (clients, auditors) come for the report and its proof; the work tabs follow.
-const VIEWER_TABS: Tab[] = ["report", "verify", "history", "ledger", "controls", "recon"];
-const WORK_TABS: Tab[] = ["recon", "ledger", "controls", "report", "verify", "history"];
+// Import has no demo data, so the demo leaves it out.
+const VIEWER_TABS: Tab[] = ["report", "verify", "history", "ledger", "controls", "recon", ...(DEMO ? [] : ["import" as const])];
+const WORK_TABS: Tab[] = ["recon", ...(DEMO ? [] : ["import" as const]), "ledger", "controls", "report", "verify", "history"];
 
 export function App() {
   const [needLogin, setNeedLogin] = useState(false);
@@ -358,6 +360,7 @@ function Workspace() {
                 <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={hostsChanged}
                         canWork={can(me, current, "work")} />
               )}
+              {tab === "import" && <Import engId={current} canWork={can(me, current, "work")} onMapped={() => { loadCoverage().catch(() => undefined); }} />}
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
               {tab === "report" && <Report engId={current} />}
               {tab === "verify" && <Verify engId={current} />}

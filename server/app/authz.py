@@ -36,6 +36,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/recon/phases"): ("signed_in", None),
     ("GET", "/packs"): ("signed_in", None),
     ("GET", "/executors"): ("signed_in", None),
+    ("GET", "/imports/formats"): ("signed_in", None),
 
     ("POST", "/engagements"): ("owner", None),
     ("PATCH", "/engagements/{eng_id}"): ("owner", ENG),
@@ -68,6 +69,10 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/lanes/{lane_id}/agent-runs"): ("read", LANE),
     ("GET", "/jobs/{job_id}"): ("read", JOB),
     ("GET", "/blobs/{digest}"): ("read", BLOB),
+    ("GET", "/engagements/{eng_id}/imports"): ("read", ENG),
+    ("GET", "/engagements/{eng_id}/inbox"): ("read", ENG),
+    ("GET", "/engagements/{eng_id}/inbox/{entry_id}"): ("read", ENG),
+    ("GET", "/engagements/{eng_id}/inbox/{entry_id}/raw/{part}"): ("read", ENG),
 
     ("POST", "/engagements/{eng_id}/assets"): ("tester", ENG),
     ("POST", "/engagements/{eng_id}/jobs"): ("tester", ENG),
@@ -80,6 +85,10 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/lanes/{lane_id}/attach"): ("tester", LANE),
     ("PATCH", "/lanes/{lane_id}/items/{idx}"): ("tester", LANE),
     ("POST", "/lanes/{lane_id}/agent-runs"): ("tester", LANE),
+    ("POST", "/engagements/{eng_id}/imports"): ("tester", ENG),          # evidence import (D-029)
+    ("POST", "/engagements/{eng_id}/inbox/map"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/inbox/dismiss"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/inbox/restore"): ("tester", ENG),
 
     ("POST", "/lanes/{lane_id}/close"): ("reviewer", LANE),
     ("GET", "/lanes/{lane_id}/receipt-payload"): ("reviewer", LANE),
