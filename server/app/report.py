@@ -5,7 +5,9 @@ The JSON bundle carries everything needed to re-check it offline:
   - the evidence hash chain can be walked from the genesis value,
   - the bundle hash covers the whole body,
   - (format 2) signed receipts carry their payload, signature and public key, and
-    timestamped receipts their RFC 3161 token.
+    timestamped receipts their RFC 3161 token,
+  - (format 2) the key log history of every key that signed a receipt (keylog.py), with
+    the chain links from its first entry to the head.
 tools/verify_report.py checks all of it with the Python standard library only.
 """
 import html
@@ -15,7 +17,7 @@ from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
-from . import gates, ledger, packs
+from . import gates, keylog, ledger, packs
 from .models import Engagement, Evidence, iso_utc
 
 REPORT_FORMAT = "attackledger-report/2"   # 2: receipts may carry a signature
@@ -106,6 +108,11 @@ def build(session, eng: Engagement, controls: dict) -> dict:
         "jobs": jobs,
         "controls": controls,
     }
+    signing_keys = {l["receipt"]["signature"]["key_fingerprint"] for l in lanes
+                    if l["receipt"] and l["receipt"].get("signature")}
+    history = keylog.for_report(session, signing_keys)
+    if history is not None:
+        body["key_log"] = history
     return {**body, "integrity": {"algorithm": "sha256", "body_sha256": ledger.sha256(ledger.canonical(body)),
                                   "chain_genesis": ledger.GENESIS}}
 
@@ -376,6 +383,9 @@ authority shows it existed at that time.</p>"""]
         out.append("<p class='muted'>No lane has a receipt yet.</p></section>")
         return "".join(out)
     rows = []
+    registered = {e["key_fingerprint"]: e for e in reversed((r.get("key_log") or {}).get("entries", []))
+                  if e["event"] == "registered"}
+    revoked = {e["key_fingerprint"]: e for e in (r.get("key_log") or {}).get("entries", []) if e["event"] == "revoked"}
     for l in with_rc:
         rc = l["receipt"]
         sig, ts = rc.get("signature"), rc.get("timestamp")
@@ -389,6 +399,12 @@ authority shows it existed at that time.</p>"""]
         hashes = f"Manifest SHA-256 <code>{_e(rc['manifest_sha256'])}</code>"
         if sig:
             hashes += f"<br>{_e(sig['algorithm'])} key <code>{_e(sig['key_fingerprint'])}</code>"
+            reg, rev = registered.get(sig["key_fingerprint"]), revoked.get(sig["key_fingerprint"])
+            if reg:
+                hashes += (f", registered <span class='nw'>{_e(_when(reg['at']))}</span> "
+                           f"{_e(keylog.VIA.get(reg['via'], reg['via']))}")
+            if rev:
+                hashes += f", revoked <span class='nw'>{_e(_when(rev['at']))}</span>"
         rows.append(f"<tbody><tr><td>{lane}</td><td data-label='Signed by'>{signer}</td>"
                     f"<td data-label='Time'>Issued <span class='nw'>{_e(_when(rc.get('issued_at')))}</span><br>{stamp}</td></tr>"
                     f"<tr class='hashes'><td colspan='3' class='small'>{hashes}</td></tr></tbody>")
@@ -417,6 +433,9 @@ def _verify(r: dict) -> str:
                           "receipt’s hash, every item marked done has evidence, and every not-applicable item has a reason."),
         ("Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its "
                                "fingerprint, and the signed text names this lane, this manifest and a chain head in the report."),
+        ("Signing key history", "Each signing key’s entries in the key log hash correctly and link into the log in order, "
+                                "and the key was registered to the signer before the receipt was issued and not revoked "
+                                "before it. Shown only when the report has signed receipts."),
         ("Receipt timestamps", "Each timestamp token covers this receipt’s manifest hash and signature, the authority’s "
                                "signature verifies, and its certificate chain reaches a root you trust. Shown only when the "
                                "report has timestamps."),
@@ -446,7 +465,9 @@ rely on it, compare its SHA-256 fingerprint with your operating system’s root 
 <pre>{_e(fp)}</pre>
 {other_note}
 <h3>Tie keys to people</h3>
-<p>A valid signature proves the holder of that key signed. To tie the key to a person, ask each signer for their key
+<p>A valid signature proves the holder of that key signed. The key log shows when each key was registered to its signer
+and how; the server never holds a private key, but whoever runs it could register a new key for someone, and that key
+would appear here with its own registration. For high assurance, ask each signer for their key
 fingerprint through a channel you trust and compare it with the one in <a href="#receipts">Receipts</a>. To make sure
 this is the report you were sent, compare the report body SHA-256 on the cover with the value the tester gave you.</p>
 </section>"""

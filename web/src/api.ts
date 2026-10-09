@@ -163,6 +163,23 @@ export interface Me {
   is_owner: boolean;
   mode: "open" | "token" | "people";
   roles: Record<string, string[]>;
+  password_chosen?: boolean;     // people only: false while the password is one someone else set
+  key_notice?: KeyNotice;        // people only
+}
+
+/** Keys registered or revoked for you since your previous sign-in (D-036). */
+export interface KeyNotice {
+  since: string | null;
+  events: { event: "registered" | "revoked"; key_fingerprint: string; algorithm: string; at: string;
+            via: string; key_id: number | null; key_revoked: boolean }[];
+}
+
+export interface SigningKeyView {
+  id: number;
+  algorithm: string;
+  fingerprint: string;
+  created_at: string;
+  revoked: boolean;
 }
 
 export interface Person {
@@ -171,6 +188,7 @@ export interface Person {
   name: string;
   is_owner: boolean;
   disabled: boolean;
+  password_chosen?: boolean;
 }
 
 export interface Member {
@@ -321,18 +339,21 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   login: (token: string) => call<{ ok: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
   loginPerson: (email: string, password: string) =>
-    call<{ ok: boolean; name: string }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+    call<{ ok: boolean; name: string; key_notice: KeyNotice }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  changePassword: (current_password: string, new_password: string) =>
+    call<{ ok: boolean }>("/auth/password", { method: "POST", body: JSON.stringify({ current_password, new_password }) }),
   health: () => call<{ ok: boolean; auth_required: boolean; mode: "open" | "token" | "people"; timestamps?: boolean }>("/health"),
   me: () => call<Me>("/auth/me"),
   people: () => call<Person[]>("/people"),
   createPerson: (body: { email: string; name: string; password: string; is_owner: boolean }) =>
     call<Person>("/people", { method: "POST", body: JSON.stringify(body) }),
-  updatePerson: (id: number, body: Partial<{ name: string; password: string; is_owner: boolean; disabled: boolean }>) =>
+  updatePerson: (id: number, body: Partial<{ name: string; is_owner: boolean; disabled: boolean }>) =>
     call<Person>(`/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   members: (engId: number) => call<Member[]>(`/engagements/${engId}/members`),
   setMembers: (engId: number, members: { user_id: number; roles: string[] }[]) =>
     call<Member[]>(`/engagements/${engId}/members`, { method: "PUT", body: JSON.stringify({ members }) }),
-  keys: () => call<{ id: number; algorithm: string; fingerprint: string; created_at: string; revoked: boolean }[]>("/auth/keys"),
+  keys: () => call<SigningKeyView[]>("/auth/keys"),
+  revokeKey: (id: number) => call<SigningKeyView>(`/auth/keys/${id}/revoke`, { method: "POST" }),
   addKey: (algorithm: string, public_key: string) =>
     call<{ id: number; fingerprint: string }>("/auth/keys", { method: "POST", body: JSON.stringify({ algorithm, public_key }) }),
   receiptPayload: (laneId: number, key: string) =>

@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, Me, PackSummary } from "./api";
 import { People, Team } from "./People";
+import { Account } from "./Account";
 import { Executor } from "./Agent";
 import { ItemWork } from "./LaneWork";
 import { DEMO, demoUrl } from "./demo";
@@ -177,6 +178,7 @@ function Workspace() {
               <button className="link-button" onClick={async () => { await api.logout(); window.location.reload(); }}>
                 Sign out
               </button>
+              <Account me={me} />
             </div>
           )}
           {owner && (

@@ -26,7 +26,8 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
     setSaved(null);
     try {
       const p = await api.createPerson({ email, name, password, is_owner: owner });
-      setSaved(`Added ${p.name}. Give them their password in person or through your password manager.`);
+      setSaved(`Added ${p.name}. Give them this first password in person or through your password manager, `
+        + "and ask them to choose their own under Your account after they sign in.");
       setEmail(""); setName(""); setPassword(""); setOwner(false);
       load();
     } catch (e) {
@@ -44,7 +45,9 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
       <section className="panel" aria-labelledby="people-title">
         <h3 id="people-title" className="panel-title">People</h3>
         <p className="muted">Everyone who can sign in. Roles are given per engagement, on its Team tab.
-          Owners manage people and engagements and can do everything.</p>
+          Owners manage people and engagements and can do everything. Nobody sets another person's password
+          here: each person changes their own, and a forgotten one is reset on the server
+          with <code>python -m app.people set-password</code>.</p>
         {mode !== "people" && (
           <p className="notice-inline">
             Nobody has an account yet, so {mode === "open" ? "this ledger is open to anyone who can reach it" : "the operator token is the only way in"}.
@@ -59,6 +62,9 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
               <span className="people-tags">
                 {p.is_owner && <span className="tag">Owner</span>}
                 {p.disabled && <span className="tag">Disabled</span>}
+                {p.password_chosen === false && !p.disabled && (
+                  <span className="tag" title="Still signs in with a password someone else set">First password</span>
+                )}
               </span>
               <span className="people-actions">
                 <button className="btn ghost small" onClick={() => change(p, { is_owner: !p.is_owner })}>
@@ -83,7 +89,7 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
             First password
             <input id="person-password" type="password" autoComplete="new-password" value={password}
                    onChange={(e) => setPassword(e.target.value)} />
-            <span className="hint">At least 12 characters.</span>
+            <span className="hint">At least 12 characters. They replace it with their own after signing in.</span>
           </label>
           <label className="check">
             <input type="checkbox" checked={owner} onChange={(e) => setOwner(e.target.checked)} />

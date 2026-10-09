@@ -29,6 +29,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/auth/keys"): ("signed_in", None),             # the handler limits it to your own keys
     ("POST", "/auth/keys"): ("signed_in", None),
     ("POST", "/auth/keys/{key_id}/revoke"): ("signed_in", None),
+    ("POST", "/auth/password"): ("signed_in", None),          # your own, with your current password
 
     ("GET", "/engagements"): ("signed_in", None),
     ("GET", "/modules"): ("signed_in", None),

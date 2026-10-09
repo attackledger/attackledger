@@ -1,0 +1,29 @@
+/* Your account (Account.tsx): a modal over the ledger. */
+
+.account {
+  width: min(40rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 1.25rem 1.4rem 1.4rem;
+  background: var(--sheet);
+  color: var(--text);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.account::backdrop { background: var(--scrim); }
+.account-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.account section { margin-top: 1.1rem; }
+.account h3 { margin: 0 0 0.5rem; font: 700 var(--step-0) / 1.3 var(--slab); }
+.account code { overflow-wrap: anywhere; }
+
+.key-notice { padding: 0.8rem 1rem; border-left: 3px solid var(--ink); background: var(--surface); }
+.key-notice p { margin: 0.6rem 0 0; font-size: var(--step--1); }
+.key-notice ul, .key-list { list-style: none; margin: 0; padding: 0; }
+.key-notice li, .key-list li {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.35rem 1rem;
+  padding: 0.45rem 0; border-top: 1px solid var(--rule); font-size: var(--step--1);
+}
+.key-notice li:first-child, .key-list li:first-child { border-top: 0; }
+.key-list li.off { opacity: 0.6; }
+.key-list .tag { margin-left: 0.4rem; }

@@ -249,6 +249,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(300))
     is_owner: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     disabled: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    # True once the person set their own password (POST /auth/password). A password set at
+    # account creation or by an operator reset is also known to whoever set it.
+    password_chosen: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    # The last two sign-ins: the app shows key changes made since the previous one.
+    last_sign_in_at: Mapped[datetime | None]
+    previous_sign_in_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -283,3 +289,21 @@ class SigningKey(Base):
     fingerprint: Mapped[str] = mapped_column(String(64), unique=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     revoked_at: Mapped[datetime | None]
+
+
+class KeyLogEntry(Base):
+    """Append-only, hash-chained record of every key registration and revocation (keylog.py).
+    Nothing updates or deletes a row. Reports carry the entries of the keys that signed them."""
+    __tablename__ = "key_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seq: Mapped[int] = mapped_column(unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_name: Mapped[str] = mapped_column(String(200))                  # the name at the time
+    key_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    algorithm: Mapped[str] = mapped_column(String(20))
+    event: Mapped[str] = mapped_column(String(16))                       # registered, revoked
+    at: Mapped[str] = mapped_column(String(40))     # ISO 8601 UTC with microseconds, hashed as stored
+    via: Mapped[str] = mapped_column(String(24))    # see keylog.VIA
+    record_sha256: Mapped[str] = mapped_column(String(64))
+    prev_hash: Mapped[str] = mapped_column(String(64))
+    entry_hash: Mapped[str] = mapped_column(String(64))
