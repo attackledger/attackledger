@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ExecutorInfo, type Job, type LaneDetail } from "./api";
-import { JobLog } from "./Recon";
+import { JobLog, SkipReason, StatusChip } from "./Recon";
+import { shownStatus } from "./jobs";
+import { plural } from "./words";
 import { DEMO } from "./demo";
 
 const OUTCOME: Record<string, string> = {
@@ -12,10 +14,6 @@ const OUTCOME: Record<string, string> = {
   timed_out: "Reached the time limit",
   refused: "The model declined",
 };
-
-function plural(n: number, one: string, many = `${one}s`) {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 /** Who works the lane, and the agent's runs when it is the Claude agent. */
 export function Executor({ lane, canWork = true, onLaneChanged }: {
@@ -147,7 +145,7 @@ function AgentRuns({ lane, canWork, onLaneChanged }: {
             return (
               <li key={j.id} className="job">
                 <div className="job-row">
-                  <span className={`chip ${j.status}`}>{j.status}</span>
+                  <StatusChip job={j} />
                   <span className="job-kind">{r.status ? OUTCOME[r.status] ?? r.status : "Agent run"}</span>
                   {(r.turns != null || r.tool_calls != null) && (
                     <span className="muted">
@@ -174,6 +172,7 @@ function AgentRuns({ lane, canWork, onLaneChanged }: {
                 {r.summary && <p className="agent-summary">{r.summary}</p>}
                 {r.detail && <p className="muted">{r.detail}</p>}
                 {failure && <p className="field-error">{failure}</p>}
+                {shownStatus(j) === "skipped" && <p className="muted"><SkipReason job={j} /></p>}
                 {openLog === j.id && <JobLog jobId={j.id} live={j.status === "running" || j.status === "queued"} />}
               </li>
             );

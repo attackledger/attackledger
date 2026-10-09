@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { DEMO, demoUrl } from "./demo";
+import { plural } from "./words";
 
 interface ReportSummary {
   generated_at: string;
@@ -16,10 +17,6 @@ interface ReportSummary {
     chain_head: string;
   };
   integrity: { body_sha256: string };
-}
-
-function plural(n: number, one: string, many: string) {
-  return `${n} ${n === 1 ? one : many}`;
 }
 
 export function Report({ engId }: { engId: number }) {
@@ -58,10 +55,10 @@ export function Report({ engId }: { engId: number }) {
         <div>
           <h3 className="panel-title">Coverage report</h3>
           <p className="report-lede">
-            <strong>{s.lanes_receipted}</strong> of {s.lanes_possible} possible lanes are receipted across{" "}
-            {s.hosts_in_scope} in-scope {s.hosts_in_scope === 1 ? "host" : "hosts"}.{" "}
-            {plural(s.lanes_opened - s.lanes_receipted, "more is", "more are")} open or void, and{" "}
-            {plural(s.lanes_possible - s.lanes_opened, "was", "were")} never opened, so{" "}
+            <strong>{s.lanes_receipted}</strong> of {plural(s.lanes_possible, "possible lane")}{" "}
+            {s.lanes_receipted === 1 ? "is" : "are"} receipted across {plural(s.hosts_in_scope, "in-scope host")}.{" "}
+            {plural(s.lanes_opened - s.lanes_receipted, "more is", "more are")} in progress or void, and{" "}
+            {plural(s.lanes_possible - s.lanes_opened, "is", "are")} not opened, so{" "}
             {s.lanes_possible - s.lanes_opened === 1 ? "it counts" : "they count"} as untested.
           </p>
           {!r.engagement.authorized_at && (

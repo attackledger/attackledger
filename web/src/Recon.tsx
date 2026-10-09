@@ -1,6 +1,9 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, EndpointRow, Job, Lead, ObservationRow, ReconModule, ReconPhase, ReconSummary, Scope, ScopeImport,
          TriageReport } from "./api";
+import { AddHost } from "./AddHost";
+import { latestLine, secondsSince, shownStatus, skipReason, STATUS_WORD } from "./jobs";
+import { duration, plural } from "./words";
 
 
 const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" } as const;
@@ -15,6 +18,13 @@ const SIGNAL_HINT: Record<string, string> = {
   WAF: "Looks like a WAF or bot challenge",
 };
 
+/** "Added shop.example.com as a host." for the hosts the server made from exact scope entries. */
+function addedText(hosts: string[] | undefined): string {
+  if (!hosts?.length) return "";
+  const shown = hosts.slice(0, 5).join(", ") + (hosts.length > 5 ? ` and ${hosts.length - 5} more` : "");
+  return ` Added ${shown} as ${hosts.length === 1 ? "a host" : "hosts"}.`;
+}
+
 function lines(v: string) {
   return v.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
 }
@@ -28,10 +38,6 @@ const RESULT_TAB: Record<string, ResultTab> = {
   jsanalyze: "leads", params: "leads", paramclass: "leads", nuclei: "leads", dorks: "leads",
 };
 
-function plural(n: number, one: string, many = `${one}s`) {
-  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
-}
-
 function ago(iso: string | null) {
   if (!iso) return "";
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -41,8 +47,9 @@ function ago(iso: string | null) {
   return new Date(iso).toLocaleDateString();
 }
 
-export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true }: {
+export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true, hostsInScope }: {
   engId: number; onAssetsChanged: () => void; canManage?: boolean; canRun?: boolean;   // owner; tester
+  hostsInScope: number;
 }) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -51,6 +58,8 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
   const [mods, setMods] = useState<ReconModule[]>([]);
   const [phases, setPhases] = useState<ReconPhase[]>([]);
   const [pipeMsg, setPipeMsg] = useState<string | null>(null);   // all hooks before any early return
+  const [pipeSkipped, setPipeSkipped] = useState<{ kind: string; reason: string }[]>([]);
+  const [rulesMsg, setRulesMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [tab, setTab] = useState<ResultTab>("golden");
@@ -71,6 +80,9 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
 
   useEffect(() => {
     setScope(null);
+    setRulesMsg(null);
+    setPipeMsg(null);
+    setPipeSkipped([]);
     setEditing(false);
     setOnly(null);
     setTab("golden");
@@ -84,6 +96,20 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
     return () => clearInterval(t);
   }, [active, refresh, onAssetsChanged]);
 
+  // The step that is running now (the worker runs one at a time): follow its log while it runs.
+  const running = jobs.find((j) => j.status === "running") ?? null;
+  const runningId = running?.id ?? null;
+  const [runLog, setRunLog] = useState<{ id: number; log: string } | null>(null);
+  useEffect(() => {
+    if (runningId == null) return;
+    let stop = false;
+    const load = () => api.job(runningId).then((j) => { if (!stop) setRunLog({ id: j.id, log: j.log ?? "" }); }).catch(() => {});
+    load();
+    const t = setInterval(load, 3000);
+    return () => { stop = true; clearInterval(t); };
+  }, [runningId]);
+  const liveLine = running && runLog?.id === running.id ? latestLine(runLog.log) : null;
+
   if (!scope) return <p className="muted">{error ?? "Loading recon…"}</p>;
 
   const authorized = !!scope.authorized_at;
@@ -92,6 +118,13 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
   const hasWildcard = scope.include.some((p) => p.startsWith("*."));
   const liveHosts = triage?.hosts.length ?? 0;
   const needsRules = !authorized || !hasScope || !identified;
+  const noHosts = hostsInScope === 0;
+  // With no host and no wildcard rule, no step has anything to work on.
+  const nothingToDo = noHosts && !hasWildcard;
+  const runAllWhy = !hasScope ? "Define the scope first."
+    : !authorized ? "Record your authorization first."
+    : nothingToDo ? "Nothing to work on yet: add a host, or a wildcard rule for recon to discover hosts under."
+    : null;
 
   function blocker(kind: string): string | null {
     if (!hasScope) return "Define the scope first";
@@ -99,6 +132,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
     const m = mods.find((x) => x.kind === kind);
     if (!m) return "Unknown module";
     if (m.input === "roots" && !hasWildcard) return "Needs a wildcard rule such as *.example.com";
+    if (m.input === "hosts" && noHosts && !hasWildcard) return "No in-scope hosts yet: add one first";
     if (m.opt_in && !scope!.enabled_modules.includes(kind)) return "Off in the rules: enable it only if the program allows it";
     if (m.needs_identification && !identified) return "Set the research header or user agent first";
     if (scope!.rate_limit_rps < m.min_rps) return `Needs a rate limit of at least ${m.min_rps} per second to stay within it`;
@@ -109,11 +143,13 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
   async function queue(kinds?: string[]) {
     setError(null);
     setPipeMsg(null);
+    setPipeSkipped([]);
     try {
       const r = await api.runPipeline(engId, kinds);
       setPipeMsg(`Queued ${plural(r.queued.length, "step")}` +
-        (r.skipped.length ? `; skipped ${r.skipped.map((s) => mods.find((m) => m.kind === s.kind)?.title ?? s.kind).join(", ")}` : "") +
-        ". Each step picks its targets when it starts.");
+        (r.skipped.length ? `; ${plural(r.skipped.length, "step")} cannot apply and ${r.skipped.length === 1 ? "was" : "were"} not queued` : "") +
+        ". Steps run one at a time, in order; each picks its targets when it starts, from what the steps before it found.");
+      setPipeSkipped(r.skipped);
       setTab("runs");
       setOnly(null);
       await refresh();
@@ -163,21 +199,61 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
       )}
       {canManage && (editing || needsRules) && (
         <RulesOfEngagement engId={engId} scope={scope} mods={mods}
-                           onSaved={(sc) => { setScope(sc); onAssetsChanged(); refresh().catch(() => {}); }} />
+                           onSaved={(sc, msg) => { setScope(sc); setRulesMsg(msg ?? null); onAssetsChanged(); refresh().catch(() => {}); }} />
+      )}
+      {rulesMsg && !(canManage && (editing || needsRules)) && <p className="saved" role="status">{rulesMsg}</p>}
+
+      {noHosts && (
+        <section className="panel no-hosts" aria-labelledby="no-hosts-title">
+          <h3 id="no-hosts-title" className="panel-title">No in-scope hosts yet</h3>
+          <p>Recon works on the hosts in this engagement, and so does the ledger. There are three ways to get them:</p>
+          <ul>
+            <li>
+              <strong>Add a host here.</strong> It gets a row in the ledger straight away.
+            </li>
+            <li>
+              <strong>Exact entries in the scope rules</strong>, such as <code>shop.example.com</code>, become hosts
+              when the rules are saved.
+            </li>
+            <li>
+              <strong>Wildcard rules</strong>, such as <code>*.example.com</code>, are not hosts themselves: the
+              subdomain step discovers the hosts under them.{" "}
+              {hasWildcard ? "This engagement has one, so running the steps will look for hosts."
+                           : "This engagement has none yet."}
+            </li>
+          </ul>
+          {canRun ? <AddHost engId={engId} onAdded={() => { onAssetsChanged(); refresh().catch(() => {}); }}
+                             id="recon-new-host" className="inline-form" />
+                  : <p className="muted">A tester or an owner on this engagement adds hosts.</p>}
+        </section>
       )}
 
       <section aria-labelledby="workflow-title" className="panel workflow">
         <div className="panel-head">
           <h3 id="workflow-title" className="panel-title">Recon workflow</h3>
           {canRun ? (
-            <button className="btn" disabled={!authorized || !hasScope || active} onClick={() => queue()}
-                    title="Queue every step that passes its gates, in order">
-              {active ? "Running…" : "Run all steps"}
-            </button>
-          ) : active && <span className="chip running">running</span>}
+            <div className="run-all">
+              <button className="btn" disabled={!!runAllWhy || active} onClick={() => queue()}
+                      aria-describedby="run-all-why">
+                {running ? "Running…" : active ? "Queued…" : "Run all steps"}
+              </button>
+              <span id="run-all-why" className="step-why">
+                {active ? "Wait for the queued steps to finish."
+                  : runAllWhy ?? "Queues every step that passes its gates. They run one at a time, in order."}
+              </span>
+            </div>
+          ) : active && <span className="chip running">Running</span>}
         </div>
         {pipeMsg && <p className="saved" role="status">{pipeMsg}</p>}
+        {pipeSkipped.length > 0 && (
+          <ul className="pipe-skipped" aria-label="Steps not queued">
+            {pipeSkipped.map((x) => (
+              <li key={x.kind}><strong>{mods.find((m) => m.kind === x.kind)?.title ?? x.kind}</strong>: {x.reason}</li>
+            ))}
+          </ul>
+        )}
         {error && <p className="field-error" role="alert">{error}</p>}
+        {active && <QueueStatus jobs={jobs} mods={mods} liveLine={liveLine} />}
 
         <ol className="funnel" aria-label="How the surface narrows">
           {funnel.map(([label, n]) => (
@@ -217,6 +293,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
                 <ul className="tools">
                   {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
                     <ToolCard key={m.kind} m={m} last={jobs.find((j) => j.kind === m.kind)} why={blocker(m.kind)} canRun={canRun}
+                              jobs={jobs} liveLine={liveLine}
                               onRun={() => run(m.kind)} onResults={() => showResults(m.kind)} />
                   ))}
                 </ul>
@@ -234,7 +311,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
               {label}
               {k === "leads" && s ? <span className="tab-n">{s.leads}</span> : null}
               {k === "urls" && s ? <span className="tab-n">{s.urls}</span> : null}
-              {k === "runs" && active ? <span className="tab-n live">running</span> : null}
+              {k === "runs" && active ? <span className="tab-n live">Running</span> : null}
             </button>
           ))}
         </div>
@@ -247,9 +324,9 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true 
         {tab === "golden" && triage && <GoldenTargets report={triage} />}
         {tab === "hosts" && <Hosts engId={engId} version={jobs.length} />}
         {tab === "urls" && <Endpoints engId={engId} version={jobs.length} module={only ?? undefined} />}
-        {tab === "leads" && <Leads engId={engId} version={jobs.filter((j) => j.status === "done").length}
+        {tab === "leads" && <Leads engId={engId} version={jobs.filter((j) => shownStatus(j) === "done" || j.status === "partial").length}
                                    module={only ?? undefined} />}
-        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} canRun={canRun} />}
+        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} canRun={canRun} liveLine={liveLine} />}
       </section>
     </div>
   );
@@ -305,11 +382,13 @@ function TargetBar({ scope, mods, editing, canClose, onToggle }: {
   );
 }
 
-function ToolCard({ m, last, why, canRun, onRun, onResults }: {
-  m: ReconModule; last?: Job; why: string | null; canRun: boolean; onRun: () => void; onResults: () => void;
+function ToolCard({ m, last, why, canRun, jobs, liveLine, onRun, onResults }: {
+  m: ReconModule; last?: Job; why: string | null; canRun: boolean; jobs: Job[]; liveLine: string | null;
+  onRun: () => void; onResults: () => void;
 }) {
   const [log, setLog] = useState(false);
   const busy = !!last && (last.status === "queued" || last.status === "running");
+  const st = last ? shownStatus(last) : null;
   return (
     <li className={`tool${why ? " blocked" : ""}`}>
       <div className="tool-name">
@@ -323,16 +402,19 @@ function ToolCard({ m, last, why, canRun, onRun, onResults }: {
       <p className="tool-last">
         {last ? (
           <>
-            <span className={`chip ${last.status}`}>{last.status}</span>{" "}
-            {last.status === "done" && plural(last.result_count, "result")}
-            {last.status === "partial" && `${last.remaining} not run yet`}
-            <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>
+            <StatusChip job={last} />{" "}
+            {st === "done" && plural(last.result_count, "result")}
+            {st === "partial" && `${last.remaining} not run yet`}
+            {st !== "running" && st !== "queued" &&
+              <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>}
+            {st === "skipped" && <SkipReason job={last} />}
+            {(st === "running" || st === "queued") && <JobProgress job={last} jobs={jobs} liveLine={liveLine} />}
           </>
         ) : <span className="muted">Not run yet</span>}
         {why && canRun && <span className="tool-why">{why}</span>}
       </p>
       <div className="tool-actions">
-        {canRun && <button className="btn small" disabled={!!why || busy} onClick={onRun}>{busy ? "Running…" : "Run"}</button>}
+        {canRun && <button className="btn small" disabled={!!why || busy} onClick={onRun}>{last?.status === "running" ? "Running…" : busy ? "Queued" : "Run"}</button>}
         <button className="btn ghost small" onClick={onResults}>Results</button>
         {last && (
           <button className="btn ghost small" aria-expanded={log} onClick={() => setLog(!log)}>
@@ -345,8 +427,9 @@ function ToolCard({ m, last, why, canRun, onRun, onResults }: {
   );
 }
 
-function Runs({ jobs, mods, refresh, onError, canRun }: {
+function Runs({ jobs, mods, refresh, onError, canRun, liveLine }: {
   jobs: Job[]; mods: ReconModule[]; refresh: () => Promise<void>; onError: (m: string) => void; canRun: boolean;
+  liveLine: string | null;
 }) {
   const [openLog, setOpenLog] = useState<number | null>(null);
   if (jobs.length === 0) return <p className="muted">{canRun ? "No runs yet. Run a step above, or every step at once." : "No runs yet."}</p>;
@@ -355,12 +438,14 @@ function Runs({ jobs, mods, refresh, onError, canRun }: {
       {jobs.map((j) => (
         <li key={j.id} className="job">
           <div className="job-row">
-            <span className={`chip ${j.status}`}>{j.status}</span>
+            <StatusChip job={j} />
             <span className="job-kind">{j.kind === "agent" ? "Claude agent" : mods.find((s) => s.kind === j.kind)?.title ?? j.kind}</span>
             <span className="muted">
               {j.status === "partial" || (j.status === "cancelled" && j.remaining)
-                ? `${j.targets_done} of ${j.targets.length} targets run`
+                ? `${j.targets_done} of ${plural(j.targets.length, "target")} run`
+                : shownStatus(j) === "skipped" ? "nothing to work on"
                 : j.deferred && j.targets.length === 0 ? "targets picked when it starts"
+                : shownStatus(j) === "done" ? `${plural(j.targets.length, "target")}, ${plural(j.result_count, "result")}`
                 : plural(j.targets.length, "target")}
             </span>
             <span className="muted job-time">{new Date(j.created_at).toLocaleTimeString()}</span>
@@ -383,10 +468,84 @@ function Runs({ jobs, mods, refresh, onError, canRun }: {
               </button>
             </span>
           </div>
+          {shownStatus(j) === "skipped" && <p className="job-note"><SkipReason job={j} /></p>}
+          {(j.status === "running" || j.status === "queued") && (
+            <p className="job-note"><JobProgress job={j} jobs={jobs} liveLine={liveLine} /></p>
+          )}
           {openLog === j.id && <JobLog jobId={j.id} live={j.status === "running" || j.status === "queued"} />}
         </li>
       ))}
     </ul>
+  );
+}
+
+/** The queue at a glance while anything runs: what runs now, how long it has run, what waits behind it. */
+function QueueStatus({ jobs, mods, liveLine }: { jobs: Job[]; mods: ReconModule[]; liveLine: string | null }) {
+  const title = (j: Job) => (j.kind === "agent" ? "Claude agent" : mods.find((m) => m.kind === j.kind)?.title ?? j.kind);
+  const running = jobs.find((j) => j.status === "running");
+  const waiting = jobs.filter((j) => j.status === "queued").sort((a, b) => a.id - b.id);
+  return (
+    <div className="queue">
+      <p className="queue-now">
+        {running ? <>Now running: <strong>{title(running)}</strong></> : "Waiting for the worker to pick up the next step."}
+      </p>
+      {running && <p className="queue-progress"><JobProgress job={running} jobs={jobs} liveLine={liveLine} /></p>}
+      {waiting.length > 0 && (
+        <p className="queue-next">
+          Then, in order: {waiting.map(title).join(", ")}.
+        </p>
+      )}
+      <p className="hint">
+        Steps run one at a time, so a slow step such as content discovery holds the ones after it. Content discovery
+        sends at most the rate limit per second; on a large host that can take many minutes.
+      </p>
+    </div>
+  );
+}
+
+export function StatusChip({ job }: { job: Job }) {
+  const st = shownStatus(job);
+  return <span className={`chip ${st}`}>{STATUS_WORD[st] ?? st}</span>;
+}
+
+/** Why a skipped step did not run. The list of jobs carries no log, so it is read from the job when needed. */
+export function SkipReason({ job }: { job: Job }) {
+  const [fetched, setFetched] = useState<string | null>(null);
+  const known = skipReason(job);
+  useEffect(() => {
+    if (known) return;
+    let stop = false;
+    api.job(job.id).then((j) => { if (!stop) setFetched(skipReason(j)); }).catch(() => {});
+    return () => { stop = true; };
+  }, [job.id, known]);
+  const why = known ?? fetched;
+  return <span className="skip-why">{why ? `Not run: ${why}` : "Not run: it had nothing to work on."}</span>;
+}
+
+/** Where a queued or running step is: elapsed time, targets finished, the worker's latest line. */
+export function JobProgress({ job, jobs, liveLine }: { job: Job; jobs: Job[]; liveLine: string | null }) {
+  if (job.status === "queued") {
+    const ahead = jobs.filter((j) => (j.status === "queued" && j.id < job.id) || j.status === "running").length;
+    return (
+      <span className="progress">
+        {ahead ? `Waiting: ${plural(ahead, "step")} ahead of it. Steps run one at a time.` : "Starting…"}
+      </span>
+    );
+  }
+  const elapsed = secondsSince(job.started_at);
+  const total = job.targets.length;
+  const done = job.targets_done;
+  // Only a pace the run has shown: targets are counted in finished batches, so no estimate before the first.
+  const left = elapsed != null && done > 0 && done < total ? (elapsed / done) * (total - done) : null;
+  return (
+    <span className="progress" aria-live="off">
+      <span>
+        Running{elapsed != null && <> for {duration(elapsed)}</>}
+        {total > 0 && <>, {done} of {plural(total, "target")} finished</>}
+        {left != null && <>; about {left < 60 ? "a minute" : duration(Math.round(left / 60) * 60)} left at this pace</>}.
+      </span>
+      {liveLine && <span className="progress-line" title={liveLine}>{liveLine}</span>}
+    </span>
   );
 }
 
@@ -446,7 +605,9 @@ function GoldenTargets({ report }: { report: TriageReport }) {
   return (
     <div role="tabpanel" className="tabpanel">
       <div className="tabpanel-head">
-        <span className="muted">{golden} of {report.hosts.length} live hosts score {report.golden_min_score} or more</span>
+        <span className="muted">
+          {golden} of {plural(report.hosts.length, "live host")} {golden === 1 ? "scores" : "score"} {report.golden_min_score} or more
+        </span>
       </div>
       {report.hosts.length === 0 ? (
         <p className="muted">Run “Find live web servers”. Each host is scored from what it answers, highest first.</p>
@@ -502,7 +663,7 @@ function Leads({ engId, version, module }: { engId: number; version: number; mod
     <div role="tabpanel" className="tabpanel">
       <div className="tabpanel-head">
         <span className="muted">
-          {rows.length} total{real ? `, ${real} secret ${real === 1 ? "candidate" : "candidates"} to review` : ""}
+          {plural(rows.length, "lead")}{real ? `, ${plural(real, "secret candidate")} to review` : ""}
         </span>
       </div>
       {rows.length === 0 ? (
@@ -572,7 +733,7 @@ function Endpoints({ engId, version, module }: { engId: number; version: number;
   return (
     <div role="tabpanel" className="tabpanel">
       <div className="tabpanel-head">
-        <span className="muted">{total} in scope</span>
+        <span className="muted">{plural(total, "URL")} in scope</span>
       </div>
       <div className="ep-filters">
         <input aria-label="Filter endpoints" placeholder="Filter by text, e.g. /api/" value={q}
@@ -626,7 +787,7 @@ export function JobLog({ jobId, live }: { jobId: number; live: boolean }) {
 }
 
 function RulesOfEngagement({ engId, scope, mods, onSaved }: {
-  engId: number; scope: Scope; mods: ReconModule[]; onSaved: (s: Scope) => void;
+  engId: number; scope: Scope; mods: ReconModule[]; onSaved: (s: Scope, message?: string) => void;
 }) {
   const [include, setInclude] = useState(scope.include.join("\n"));
   const [exclude, setExclude] = useState(scope.exclude.join("\n"));
@@ -651,10 +812,12 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
         research_header: header.trim() || null, research_user_agent: ua.trim() || null,
         enabled_modules: enabled, crawl_depth: depth,
       });
+      const added = s.hosts_added;
       if (confirm) s = await api.attest(engId, operator, policy);
       setConfirm(false);
-      setSaved("Rules saved.");
-      onSaved(s);
+      const msg = `Rules saved.${addedText(added)}`;
+      setSaved(msg);
+      onSaved(s, msg);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -715,11 +878,13 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
           </fieldset>
         )}
 
-        <ScopeImporter engId={engId} onApplied={async () => {
+        <ScopeImporter engId={engId} onApplied={async (added) => {
           const s = await api.scope(engId);
           setInclude(s.include.join("\n"));
           setExclude(s.exclude.join("\n"));
-          onSaved(s);
+          const msg = `Scope imported into the rules.${addedText(added)}`;
+          setSaved(msg);
+          onSaved(s, msg);
         }} />
 
         <fieldset className="attest">
@@ -749,7 +914,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
 }
 
 
-function ScopeImporter({ engId, onApplied }: { engId: number; onApplied: () => void }) {
+function ScopeImporter({ engId, onApplied }: { engId: number; onApplied: (hostsAdded?: string[]) => void }) {
   const [csv, setCsv] = useState<string | null>(null);
   const [preview, setPreview] = useState<ScopeImport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -766,10 +931,10 @@ function ScopeImporter({ engId, onApplied }: { engId: number; onApplied: () => v
   async function apply() {
     if (!csv) return;
     try {
-      await api.importScope(engId, csv, true);
+      const r = await api.importScope(engId, csv, true);
       setPreview(null);
       setCsv(null);
-      onApplied();
+      onApplied(r.hosts_added);
     } catch (e) {
       setError((e as Error).message);
     }
