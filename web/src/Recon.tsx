@@ -3,7 +3,7 @@ import { api, EndpointRow, Job, Lead, ObservationRow, ReconModule, ReconPhase, R
          TriageReport } from "./api";
 import { AddHost } from "./AddHost";
 import { latestLine, secondsSince, shownStatus, skipReason, STATUS_WORD } from "./jobs";
-import { duration, plural } from "./words";
+import { duration, plural, termsFor, type Terms } from "./words";
 
 
 const TRAFFIC_LABEL = { passive: "Passive", dns: "DNS only", target: "Sends traffic" } as const;
@@ -47,10 +47,12 @@ function ago(iso: string | null) {
   return new Date(iso).toLocaleDateString();
 }
 
-export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true, hostsInScope }: {
+export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true, hostsInScope, engagementType }: {
   engId: number; onAssetsChanged: () => void; canManage?: boolean; canRun?: boolean;   // owner; tester
   hostsInScope: number;
+  engagementType?: string;   // bug_bounty, pentest or internal: the words for who sets the rules
 }) {
+  const terms = termsFor(engagementType);
   const [scope, setScope] = useState<Scope | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [triage, setTriage] = useState<TriageReport | null>(null);
@@ -133,7 +135,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
     if (!m) return "Unknown module";
     if (m.input === "roots" && !hasWildcard) return "Needs a wildcard rule such as *.example.com";
     if (m.input === "hosts" && noHosts && !hasWildcard) return "No in-scope hosts yet: add one first";
-    if (m.opt_in && !scope!.enabled_modules.includes(kind)) return "Off in the rules: enable it only if the program allows it";
+    if (m.opt_in && !scope!.enabled_modules.includes(kind)) return `Off in the rules: enable it only if ${terms.allows} it`;
     if (m.needs_identification && !identified) return "Set the research header or user agent first";
     if (scope!.rate_limit_rps < m.min_rps) return `Needs a rate limit of at least ${m.min_rps} per second to stay within it`;
     if (kind === "crawl" && liveHosts === 0) return "Find live web servers first";
@@ -198,7 +200,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
           or authorization). An owner has to record them before anything runs.</p>
       )}
       {canManage && (editing || needsRules) && (
-        <RulesOfEngagement engId={engId} scope={scope} mods={mods}
+        <RulesOfEngagement engId={engId} scope={scope} mods={mods} terms={terms}
                            onSaved={(sc, msg, fold) => {
                              // Saved: once the rules are complete the form folds into the summary bar above,
                              // so the page leads with the work. An import keeps the form open for the rest.
@@ -329,7 +331,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
         {tab === "golden" && triage && <GoldenTargets report={triage} />}
         {tab === "hosts" && <Hosts engId={engId} version={jobs.length} />}
         {tab === "urls" && <Endpoints engId={engId} version={jobs.length} module={only ?? undefined} />}
-        {tab === "leads" && <Leads engId={engId} version={jobs.filter((j) => shownStatus(j) === "done" || j.status === "partial").length}
+        {tab === "leads" && <Leads engId={engId} terms={terms} version={jobs.filter((j) => shownStatus(j) === "done" || j.status === "partial").length}
                                    module={only ?? undefined} />}
         {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} canRun={canRun} liveLine={liveLine} />}
       </section>
@@ -663,7 +665,7 @@ function GoldenTargets({ report }: { report: TriageReport }) {
 
 const LEAD_KIND: Record<string, string> = { secret: "Secret candidate", graphql: "GraphQL operation", sourcemap: "Sourcemap", nuclei: "Scanner finding", parameter: "Hidden parameters", "param-class": "Parameter pattern", dork: "Manual check" };
 
-function Leads({ engId, version, module }: { engId: number; version: number; module?: string }) {
+function Leads({ engId, version, module, terms }: { engId: number; version: number; module?: string; terms: Terms }) {
   const [rows, setRows] = useState<Lead[]>([]);
   const [open, setOpen] = useState<number | null>(null);
   useEffect(() => { api.leads(engId, module).then(setRows).catch(() => {}); }, [engId, version, module]);
@@ -681,8 +683,8 @@ function Leads({ engId, version, module }: { engId: number; version: number; mod
       ) : (
         <>
           <p className="disclaimer">
-            Secret candidates are shown masked and have not been tested. Do not use them. Confirm the owner, check
-            the program policy, and report.
+            Secret candidates are shown masked and have not been tested. Do not use them. Confirm the owner, {terms.leadsCheck},
+            and report.
           </p>
           <ul className="leads">
             {rows.map((l) => (
@@ -796,8 +798,8 @@ export function JobLog({ jobId, live }: { jobId: number; live: boolean }) {
   );
 }
 
-function RulesOfEngagement({ engId, scope, mods, onSaved }: {
-  engId: number; scope: Scope; mods: ReconModule[]; onSaved: (s: Scope, message?: string, fold?: boolean) => void;
+function RulesOfEngagement({ engId, scope, mods, terms, onSaved }: {
+  engId: number; scope: Scope; mods: ReconModule[]; terms: Terms; onSaved: (s: Scope, message?: string, fold?: boolean) => void;
 }) {
   const [include, setInclude] = useState(scope.include.join("\n"));
   const [exclude, setExclude] = useState(scope.exclude.join("\n"));
@@ -862,18 +864,18 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
           </label>
           <label>
             Research header
-            <input value={header} onChange={(e) => setHeader(e.target.value)} placeholder="X-Bug-Bounty: your-handle" />
-            <span className="hint">Sent on every request to the target, exactly as the program asks.</span>
+            <input value={header} onChange={(e) => setHeader(e.target.value)} placeholder={terms.headerPlaceholder} />
+            <span className="hint">Sent on every request to the target, exactly as {terms.asks}.</span>
           </label>
           <label>
             Research user agent
             <input value={ua} onChange={(e) => setUa(e.target.value)} placeholder="Mozilla/5.0 (compatible; your-handle)" />
-            <span className="hint">Set this too if the program requires it; otherwise tools send their own.</span>
+            <span className="hint">Set this too if {terms.requires} it; otherwise tools send their own.</span>
           </label>
           <label className="narrow">
             Requests per second
             <input type="number" min={1} max={50} value={rps} onChange={(e) => setRps(Number(e.target.value))} />
-            <span className="hint">A hard ceiling for every step that sends traffic, port scanning included. Use the program's limit.</span>
+            <span className="hint">A hard ceiling for every step that sends traffic, port scanning included. Use the limit in {terms.rulesBy}.</span>
           </label>
           <label className="narrow">
             Crawl depth
@@ -882,7 +884,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
         </div>
         {mods.some((m) => m.opt_in) && (
           <fieldset className="optins">
-            <legend>Modules the program allows</legend>
+            <legend>Modules {terms.allows}</legend>
             {mods.filter((m) => m.opt_in).map((m) => (
               <label key={m.kind} className="check optin-row">
                 <input type="checkbox" checked={enabled.includes(m.kind)}
@@ -907,7 +909,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
           </label>
         </fieldset>
 
-        <ScopeImporter engId={engId} onApplied={async (added) => {
+        <ScopeImporter engId={engId} label={terms.scopeImport} onApplied={async (added) => {
           const s = await api.scope(engId);
           setInclude(s.include.join("\n"));
           setExclude(s.exclude.join("\n"));
@@ -920,8 +922,8 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
           <legend>Authorization</legend>
           <div className="roe-grid">
             <label>
-              Program policy URL
-              <input value={policy} onChange={(e) => setPolicy(e.target.value)} placeholder="https://hackerone.com/example" />
+              {terms.policyLabel}
+              <input value={policy} onChange={(e) => setPolicy(e.target.value)} placeholder={terms.policyPlaceholder} />
             </label>
             <label>
               Your name or handle
@@ -930,7 +932,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
           </div>
           <label className="check">
             <input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />
-            I am authorized to test this program and will follow its policy.
+            {terms.attest}
           </label>
         </fieldset>
 
@@ -943,7 +945,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
 }
 
 
-function ScopeImporter({ engId, onApplied }: { engId: number; onApplied: (hostsAdded?: string[]) => void }) {
+function ScopeImporter({ engId, label, onApplied }: { engId: number; label: string; onApplied: (hostsAdded?: string[]) => void }) {
   const [csv, setCsv] = useState<string | null>(null);
   const [preview, setPreview] = useState<ScopeImport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -972,7 +974,7 @@ function ScopeImporter({ engId, onApplied }: { engId: number; onApplied: (hostsA
   return (
     <div className="importer">
       <label className="check">
-        <span>Import a HackerOne scope CSV</span>
+        <span>{label}</span>
         <input type="file" accept=".csv,text/csv" onChange={(e) => load(e.target.files?.[0])} />
       </label>
       <span className="hint">Assets not eligible for submission become exclusions, so a wildcard cannot cover them.</span>

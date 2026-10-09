@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { DEMO, demoUrl } from "./demo";
+import { OfflineVerifier, VERIFY_PAGE } from "./OfflineVerifier";
 import { cliText, decodeFile, ed25519Native, pageWording, selfTest, verifyReport, type CheckResult, type Outcome } from "./verify_report";
 
 // The same module as the public verifier page (attackledger.com/verify): a port of
@@ -25,10 +26,6 @@ const BADGE: Record<CheckResult["verdict"], { cls: string; label: string }> = {
   PASS: { cls: "ok", label: "Passed" }, FAIL: { cls: "bad", label: "Failed" }, SKIP: { cls: "plain", label: "Skipped" },
 };
 
-// Downloaded side by side (the demo and the site) the root is passed explicitly; in the repository
-// tools/verify_report.py loads tools/tsa-roots/ by itself.
-const COMMAND = DEMO ? "python3 verify_report.py report.json --tsa-root digicert-trusted-root-g4.pem"
-                     : "python3 tools/verify_report.py report.json";
 
 function tsaHost(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -101,8 +98,9 @@ export function Verify({ engId }: { engId: number }) {
           <p className="report-lede">
             This checks the report in your browser exactly as the offline verifier does: the body hash, the evidence
             chain, every receipt against its items and evidence, signatures, the key log, the change history and the
-            timestamps, with the same verdicts. The same check is public at attackledger.com/verify, so a client can
-            run it without this app.
+            timestamps, with the same verdicts. A client can run the same check without this app at{" "}
+            <a href={VERIFY_PAGE} target="_blank" rel="noopener noreferrer">attackledger.com/verify</a>: download the
+            report JSON and drop it there. Nothing is uploaded.
           </p>
           {outcome && (
             <p className={`status ${outcome.status === "verified" ? "ok" : "bad"}`} role="status">
@@ -116,8 +114,6 @@ export function Verify({ engId }: { engId: number }) {
         </div>
         <div className="report-actions">
           <a className="btn" href={json} download="report.json">Download report JSON</a>
-          {DEMO && <a className="btn ghost" href="../verify_report.py" download>Download verify_report.py</a>}
-          {DEMO && <a className="btn ghost" href="../digicert-trusted-root-g4.pem" download>Download DigiCert root</a>}
         </div>
       </section>
 
@@ -168,13 +164,7 @@ export function Verify({ engId }: { engId: number }) {
 
       <section className="panel" aria-labelledby="offline-title">
         <h3 id="offline-title" className="panel-title">The same check, offline</h3>
-        <p className="muted">
-          <code>verify_report.py</code> ({DEMO ? "download it above" : <>in the AttackLedger repository, <code>tools/verify_report.py</code>, with the
-          DigiCert root in <code>tools/tsa-roots/</code></>}) needs only Python and no AttackLedger install, and makes the
-          checks above. {DEMO ? <>Save the report JSON as <code>report.json</code> next to the script and the root, and run:</>
-                              : <>Save the report JSON as <code>report.json</code> in the repository folder and run:</>}
-        </p>
-        <pre className="cmd" tabIndex={0} aria-label="Command">{COMMAND}</pre>
+        <OfflineVerifier file="report.json" />
         <p className="muted">
           A signature proves the key holder signed; to tie a key to a person, compare its fingerprint with the one the
           signer gives you.

@@ -6,6 +6,8 @@ export interface Cell {
   status: CellStatus;
   lane_id?: number;
   unresolved?: number;
+  awaiting_done?: number;   // opened lanes: items with evidence, waiting to be marked done
+  waiting_on?: string[];    // lane keys this lane needs that are not receipted on the host
   receipt?: string;
 }
 
@@ -28,7 +30,9 @@ export interface Coverage {
   require_signatures?: boolean;
   retain_until?: string | null;              // YYYY-MM-DD (UTC): the content is kept through this day
   content_deleted?: ContentDeleted | null;
-  pack: { id: string; name: string };
+  // needs_gate "open": a lane opens only after the lanes it needs are receipted; "close": it can be
+  // opened and worked at once, and signed only after them.
+  pack: { id: string; name: string; needs_gate?: "open" | "close" };
   roles: string[];
   lanes: LaneInfo[];
   closed_cells: number;
@@ -65,6 +69,7 @@ export interface PackSummary {
   version: string;
   description: string;
   engagement_types: string[];
+  needs_gate?: "open" | "close";
   lanes: { key: string; name: string; needs: string[]; items: number }[];
 }
 
@@ -141,9 +146,24 @@ export interface LaneDetail {
   items: LaneItem[];
   evidence: EvidenceEntry[];
   content_deleted?: ContentDeleted | null;
+  // Open items that have evidence attached and only wait to be marked done.
+  awaiting_done?: number;
+  // Lanes this one needs that are not receipted on the host: it can be worked, not signed.
+  waiting_on?: { key: string; name: string; lane_id: number | null; status: CellStatus }[];
+  inbox?: { new: number; mapped: number; dismissed: number };   // imported entries on this host, by state
   receipt: { sha256: string; closed_by: string | null; closed_by_email?: string | null; created_at: string; signed?: boolean;
              algorithm?: string | null; key_fingerprint?: string | null;
              timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null } | null;
+}
+
+/** The verifier downloads this server offers, with their hashes, and the independent public copy. */
+export interface VerifierIndex {
+  script: { name: string; path: string; sha256: string; bytes: number };
+  tsa_roots: { name: string; path: string; sha256: string; bytes: number; certificate_sha256: string | null }[];
+  bundle: { name: string; path: string; sha256: string; bytes: number };
+  page: string;
+  public_copy: string;
+  license: string;
 }
 
 /** One administrative change from the server's audit log, with the server's own wording. */
@@ -387,7 +407,7 @@ export class ApiError extends Error {
 
 // Request fields as the forms name them, for validation messages.
 const FIELD_LABEL: Record<string, string> = {
-  policy_url: "Program policy URL", operator: "Your name or handle", host: "Host", include: "In scope",
+  policy_url: "Policy URL", operator: "Your name or handle", host: "Host", include: "In scope",
   exclude: "Out of scope", rate_limit_rps: "Requests per second", research_header: "Research header",
   research_user_agent: "Research user agent", crawl_depth: "Crawl depth", name: "Name", na_reason: "Reason",
   email: "Email", password: "Password", closed_by: "Your name", targets: "Targets", kind: "Step",
@@ -607,10 +627,10 @@ export const api = {
     call<ContentStatus>(`/engagements/${engId}/content/delete`, { method: "POST", body: JSON.stringify({ confirm_name }) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
-  createEngagement: (name: string, pack_id: string) =>
+  createEngagement: (name: string, pack_id: string, engagement_type?: string) =>
     call<{ id: number }>("/engagements", {
       method: "POST",
-      body: JSON.stringify({ name, pack_id }),
+      body: JSON.stringify({ name, pack_id, engagement_type }),
     }),
   packs: () => call<PackSummary[]>("/packs"),
   controls: (engId: number) => call<ControlsReport>(`/engagements/${engId}/controls`),
@@ -668,6 +688,7 @@ export const api = {
     call<Job>(`/lanes/${laneId}/agent-runs`, {
       method: "POST", body: JSON.stringify({ max_turns, max_requests, max_cost_usd }),
     }),
+  verifier: () => call<VerifierIndex>("/verifier"),
   report: <T,>(engId: number) => call<T>(`/engagements/${engId}/report`),
   audit: (engId: number) => call<AuditLog>(`/engagements/${engId}/audit`),
   importFormats: () => call<ImportFormats>("/imports/formats"),
