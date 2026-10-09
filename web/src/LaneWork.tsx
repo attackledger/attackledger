@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
 import { api, type Job, type LaneDetail, type LaneItem } from "./api";
+import { plural } from "./words";
 
 type Mode = null | "evidence" | "na";
 type Source = "note" | "file" | "run";
@@ -126,7 +127,7 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
                 <option value="">Choose a finished run</option>
                 {runs.map((j) => (
                   <option key={j.id} value={j.id}>
-                    {titles[j.kind] ?? j.kind}, job {j.id}, {j.result_count} results, {new Date(j.created_at).toLocaleString()}
+                    {titles[j.kind] ?? j.kind}, job {j.id}, {plural(j.result_count, "result")}, {new Date(j.created_at).toLocaleString()}
                   </option>
                 ))}
               </select>
@@ -164,6 +165,104 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
           </div>
         </form>
       )}
+      {error && <p className="field-error" role="alert">{error}</p>}
+    </div>
+  );
+}
+
+function listIdx(idx: number[]): string {
+  if (idx.length <= 1) return idx.join("");
+  return `${idx.slice(0, -1).join(", ")} and ${idx[idx.length - 1]}`;
+}
+
+/** Mark every open item that has no evidence not applicable, with one reason. Each item goes through the
+ *  same per-item request as marking it by hand, so the server checks every change. */
+export function BulkNotApplicable({ lane, onChanged }: { lane: LaneDetail; onChanged: (l: LaneDetail) => void }) {
+  const [step, setStep] = useState<"idle" | "reason" | "confirm">("idle");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const withEvidence = new Set(lane.evidence.map((e) => e.item_idx).filter((x): x is number => x != null));
+  const targets = lane.items.filter((i) => i.state === "open" && !withEvidence.has(i.idx)).map((i) => i.idx);
+  const kept = lane.items.filter((i) => i.state === "open" && withEvidence.has(i.idx)).length;
+  const id = `bulk-na-${lane.id}`;
+
+  if (targets.length === 0 && step === "idle" && !progress && !error) return null;
+
+  async function apply() {
+    const list = [...targets];
+    const why = reason.trim();
+    setBusy(true);
+    setError(null);
+    setProgress(null);
+    let last: LaneDetail | null = null;
+    let n = 0;
+    for (const idx of list) {
+      try {
+        last = await api.updateItem(lane.id, idx, "na", why);
+        n += 1;
+        setProgress(`Marked ${n} of ${list.length}…`);
+      } catch (e) {
+        setError(`Marked ${n} of ${plural(list.length, "item")}; stopped at item ${idx}: ${(e as Error).message}`);
+        break;
+      }
+    }
+    setBusy(false);
+    if (last) onChanged(last);
+    if (n === list.length) {
+      setProgress(`Marked ${plural(n, "item")} not applicable.`);
+      setReason("");
+    } else {
+      setProgress(null);
+    }
+    setStep("idle");
+  }
+
+  return (
+    <div className="bulk-na">
+      {step === "idle" && targets.length > 0 && (
+        <button type="button" className="btn ghost small"
+                onClick={() => { setStep("reason"); setProgress(null); setError(null); }}>
+          Mark the {plural(targets.length, "open item")} not applicable…
+        </button>
+      )}
+      {step !== "idle" && (
+        <form className="work-form" onSubmit={(ev: FormEvent) => { ev.preventDefault(); if (reason.trim()) setStep("confirm"); }}>
+          <label htmlFor={`${id}-reason`}>
+            Why these items do not apply to {lane.host}
+          </label>
+          <input id={`${id}-reason`} value={reason} disabled={step === "confirm" || busy} autoFocus
+                 onChange={(e) => setReason(e.target.value)}
+                 placeholder="The host serves static files only: no login, no forms, no API." />
+          <p className="hint">
+            Applies to {targets.length === 1 ? "item" : "items"} {listIdx(targets)}: every open item without evidence.
+            {kept > 0 && ` ${plural(kept, "open item")} with evidence attached ${kept === 1 ? "is" : "are"} left for you to mark done.`}
+            {" "}Each gets the same reason, recorded on the item like a reason written by hand.
+          </p>
+          {step === "reason" ? (
+            <div className="work-buttons">
+              <button type="submit" className="btn small" disabled={!reason.trim()}>Review</button>
+              <button type="button" className="btn ghost small" onClick={() => setStep("idle")}>Cancel</button>
+            </div>
+          ) : (
+            <div className="confirm" role="group" aria-label="Confirm">
+              <p>
+                Mark {plural(targets.length, "item")} not applicable with this reason? A reviewer sees the reason on
+                each item and in the report.
+              </p>
+              <div className="work-buttons">
+                <button type="button" className="btn small" disabled={busy} onClick={apply} autoFocus>
+                  {busy ? "Marking…" : `Mark ${plural(targets.length, "item")} not applicable`}
+                </button>
+                <button type="button" className="btn ghost small" disabled={busy} onClick={() => setStep("reason")}>Back</button>
+              </div>
+            </div>
+          )}
+        </form>
+      )}
+      {progress && <p className="saved" role="status">{progress}</p>}
       {error && <p className="field-error" role="alert">{error}</p>}
     </div>
   );

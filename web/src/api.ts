@@ -119,9 +119,10 @@ export interface Scope {
   authorized_by: string | null;
   authorized_at: string | null;
   separation_of_duties?: boolean;
+  hosts_added?: string[];   // returned by a save: exact scope entries that became hosts
 }
 
-export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "partial";
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "partial" | "skipped";
 
 export interface Job {
   id: number;
@@ -154,6 +155,8 @@ export interface AgentResult {
   summary?: string;
   detail?: string;
   cost_usd_estimate?: number;
+  reason?: string;           // a step that could not run ("skipped"): why
+  skipped_reason?: string;
 }
 
 export interface Me {
@@ -208,6 +211,7 @@ export interface ScopeImport {
   invalid: { identifier: string; reason: string }[];
   result: { include: string[]; exclude: string[] };
   applied: boolean;
+  hosts_added?: string[];
 }
 
 export interface ReconModule {
@@ -293,27 +297,79 @@ export interface EndpointRow {
   js: boolean;
 }
 
+/** A refused request: the message is readable; status and detail are kept for callers that need them. */
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+  constructor(message: string, status: number, detail: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+// Request fields as the forms name them, for validation messages.
+const FIELD_LABEL: Record<string, string> = {
+  policy_url: "Program policy URL", operator: "Your name or handle", host: "Host", include: "In scope",
+  exclude: "Out of scope", rate_limit_rps: "Requests per second", research_header: "Research header",
+  research_user_agent: "Research user agent", crawl_depth: "Crawl depth", name: "Name", na_reason: "Reason",
+  email: "Email", password: "Password", closed_by: "Your name", targets: "Targets", kind: "Step",
+};
+
+function fieldLabel(loc: unknown[] | undefined): string {
+  const key = [...(loc ?? [])].reverse().find((x) => typeof x === "string" && x !== "body");
+  if (typeof key !== "string") return "";
+  return FIELD_LABEL[key] ?? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+/** The server's `detail` as a sentence a person can act on. */
+export function readableDetail(detail: unknown, status: number): string {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    // Request validation: one line per field, named as the form names it.
+    return detail.map((d: { loc?: unknown[]; msg?: string; type?: string; ctx?: { pattern?: string } }) => {
+      const msg = d?.type === "missing" ? "is required"
+        : d?.type === "string_pattern_mismatch" && d.ctx?.pattern === "^https://" ? "must start with https://"
+        : d?.type === "string_pattern_mismatch" ? "is not in the expected format"
+        : String(d?.msg ?? "is not valid").replace(/^Value error, /, "");
+      const field = fieldLabel(d?.loc);
+      return field ? `${field}: ${msg}` : msg;
+    }).join("\n");
+  }
+  if (detail && typeof detail === "object") {
+    const d = detail as { unresolved?: string[]; skipped?: { kind: string; reason: string }[];
+                          error?: string; message?: string; reason?: string };
+    if (d.unresolved?.length) return `This lane cannot close yet:\n${d.unresolved.join("\n")}`;
+    if (d.skipped?.length) return `${d.error ?? "Not run"}: ${d.skipped.map((x) => `${x.kind}: ${x.reason}`).join("; ")}`;
+    const text = d.message ?? d.error ?? d.reason;
+    if (typeof text === "string" && text.trim()) return text;
+  }
+  if (status === 401) return "Sign in again to continue.";
+  if (status === 403) return "Your role on this engagement does not allow this.";
+  if (status === 404) return "Not found. It may have been removed; reload the page.";
+  if (status >= 500) return `The ledger API failed (${status}). Its log says why.`;
+  return `Request failed (${status})`;
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (DEMO) return demoCall<T>(path, init);
-  const res = await fetch(`/api${path}`, {
-    headers: { "content-type": "application/json" },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      headers: { "content-type": "application/json" },
+      ...init,
+    });
+  } catch {
+    throw new ApiError("Can't reach the ledger API. Check that it is running, then try again.", 0, null);
+  }
   const body = await res.json().catch(() => null);
   if (res.status === 401 && !path.startsWith("/auth/")) {
     window.dispatchEvent(new Event("attackledger:auth-required"));
   }
   if (!res.ok) {
     const detail = body?.detail;
-    const msg =
-      typeof detail === "string"
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d: { loc?: string[]; msg: string }) => `${d.loc?.slice(-1)[0] ?? "field"}: ${d.msg}`).join("\n")
-          : detail?.unresolved?.join("\n")
-            ?? (detail?.skipped ? `${detail.error}: ` + detail.skipped.map((x: { kind: string; reason: string }) => `${x.kind}: ${x.reason}`).join("; ") : undefined)
-            ?? `Request failed (${res.status})`;
-    throw new Error(msg);
+    throw new ApiError(readableDetail(detail, res.status), res.status, detail);
   }
   return body as T;
 }

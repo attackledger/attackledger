@@ -1,8 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, Me, PackSummary } from "./api";
+import { api, ApiError, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, LaneItem, Me,
+         PackSummary } from "./api";
+import { AddHost } from "./AddHost";
+import { plural } from "./words";
 import { People, Team } from "./People";
 import { Executor } from "./Agent";
-import { ItemWork } from "./LaneWork";
+import { BulkNotApplicable, ItemWork } from "./LaneWork";
 import { DEMO, demoUrl } from "./demo";
 import { ensureKey, localKey, sign, type LocalKey } from "./signing";
 import { Controls } from "./Controls";
@@ -121,6 +124,11 @@ function Workspace() {
   useEffect(() => { loadEngagements(); }, [loadEngagements]);
   useEffect(() => { loadCoverage().catch((e) => setNotice(e.message)); }, [loadCoverage]);
 
+  // Hosts were added (by hand, by saving scope rules, or by recon): the ledger and the sidebar's host counts both follow.
+  const hostsChanged = useCallback(async () => {
+    await Promise.all([loadCoverage().catch((e) => setNotice((e as Error).message)), loadEngagements()]);
+  }, [loadCoverage, loadEngagements]);
+
   async function openCell(assetId: number, role: string, cell: Cell) {
     setNotice(null);
     if (cell.lane_id) return setLaneId(cell.lane_id);
@@ -159,7 +167,7 @@ function Workspace() {
                       {e.name}
                       <span className="engagement-type">{TYPE_NAMES[e.engagement_type] ?? e.engagement_type}</span>
                     </span>
-                    <span className="count">{e.assets} {e.assets === 1 ? "host" : "hosts"}</span>
+                    <span className="count">{plural(e.assets, "host")}</span>
                   </button>
                 </li>
               ))}
@@ -250,10 +258,11 @@ function Workspace() {
               </p>
             )}
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-              {tab === "recon" && <Recon engId={current} onAssetsChanged={loadCoverage} canManage={can(me, current, "rules")}
-                                         canRun={can(me, current, "work")} />}
+              {tab === "recon" && <Recon engId={current} onAssetsChanged={hostsChanged} canManage={can(me, current, "rules")}
+                                         canRun={can(me, current, "work")}
+                                         hostsInScope={coverage.assets.filter((a) => a.in_scope).length} />}
               {tab === "ledger" && (
-                <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage}
+                <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={hostsChanged}
                         canWork={can(me, current, "work")} />
               )}
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
@@ -261,7 +270,7 @@ function Workspace() {
               {tab === "verify" && <Verify engId={current} />}
               {tab === "team" && owner && (
                 <Team engId={current} separation={!!coverage.separation_of_duties}
-                      signatures={!!coverage.require_signatures} onChanged={loadCoverage} />
+                      signatures={!!coverage.require_signatures} onChanged={hostsChanged} />
               )}
             </div>
           </>
@@ -400,9 +409,6 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
   onAdded: () => void;
   canWork: boolean;   // testers open lanes and add hosts
 }) {
-  const [host, setHost] = useState("");
-  const [inScope, setInScope] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [gapsOnly, setGapsOnly] = useState(false);
 
   const rows = gapsOnly ? coverage.assets.filter(isGapRow) : coverage.assets;
@@ -416,19 +422,6 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
     }));
   }, [coverage]);
 
-  async function add(ev: FormEvent) {
-    ev.preventDefault();
-    if (!host.trim()) return;
-    try {
-      await api.addAsset(engId, host.trim(), inScope);
-      setHost("");
-      setError(null);
-      onAdded();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-
   const laneName = (k: string) => coverage.lanes.find((l) => l.key === k)?.name ?? k;
   const blockers = (row: CoverageRow, k: string) =>
     (coverage.lanes.find((l) => l.key === k)?.needs ?? []).filter((n) => row.roles[n]?.status !== "closed");
@@ -441,7 +434,7 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
         <div>
           <h3 id="ledger-title" className="sr-only">Coverage ledger</h3>
           <p className="tally">
-            {coverage.closed_cells} of {coverage.total_cells} in-scope cells receipted ({pct}%)
+            {coverage.closed_cells} of {plural(coverage.total_cells, "in-scope cell")} receipted ({pct}%)
           </p>
         </div>
         <label className="switch">
@@ -512,18 +505,7 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
 
       <Legend />
 
-      {canWork && <form className="inline-form add-host" onSubmit={add}>
-        <label htmlFor="new-host">Add a host</label>
-        <div className="field-row">
-          <input id="new-host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="app.example.com" />
-          <label className="check">
-            <input type="checkbox" checked={inScope} onChange={(e) => setInScope(e.target.checked)} />
-            In scope
-          </label>
-          <button type="submit" className="btn">Add host</button>
-        </div>
-        {error && <p className="field-error">{error}</p>}
-      </form>}
+      {canWork && <AddHost engId={engId} onAdded={onAdded} />}
     </section>
   );
 }
@@ -531,9 +513,10 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
 function Legend() {
   return (
     <dl className="legend" aria-label="What the marks mean">
-      <div><dt><span className="stamp mini"><span className="stamp-word">RECEIPTED</span></span></dt><dd>Every item proven</dd></div>
-      <div><dt><span className="stamp mini void"><span className="stamp-word">VOID</span></span></dt><dd>Changed after its receipt</dd></div>
-      <div><dt><span className="mark-open">3 open</span></dt><dd>In progress</dd></div>
+      <div><dt><span className="stamp mini"><span className="stamp-word">Receipted</span></span></dt><dd>Every item proven</dd></div>
+      <div><dt><span className="stamp mini void"><span className="stamp-word">Void</span></span></dt><dd>Changed after its receipt</dd></div>
+      <div><dt><span className="mark-open">In progress</span></dt><dd>Opened, not receipted; shows how many items are open</dd></div>
+      <div><dt><span className="mark-unopened">Not opened</span></dt><dd>Not tested yet</dd></div>
       <div><dt><span className="mark-locked">Needs …</span></dt><dd>Receipt the lane it depends on first</dd></div>
     </dl>
   );
@@ -547,21 +530,25 @@ function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
     case "closed":
       return (
         <button className="cell stamp" onClick={onClick} aria-label={`${label}: receipted ${cell.receipt}`}>
-          <span className="stamp-word">RECEIPTED</span>
+          <span className="stamp-word">Receipted</span>
           <span className="stamp-hash">{cell.receipt}</span>
         </button>
       );
     case "stale":
       return (
-        <button className="cell stamp void" onClick={onClick} aria-label={`${label}: receipt no longer matches the ledger`}>
-          <span className="stamp-word">VOID</span>
+        <button className="cell stamp void" onClick={onClick} aria-label={`${label}: void, the receipt no longer matches the ledger`}>
+          <span className="stamp-word">Void</span>
           <span className="stamp-hash">{cell.receipt}</span>
         </button>
       );
     case "open":
       return (
-        <button className="cell open" onClick={onClick} aria-label={`${label}: ${cell.unresolved} items open`}>
-          <span className="open-count">{cell.unresolved}</span> open
+        <button className="cell open" onClick={onClick}
+                aria-label={`${label}: in progress, ${plural(cell.unresolved ?? 0, "item")} open`}>
+          <span className="cell-word">In progress</span>
+          <span className="cell-sub">
+            {cell.unresolved ? <><span className="open-count">{cell.unresolved}</span> open</> : "ready to sign"}
+          </span>
         </button>
       );
     default:
@@ -573,14 +560,45 @@ function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
         );
       if (!canOpen) return <span className="cell plain" aria-label={`${label}: not opened`}>Not opened</span>;
       return (
-        <button className="cell unopened" onClick={onClick} aria-label={`Open ${label}`}>
-          Open
+        <button className="cell unopened" onClick={onClick} aria-label={`${label}: not opened. Open this lane`}>
+          <span className="cell-word">Not opened</span>
+          <span className="cell-sub">Open lane</span>
         </button>
       );
   }
 }
 
-const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○" };
+const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○", evidence: "◐" };
+
+interface Problem { idx: number; why: string }
+
+/** What still keeps a lane from closing, worked out from the lane as it is now (the server's gate, mirrored). */
+function problemsOf(lane: LaneDetail): Problem[] {
+  const withEvidence = new Set(lane.evidence.map((e) => e.item_idx).filter((x): x is number => x != null));
+  const out: Problem[] = [];
+  for (const i of lane.items) {
+    if (i.state === "open") out.push({ idx: i.idx, why: withEvidence.has(i.idx) ? "has evidence, not marked done" : "still open" });
+    else if (i.state === "done" && !withEvidence.has(i.idx)) out.push({ idx: i.idx, why: "marked done without evidence" });
+    else if (i.state === "na" && !(i.na_reason ?? "").trim()) out.push({ idx: i.idx, why: "not applicable without a reason" });
+  }
+  return out;
+}
+
+function itemCounts(lane: LaneDetail) {
+  const ev = (i: LaneItem) => lane.evidence.some((e) => e.item_idx === i.idx);
+  return {
+    done: lane.items.filter((i) => i.state === "done").length,
+    evidence: lane.items.filter((i) => i.state === "open" && ev(i)).length,
+    na: lane.items.filter((i) => i.state === "na").length,
+    open: lane.items.filter((i) => i.state === "open" && !ev(i)).length,
+  };
+}
+
+function goToItem(laneId: number, idx: number) {
+  const el = document.getElementById(`lane-${laneId}-item-${idx}`);
+  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  el?.focus({ preventScroll: true });
+}
 
 function Folio({ laneId, me, onClose, onChanged }: {
   laneId: number; me: Me | null; onClose: () => void; onChanged: () => void;
@@ -594,12 +612,14 @@ function Folio({ laneId, me, onClose, onChanged }: {
     api.modules().then((ms) => setTitles(Object.fromEntries(ms.map((m) => [m.kind, m.title])))).catch(() => {});
   }, []);
   const [error, setError] = useState<string | null>(null);
+  const [refused, setRefused] = useState(false);   // the last close was refused by the gate
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setLane(null);
     setCtx(null);
     setError(null);
+    setRefused(false);
     api.lane(laneId).then(setLane).catch((e) => setError(e.message));
     api.laneContext(laneId).then(setCtx).catch(() => {});
     api.lane(laneId)
@@ -633,6 +653,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
         setLane(await api.closeLaneSigned(laneId, payload, await sign(k, payload), k.fingerprint));
         setReviewed(false);
         setError(null);
+        setRefused(false);
         onChanged();
         return;
       }
@@ -640,20 +661,32 @@ function Folio({ laneId, me, onClose, onChanged }: {
       setLane(await api.closeLane(laneId, signer.trim(), reviewed));
       setReviewed(false);
       setError(null);
+      setRefused(false);
       onChanged();
     } catch (e) {
-      setError((e as Error).message);
+      const d = e instanceof ApiError ? e.detail as { unresolved?: string[] } | null : null;
+      if (d && Array.isArray(d.unresolved)) {
+        // Shown from the lane itself below, so the list follows as items are resolved.
+        setRefused(true);
+        setError(null);
+        api.lane(laneId).then(setLane).catch(() => {});
+      } else {
+        setError((e as Error).message);
+      }
     }
   }
+
+  const laneChanged = useCallback((l: LaneDetail) => {
+    setLane(l);
+    setError(null);
+    onChanged();
+  }, [onChanged]);
 
   const canWork = !!lane && can(me, lane.engagement_id, "work");
   const canSign = !!lane && can(me, lane.engagement_id, "sign");
 
-  const counts = lane && {
-    done: lane.items.filter((i) => i.state === "done").length,
-    na: lane.items.filter((i) => i.state === "na").length,
-    open: lane.items.filter((i) => i.state === "open").length,
-  };
+  const counts = lane && itemCounts(lane);
+  const problems = lane ? problemsOf(lane) : [];
 
   return (
     <>
@@ -671,7 +704,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
           <p className="folio-body">{error ?? "Loading lane…"}</p>
         ) : (
           <div className="folio-body">
-            <StatusLine lane={lane} />
+            <StatusLine lane={lane} problems={problems.length} />
             <p className="worked-by">
               Worked <strong>{lane.executor === "agent" ? "by a Claude agent" : "manually"}</strong>
               {ctx && (
@@ -682,29 +715,38 @@ function Folio({ laneId, me, onClose, onChanged }: {
               )}
             </p>
             {counts && (
-              <p className="counts">
-                <span className="c-done">{counts.done} with evidence</span>
-                <span className="c-na">{counts.na} not applicable</span>
-                <span className="c-open">{counts.open} open</span>
-              </p>
+              <dl className="counts" aria-label={`Checklist, ${plural(lane.items.length, "item")}`}>
+                <div className="c-done"><dt>Done</dt><dd>{counts.done}</dd></div>
+                <div className="c-ev"><dt>Evidence attached, not marked done</dt><dd>{counts.evidence}</dd></div>
+                <div className="c-na"><dt>Not applicable</dt><dd>{counts.na}</dd></div>
+                <div className="c-open"><dt>Open, no evidence</dt><dd>{counts.open}</dd></div>
+              </dl>
             )}
 
             <h3>Checklist</h3>
+            {lane.executor === "manual" && canWork && lane.status !== "closed" && (
+              <BulkNotApplicable lane={lane} onChanged={laneChanged} />
+            )}
             <ol className="items">
               {lane.items.map((i) => {
                 const ev = lane.evidence.filter((e) => e.item_idx === i.idx);
+                const mark = i.state === "open" && ev.length ? "evidence" : i.state;
                 return (
-                  <li key={i.idx} className={`item ${i.state}`}>
-                    <span className="item-mark" aria-hidden="true">{ITEM_MARK[i.state]}</span>
+                  <li key={i.idx} id={`lane-${lane.id}-item-${i.idx}`} tabIndex={-1}
+                      className={`item ${i.state}${mark === "evidence" ? " has-evidence" : ""}`}>
+                    <span className="item-mark" aria-hidden="true">{ITEM_MARK[mark]}</span>
                     <span className="item-idx">{i.idx}</span>
                     <span className="item-text">
                       <span className="item-key">{i.key}</span>
                       {i.text}
                     </span>
                     <span className="item-state">
-                      {i.state === "done" && `${ev.length} evidence ${ev.length === 1 ? "entry" : "entries"}`}
+                      {i.state === "done" && (ev.length ? `Done, ${plural(ev.length, "evidence entry", "evidence entries")}`
+                                                         : "Marked done, but no evidence is attached")}
                       {i.state === "na" && `Not applicable: ${i.na_reason}`}
-                      {i.state === "open" && "Open"}
+                      {i.state === "open" && (ev.length
+                        ? `Open: ${plural(ev.length, "evidence entry", "evidence entries")} attached, not marked done yet`
+                        : "Open")}
                     </span>
                     {i.controls.length > 0 && (
                       <span className="item-controls">
@@ -712,7 +754,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
                       </span>
                     )}
                     {lane.executor === "manual" && canWork && (
-                      <ItemWork lane={lane} item={i} runs={runs} titles={titles} onChanged={(l) => { setLane(l); onChanged(); }} />
+                      <ItemWork lane={lane} item={i} runs={runs} titles={titles} onChanged={laneChanged} />
                     )}
                   </li>
                 );
@@ -726,7 +768,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
               <ul className="evidence">
                 {lane.evidence.map((e) => (
                   <li key={e.id}>
-                    <span className="ev-kind">{e.kind}</span>
+                    <span className="ev-kind">{e.uri?.startsWith("job:") ? "Recon run" : e.kind.charAt(0).toUpperCase() + e.kind.slice(1)}</span>
                     <span className="ev-summary">
                       {e.summary}
                       {e.item_idx != null && <span className="ev-item">Item {e.item_idx}</span>}
@@ -749,7 +791,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
               </ul>
             )}
 
-            <Executor lane={lane} canWork={canWork} onLaneChanged={(l) => { setLane(l); onChanged(); }} />
+            <Executor lane={lane} canWork={canWork} onLaneChanged={laneChanged} />
           </div>
         )}
         {raw && (
@@ -765,6 +807,24 @@ function Folio({ laneId, me, onClose, onChanged }: {
         {lane && (
           <footer className="folio-foot">
             {error && <p className="field-error" role="alert">{error}</p>}
+            {refused && lane.status !== "closed" && (problems.length > 0 ? (
+              <div className="refusal" role="alert">
+                <p>
+                  <strong>Not closed.</strong> {plural(problems.length, "item")} still{" "}
+                  {problems.length === 1 ? "needs" : "need"} evidence or a reason. The list follows your changes.
+                </p>
+                <ul className="refusal-items">
+                  {problems.map((pr) => (
+                    <li key={pr.idx}>
+                      <button className="linklike" onClick={() => goToItem(lane.id, pr.idx)}>Item {pr.idx}</button>{" "}
+                      {pr.why}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="saved" role="status">Every item now has evidence or a reason. Sign and close again.</p>
+            ))}
             {lane.status === "closed" ? (
               <p className="muted">
                 Receipt signed by {lane.receipt!.closed_by ?? "an unknown reviewer"},{" "}
@@ -826,7 +886,7 @@ function tsaHost(url: string): string {
   try { return new URL(url).host; } catch { return url; }
 }
 
-function StatusLine({ lane }: { lane: LaneDetail }) {
+function StatusLine({ lane, problems }: { lane: LaneDetail; problems: number }) {
   if (lane.status === "closed" && lane.receipt)
     return (
       <p className="status ok">
@@ -835,6 +895,12 @@ function StatusLine({ lane }: { lane: LaneDetail }) {
     );
   if (lane.status === "stale")
     return <p className="status bad">The ledger changed after the receipt was issued. Review the new entries and close again.</p>;
-  const open = lane.items.filter((i) => i.state === "open").length;
-  return <p className="status bad">{open} of {lane.items.length} items still open.</p>;
+  if (problems === 0)
+    return <p className="status ready">In progress. Every item has evidence or a reason; a reviewer can sign and close the lane.</p>;
+  return (
+    <p className="status bad">
+      In progress. {problems} of {plural(lane.items.length, "item")} still {problems === 1 ? "needs" : "need"} evidence
+      or a reason.
+    </p>
+  );
 }

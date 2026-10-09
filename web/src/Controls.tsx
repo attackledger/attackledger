@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ControlRow, ControlsReport } from "./api";
+import { plural } from "./words";
 
 const STATUS_TEXT: Record<ControlRow["status"], string> = {
   evidenced: "Evidenced",
@@ -32,9 +33,8 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
     <div className="controls">
       <p className="controls-intro">
         Which controls the receipted tests in this engagement produce evidence for, using the{" "}
-        <strong>{pack}</strong> methodology across {report.hosts_in_scope} in-scope{" "}
-        {report.hosts_in_scope === 1 ? "host" : "hosts"}. {evidenced} of {report.controls.length} controls are
-        fully evidenced. Items marked not applicable are counted apart and never as evidence.
+        <strong>{pack}</strong> methodology across {plural(report.hosts_in_scope, "in-scope host")}.{" "}
+        {evidenced} of {plural(report.controls.length, "control")} {evidenced === 1 ? "is" : "are"} fully evidenced. Items marked not applicable are counted apart and never as evidence.
       </p>
       <p className="disclaimer">{report.disclaimer} Check each mapping against the current standard.</p>
 

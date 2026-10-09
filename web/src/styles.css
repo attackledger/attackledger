@@ -321,12 +321,17 @@ code { font-family: var(--body); letter-spacing: 0.02em; }
 
 .cell.unopened { color: var(--text-faint); font-size: var(--step--1); border: 1px dashed transparent; }
 .cell.unopened:hover, .cell.unopened:focus-visible { border-color: var(--rule-strong); color: var(--text); }
+.cell.unopened, .cell.open { display: inline-flex; flex-direction: column; align-items: center; gap: 0.1rem; line-height: 1.2; }
+.cell-sub { font-size: var(--step--2); color: var(--text-faint); }
+.cell.unopened .cell-sub { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.cell.open .cell-sub { color: var(--red); }
+.mark-unopened { color: var(--text-faint); font-size: var(--step--1); border: 1px dashed var(--rule-strong); border-radius: var(--radius); padding: 0 0.3rem; }
 
 .cell.locked, .mark-locked { display: inline-block; color: var(--text-faint); font-size: var(--step--2); cursor: help; opacity: 0.8; }
 
 .cell.open, .mark-open { color: var(--red); font-size: var(--step--1); }
 .cell.open:hover { background: var(--red-wash); }
-.open-count { font: 700 var(--step-1) / 1 var(--body); margin-right: 0.1rem; }
+.open-count { font: 700 var(--step-0) / 1 var(--body); margin-right: 0.1rem; }
 
 /* The rubber stamp — the one loud thing on the page. */
 .stamp {
@@ -346,7 +351,8 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .stamp.void { color: var(--red); }
 .stamp.void:hover { background: var(--red-wash); }
 
-.stamp-word { font: 700 0.8rem / 1 var(--slab); letter-spacing: 0.12em; }
+/* The words are written "Receipted" and "Void", as in the report; the stamp sets them in capitals. */
+.stamp-word { font: 700 0.8rem / 1 var(--slab); letter-spacing: 0.12em; text-transform: uppercase; }
 .stamp-hash { font: 400 var(--step--2) / 1.1 var(--body); letter-spacing: 0.05em; }
 .stamp.void .stamp-hash { text-decoration: line-through; }
 
@@ -413,17 +419,34 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .folio-body { flex: 1; overflow-y: auto; padding: 1.25rem 1.5rem; }
 .folio-body h3 { font: 500 var(--step-1) / 1.2 var(--slab); margin: 1.75rem 0 0.5rem; }
 
-.folio-foot { padding: 1rem 1.5rem 1.25rem; border-top: 1px solid var(--rule); }
+/* Capped so a long message never pushes the checklist out of the drawer. */
+.folio-foot { padding: 1rem 1.5rem 1.25rem; border-top: 1px solid var(--rule); max-height: 45vh; overflow-y: auto; }
+.refusal { margin: 0 0 0.75rem; padding: 0.55rem 0.75rem; border-left: 3px solid var(--red); background: var(--red-wash); border-radius: 0 var(--radius) var(--radius) 0; font-size: var(--step--1); }
+.refusal p { margin: 0 0 0.35rem; }
+.refusal-items { margin: 0; padding-left: 1.1rem; max-height: 9rem; overflow-y: auto; }
+.refusal-items li { margin: 0.1rem 0; }
+.folio-foot > .saved { margin: 0 0 0.75rem; }
 .folio-foot .field-error { margin: 0 0 0.75rem; }
 
 .status { margin: 0; padding: 0.6rem 0.8rem; border-left: 3px solid; border-radius: 0 var(--radius) var(--radius) 0; }
 .status.ok { color: var(--stamp); background: var(--stamp-wash); }
 .status.bad { color: var(--red); background: var(--red-wash); }
+.status.ready { color: var(--ink); background: var(--hatch); }
 
-.counts { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; margin: 0.75rem 0 0; font-size: var(--step--1); }
+.counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 0.4rem; margin: 0.75rem 0 0; }
+.counts div { padding: 0.35rem 0.55rem; border: 1px solid var(--rule); border-top: 3px solid currentColor; border-radius: var(--radius); }
+.counts dt { font-size: var(--step--2); line-height: 1.25; }
+.counts dd { margin: 0.15rem 0 0; font: 700 var(--step-1) / 1 var(--body); color: var(--text); }
 .c-done { color: var(--ink); }
+.c-ev { color: var(--stamp); }
 .c-na { color: var(--text-soft); }
 .c-open { color: var(--red); }
+.bulk-na { margin: 0 0 0.6rem; display: grid; gap: 0.4rem; }
+.bulk-na .btn { justify-self: start; }
+.bulk-na .work-form > label { font-weight: 700; color: var(--text); }
+.bulk-na .saved { margin: 0; }
+.confirm { display: grid; gap: 0.45rem; padding-top: 0.5rem; border-top: 1px dashed var(--rule-strong); }
+.confirm p { margin: 0; font-size: var(--step--1); }
 
 .items { list-style: none; margin: 0; padding: 0; }
 .item {
@@ -441,6 +464,9 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .item.done .item-mark, .item.done .item-state { color: var(--ink); }
 .item.na .item-mark, .item.na .item-state { color: var(--text-faint); }
 .item.open .item-mark, .item.open .item-state { color: var(--red); }
+.item.open.has-evidence .item-mark, .item.open.has-evidence .item-state { color: var(--stamp); }
+.item:focus { outline: none; }
+.item:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .evidence { list-style: none; margin: 0; padding: 0; }
 .evidence li {
@@ -451,7 +477,7 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
   border-bottom: 1px solid var(--rule);
   font-size: var(--step--1);
 }
-.ev-kind { color: var(--ink); font-weight: 700; text-transform: capitalize; }
+.ev-kind { color: var(--ink); font-weight: 700; }
 .ev-item { display: block; color: var(--text-faint); font-size: var(--step--2); }
 .ev-hash { color: var(--text-faint); font-size: var(--step--2); }
 
@@ -640,6 +666,22 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .chip.running, .chip.queued { color: var(--ink); }
 .chip.failed, .chip.cancelled { color: var(--red); }
 .chip.partial { color: var(--red); border-style: dashed; }
+.chip.skipped { color: var(--text-soft); border-style: dashed; }
+.skip-why { display: block; color: var(--text-soft); }
+.progress { display: grid; gap: 0.15rem; color: var(--text-soft); }
+.progress-line { display: block; font: 0.74rem / 1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.tool-last .progress, .tool-last .skip-why { margin-top: 0.15rem; }
+.job-note { margin: 0.3rem 0 0; font-size: var(--step--1); min-width: 0; }
+.queue { margin: 0 0 1.1rem; padding: 0.65rem 0.85rem; border: 1px solid var(--rule); border-left: 3px solid var(--ink); border-radius: var(--radius); background: var(--surface); font-size: var(--step--1); display: grid; gap: 0.3rem; min-width: 0; }
+.queue p { margin: 0; min-width: 0; }
+.queue .hint { color: var(--text-faint); }
+.run-all { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.35rem 0.75rem; }
+.run-all .step-why { max-width: 24rem; text-align: right; }
+.pipe-skipped { margin: 0.4rem 0 0.9rem; padding-left: 1.2rem; font-size: var(--step--1); color: var(--text-soft); display: grid; gap: 0.15rem; }
+.no-hosts { border-left: 4px double var(--red); }
+.no-hosts > p { margin: 0 0 0.5rem; max-width: 68ch; }
+.no-hosts ul { margin: 0 0 1rem; padding-left: 1.2rem; max-width: 68ch; display: grid; gap: 0.3rem; }
+.no-hosts .inline-form { max-width: 38rem; }
 .step-last.partial { color: var(--red); }
 @media (prefers-reduced-motion: no-preference) {
   .chip.running { animation: pulse 1.4s ease-in-out infinite; }
