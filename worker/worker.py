@@ -751,8 +751,9 @@ def run(session, job: Job) -> "Run":
         job.targets = jobgates.normalize_targets(m, targeting.default_targets(session, eng, m))
         session.commit()
         if not job.targets:
-            hint = targeting.NO_TARGET_HINT.get(m.kind, "earlier steps produced nothing to work on")
-            job.log += f"nothing to run: {hint}\n"
+            reason = targeting.skip_reason(m)
+            job.result = {"skipped_reason": reason}
+            job.log += f"skipped, nothing to run: {reason}\n"
             session.commit()
             r = Run(session, job)
             r.skipped = True
@@ -869,6 +870,14 @@ def run_agent(session, job: Job, client=None) -> "Run":
     return r
 
 
+def final_status(r: "Run") -> JobStatus:
+    """How a run that did not raise ends: skipped (nothing to work on), partial (time or
+    target limit), or done."""
+    if r.skipped:
+        return JobStatus.skipped
+    return JobStatus.partial if r.stopped else JobStatus.done   # never "done" with targets left
+
+
 INTERRUPTED = ("interrupted: the worker stopped while this job was running. Results from finished "
                "batches (and an agent's evidence up to its last turn) were kept; run it again for the rest.")
 
@@ -926,12 +935,8 @@ def main():
             try:
                 r = run_agent(session, job) if job.kind == "agent" else run(session, job)
                 session.refresh(job, ["status"])
-                if job.status == JobStatus.cancelled:
-                    pass
-                elif r.stopped:                       # time limit or target limit
-                    job.status = JobStatus.partial   # never "done" with targets left
-                else:
-                    job.status = JobStatus.done
+                if job.status != JobStatus.cancelled:
+                    job.status = final_status(r)
             except Exception as e:  # report, never crash the loop
                 session.rollback()
                 job = session.get(Job, job.id)

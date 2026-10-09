@@ -171,9 +171,19 @@ tested against any service. JS fetches follow no redirects.
 
 Crawl and archive output is cleaned in the same way as `uro`: static files are
 dropped and URLs that differ only in parameter values are collapsed. Only
-in-scope URLs are kept. A job whose tool fails without producing anything is
-marked failed, not done. A job stopped at the time limit (`WORKER_JOB_TIMEOUT`, default 30 min) is
-marked **partial**, lists the targets it did not reach and can be resumed with
+in-scope URLs are kept. A job ends in one of these states:
+
+- **done**: it ran on every target. Zero results means it ran and found nothing.
+- **failed**: a tool or every fetch failed and nothing was found, or a gate refused it.
+- **skipped**: it had nothing to work on, with the reason in its log, such as "needs
+  a wildcard in scope" or "no live web servers from 'Find live web servers'".
+  *Run all steps* does not queue a step that cannot apply to the scope (steps that
+  start from wildcards, when there is none); a later step whose earlier steps found
+  nothing is skipped when it starts.
+- **partial**: see below.
+
+A job stopped at the time limit (`WORKER_JOB_TIMEOUT`, default 30 min) or at a
+step's per-run target limit is marked **partial**, lists the targets it did not reach and can be resumed with
 *Run remaining*.
 
 A job is refused unless the engagement has:

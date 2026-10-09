@@ -797,8 +797,9 @@ class PipelineIn(BaseModel):
 @app.post("/engagements/{eng_id}/pipeline", status_code=201)
 def run_pipeline(eng_id: int, request: Request, body: PipelineIn | None = None,
                  session: Session = Depends(get_session)):
-    """Queue every step that passes its gates, in registry order. Each step resolves
-    its targets when it starts, from what the steps before it produced."""
+    """Queue every step that passes its gates and can apply to this scope, in registry
+    order. Each step resolves its targets when it starts, from what the steps before it
+    produced; one that finds none ends "skipped", with the reason."""
     eng = _get(session, Engagement, eng_id)
     wanted = (body.kinds if body and body.kinds else [m.kind for m in modules.MODULES])
     unknown = [k for k in wanted if k not in modules.BY_KIND]
@@ -812,6 +813,10 @@ def run_pipeline(eng_id: int, request: Request, body: PipelineIn | None = None,
             jobgates.check_engagement(eng, m.kind)
         except jobgates.GateError as e:
             skipped.append({"kind": m.kind, "reason": str(e)})
+            continue
+        why = targeting.cannot_apply(eng, m)
+        if why:
+            skipped.append({"kind": m.kind, "reason": why})
             continue
         job = Job(engagement_id=eng.id, kind=m.kind, targets=[], deferred=True,
                   created_by=authz.current(request).user_id)

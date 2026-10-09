@@ -158,6 +158,7 @@ class JobStatus(str, Enum):
     failed = "failed"
     cancelled = "cancelled"
     partial = "partial"   # stopped at the time limit; remaining_targets lists what was not run
+    skipped = "skipped"   # a pipeline step with nothing to work on; result["skipped_reason"] says why
 
 
 class Job(Base):

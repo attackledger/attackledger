@@ -199,7 +199,27 @@ def test_deferred_job_with_nothing_to_do_is_skipped(session):
     job.engagement.research_header = "X-Bug-Bounty: r1"
     session.commit()
     r = worker.run(session, job)
-    assert r.skipped and "nothing to run" in job.log
+    assert r.skipped and "nothing to run" in job.log and "Find live web servers" in job.log
+    assert job.result == {"skipped_reason": "no live web servers from 'Find live web servers'"}
+    assert worker.final_status(r) == JobStatus.skipped and job.output_sha256 is None
+
+
+def test_deferred_root_step_without_a_wildcard_is_skipped(session):
+    job = make_job(session, [], kind="archive")
+    job.deferred = True
+    job.engagement.scope_include = ["shop.example.com"]
+    session.commit()
+    r = worker.run(session, job)
+    assert worker.final_status(r) == JobStatus.skipped and "wildcard" in job.result["skipped_reason"]
+
+
+def test_final_status_of_a_run(session, monkeypatch):
+    job = make_job(session, ["a.example.com"])
+    monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: 0)
+    r = worker.run(session, job)
+    assert worker.final_status(r) == JobStatus.done and job.result is None   # ran, found nothing
+    r.stopped = "timed out"
+    assert worker.final_status(r) == JobStatus.partial
 
 
 def test_noerror_without_records_is_not_resolved(session, monkeypatch):

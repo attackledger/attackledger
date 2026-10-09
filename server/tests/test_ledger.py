@@ -431,6 +431,23 @@ def test_pipeline_queues_steps_that_pass_their_gates(client):
     assert all(j["deferred"] and j["targets"] == [] for j in jobs)
 
 
+def test_pipeline_does_not_queue_steps_that_cannot_apply(client):
+    e = client.post("/engagements", json={"name": "pipe-exact"}).json()["id"]
+    client.put(f"/engagements/{e}/scope", json={"include": ["shop.lab.test"]})
+    attested(client, e)
+    body = client.post(f"/engagements/{e}/pipeline").json()
+    assert body["queued"] == ["resolve", "paramclass"]
+    reasons = {s["kind"]: s["reason"] for s in body["skipped"]}
+    assert all("needs a wildcard in scope" in reasons[k] for k in ("subdomains", "archive", "dorks"))
+
+    e = client.post("/engagements", json={"name": "pipe-nohosts"}).json()["id"]
+    client.put(f"/engagements/{e}/scope", json={"include": ["old.lab.test"], "exclude": ["old.lab.test"]})
+    attested(client, e)
+    body = client.post(f"/engagements/{e}/pipeline").json()
+    assert body["queued"] == ["paramclass"] and "no in-scope hosts" in \
+        {s["kind"]: s["reason"] for s in body["skipped"]}["resolve"]
+
+
 def test_pipeline_refuses_when_nothing_can_run(client):
     eng = client.post("/engagements", json={"name": "pipe-none"}).json()["id"]
     r = client.post(f"/engagements/{eng}/pipeline")
