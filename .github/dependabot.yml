@@ -1,0 +1,21 @@
+# Weekly dependency update checks. Security updates come as soon as an advisory is
+# published (enable "Dependabot security updates" in the repository settings).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /server
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        dependency-type: development
+  - package-ecosystem: docker
+    directories: [/server, /worker, /web]
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
