@@ -1,4 +1,4 @@
-FROM golang:1.23-bookworm AS tools
+FROM golang:1.25-bookworm AS tools
 # No naabu: port probes are made by the gateway (D-039), which can check them against scope.
 RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.7 \
  && go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.2.1 \
