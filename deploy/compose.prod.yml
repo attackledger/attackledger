@@ -105,10 +105,17 @@ services:
           cpus: "${ATTACKLEDGER_WORKER_CPUS:-2}"
           memory: ${ATTACKLEDGER_WORKER_MEMORY:-4g}
 
-  # The worker's only way out (D-039, docs/GATEWAY.md). Its healthcheck is in docker-compose.yml.
+  # The worker's only way out (D-039, docs/GATEWAY.md). The worker stays on the internal network
+  # only (docker-compose.yml). Its CA and token need no backup: it makes new ones if they are lost.
   gateway:
     restart: unless-stopped
     logging: *logging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 5).close()"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:

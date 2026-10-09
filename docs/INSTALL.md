@@ -587,6 +587,8 @@ master key is what unwraps them. Stored together, anyone who gets the backup can
 engagement. Stored apart, a stolen backup alone reveals no evidence content. Lose the master
 key, and the backups' evidence content is lost too, even though the chain and receipts
 still verify. `.env` is not needed for a restore; a new install generates its own.
+The gateway's volumes (its CA and its token, section 6) are not backed up either: the gateway
+makes new ones on a fresh install, and its request log is in the database.
 
 Why the two parts together: the database's encrypted summaries open only with the data keys
 in the blob store, and the API refuses to start when an engagement's key file is missing.
