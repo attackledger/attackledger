@@ -1,0 +1,2556 @@
+{
+ "date": "2026-10-09",
+ "benchmark": "AttackLedger vs OWASP Juice Shop",
+ "versions": {
+  "attackledger_commit": "fb38bf1202efdd96a17f67bbd07fd05e7b736d13",
+  "images": {
+   "attackledger-bench-api:latest": "sha256:26e539b2638bf62ffd04a3e0f31e978e8343890266ff72fd3185af53501c14c6",
+   "attackledger-bench-worker:latest": "sha256:c518cc799169519cecb37342f704c64293ddb95deb0a34352cb5f78b110c3d4f",
+   "bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b": "sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b"
+  },
+  "juice_shop": "v20.2.0",
+  "nuclei": "[\u001b[34mINF\u001b[0m] PDCP Directory: /home/worker/.pdcp",
+  "nuclei_templates": "v10.4.9 (worker/Dockerfile)"
+ },
+ "settings": {
+  "include": [
+   "juice.lab.test"
+  ],
+  "exclude": [],
+  "rate_limit_rps": 20,
+  "research_header": "X-Bug-Bounty: bench-researcher",
+  "research_user_agent": "AttackLedger/0.6 (bench-researcher)",
+  "enabled_modules": [
+   "ports",
+   "content",
+   "params",
+   "nuclei"
+  ],
+  "crawl_depth": 3,
+  "policy_url": "https://example.com/policy"
+ },
+ "engagement_id": 1,
+ "lanes": {
+  "recon": 1,
+  "mapper": 2
+ },
+ "recon": {
+  "wall_seconds": 390.4,
+  "jobs": [
+   {
+    "id": 1,
+    "kind": "resolve",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "juice.lab.test"
+    ],
+    "seconds": 0.1,
+    "skipped_reason": null,
+    "requests": 0,
+    "peak_rps_1s": 0,
+    "missing_identification": 0,
+    "log_tail": "$ /opt/pd/bin/dnsx -silent -json -a -aaaa -r 127.0.0.11 -rl 20  (1 input line)\n$ /opt/pd/bin/dnsx -silent -json -cname -r 127.0.0.11 -rl 20  (1 input line)\n"
+   },
+   {
+    "id": 2,
+    "kind": "ports",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "juice.lab.test"
+    ],
+    "seconds": 16.0,
+    "skipped_reason": null,
+    "requests": 0,
+    "peak_rps_1s": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 1,
+    "methods": {},
+    "log_tail": "$ /opt/pd/bin/naabu -silent -json -top-ports 100 -exclude-ports 25 -scan-type c -rate 20 -c 20 -r 127.0.0.11  (1 input line)\n",
+    "peak_per_calendar_second": 0,
+    "seconds_over_limit": 0
+   },
+   {
+    "id": 3,
+    "kind": "probe",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "juice.lab.test"
+    ],
+    "seconds": 0.2,
+    "skipped_reason": null,
+    "requests": 1,
+    "peak_rps_1s": 1,
+    "missing_identification": 0,
+    "log_tail": "$ /opt/pd/bin/httpx -silent -json -status-code -title -tech-detect -web-server -ip -cdn -cname -location -rl 20 -t 10 -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher)  (1 input line)\n",
+    "peak_per_calendar_second": 1,
+    "seconds_over_limit": 0,
+    "non_http_connections": 1,
+    "connections": 2,
+    "methods": {
+     "GET": 1
+    }
+   },
+   {
+    "id": 4,
+    "kind": "crawl",
+    "status": "done",
+    "result_count": 27,
+    "targets": [
+     "http://juice.lab.test:3000"
+    ],
+    "seconds": 13.2,
+    "skipped_reason": null,
+    "requests": 29,
+    "peak_rps_1s": 22,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 5,
+    "methods": {
+     "GET": 29
+    },
+    "log_tail": "$ /opt/pd/bin/katana -silent -j -d 3 -jc -fs fqdn -cos logout|log-out|signout|sign-out|/delete|/destroy|/remove|/revoke|/deactivate|/close-account|/unsubscribe -rl 20 -c 5 -ct 10m -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher)  (1 input line)\n28 URLs seen, 27 in scope after clean-up, 27 new\n",
+    "peak_per_calendar_second": 20,
+    "seconds_over_limit": 0
+   },
+   {
+    "id": 5,
+    "kind": "content",
+    "status": "done",
+    "result_count": 0,
+    "targets": [
+     "http://juice.lab.test:3000"
+    ],
+    "seconds": 0.1,
+    "skipped_reason": null,
+    "requests": 2,
+    "peak_rps_1s": 2,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 2,
+    "methods": {
+     "GET": 2
+    },
+    "log_tail": "skipped http://juice.lab.test:3000: every path answers 200\n",
+    "peak_per_calendar_second": 2,
+    "seconds_over_limit": 0
+   },
+   {
+    "id": 6,
+    "kind": "jsanalyze",
+    "status": "done",
+    "result_count": 20,
+    "targets": [
+     "http://juice.lab.test:3000/Zone.js",
+     "http://juice.lab.test:3000/about.component-CZcG2819.js",
+     "http://juice.lab.test:3000/chunk-BJ5LcrCb.js",
+     "http://juice.lab.test:3000/chunk-DAJ4olp_.js",
+     "http://juice.lab.test:3000/chunk-DBPdFzgj.js",
+     "http://juice.lab.test:3000/chunk-LgKEbQmx.js",
+     "http://juice.lab.test:3000/chunk-eYAgyLdn.js",
+     "http://juice.lab.test:3000/chunk-v9EE5s4z.js",
+     "http://juice.lab.test:3000/coding-challenge-page.component-VgIt3B-z.js",
+     "http://juice.lab.test:3000/confetti-DoPrSMNP.js",
+     "http://juice.lab.test:3000/faucet.module-60SLa5Cr.js",
+     "http://juice.lab.test:3000/hacking-instructor-BXwB7EFQ.js",
+     "http://juice.lab.test:3000/main.js",
+     "http://juice.lab.test:3000/polyfills.js",
+     "http://juice.lab.test:3000/recycle.component-BMXcwerA.js",
+     "http://juice.lab.test:3000/rolldown-runtime-BoHGiXSq.js",
+     "http://juice.lab.test:3000/scripts.js",
+     "http://juice.lab.test:3000/wallet-web3.module-s802s5aS.js",
+     "http://juice.lab.test:3000/web3-sandbox.module-C8MIIA8b.js",
+     "http://juice.lab.test:3000/zone.js"
+    ],
+    "seconds": 1.6,
+    "skipped_reason": null,
+    "requests": 20,
+    "peak_rps_1s": 13,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 20,
+    "methods": {
+     "GET": 20
+    },
+    "log_tail": "analysing 20 JavaScript files\n108 URLs seen, 107 in scope after clean-up, 107 new\n20 files analysed, 1 new lead, 0 noise matches ignored, 107 new endpoints\n",
+    "peak_per_calendar_second": 12,
+    "seconds_over_limit": 0
+   },
+   {
+    "id": 7,
+    "kind": "params",
+    "status": "done",
+    "result_count": 8,
+    "targets": [
+     "http://juice.lab.test:3000/api/Addresss",
+     "http://juice.lab.test:3000/api/BasketItems",
+     "http://juice.lab.test:3000/api/Cards",
+     "http://juice.lab.test:3000/api/Challenges",
+     "http://juice.lab.test:3000/api/Challenges/",
+     "http://juice.lab.test:3000/api/Complaints",
+     "http://juice.lab.test:3000/api/Deliverys",
+     "http://juice.lab.test:3000/api/Feedbacks",
+     "http://juice.lab.test:3000/api/Hints",
+     "http://juice.lab.test:3000/api/Products",
+     "http://juice.lab.test:3000/api/Quantitys",
+     "http://juice.lab.test:3000/api/Recycles",
+     "http://juice.lab.test:3000/api/SecurityAnswers",
+     "http://juice.lab.test:3000/api/SecurityQuestions",
+     "http://juice.lab.test:3000/api/Users",
+     "http://juice.lab.test:3000/application/vnd.ms-word.do",
+     "http://juice.lab.test:3000/application/vnd.openxmlformats-officedocument.wordprocessingml.do",
+     "http://juice.lab.test:3000/rest/user/change-password",
+     "http://juice.lab.test:3000/rest/user/security-question",
+     "http://juice.lab.test:3000/wQ"
+    ],
+    "seconds": 225.1,
+    "skipped_reason": null,
+    "requests": 3206,
+    "peak_rps_1s": 19,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 3206,
+    "methods": {
+     "GET": 3206
+    },
+    "log_tail": "jun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/application/vnd.openxmlformats-officedocument.wordprocessingml.do -o /tmp/tmpag83jqzu/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n$ /usr/local/bin/python -c import sys, runpy; sys.path.insert(0, '/opt/arjun'); sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/rest/user/change-password -o /tmp/tmp4ejd2rva/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n$ /usr/local/bin/python -c import sys, runpy; sys.path.insert(0, '/opt/arjun'); sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/rest/user/security-question -o /tmp/tmpvylj4xu6/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n$ /usr/local/bin/python -c import sys, runpy; sys.path.insert(0, '/opt/arjun'); sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/wQ -o /tmp/tmpex8wg5tb/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n",
+    "peak_per_calendar_second": 19,
+    "seconds_over_limit": 0
+   },
+   {
+    "id": 8,
+    "kind": "paramclass",
+    "status": "done",
+    "result_count": 13,
+    "targets": [
+     "http://juice.lab.test:3000/api/Challenges",
+     "http://juice.lab.test:3000/api/Challenges/?key=nftMintChallenge",
+     "http://juice.lab.test:3000/api/Feedbacks",
+     "http://juice.lab.test:3000/api/Hints",
+     "http://juice.lab.test:3000/api/Products",
+     "http://juice.lab.test:3000/api/Quantitys",
+     "http://juice.lab.test:3000/api/SecurityQuestions",
+     "http://juice.lab.test:3000/rest/user/change-password",
+     "http://juice.lab.test:3000/rest/user/change-password?current=",
+     "http://juice.lab.test:3000/rest/user/security-question",
+     "http://juice.lab.test:3000/rest/user/security-question?email=",
+     "http://juice.lab.test:3000/wQ?MvO1G2"
+    ],
+    "seconds": 0.0,
+    "skipped_reason": null,
+    "requests": 0,
+    "peak_rps_1s": 0,
+    "missing_identification": 0,
+    "log_tail": "12 URLs with parameters, 13 routed parameters, 13 new leads\n"
+   },
+   {
+    "id": 9,
+    "kind": "nuclei",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "http://juice.lab.test:3000"
+    ],
+    "seconds": 130.3,
+    "skipped_reason": null,
+    "requests": 2612,
+    "peak_rps_1s": 40,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 1532,
+    "methods": {
+     "GET": 2586,
+     "POST": 24,
+     "DEBUG": 1,
+     "DELETE": 1
+    },
+    "log_tail": "1 live service, 1 cluster representative, 0 on golden hosts\n$ /opt/pd/bin/nuclei -silent -jsonl -nc -duc -et /opt/nuclei-exclude.txt -ni -dr -etags dos,fuzz,fuzzing,intrusive,bruteforce,brute-force,default-login,credential-stuffing,token-spray -rl 20 -c 5 -bs 5 -retries 1 -timeout 8 -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher) -t /opt/nuclei-templates/http/takeovers/  (1 input line)\n$ /opt/pd/bin/nuclei -silent -jsonl -nc -duc -et /opt/nuclei-exclude.txt -ni -dr -etags dos,fuzz,fuzzing,intrusive,bruteforce,brute-force,default-login,credential-stuffing,token-spray -rl 20 -c 5 -bs 5 -retries 1 -timeout 8 -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher) -t /opt/nuclei-templates/http/exposures/ -t /opt/nuclei-templates/http/misconfiguration/ -severity medium,high,critical  (1 input line)\n",
+    "peak_per_calendar_second": 29,
+    "seconds_over_limit": 1
+   }
+  ],
+  "traffic_totals": {
+   "requests": 5870,
+   "peak_per_calendar_second": 29,
+   "peak_rps_1s": 40,
+   "missing_identification": 0,
+   "non_get": [
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/WEB_VMS/LEVEL15/"
+    },
+    {
+     "job": 9,
+     "method": "DEBUG",
+     "target": "/Foobar-debug.aspx"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/api/session"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/ui/login"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/cgi-bin/webproc"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/auth/login"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/form2saveConf.cgi"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/exist/apps/dashboard/login"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/api/v1/users/signup"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/nacos/v1/auth/users/?username=3KSm86nKLiKADRiwZNhupaf2r1E&password=3KSm82UP1GNezk480rKBtrDqMRs&accessToken=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuYWNvcyIsImV4cCI6OTk5OTk5OTk5OTl9.-isk56R8NfioHVYmpj4oz92nUt"
+    },
+    {
+     "job": 9,
+     "method": "DELETE",
+     "target": "/nacos/v1/auth/users/?username=3KSm86nKLiKADRiwZNhupaf2r1E&accessToken=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuYWNvcyIsImV4cCI6OTk5OTk5OTk5OTl9.-isk56R8NfioHVYmpj4oz92nUteNBCN3HRd0-Hfk76g"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/seeyon/thirdpartyController.do"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/ui/login"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/ws/v1/cluster/apps/new-application"
+    },
+    {
+     "job": 9,
+     "method": "POST",
+     "target": "/admin/login/?next=/admin/"
+    }
+   ]
+  },
+  "unattributed_traffic": {
+   "requests": 1,
+   "peak_rps_1s": 1,
+   "peak_per_calendar_second": 1,
+   "seconds_over_limit": 0,
+   "missing_identification": 0,
+   "non_http_connections": 0,
+   "connections": 1,
+   "methods": {
+    "GET": 1
+   }
+  },
+  "endpoints_total": 134,
+  "leads_total": 23,
+  "leads_by_kind": {
+   "nuclei": 1,
+   "param-class": 13,
+   "parameter": 8,
+   "secret": 1
+  },
+  "nuclei_leads": [
+   {
+    "title": "Prometheus Metrics - Detect",
+    "severity": "medium",
+    "url": "http://juice.lab.test:3000/metrics",
+    "template": "prometheus-metrics"
+   }
+  ],
+  "endpoints": [
+   "http://juice.lab.test:3000",
+   "http://juice.lab.test:3000/",
+   "http://juice.lab.test:3000/%5C/index%5C.html",
+   "http://juice.lab.test:3000/%60+_%28i%5B11%5D%7C%7Cf%5Bg.toLowerCase%28%29%5D%29+%60",
+   "http://juice.lab.test:3000/%60+_%28i%5B8%5D%29+%60",
+   "http://juice.lab.test:3000/%7B%7Bhref%7D%7D",
+   "http://juice.lab.test:3000/0/0",
+   "http://juice.lab.test:3000/10",
+   "http://juice.lab.test:3000/16",
+   "http://juice.lab.test:3000/160",
+   "http://juice.lab.test:3000/20",
+   "http://juice.lab.test:3000/2fa/enter",
+   "http://juice.lab.test:3000/40",
+   "http://juice.lab.test:3000/60",
+   "http://juice.lab.test:3000/Zone.js",
+   "http://juice.lab.test:3000/about",
+   "http://juice.lab.test:3000/about.component-CZcG2819.js",
+   "http://juice.lab.test:3000/accounting",
+   "http://juice.lab.test:3000/address/create",
+   "http://juice.lab.test:3000/address/edit/",
+   "http://juice.lab.test:3000/address/saved",
+   "http://juice.lab.test:3000/address/select",
+   "http://juice.lab.test:3000/api/Addresss",
+   "http://juice.lab.test:3000/api/BasketItems",
+   "http://juice.lab.test:3000/api/Cards",
+   "http://juice.lab.test:3000/api/Challenges",
+   "http://juice.lab.test:3000/api/Challenges/",
+   "http://juice.lab.test:3000/api/Challenges/?key=nftMintChallenge",
+   "http://juice.lab.test:3000/api/Complaints",
+   "http://juice.lab.test:3000/api/Deliverys",
+   "http://juice.lab.test:3000/api/Feedbacks",
+   "http://juice.lab.test:3000/api/Hints",
+   "http://juice.lab.test:3000/api/Products",
+   "http://juice.lab.test:3000/api/Quantitys",
+   "http://juice.lab.test:3000/api/Recycles",
+   "http://juice.lab.test:3000/api/SecurityAnswers",
+   "http://juice.lab.test:3000/api/SecurityQuestions",
+   "http://juice.lab.test:3000/api/Users",
+   "http://juice.lab.test:3000/application-configuration",
+   "http://juice.lab.test:3000/application-version",
+   "http://juice.lab.test:3000/application/vnd.ms-word.do",
+   "http://juice.lab.test:3000/application/vnd.openxmlformats-officedocument.wordprocessingml.do",
+   "http://juice.lab.test:3000/assets/i18n/",
+   "http://juice.lab.test:3000/bQ",
+   "http://juice.lab.test:3000/basket",
+   "http://juice.lab.test:3000/chatbot",
+   "http://juice.lab.test:3000/chatbot/conversation",
+   "http://juice.lab.test:3000/chunk-BJ5LcrCb.js",
+   "http://juice.lab.test:3000/chunk-DAJ4olp_.js",
+   "http://juice.lab.test:3000/chunk-DBPdFzgj.js",
+   "http://juice.lab.test:3000/chunk-LgKEbQmx.js",
+   "http://juice.lab.test:3000/chunk-eYAgyLdn.js",
+   "http://juice.lab.test:3000/chunk-v9EE5s4z.js",
+   "http://juice.lab.test:3000/coding-challenge",
+   "http://juice.lab.test:3000/coding-challenge-page.component-VgIt3B-z.js",
+   "http://juice.lab.test:3000/complain",
+   "http://juice.lab.test:3000/confetti-DoPrSMNP.js",
+   "http://juice.lab.test:3000/contact",
+   "http://juice.lab.test:3000/data-export",
+   "http://juice.lab.test:3000/dataerasure",
+   "http://juice.lab.test:3000/delivery-method",
+   "http://juice.lab.test:3000/deluxe-membership",
+   "http://juice.lab.test:3000/engine.io",
+   "http://juice.lab.test:3000/erasure-request",
+   "http://juice.lab.test:3000/faucet.module-60SLa5Cr.js",
+   "http://juice.lab.test:3000/file-upload",
+   "http://juice.lab.test:3000/forgot-password",
+   "http://juice.lab.test:3000/hacking-instructor-BXwB7EFQ.js",
+   "http://juice.lab.test:3000/login",
+   "http://juice.lab.test:3000/main.js",
+   "http://juice.lab.test:3000/nftMintListen",
+   "http://juice.lab.test:3000/nftUnlocked",
+   "http://juice.lab.test:3000/order-completion",
+   "http://juice.lab.test:3000/order-history",
+   "http://juice.lab.test:3000/order-summary",
+   "http://juice.lab.test:3000/orders",
+   "http://juice.lab.test:3000/pQ6q2dQ7s4aQ9W6rT=m",
+   "http://juice.lab.test:3000/payment",
+   "http://juice.lab.test:3000/photo-wall",
+   "http://juice.lab.test:3000/polyfills.js",
+   "http://juice.lab.test:3000/profile",
+   "http://juice.lab.test:3000/recycle",
+   "http://juice.lab.test:3000/recycle.component-BMXcwerA.js",
+   "http://juice.lab.test:3000/register",
+   "http://juice.lab.test:3000/rest/admin",
+   "http://juice.lab.test:3000/rest/admin/application-configuration",
+   "http://juice.lab.test:3000/rest/captcha",
+   "http://juice.lab.test:3000/rest/chat",
+   "http://juice.lab.test:3000/rest/continue-code",
+   "http://juice.lab.test:3000/rest/continue-code-findIt",
+   "http://juice.lab.test:3000/rest/continue-code-findIt/apply/",
+   "http://juice.lab.test:3000/rest/continue-code-fixIt",
+   "http://juice.lab.test:3000/rest/continue-code-fixIt/apply/",
+   "http://juice.lab.test:3000/rest/continue-code/apply/",
+   "http://juice.lab.test:3000/rest/country-mapping",
+   "http://juice.lab.test:3000/rest/deluxe-membership",
+   "http://juice.lab.test:3000/rest/image-captcha/",
+   "http://juice.lab.test:3000/rest/memories",
+   "http://juice.lab.test:3000/rest/order-history",
+   "http://juice.lab.test:3000/rest/products",
+   "http://juice.lab.test:3000/rest/repeat-notification",
+   "http://juice.lab.test:3000/rest/saveLoginIp",
+   "http://juice.lab.test:3000/rest/track-order",
+   "http://juice.lab.test:3000/rest/user",
+   "http://juice.lab.test:3000/rest/user/authentication-details/",
+   "http://juice.lab.test:3000/rest/user/change-password?current=",
+   "http://juice.lab.test:3000/rest/user/login",
+   "http://juice.lab.test:3000/rest/user/reset-password",
+   "http://juice.lab.test:3000/rest/user/security-question?email=",
+   "http://juice.lab.test:3000/rest/user/whoami",
+   "http://juice.lab.test:3000/rest/wallet/balance",
+   "http://juice.lab.test:3000/rest/web3",
+   "http://juice.lab.test:3000/reviews",
+   "http://juice.lab.test:3000/rolldown-runtime-BoHGiXSq.js",
+   "http://juice.lab.test:3000/saved-payment-methods",
+   "http://juice.lab.test:3000/score-board",
+   "http://juice.lab.test:3000/scripts.js",
+   "http://juice.lab.test:3000/search",
+   "http://juice.lab.test:3000/snippets",
+   "http://juice.lab.test:3000/snippets/fixes",
+   "http://juice.lab.test:3000/snippets/verdict",
+   "http://juice.lab.test:3000/socket.io",
+   "http://juice.lab.test:3000/submitKey",
+   "http://juice.lab.test:3000/track-result",
+   "http://juice.lab.test:3000/track-result/new",
+   "http://juice.lab.test:3000/v3/",
+   "http://juice.lab.test:3000/wQ?MvO1G2",
+   "http://juice.lab.test:3000/wallet",
+   "http://juice.lab.test:3000/wallet-web3.module-s802s5aS.js",
+   "http://juice.lab.test:3000/walletExploitAddress",
+   "http://juice.lab.test:3000/walletNFTVerify",
+   "http://juice.lab.test:3000/web3-sandbox.module-C8MIIA8b.js",
+   "http://juice.lab.test:3000/ws/v3/",
+   "http://juice.lab.test:3000/zone.js"
+  ],
+  "leads": [
+   {
+    "kind": "nuclei",
+    "title": "Prometheus Metrics - Detect",
+    "url": "http://juice.lab.test:3000/metrics"
+   },
+   {
+    "kind": "param-class",
+    "title": "idor-prone parameter: id",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "idor-prone parameter: order",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "param-class",
+    "title": "lfi-prone parameter: page",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: id",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: offset",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: order",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: q",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: sort",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: comment",
+    "url": "http://juice.lab.test:3000/api/Feedbacks"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: email",
+    "url": "http://juice.lab.test:3000/rest/user/security-question"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: name",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: q",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: text",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "parameter",
+    "title": "1 hidden parameter: email",
+    "url": "http://juice.lab.test:3000/rest/user/security-question"
+   },
+   {
+    "kind": "parameter",
+    "title": "1 hidden parameter: new",
+    "url": "http://juice.lab.test:3000/rest/user/change-password"
+   },
+   {
+    "kind": "parameter",
+    "title": "10 hidden parameters: automation, id, offset, order, page, q, scope, signing…",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "parameter",
+    "title": "10 hidden parameters: description, id, image, name, offset, page, price, q…",
+    "url": "http://juice.lab.test:3000/api/Products"
+   },
+   {
+    "kind": "parameter",
+    "title": "12 hidden parameters: category, description, difficulty, id, key, name, offset, page…",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "parameter",
+    "title": "7 hidden parameters: id, offset, page, q, quantity, scope, sort",
+    "url": "http://juice.lab.test:3000/api/Quantitys"
+   },
+   {
+    "kind": "parameter",
+    "title": "7 hidden parameters: id, offset, page, q, question, scope, sort",
+    "url": "http://juice.lab.test:3000/api/SecurityQuestions"
+   },
+   {
+    "kind": "parameter",
+    "title": "8 hidden parameters: comment, id, offset, page, q, rating, scope, sort",
+    "url": "http://juice.lab.test:3000/api/Feedbacks"
+   },
+   {
+    "kind": "secret",
+    "title": "Google OAuth client id",
+    "url": "http://juice.lab.test:3000/main.js"
+   }
+  ]
+ },
+ "challenges_after_recon": [
+  "errorHandlingChallenge",
+  "exposedMetricsChallenge"
+ ],
+ "agent": {
+  "driver": "Claude Opus 5.5 in Claude Code, through tools/agent_bridge.py (D-031 procedure), not the product's Messages API loop",
+  "note": "Recon lane only, budget 60. The run was stopped after 4 requests: a safety classifier on the driving session stopped further hands-on probing, so the agent part is incomplete and its recall is a lower bound. No evidence was attached and no item was marked; the 4 exchanges are in the blob store under job 10. The model lane was not run.",
+  "lanes": [
+   {
+    "lane_id": 1,
+    "role": "recon",
+    "job_id": 10,
+    "requests": 4,
+    "budget": 60,
+    "status": "ended (partial)"
+   }
+  ],
+  "jobs": [
+   {
+    "id": 10,
+    "lane_id": 1,
+    "status": "partial",
+    "seconds": 48.2,
+    "result": {
+     "limits": {
+      "max_turns": null,
+      "max_requests": 60
+     },
+     "status": "ended",
+     "model": "Claude Opus 5.5 in Claude Code (benchmark, D-031 procedure)",
+     "turns": null,
+     "tool_calls": 4,
+     "requests": 4,
+     "evidence_added": 0,
+     "items_marked": 0,
+     "leads_added": 0,
+     "summary": "",
+     "detail": "Driven by Claude Opus 5.5 in Claude Code (benchmark, D-031 procedure) through the same five gated tools, because no API key was available yet. Token use was not measured."
+    },
+    "requests": 4,
+    "peak_rps_1s": 2,
+    "peak_per_calendar_second": 2,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 4,
+    "methods": {
+     "GET": 4
+    }
+   }
+  ],
+  "refusals": []
+ },
+ "traffic_totals_all": {
+  "requests": 5875,
+  "peak_rps_1s": 40,
+  "peak_per_calendar_second": 34,
+  "non_get": [
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/WEB_VMS/LEVEL15/"
+   },
+   {
+    "job": 9,
+    "method": "DEBUG",
+    "target": "/Foobar-debug.aspx"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/api/session"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/ui/login"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/cgi-bin/webproc"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/auth/login"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/form2saveConf.cgi"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/exist/apps/dashboard/login"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/api/v1/users/signup"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/nacos/v1/auth/users/?username=3KSm86nKLiKADRiwZNhupaf2r1E&password=3KSm82UP1GNezk480rKBtrDqMRs&accessToken=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuYWNvcyIsImV4cCI6OTk5OTk5OTk5OTl9.-isk56R8NfioHVYmpj4oz92nUt"
+   },
+   {
+    "job": 9,
+    "method": "DELETE",
+    "target": "/nacos/v1/auth/users/?username=3KSm86nKLiKADRiwZNhupaf2r1E&accessToken=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJuYWNvcyIsImV4cCI6OTk5OTk5OTk5OTl9.-isk56R8NfioHVYmpj4oz92nUteNBCN3HRd0-Hfk76g"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/seeyon/thirdpartyController.do"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/ui/login"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/ws/v1/cluster/apps/new-application"
+   },
+   {
+    "job": 9,
+    "method": "POST",
+    "target": "/admin/login/?next=/admin/"
+   }
+  ],
+  "missing_identification": 0,
+  "methods": {
+   "GET": 5849,
+   "POST": 24,
+   "DEBUG": 1,
+   "DELETE": 1
+  }
+ },
+ "items": [
+  {
+   "id": "web3SandboxChallenge",
+   "type": "challenge",
+   "name": "Web3 Sandbox",
+   "category": "Broken Access Control",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [
+    "endpoint http://juice.lab.test:3000/web3-sandbox.module-C8MIIA8b.js"
+   ],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "missingEncodingChallenge",
+   "type": "challenge",
+   "name": "Missing Encoding",
+   "category": "Improper Input Validation",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "privacyPolicyChallenge",
+   "type": "challenge",
+   "name": "Privacy Policy",
+   "category": "Miscellaneous",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "scoreBoardChallenge",
+   "type": "challenge",
+   "name": "Score Board",
+   "category": "Miscellaneous",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [
+    "endpoint http://juice.lab.test:3000/score-board"
+   ],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "exposedMetricsChallenge",
+   "type": "challenge",
+   "name": "Exposed Metrics",
+   "category": "Observability Failures",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [
+    "lead [nuclei] Prometheus Metrics - Detect @ http://juice.lab.test:3000/metrics"
+   ],
+   "agent": null,
+   "solved": true
+  },
+  {
+   "id": "errorHandlingChallenge",
+   "type": "challenge",
+   "name": "Error Handling",
+   "category": "Security Misconfiguration",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": true
+  },
+  {
+   "id": "directoryListingChallenge",
+   "type": "challenge",
+   "name": "Confidential Document",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": {
+    "found": false,
+    "exchange": "x3,x4",
+    "observation": "GET /ftp/ returned a listing page, but its inline CSS filled the 4,000-character view; a Range header was ignored (dynamic page), so no file name was seen"
+   },
+   "solved": false
+  },
+  {
+   "id": "redirectCryptoCurrencyChallenge",
+   "type": "challenge",
+   "name": "Outdated Allowlist",
+   "category": "Unvalidated Redirects",
+   "difficulty": 1,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "adminSectionChallenge",
+   "type": "challenge",
+   "name": "Admin Section",
+   "category": "Broken Access Control",
+   "difficulty": 2,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "securityPolicyChallenge",
+   "type": "challenge",
+   "name": "Security Policy",
+   "category": "Miscellaneous",
+   "difficulty": 2,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": {
+    "found": true,
+    "exchange": "x2",
+    "observation": "GET /.well-known/security.txt returned the policy; it also names /#/score-board"
+   },
+   "solved": true
+  },
+  {
+   "id": "misplacedIacFiles",
+   "type": "challenge",
+   "name": "Misplaced IaC Files",
+   "category": "Security Misconfiguration",
+   "difficulty": 2,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "dbSchemaChallenge",
+   "type": "challenge",
+   "name": "Database Schema",
+   "category": "Injection",
+   "difficulty": 3,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "easterEggLevelOneChallenge",
+   "type": "challenge",
+   "name": "Easter Egg",
+   "category": "Broken Access Control",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "easterEggLevelTwoChallenge",
+   "type": "challenge",
+   "name": "Nested Easter Egg",
+   "category": "Cryptographic Issues",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "nullByteChallenge",
+   "type": "challenge",
+   "name": "Poison Null Byte",
+   "category": "Improper Input Validation",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "unionSqlInjectionChallenge",
+   "type": "challenge",
+   "name": "User Credentials",
+   "category": "Injection",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "accessLogDisclosureChallenge",
+   "type": "challenge",
+   "name": "Access Log",
+   "category": "Observability Failures",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "misplacedSignatureFileChallenge",
+   "type": "challenge",
+   "name": "Misplaced Signature File",
+   "category": "Observability Failures",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "forgottenDevBackupChallenge",
+   "type": "challenge",
+   "name": "Forgotten Developer Backup",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "forgottenBackupChallenge",
+   "type": "challenge",
+   "name": "Forgotten Sales Backup",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "redirectChallenge",
+   "type": "challenge",
+   "name": "Allowlist Bypass",
+   "category": "Unvalidated Redirects",
+   "difficulty": 4,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "emailLeakChallenge",
+   "type": "challenge",
+   "name": "Email Leak",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 5,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "jwtUnsignedChallenge",
+   "type": "challenge",
+   "name": "Unsigned JWT",
+   "category": "Vulnerable Components",
+   "difficulty": 5,
+   "in_reach": true,
+   "reason": null,
+   "reason_code": null,
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "passwordRepeatChallenge",
+   "type": "challenge",
+   "name": "Repetitive Registration",
+   "category": "Improper Input Validation",
+   "difficulty": 1,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "zeroStarsChallenge",
+   "type": "challenge",
+   "name": "Zero Stars",
+   "category": "Improper Input Validation",
+   "difficulty": 1,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "closeNotificationsChallenge",
+   "type": "challenge",
+   "name": "Mass Dispel",
+   "category": "Miscellaneous",
+   "difficulty": 1,
+   "in_reach": false,
+   "reason": "needs a browser that renders the single-page app or runs JavaScript (DOM XSS, UI interaction, text only visible after rendering)",
+   "reason_code": "browser",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "localXssChallenge",
+   "type": "challenge",
+   "name": "DOM XSS",
+   "category": "XSS",
+   "difficulty": 1,
+   "in_reach": false,
+   "reason": "needs a browser that renders the single-page app or runs JavaScript (DOM XSS, UI interaction, text only visible after rendering)",
+   "reason_code": "browser",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "xssBonusChallenge",
+   "type": "challenge",
+   "name": "Bonus Payload",
+   "category": "XSS",
+   "difficulty": 1,
+   "in_reach": false,
+   "reason": "needs a browser that renders the single-page app or runs JavaScript (DOM XSS, UI interaction, text only visible after rendering)",
+   "reason_code": "browser",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "feedbackChallenge",
+   "type": "challenge",
+   "name": "Five-Star Feedback",
+   "category": "Broken Access Control",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "basketAccessChallenge",
+   "type": "challenge",
+   "name": "View Basket",
+   "category": "Broken Access Control",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "aiDebuggingChallenge",
+   "type": "challenge",
+   "name": "AI Debugging",
+   "category": "Broken Access Control",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs the chatbot's LLM backend (not reachable in the isolated lab) and POST requests",
+   "reason_code": "llm",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "weakPasswordChallenge",
+   "type": "challenge",
+   "name": "Password Strength",
+   "category": "Broken Authentication",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "weirdCryptoChallenge",
+   "type": "challenge",
+   "name": "Weird Crypto",
+   "category": "Cryptographic Issues",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "emptyUserRegistration",
+   "type": "challenge",
+   "name": "Empty User Registration",
+   "category": "Improper Input Validation",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "loginAdminChallenge",
+   "type": "challenge",
+   "name": "Login Admin",
+   "category": "Injection",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "chatbotPromptInjectionChallenge",
+   "type": "challenge",
+   "name": "Chatbot Prompt Injection",
+   "category": "Injection",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs the chatbot's LLM backend (not reachable in the isolated lab) and POST requests",
+   "reason_code": "llm",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "passwordHashLeakChallenge",
+   "type": "challenge",
+   "name": "Password Hash Leak",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "nftUnlockChallenge",
+   "type": "challenge",
+   "name": "NFT Takeover",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "loginRapperChallenge",
+   "type": "challenge",
+   "name": "Login MC SafeSearch",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "geoStalkingMetaChallenge",
+   "type": "challenge",
+   "name": "Meta Geo Stalking",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "geoStalkingVisualChallenge",
+   "type": "challenge",
+   "name": "Visual Geo Stalking",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "exposedCredentialsChallenge",
+   "type": "challenge",
+   "name": "Exposed Credentials",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "forgedFeedbackChallenge",
+   "type": "challenge",
+   "name": "Forged Feedback",
+   "category": "Broken Access Control",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "forgedReviewChallenge",
+   "type": "challenge",
+   "name": "Forged Review",
+   "category": "Broken Access Control",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "basketManipulateChallenge",
+   "type": "challenge",
+   "name": "Manipulate Basket",
+   "category": "Broken Access Control",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "changeProductChallenge",
+   "type": "challenge",
+   "name": "Product Tampering",
+   "category": "Broken Access Control",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "csrfChallenge",
+   "type": "challenge",
+   "name": "CSRF",
+   "category": "Broken Access Control",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a third-party site or another origin",
+   "reason_code": "external",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "captchaBypassChallenge",
+   "type": "challenge",
+   "name": "CAPTCHA Bypass",
+   "category": "Broken Anti Automation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "resetPasswordBjoernOwaspChallenge",
+   "type": "challenge",
+   "name": "Bjoern's Favorite Pet",
+   "category": "Broken Authentication",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "ghostLoginChallenge",
+   "type": "challenge",
+   "name": "GDPR Data Erasure",
+   "category": "Broken Authentication",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "resetPasswordJimChallenge",
+   "type": "challenge",
+   "name": "Reset Jim's Password",
+   "category": "Broken Authentication",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "registerAdminChallenge",
+   "type": "challenge",
+   "name": "Admin Registration",
+   "category": "Improper Input Validation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "nftMintChallenge",
+   "type": "challenge",
+   "name": "Mint the Honey Pot",
+   "category": "Improper Input Validation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a wallet and a blockchain network (POST requests, unreachable in the isolated lab)",
+   "reason_code": "web3",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "negativeOrderChallenge",
+   "type": "challenge",
+   "name": "Payback Time",
+   "category": "Improper Input Validation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "uploadSizeChallenge",
+   "type": "challenge",
+   "name": "Upload Size",
+   "category": "Improper Input Validation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "uploadTypeChallenge",
+   "type": "challenge",
+   "name": "Upload Type",
+   "category": "Improper Input Validation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "freeDeluxeChallenge",
+   "type": "challenge",
+   "name": "Deluxe Fraud",
+   "category": "Improper Input Validation",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "loginBenderChallenge",
+   "type": "challenge",
+   "name": "Login Bender",
+   "category": "Injection",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "loginJimChallenge",
+   "type": "challenge",
+   "name": "Login Jim",
+   "category": "Injection",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "chatbotGreedyInjectionChallenge",
+   "type": "challenge",
+   "name": "Greedy Chatbot Manipulation",
+   "category": "Injection",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs the chatbot's LLM backend (not reachable in the isolated lab) and POST requests",
+   "reason_code": "llm",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "systemPromptExtractionChallenge",
+   "type": "challenge",
+   "name": "System Prompt Extraction",
+   "category": "Injection",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs the chatbot's LLM backend (not reachable in the isolated lab) and POST requests",
+   "reason_code": "llm",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "csafChallenge",
+   "type": "challenge",
+   "name": "Security Advisory",
+   "category": "Miscellaneous",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "privacyPolicyProofChallenge",
+   "type": "challenge",
+   "name": "Privacy Policy Inspection",
+   "category": "Security through Obscurity",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a browser that renders the single-page app or runs JavaScript (DOM XSS, UI interaction, text only visible after rendering)",
+   "reason_code": "browser",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "loginAmyChallenge",
+   "type": "challenge",
+   "name": "Login Amy",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "vulnerableDockerImageChallenge",
+   "type": "challenge",
+   "name": "Vulnerable Infrastructure",
+   "category": "Vulnerable Components",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "oauthUserPasswordChallenge",
+   "type": "challenge",
+   "name": "Login Bjoern",
+   "category": "Broken Authentication",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "resetPasswordBenderChallenge",
+   "type": "challenge",
+   "name": "Reset Bender's Password",
+   "category": "Broken Authentication",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "manipulateClockChallenge",
+   "type": "challenge",
+   "name": "Expired Coupon",
+   "category": "Improper Input Validation",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "christmasSpecialChallenge",
+   "type": "challenge",
+   "name": "Christmas Special",
+   "category": "Injection",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "ephemeralAccountantChallenge",
+   "type": "challenge",
+   "name": "Ephemeral Accountant",
+   "category": "Injection",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "noSqlReviewsChallenge",
+   "type": "challenge",
+   "name": "NoSQL Manipulation",
+   "category": "Injection",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "hiddenImageChallenge",
+   "type": "challenge",
+   "name": "Steganography",
+   "category": "Security through Obscurity",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "dataExportChallenge",
+   "type": "challenge",
+   "name": "GDPR Data Theft",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "dlpPastebinDataLeakChallenge",
+   "type": "challenge",
+   "name": "Leaked Unsafe Product",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "resetPasswordUvoginChallenge",
+   "type": "challenge",
+   "name": "Reset Uvogin's Password",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "iacLeakedKeyChallenge",
+   "type": "challenge",
+   "name": "Login Cloud Admin",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "needs computation outside HTTP (signing a token, decryption, deobfuscating or running JavaScript, binary analysis); the agent has no code execution",
+   "reason_code": "compute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "typosquattingNpmChallenge",
+   "type": "challenge",
+   "name": "Legacy Typosquatting",
+   "category": "Vulnerable Components",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "knownVulnerableComponentChallenge",
+   "type": "challenge",
+   "name": "Vulnerable Library",
+   "category": "Vulnerable Components",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "extraLanguageChallenge",
+   "type": "challenge",
+   "name": "Extra Language",
+   "category": "Broken Anti Automation",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs brute force or guessing beyond the content-discovery wordlist, which the rules forbid",
+   "reason_code": "brute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "resetPasswordMortyChallenge",
+   "type": "challenge",
+   "name": "Reset Morty's Password",
+   "category": "Broken Anti Automation",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "changePasswordBenderChallenge",
+   "type": "challenge",
+   "name": "Change Bender's Password",
+   "category": "Broken Authentication",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "resetPasswordBjoernChallenge",
+   "type": "challenge",
+   "name": "Reset Bjoern's Password",
+   "category": "Broken Authentication",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "twoFactorAuthUnsafeSecretStorageChallenge",
+   "type": "challenge",
+   "name": "Two Factor Authentication",
+   "category": "Broken Authentication",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "dlpPasswordSprayingChallenge",
+   "type": "challenge",
+   "name": "Leaked Access Logs",
+   "category": "Observability Failures",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs a third-party site or another origin",
+   "reason_code": "external",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "svgInjectionChallenge",
+   "type": "challenge",
+   "name": "Cross-Site Imaging",
+   "category": "Security Misconfiguration",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "tokenSaleChallenge",
+   "type": "challenge",
+   "name": "Blockchain Hype",
+   "category": "Security through Obscurity",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs computation outside HTTP (signing a token, decryption, deobfuscating or running JavaScript, binary analysis); the agent has no code execution",
+   "reason_code": "compute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "retrieveBlueprintChallenge",
+   "type": "challenge",
+   "name": "Retrieve Blueprint",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "needs computation outside HTTP (signing a token, decryption, deobfuscating or running JavaScript, binary analysis); the agent has no code execution",
+   "reason_code": "compute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "leakedApiKeyChallenge",
+   "type": "challenge",
+   "name": "Leaked API Key",
+   "category": "Sensitive Data Exposure",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "typosquattingAngularChallenge",
+   "type": "challenge",
+   "name": "Frontend Typosquatting",
+   "category": "Vulnerable Components",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "supplyChainAttackChallenge",
+   "type": "challenge",
+   "name": "Supply Chain Attack",
+   "category": "Vulnerable Components",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "the information can be observed with GET, but solving means submitting it through POST /api/Feedbacks or /api/Complaints",
+   "reason_code": "submit",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "ssrfChallenge",
+   "type": "challenge",
+   "name": "SSRF",
+   "category": "Broken Access Control",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "timingAttackChallenge",
+   "type": "challenge",
+   "name": "Multiple Likes",
+   "category": "Broken Anti Automation",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "forgedCouponChallenge",
+   "type": "challenge",
+   "name": "Forged Coupon",
+   "category": "Cryptographic Issues",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs computation outside HTTP (signing a token, decryption, deobfuscating or running JavaScript, binary analysis); the agent has no code execution",
+   "reason_code": "compute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "continueCodeChallenge",
+   "type": "challenge",
+   "name": "Imaginary Challenge",
+   "category": "Cryptographic Issues",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs a state-changing request (POST, PUT, PATCH or DELETE); agents send read-only requests only (D-024) and recon never writes",
+   "reason_code": "post",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "premiumPaywallChallenge",
+   "type": "challenge",
+   "name": "Premium Paywall",
+   "category": "Cryptographic Issues",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs computation outside HTTP (signing a token, decryption, deobfuscating or running JavaScript, binary analysis); the agent has no code execution",
+   "reason_code": "compute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "web3WalletChallenge",
+   "type": "challenge",
+   "name": "Wallet Depletion",
+   "category": "Miscellaneous",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs a wallet and a blockchain network (POST requests, unreachable in the isolated lab)",
+   "reason_code": "web3",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "loginSupportChallenge",
+   "type": "challenge",
+   "name": "Login Support Team",
+   "category": "Security Misconfiguration",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs a signed-in session; signing in is a POST with a password, and agents never enter passwords",
+   "reason_code": "login",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "jwtForgedChallenge",
+   "type": "challenge",
+   "name": "Forged Signed JWT",
+   "category": "Vulnerable Components",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "needs computation outside HTTP (signing a token, decryption, deobfuscating or running JavaScript, binary analysis); the agent has no code execution",
+   "reason_code": "compute",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "restfulXssChallenge",
+   "type": "challenge",
+   "name": "API-only XSS",
+   "category": "XSS",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "fileWriteChallenge",
+   "type": "challenge",
+   "name": "Arbitrary File Write",
+   "category": "Vulnerable Components",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "rceChallenge",
+   "type": "challenge",
+   "name": "Blocked RCE DoS",
+   "category": "Insecure Deserialization",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "usernameXssChallenge",
+   "type": "challenge",
+   "name": "CSP Bypass",
+   "category": "XSS",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "persistedXssUserChallenge",
+   "type": "challenge",
+   "name": "Client-side XSS Protection",
+   "category": "XSS",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "deprecatedInterfaceChallenge",
+   "type": "challenge",
+   "name": "Deprecated Interface",
+   "category": "Security Misconfiguration",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "httpHeaderXssChallenge",
+   "type": "challenge",
+   "name": "HTTP-Header XSS",
+   "category": "XSS",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "noSqlCommandChallenge",
+   "type": "challenge",
+   "name": "NoSQL DoS",
+   "category": "Injection",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "noSqlOrdersChallenge",
+   "type": "challenge",
+   "name": "NoSQL Exfiltration",
+   "category": "Injection",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "reflectedXssChallenge",
+   "type": "challenge",
+   "name": "Reflected XSS",
+   "category": "XSS",
+   "difficulty": 2,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "sstiChallenge",
+   "type": "challenge",
+   "name": "SSTi",
+   "category": "Injection",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "persistedXssFeedbackChallenge",
+   "type": "challenge",
+   "name": "Server-side XSS Protection",
+   "category": "XSS",
+   "difficulty": 4,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "rceOccupyChallenge",
+   "type": "challenge",
+   "name": "Successful RCE DoS",
+   "category": "Insecure Deserialization",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "videoXssChallenge",
+   "type": "challenge",
+   "name": "Video XSS",
+   "category": "XSS",
+   "difficulty": 6,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "xxeFileDisclosureChallenge",
+   "type": "challenge",
+   "name": "XXE Data Access",
+   "category": "XXE",
+   "difficulty": 3,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "xxeDosChallenge",
+   "type": "challenge",
+   "name": "XXE DoS",
+   "category": "XXE",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "yamlBombChallenge",
+   "type": "challenge",
+   "name": "Memory Bomb",
+   "category": "Insecure Deserialization",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "lfrChallenge",
+   "type": "challenge",
+   "name": "Local File Read",
+   "category": "Vulnerable Components",
+   "difficulty": 5,
+   "in_reach": false,
+   "reason": "disabled by Juice Shop itself when it runs in Docker (disabledEnv: Docker)",
+   "reason_code": "docker",
+   "recon": [],
+   "agent": null,
+   "solved": false
+  },
+  {
+   "id": "S01",
+   "type": "surface",
+   "name": "robots.txt names the /ftp directory",
+   "in_reach": true,
+   "recon": [],
+   "agent": {
+    "found": true,
+    "exchange": "x1",
+    "observation": "GET /robots.txt: Disallow: /ftp"
+   },
+   "solved": null
+  },
+  {
+   "id": "S02",
+   "type": "surface",
+   "name": "Swagger UI for the B2B API at /api-docs",
+   "in_reach": true,
+   "recon": [],
+   "agent": null,
+   "solved": null
+  },
+  {
+   "id": "S03",
+   "type": "surface",
+   "name": "/encryptionkeys lists the JWT public key and premium.key",
+   "in_reach": true,
+   "recon": [],
+   "agent": null,
+   "solved": null
+  },
+  {
+   "id": "S04",
+   "type": "surface",
+   "name": "/rest/admin/application-configuration returns the server configuration without authentication",
+   "in_reach": true,
+   "recon": [
+    "endpoint http://juice.lab.test:3000/application-configuration",
+    "endpoint http://juice.lab.test:3000/rest/admin/application-configuration"
+   ],
+   "agent": null,
+   "solved": null
+  },
+  {
+   "id": "S05",
+   "type": "surface",
+   "name": "/rest/admin/application-version discloses the version without authentication",
+   "in_reach": true,
+   "recon": [
+    "endpoint http://juice.lab.test:3000/application-version"
+   ],
+   "agent": null,
+   "solved": null
+  },
+  {
+   "id": "S06",
+   "type": "surface",
+   "name": "CORS allows any origin (Access-Control-Allow-Origin: *)",
+   "in_reach": true,
+   "recon": [],
+   "agent": {
+    "found": true,
+    "exchange": "x1",
+    "observation": "every response carries Access-Control-Allow-Origin: *"
+   },
+   "solved": null
+  },
+  {
+   "id": "S07",
+   "type": "surface",
+   "name": "No Content-Security-Policy and no HSTS on the app",
+   "in_reach": true,
+   "recon": [],
+   "agent": {
+    "found": true,
+    "exchange": "x1",
+    "observation": "no Content-Security-Policy or Strict-Transport-Security header on any response"
+   },
+   "solved": null
+  },
+  {
+   "id": "S08",
+   "type": "surface",
+   "name": "Hard-coded test account credentials in main.js",
+   "in_reach": true,
+   "recon": [],
+   "agent": null,
+   "solved": null
+  },
+  {
+   "id": "S09",
+   "type": "surface",
+   "name": "Product reviews API returns author email addresses without authentication",
+   "in_reach": true,
+   "recon": [],
+   "agent": null,
+   "solved": null
+  }
+ ],
+ "summary": {
+  "challenges_total": 116,
+  "challenges_disabled_in_docker": 18,
+  "challenges_in_reach": 23,
+  "challenges_enabled_out_of_reach": 75,
+  "out_of_reach_by_reason": {
+   "post": 31,
+   "browser": 4,
+   "login": 15,
+   "llm": 4,
+   "submit": 10,
+   "external": 2,
+   "web3": 2,
+   "compute": 6,
+   "brute": 1,
+   "docker": 18
+  },
+  "surface_items": 9,
+  "in_reach_items": 32,
+  "recon": {
+   "found": 5,
+   "of": 32,
+   "recall": 0.156
+  },
+  "agent": {
+   "found": 4,
+   "of": 32,
+   "recall": 0.125
+  },
+  "recon_or_agent": {
+   "found": 9,
+   "of": 32,
+   "recall": 0.281
+  },
+  "solved": [
+   "errorHandlingChallenge",
+   "exposedMetricsChallenge",
+   "securityPolicyChallenge"
+  ],
+  "solved_in_reach": 3,
+  "solved_out_of_reach": []
+ }
+}
