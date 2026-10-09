@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, LaneItem, Me,
          PackSummary } from "./api";
+import { focusWhenReady, nextStep, SetupData, SetupGuide, SetupStep, setupComplete, setupSteps } from "./Setup";
 import { AddHost } from "./AddHost";
 import { plural } from "./words";
 import { People, Team } from "./People";
@@ -27,6 +28,18 @@ type Tab = "recon" | "ledger" | "controls" | "report" | "verify" | "history" | "
 const TAB_NAMES: Record<Tab, string> = {
   recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History", team: "Team",
 };
+
+/** Who the caller is on an engagement, for the tab it opens on and the order of the tabs. */
+type Home = "owner" | "worker" | "viewer" | "unknown";
+function homeOf(me: Me | null, engId: number): Home {
+  if (DEMO || !me) return "unknown";
+  if (me.is_owner) return "owner";
+  return readOnly(me, engId) ? "viewer" : "worker";
+}
+
+// Readers (clients, auditors) come for the report and its proof; the work tabs follow.
+const VIEWER_TABS: Tab[] = ["report", "verify", "history", "ledger", "controls", "recon"];
+const WORK_TABS: Tab[] = ["recon", "ledger", "controls", "report", "verify", "history"];
 
 export function App() {
   const [needLogin, setNeedLogin] = useState(false);
@@ -103,24 +116,47 @@ function Workspace() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("recon");
   const [me, setMe] = useState<Me | null>(null);
+  const [meKnown, setMeKnown] = useState(DEMO);
   const [page, setPage] = useState<"work" | "people">("work");
-  useEffect(() => { if (!DEMO) api.me().then(setMe).catch(() => {}); }, []);
+  const [menuOpen, setMenuOpen] = useState(false);   // narrow screens: the engagement list folds away
+  useEffect(() => {
+    if (!DEMO) api.me().then(setMe).catch(() => {}).finally(() => setMeKnown(true));
+  }, []);
   const owner = can(me, null, "team");   // People page and Team tab
+
+  // The engagement whose opening tab is still to be chosen (by role, and for owners by setup).
+  // Set only when a person opens an engagement, so a tab chosen on purpose is never overridden.
+  const [chooseFor, setChooseFor] = useState<number | null>(null);
+  const currentRef = useRef<number | null>(null);
+  currentRef.current = current;
+  const openEngagement = useCallback((id: number) => {
+    setCurrent(id);
+    setLaneId(null);
+    setPage("work");
+    setMenuOpen(false);
+    setChooseFor(id);
+  }, []);
 
   const loadEngagements = useCallback(async () => {
     try {
       const list = await api.engagements();
       setEngagements(list);
-      setCurrent((c) => c ?? list[0]?.id ?? null);
+      if (currentRef.current == null && list[0]) {
+        setCurrent(list[0].id);
+        setChooseFor(list[0].id);
+      }
     } catch (e) {
       setNotice(`Can't reach the ledger API. Start it with "docker compose up", then reload. (${(e as Error).message})`);
       setEngagements([]);
     }
   }, []);
 
+  const [coverageFor, setCoverageFor] = useState<number | null>(null);
   const loadCoverage = useCallback(async () => {
     if (current == null) return setCoverage(null);
-    setCoverage(await api.coverage(current));
+    const c = await api.coverage(current);
+    setCoverage(c);
+    setCoverageFor(current);
   }, [current]);
 
   useEffect(() => { loadEngagements(); }, [loadEngagements]);
@@ -130,6 +166,48 @@ function Workspace() {
   const hostsChanged = useCallback(async () => {
     await Promise.all([loadCoverage().catch((e) => setNotice((e as Error).message)), loadEngagements()]);
   }, [loadCoverage, loadEngagements]);
+
+  // The guided first run reads the engagement's scope and runs; it follows every change to the ledger.
+  const [setup, setSetup] = useState<SetupData | null>(null);
+  const setsUp = current != null && !DEMO && (can(me, current, "rules") || can(me, current, "work"));
+  useEffect(() => {
+    if (current == null || !setsUp || coverageFor !== current) return setSetup(null);
+    let live = true;
+    Promise.all([api.scope(current), api.jobs(current)])
+      .then(([scope, jobs]) => { if (live) setSetup({ engId: current, scope, jobs }); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [current, coverage, coverageFor, setsUp]);
+  const steps = useMemo(
+    () => (setup && coverage && setup.engId === current && coverageFor === current ? setupSteps(setup, coverage) : null),
+    [setup, coverage, current, coverageFor]);
+
+  // Choose the opening tab once what it depends on is known.
+  useEffect(() => {
+    if (chooseFor == null || chooseFor !== current) return;
+    if (!meKnown) return;
+    const home = homeOf(me, chooseFor);
+    if (home === "viewer") setTab("report");
+    else if (home === "worker") setTab("ledger");
+    else if (home === "owner") {
+      if (!steps) return;   // wait for the setup state
+      const next = nextStep(steps);
+      if (next) setTab(next.tab);   // otherwise the tab stays as it was
+    }
+    setChooseFor(null);
+  }, [chooseFor, current, me, meKnown, steps]);
+
+  function goToStep(st: SetupStep) {
+    setTab(st.tab);
+    setLaneId(null);
+    focusWhenReady(st.focus);
+  }
+
+  const home = current != null ? homeOf(me, current) : "unknown";
+  const tabs: Tab[] = [...(home === "viewer" ? VIEWER_TABS : WORK_TABS), ...(owner ? ["team" as const] : [])];
+  const currentName = engagements?.find((e) => e.id === current)?.name;
+  // With nothing to pick yet, the list is the only thing to show.
+  const menuShown = menuOpen || !engagements || engagements.length === 0;
 
   async function openCell(assetId: number, role: string, cell: Cell) {
     setNotice(null);
@@ -145,15 +223,22 @@ function Workspace() {
 
   return (
     <div className="shell">
-      <aside className="index">
-        <div className="brand">
-          <StampGlyph />
-          <div>
-            <h1 className="wordmark">AttackLedger</h1>
-            <p className="tagline">Nothing counts as tested until it has a receipt.</p>
+      <aside className={`index${menuShown ? "" : " folded"}`}>
+        <div className="index-top">
+          <div className="brand">
+            <StampGlyph />
+            <div>
+              <h1 className="wordmark">AttackLedger</h1>
+              <p className="tagline">Nothing counts as tested until it has a receipt.</p>
+            </div>
           </div>
+          <button type="button" className="btn ghost small menu-toggle" aria-expanded={menuShown}
+                  aria-controls="index-panel" onClick={() => setMenuOpen(!menuShown)}>
+            {menuShown ? "Hide engagements" : <>Engagements<span className="sr-only">, current: {currentName ?? "none"}</span></>}
+          </button>
         </div>
 
+        <div id="index-panel" className="index-panel">
         <nav aria-labelledby="eng-heading" className="index-nav">
           <h2 id="eng-heading" className="index-heading">Engagements</h2>
           {engagements && engagements.length > 0 && (
@@ -163,7 +248,7 @@ function Workspace() {
                   <button
                     className="engagement"
                     aria-current={e.id === current ? "page" : undefined}
-                    onClick={() => { setCurrent(e.id); setLaneId(null); setPage("work"); }}
+                    onClick={() => openEngagement(e.id)}
                   >
                     <span className="engagement-name">
                       {e.name}
@@ -176,7 +261,7 @@ function Workspace() {
             </ul>
           )}
           {can(me, null, "create") && (
-            <NewEngagement onCreated={async (id) => { await loadEngagements(); setCurrent(id); setPage("work"); }} />
+            <NewEngagement onCreated={async (id) => { await loadEngagements(); openEngagement(id); }} />
           )}
         </nav>
 
@@ -197,6 +282,7 @@ function Workspace() {
             </button>
           )}
           <ThemeToggle />
+        </div>
         </div>
       </aside>
 
@@ -236,7 +322,7 @@ function Workspace() {
             <header className="eng-head">
               <h2 className="eng-title">{coverage.engagement}</h2>
               <div className="tabs" role="tablist" aria-label="Engagement views">
-                {(["recon", "ledger", "controls", "report", "verify", "history", ...(owner ? ["team"] as const : [])] as const).map((t) => (
+                {tabs.map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -259,6 +345,9 @@ function Workspace() {
                 You can read this engagement{rolesOn(me, current).length ? ` (${rolesOn(me, current).join(", ")})` : ""}:
                 its coverage, evidence and reports, and verify its receipts. Changes are made by its testers, reviewers and owners.
               </p>
+            )}
+            {steps && !setupComplete(steps) && (tab === "recon" || tab === "ledger") && (
+              <SetupGuide steps={steps} canDo={(who) => can(me, current, who)} onGo={goToStep} />
             )}
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
               {tab === "recon" && <Recon engId={current} onAssetsChanged={hostsChanged} canManage={can(me, current, "rules")}
@@ -450,7 +539,7 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
       {coverage.assets.length === 0 ? (
         <p className="empty-row">{canWork ? "Add a host below to open its row in the ledger." : "No hosts in this engagement yet."}</p>
       ) : (
-        <div className="sheet" role="region" aria-label="Coverage ledger" tabIndex={0}>
+        <div className="sheet" role="region" aria-label="Coverage table, hosts by lane" tabIndex={0}>
           <table style={{ minWidth: `${12 + coverage.roles.length * 7.5}rem` }}>
             <colgroup>
               <col style={{ width: "12rem" }} />
@@ -529,7 +618,8 @@ function Legend() {
 function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
   cell: Cell; label: string; lockedBy: string[]; disabled: boolean; canOpen: boolean; onClick: () => void;
 }) {
-  if (disabled) return <span className="cell-blank" aria-label={`${label}: out of scope`} />;
+  // Table cells take their names from the row and column headers, so plain text, not aria-label on a span.
+  if (disabled) return <span className="cell-blank"><span className="sr-only">Out of scope</span></span>;
   switch (cell.status) {
     case "closed":
       return (
@@ -562,7 +652,7 @@ function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
             Needs {lockedBy.length === 1 ? lockedBy[0].toLowerCase() : `${lockedBy.length} lanes`}
           </span>
         );
-      if (!canOpen) return <span className="cell plain" aria-label={`${label}: not opened`}>Not opened</span>;
+      if (!canOpen) return <span className="cell plain">Not opened</span>;
       return (
         <button className="cell unopened" onClick={onClick} aria-label={`${label}: not opened. Open this lane`}>
           <span className="cell-word">Not opened</span>
@@ -695,14 +785,14 @@ function Folio({ laneId, me, onClose, onChanged }: {
   return (
     <>
       <div className="scrim" onClick={onClose} aria-hidden="true" />
-      <aside className="folio" role="dialog" aria-modal="true" aria-labelledby="folio-title">
-        <header className="folio-head">
+      <div className="folio" role="dialog" aria-modal="true" aria-labelledby="folio-title">
+        <div className="folio-head">
           <div>
             <h2 id="folio-title" className="folio-title">{lane ? lane.role_name : "Lane"}</h2>
             {lane && <p className="folio-host">{lane.host}</p>}
           </div>
           <button ref={closeRef} className="btn ghost" onClick={onClose}>Close</button>
-        </header>
+        </div>
 
         {!lane ? (
           <p className="folio-body">{error ?? "Loading lane…"}</p>
@@ -805,12 +895,12 @@ function Folio({ laneId, me, onClose, onChanged }: {
               <span>{raw.title}</span>
               <button className="btn ghost small" onClick={() => setRaw(null)}>Close</button>
             </div>
-            <pre>{raw.text}</pre>
+            <pre tabIndex={0} aria-label="Raw evidence bytes">{raw.text}</pre>
           </div>
         )}
 
         {lane && (
-          <footer className="folio-foot">
+          <div className="folio-foot">
             {error && <p className="field-error" role="alert">{error}</p>}
             {refused && lane.status !== "closed" && (problems.length > 0 ? (
               <div className="refusal" role="alert">
@@ -881,9 +971,9 @@ function Folio({ laneId, me, onClose, onChanged }: {
                 </button>
               </div>
             )}
-          </footer>
+          </div>
         )}
-      </aside>
+      </div>
     </>
   );
 }

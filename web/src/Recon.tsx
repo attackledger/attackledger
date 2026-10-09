@@ -199,7 +199,12 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
       )}
       {canManage && (editing || needsRules) && (
         <RulesOfEngagement engId={engId} scope={scope} mods={mods}
-                           onSaved={(sc, msg) => { setScope(sc); setRulesMsg(msg ?? null); onAssetsChanged(); refresh().catch(() => {}); }} />
+                           onSaved={(sc, msg, fold) => {
+                             // Saved: once the rules are complete the form folds into the summary bar above,
+                             // so the page leads with the work. An import keeps the form open for the rest.
+                             setScope(sc); setRulesMsg(msg ?? null); if (fold) setEditing(false);
+                             onAssetsChanged(); refresh().catch(() => {});
+                           }} />
       )}
       {rulesMsg && !(canManage && (editing || needsRules)) && <p className="saved" role="status">{rulesMsg}</p>}
 
@@ -233,7 +238,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
           <h3 id="workflow-title" className="panel-title">Recon workflow</h3>
           {canRun ? (
             <div className="run-all">
-              <button className="btn" disabled={!!runAllWhy || active} onClick={() => queue()}
+              <button id="run-all" className="btn" disabled={!!runAllWhy || active} onClick={() => queue()}
                       aria-describedby="run-all-why">
                 {running ? "Running…" : active ? "Queued…" : "Run all steps"}
               </button>
@@ -785,14 +790,14 @@ export function JobLog({ jobId, live }: { jobId: number; live: boolean }) {
   if (!job) return null;
   return (
     <div className="log">
-      <pre>{job.log || "Waiting for the worker…"}</pre>
+      <pre tabIndex={0} aria-label={`Log of run ${jobId}`}>{job.log || "Waiting for the worker…"}</pre>
       {job.output_sha256 && <p className="muted">Output SHA-256 <code>{job.output_sha256}</code></p>}
     </div>
   );
 }
 
 function RulesOfEngagement({ engId, scope, mods, onSaved }: {
-  engId: number; scope: Scope; mods: ReconModule[]; onSaved: (s: Scope, message?: string) => void;
+  engId: number; scope: Scope; mods: ReconModule[]; onSaved: (s: Scope, message?: string, fold?: boolean) => void;
 }) {
   const [include, setInclude] = useState(scope.include.join("\n"));
   const [exclude, setExclude] = useState(scope.exclude.join("\n"));
@@ -827,7 +832,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
       setConfirm(false);
       const msg = `Rules saved.${addedText(added)}`;
       setSaved(msg);
-      onSaved(s, msg);
+      onSaved(s, msg, true);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -847,7 +852,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
         <div className="roe-grid">
           <label>
             In scope
-            <textarea rows={4} value={include} onChange={(e) => setInclude(e.target.value)} placeholder={"*.example.com\nexample.com"} />
+            <textarea id="roe-include" rows={4} value={include} onChange={(e) => setInclude(e.target.value)} placeholder={"*.example.com\nexample.com"} />
             <span className="hint">One per line. *.example.com covers subdomains only, so list the apex separately.</span>
           </label>
           <label>
@@ -920,7 +925,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
             </label>
             <label>
               Your name or handle
-              <input value={operator} onChange={(e) => setOperator(e.target.value)} />
+              <input id="roe-operator" value={operator} onChange={(e) => setOperator(e.target.value)} />
             </label>
           </div>
           <label className="check">

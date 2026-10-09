@@ -90,7 +90,7 @@ export function Report({ engId }: { engId: number }) {
           Anyone can check a downloaded report without AttackLedger installed. The verifier rebuilds every receipt
           from its items and evidence, walks the evidence chain and recomputes the body hash:
         </p>
-        <pre className="cmd">python3 tools/verify_report.py attackledger-report.html</pre>
+        <pre className="cmd" tabIndex={0} aria-label="Command">python3 tools/verify_report.py attackledger-report.html</pre>
         <p className="muted">The hashes change every time the report is generated, because it includes the generation time.</p>
       </section>
     </div>

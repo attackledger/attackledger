@@ -129,7 +129,7 @@ export function Verify({ engId }: { engId: number }) {
           you trust. {DEMO ? <>Save the report JSON as <code>report.json</code> next to the script and the root, and run:</>
                            : <>Save the report JSON as <code>report.json</code> in the repository folder and run:</>}
         </p>
-        <pre className="cmd">{COMMAND}</pre>
+        <pre className="cmd" tabIndex={0} aria-label="Command">{COMMAND}</pre>
         <p className="muted">
           Timestamp tokens, the key log and the change history are not checked in the browser. A signature proves the
           key holder signed; to tie a key to a person, compare its fingerprint with the one the signer gives you.

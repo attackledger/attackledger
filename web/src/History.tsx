@@ -77,7 +77,7 @@ export function History({ engId }: { engId: number }) {
         {rows.length === 0
           ? <p className="muted">Nothing of this kind was recorded.</p>
           : (
-            <div className="history-wrap">
+            <div className="history-wrap" role="region" aria-label="Change history table" tabIndex={0}>
               <table className="ctl">
                 <thead>
                   <tr><th scope="col">When</th><th scope="col">By</th><th scope="col">Change</th></tr>

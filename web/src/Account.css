@@ -25,5 +25,5 @@
   padding: 0.45rem 0; border-top: 1px solid var(--rule); font-size: var(--step--1);
 }
 .key-notice li:first-child, .key-list li:first-child { border-top: 0; }
-.key-list li.off { opacity: 0.6; }
+.key-list li.off { color: var(--text-soft); }
 .key-list .tag { margin-left: 0.4rem; }
