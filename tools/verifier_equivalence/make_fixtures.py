@@ -393,7 +393,15 @@ def main():
     (OUT / "signed.json").write_bytes(signed_raw)
     (OUT / "content-deleted.json").write_bytes(deleted_raw)
     (OUT / "retention-deleted.json").write_bytes(make_retention())
-    (OUT / "rsa-timestamps.json").write_bytes(make_rsa(rsa_tsa))
+    rsa_raw = make_rsa(rsa_tsa)
+    (OUT / "rsa-timestamps.json").write_bytes(rsa_raw)
+    # The revocation dated before the receipt was issued, the key log rewritten to match.
+    r = json.loads(rsa_raw)
+    rev = next(e for e in r["key_log"]["entries"] if e["event"] == "revoked")
+    issued = json.loads(signed_lanes(r)[0]["receipt"]["signature"]["payload"])["issued_at"]
+    rev["at"] = (datetime.fromisoformat(issued) - timedelta(seconds=1)).isoformat()
+    rewrite_log(r["key_log"], ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"))
+    (OUT / "keylog-revoked-before-signing.json").write_text(json.dumps(rehash(r), ensure_ascii=False), encoding="utf-8")
     (OUT / "unsigned.json").write_bytes(make_unsigned())
     (OUT / "operator-token.json").write_bytes(make_token())
 

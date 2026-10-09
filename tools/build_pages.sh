@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Build the folder that goes to Cloudflare Pages (attackledger.com): the site, the demo,
-# the sample report, the security policy and security.txt, and the security headers. The
-# inline-script hashes in the CSP are computed from the files, so a changed script cannot run
-# until the headers are rebuilt.
+# the sample report, the verifier page, the security policy and security.txt, and the
+# security headers. The inline-script hashes in the CSP are computed from the files, so a
+# changed script cannot run until the headers are rebuilt. The verifier page (/verify, built
+# by tools/build_verify.sh) gets its own, stricter policy: no connections at all.
 # Usage: tools/build_pages.sh [OUT]   (default: dist/pages)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=${1:-dist/pages}
 rm -rf "$OUT"
 mkdir -p "$OUT"
-cp site/index.html site/404.html site/security.html site/sample-report.html site/sample-report.json site/verify_report.py \
+cp site/index.html site/404.html site/security.html site/verify.html site/sample-report.html site/sample-report.json site/verify_report.py \
    site/digicert-trusted-root-g4.pem site/favicon.svg site/favicon-32.png site/apple-touch-icon.png "$OUT"/
 mkdir -p "$OUT"/.well-known
 cp site/.well-known/security.txt "$OUT"/.well-known/    # RFC 9116; Pages serves /security for security.html
@@ -27,7 +28,7 @@ csp = "; ".join([
     "default-src 'self'",
     "script-src 'self' " + " ".join(sorted(hashes)),
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data:",
     "connect-src 'self'",
     "frame-src 'self'",
@@ -36,6 +37,18 @@ csp = "; ".join([
     "form-action 'none'",
     "frame-ancestors 'none'",
 ])
+# The verifier page carries its policy in a meta tag (so a saved copy keeps it); serve the same
+# one as a header, and refuse to build if the page's inline script or style no longer matches it.
+page = (out / "verify.html").read_text()
+verify_csp = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]+)">', page).group(1)
+for tag in ("script", "style"):
+    body = re.search(rf"<{tag}>(.*?)</{tag}>", page, re.S).group(1)
+    want = "'sha256-" + base64.b64encode(hashlib.sha256(body.encode()).digest()).decode() + "'"
+    if want not in verify_csp:
+        sys.exit(f"site/verify.html: the inline {tag} does not match its CSP; run tools/build_verify.sh")
+if "connect-src 'none'" not in verify_csp or "default-src 'none'" not in verify_csp:
+    sys.exit("site/verify.html: its CSP must keep default-src 'none' and connect-src 'none'")
+verify_csp += "; frame-ancestors 'none'"
 (out / "_headers").write_text(f"""/*
   Content-Security-Policy: {csp}
   X-Content-Type-Options: nosniff
@@ -43,6 +56,12 @@ csp = "; ".join([
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
   Cross-Origin-Opener-Policy: same-origin
   Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+/verify
+  Content-Security-Policy: {verify_csp}
+
+/verify.html
+  Content-Security-Policy: {verify_csp}
 
 /verify_report.py
   Content-Type: text/plain; charset=utf-8

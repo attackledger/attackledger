@@ -41,6 +41,7 @@
     {"name": "wrong key-log link", "file": "tools/verifier_equivalence/fixtures/keylog-link-wrong.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
     {"name": "key-log record edited", "file": "tools/verifier_equivalence/fixtures/keylog-record-edited.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
     {"name": "key registered after it signed (log rewritten)", "file": "tools/verifier_equivalence/fixtures/keylog-registered-later.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
+    {"name": "key revoked before it signed (log rewritten)", "file": "tools/verifier_equivalence/fixtures/keylog-revoked-before-signing.json", "roots": ["rsa-root.pem"], "expect": {"status": "failed", "K": "FAIL"}},
     {"name": "no key log", "file": "tools/verifier_equivalence/fixtures/keylog-removed.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "K": "-"}},
 
     {"name": "audit-log role change", "file": "tools/verifier_equivalence/fixtures/audit-role-edited.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "H": "FAIL"}},

@@ -1943,3 +1943,6 @@ export const internals = {
   ed25519: (pub: Uint8Array, message: Uint8Array, signature: Uint8Array, mode: Ed25519Mode) =>
     ed25519Verify(pub, message, signature, mode),
 };
+
+/** The roots trusted without being added, as verify_report.py trusts tools/tsa-roots/. */
+export { TSA_ROOTS };

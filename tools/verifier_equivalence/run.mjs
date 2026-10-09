@@ -7,7 +7,7 @@
 // Usage (through run.sh): node run.mjs BUNDLE [--python verify_report.py] [--markdown FILE]
 import { spawnSync } from "node:child_process";
 import { constants, createHash, generateKeyPairSync, privateEncrypt, sign } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -64,6 +64,16 @@ function firstDiff(a, b) {
   const x = a.split("\n"), y = b.split("\n");
   const i = x.findIndex((line, n) => line !== y[n]);
   return i < 0 ? x.length : i + 1;
+}
+
+// ---- the pinned roots are tools/tsa-roots/, as verify_report.py loads them -----------------
+
+const rootDir = path.join(path.dirname(python), "tsa-roots");
+const expected = readdirSync(rootDir).filter((f) => f.endsWith(".pem")).sort()
+  .map((f) => ({ name: f, text: readFileSync(path.join(rootDir, f), "utf8") }));
+if (JSON.stringify(expected) !== JSON.stringify(v.TSA_ROOTS)) {
+  console.error("web/src/tsa_roots.ts does not match tools/tsa-roots/: run tools/build_verify.sh");
+  process.exit(1);
 }
 
 // ---- whole reports ----------------------------------------------------------------------

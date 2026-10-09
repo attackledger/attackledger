@@ -31,7 +31,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 python3 -I - "$TMP/verify_page.js" <<'PY'
 import base64, hashlib, pathlib, re, sys
-script = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip("\n")
+script = "\n" + pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip("\n") + "\n"
 if re.search(r"</script|<!--", script, re.I):
     sys.exit("the bundled script contains </script or <!--, which would break the inline script")
 fonts = pathlib.Path("web/node_modules/@fontsource")
@@ -63,7 +63,7 @@ csp = "; ".join([
 ])
 page = page.replace("<!-- CSP -->", f'<meta http-equiv="Content-Security-Policy" content="{csp}">')
 page = page.replace("<!-- CSP TEXT -->", csp.replace("&", "&amp;").replace("<", "&lt;"))
-page = page.replace("<!-- SCRIPT -->", f"<script>\n{script}\n</script>")
+page = page.replace("<!-- SCRIPT -->", f"<script>{script}</script>")
 pathlib.Path("site/verify.html").write_text(page, encoding="utf-8")
 print(f"site/verify.html: {len(page.encode()) // 1024} KiB, script {len(script.encode()) // 1024} KiB")
 PY

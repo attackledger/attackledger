@@ -5,7 +5,9 @@ checks receipt timestamps, plus any you pass with `--tsa-root FILE`.
 
 Add a root only after you check its fingerprint against a source you trust (your
 operating system's root store, the authority's own site). Removing a file here makes
-timestamps from that authority fail verification.
+timestamps from that authority fail verification. The browser verifier (the public page and
+the app's Verify tab) trusts the same files: `tools/build_verify.sh` copies them into
+`web/src/tsa_roots.ts`, and `tools/verifier_equivalence/run.sh` fails if the copy is stale.
 
 | File | Authority | SHA-256 fingerprint |
 |---|---|---|
