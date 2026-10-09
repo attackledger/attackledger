@@ -619,6 +619,60 @@ export interface InboxFilter {
 let signedIn = false;
 export function sessionSeen(): boolean { return signedIn; }
 
+/** A test account (D-040): a person signed in to it; the API never returns its session material. */
+export interface TestAccount {
+  id: number;
+  label: string;
+  role: string;
+  hosts: string[];
+  kind: "cookie" | "bearer" | "headers";
+  header_names: string[];
+  fingerprint: string;
+  created_at: string;
+  created_by: string | null;
+  replaced_at: string | null;
+  last_used_at: string | null;
+}
+
+export type WriteStatus = "pending" | "confirming" | "approved" | "rejected" | "sent" | "failed" | "expired";
+
+/** A write an agent proposed (D-041), waiting for or decided by a person. */
+export interface WriteProposal {
+  id: number;
+  status: WriteStatus;
+  method: string;
+  url: string;
+  host: string;
+  account: string | null;
+  reason: string;
+  item_idx: number | null;
+  lane_id: number;
+  lane_role: string | null;
+  job_id: number | null;
+  job_running: boolean;
+  proposed_by: string;
+  request_sha256: string;
+  created_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  note: string | null;
+  expires_at: string | null;
+  sent_at: string | null;
+  response_status: number | null;
+  evidence_id: number | null;
+  needs_delete_confirmation: boolean;
+  confirm_path: string;
+  request?: { method: string; url: string; account: string | null; headers: [string, string][]; body: string; body_bytes: number };
+}
+
+export interface ApprovalQueue {
+  allow_writes: boolean;
+  separation_of_duties: boolean;
+  approval_minutes: number;
+  waiting: number;
+  items: WriteProposal[];
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (DEMO) return demoCall<T>(path, init);
   let res: Response;
@@ -677,6 +731,26 @@ export const api = {
   contentStatus: (engId: number) => call<ContentStatus>(`/engagements/${engId}/content`),
   deleteContent: (engId: number, confirm_name: string) =>
     call<ContentStatus>(`/engagements/${engId}/content/delete`, { method: "POST", body: JSON.stringify({ confirm_name }) }),
+  testAccounts: (engId: number) => call<TestAccount[]>(`/engagements/${engId}/test-accounts`),
+  addTestAccount: (engId: number, body: { label: string; role: string; hosts: string[]; kind: string; value: string }) =>
+    call<TestAccount>(`/engagements/${engId}/test-accounts`, { method: "POST", body: JSON.stringify(body) }),
+  replaceTestAccount: (engId: number, id: number, body: { role?: string; hosts?: string[]; kind?: string; value?: string }) =>
+    call<TestAccount>(`/engagements/${engId}/test-accounts/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteTestAccount: (engId: number, id: number) =>
+    call<{ deleted: number }>(`/engagements/${engId}/test-accounts/${id}/delete`, { method: "POST", body: "{}" }),
+  approvals: (engId: number) => call<ApprovalQueue>(`/engagements/${engId}/approvals`),
+  approveWrite: (engId: number, id: number, request_sha256: string, note: string) =>
+    call<WriteProposal>(`/engagements/${engId}/approvals/${id}/approve`, {
+      method: "POST", body: JSON.stringify({ request_sha256, note: note || null }),
+    }),
+  confirmDelete: (engId: number, id: number, request_sha256: string, confirm_path: string) =>
+    call<WriteProposal>(`/engagements/${engId}/approvals/${id}/confirm-delete`, {
+      method: "POST", body: JSON.stringify({ request_sha256, confirm_path }),
+    }),
+  rejectWrite: (engId: number, id: number, note: string) =>
+    call<WriteProposal>(`/engagements/${engId}/approvals/${id}/reject`, { method: "POST", body: JSON.stringify({ note }) }),
+  setAllowWrites: (engId: number, allow_writes: boolean) =>
+    call<{ allow_writes: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify({ allow_writes }) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
   createEngagement: (name: string, pack_id: string, engagement_type?: string) =>

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from . import gates, packs, surface, targets
+from . import approvals, gates, packs, surface, targets, testaccounts
 from .models import Endpoint, Lane, Lead, Observation
 
 # Endpoints read per host to rank; a host with more (a large archive) is ranked on the
@@ -103,6 +103,12 @@ def lane_context(session, lane: Lane, limit: int = 200) -> dict:
                   "rate_limit_rps": eng.rate_limit_rps,
                   "research_header": eng.research_header, "research_user_agent": eng.research_user_agent,
                   "authorized": eng.authorized_at is not None, "policy_url": eng.policy_url},
+        # Labels and roles only (D-040): the gateway adds an account's session, the agent never sees it.
+        "test_accounts": testaccounts.for_context(session, eng, host),
+        "writes": {"allowed": bool(eng.allow_writes), "approval_minutes": approvals.APPROVAL_MINUTES,
+                   "note": ("writes are proposed with propose_write and wait for a person's approval; a DELETE "
+                            "also needs their confirmation") if eng.allow_writes else
+                           "this engagement allows read-only requests only"},
         "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,
                    "controls": i.controls} for i in lane.items],
         "recon": {

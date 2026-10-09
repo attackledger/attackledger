@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, object_session
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault, workerapi
+from . import approvals, testaccounts
 from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
@@ -53,6 +54,8 @@ app = FastAPI(title="AttackLedger", version="0.7.1", lifespan=lifespan,
               dependencies=[Depends(authz.authorize)], docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(gatewayapi.router)
 app.include_router(workerapi.router)
+app.include_router(testaccounts.router)
+app.include_router(approvals.router)
 COOKIE_SECURE = os.environ.get("ATTACKLEDGER_COOKIE_SECURE", "") == "1"   # set behind HTTPS
 
 
@@ -1532,11 +1535,18 @@ class EngagementPatch(BaseModel):
     require_signatures: bool | None = None
     redact_evidence: bool | None = None         # off only for a lab: raw evidence is then stored as captured
     retain_until: date | None = None            # keep the content through this UTC date; null removes the date
+    allow_writes: bool | None = None            # agents may propose writes, each approved by a person (D-041)
 
 
 @app.patch("/engagements/{eng_id}")
 def update_engagement(eng_id: int, body: EngagementPatch, request: Request, session: Session = Depends(get_session)):
     eng = _get(session, Engagement, eng_id)
+    if body.allow_writes is not None and body.allow_writes != eng.allow_writes:
+        # Its own entry, not part of the settings snapshot: earlier entries stay as they were.
+        auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="engagement.writes",
+                        engagement_id=eng.id, change={"before": {"allow_writes": bool(eng.allow_writes)},
+                                                      "after": {"allow_writes": body.allow_writes}})
+        eng.allow_writes = body.allow_writes
     if "retain_until" in body.model_fields_set and body.retain_until != eng.retain_until:
         if eng.content_deleted_at is not None:
             raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(eng)))
@@ -1564,7 +1574,7 @@ def update_engagement(eng_id: int, body: EngagementPatch, request: Request, sess
     return {"id": eng.id, "separation_of_duties": eng.separation_of_duties,
             "require_signatures": eng.require_signatures, "redact_evidence": eng.redact_evidence,
             "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
-            "content_deleted": vault.deleted_info(eng)}
+            "allow_writes": bool(eng.allow_writes), "content_deleted": vault.deleted_info(eng)}
 
 
 # ---- retention and deleting content (D-043) -----------------------------------

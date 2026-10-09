@@ -147,11 +147,17 @@ class JobChannel:
         return self._call("finish", body)
 
     def agent_exchange(self, *, method: str, url: str, headers: dict, status: int,
-                       response_headers: list, body: bytes, at: str, view: str = "auto") -> dict:
+                       response_headers: list, body: bytes, at: str, view: str = "auto",
+                       account: str | None = None, approval_id: int | None = None,
+                       request_body: bytes | None = None) -> dict:
+        """account: the test account the gateway sent it as (D-040); approval_id and request_body:
+        an approved write the gateway sent (D-041)."""
         return self._call("agent/exchange", {
             "method": method, "url": url, "headers": headers, "status": status,
             "response_headers": [[k, v] for k, v in response_headers],
-            "body_b64": base64.b64encode(body).decode(), "at": at, "view": view})
+            "body_b64": base64.b64encode(body).decode(), "at": at, "view": view, "account": account,
+            "approval_id": approval_id,
+            "request_body_b64": base64.b64encode(request_body).decode() if request_body is not None else None})
 
     def agent_call(self, name: str, args: dict) -> dict:
         return self._call("agent/call", {"name": name, "args": args})

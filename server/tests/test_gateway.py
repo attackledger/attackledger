@@ -88,7 +88,7 @@ class Upstream:
         n = int(dict((k.lower(), v) for k, v in headers).get("content-length", "0"))
         body = await reader.readexactly(n) if n else b""
         self.requests.append({"t": time.monotonic(), "method": method, "target": target, "headers": headers,
-                              "body": body})
+                              "body": body, "bytes": len(head) + len(body)})
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n"
                      b"Set-Cookie: s=1\r\nConnection: close\r\n\r\nok")
         await writer.drain()
@@ -680,3 +680,23 @@ def test_the_control_port_relays_nothing_else(stack, method, path):
     status, headers, _ = control(stack, method, path)
     assert status in (404, 405) and headers.get("x-attackledger-gateway") == "refused"
     assert stack.api.relayed == []
+
+
+def test_bytes_sent_is_the_request_as_it_left(stack):
+    stack.get("http://app.example.com/a?b=c")
+    row = stack.rows(1)[0]
+    assert row["verdict"] == "allowed" and row["bytes_sent"] == stack.up.requests[0]["bytes"] > 50
+
+
+def test_katanas_burp_check_is_answered_here_and_sends_and_logs_nothing(stack):
+    status, headers, body = stack.get("http://burpsuite/")
+    assert status == 404 and body == b"AttackLedger gateway\n" and b"Burp" not in body
+    assert stack.up.requests == [] and stack.connects == []
+    time.sleep(0.2)
+    assert stack.gw.log_rows == []
+    # Without a job's credential it is refused and logged like any other request.
+    status, _, _ = stack.get("http://burpsuite/", auth=False)
+    assert status == 407 and stack.rows(1)[0]["verdict"] == "refused"
+    # Any other request to that name is not the check: refused as out of scope, as before.
+    status, _, _ = stack.get("http://burpsuite/cert")
+    assert status == 403 and stack.up.requests == []

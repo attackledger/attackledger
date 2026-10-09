@@ -17,6 +17,7 @@ import { Report } from "./Report";
 import { Verify } from "./Verify";
 import { History } from "./History";
 import { Import } from "./Import";
+import { Approvals, TestAccounts } from "./Accounts";
 import { can, readOnly, rolesOn } from "./access";
 import { ThemeToggle } from "./theme";
 import { formatRoute, linkTo, parseRoute, type Route } from "./route";
@@ -29,9 +30,10 @@ const TYPE_NAMES: Record<string, string> = {
   internal: "Internal assessment",
 };
 
-type Tab = "recon" | "import" | "ledger" | "controls" | "report" | "verify" | "history" | "team";
+type Tab = "recon" | "import" | "ledger" | "controls" | "report" | "verify" | "history" | "accounts" | "approvals" | "team";
 const TAB_NAMES: Record<Tab, string> = {
-  recon: "Recon", import: "Import", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History", team: "Team",
+  recon: "Recon", import: "Import", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History",
+  accounts: "Test accounts", approvals: "Approvals", team: "Team",
 };
 const isTab = (t: string | undefined): t is Tab => !!t && t in TAB_NAMES;
 
@@ -356,7 +358,20 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   }
 
   const home = current != null ? homeOf(me, current) : "unknown";
-  const tabs: Tab[] = [...(home === "viewer" ? VIEWER_TABS : WORK_TABS), ...(owner ? ["team" as const] : [])];
+  // Test accounts and the approval queue (D-040, D-041) are for testers and owners; the demo has neither.
+  const works = !DEMO && current != null && can(me, current, "work");
+  const tabs: Tab[] = [...(home === "viewer" ? VIEWER_TABS : WORK_TABS),
+                       ...(works ? ["accounts" as const, "approvals" as const] : []), ...(owner ? ["team" as const] : [])];
+  const [waiting, setWaiting] = useState(0);
+  useEffect(() => {
+    setWaiting(0);
+    if (!works || current == null) return;
+    let live = true;
+    const poll = () => api.approvals(current).then((q) => { if (live) setWaiting(q.waiting); }).catch(() => undefined);
+    poll();
+    const t = window.setInterval(poll, 10000);
+    return () => { live = false; window.clearInterval(t); };
+  }, [works, current]);
   // A link to a tab this person does not have (the Team tab, for someone who is not an owner):
   // the opening tab is chosen for them instead.
   const tabMissing = meKnown && current != null && !tabs.includes(tab);
@@ -517,6 +532,9 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
                     {t === "ledger" && (
                       <span className="tab-count">{coverage.closed_cells}/{coverage.total_cells}</span>
                     )}
+                    {t === "approvals" && waiting > 0 && (
+                      <span className="tab-count waiting">{waiting}<span className="sr-only"> waiting</span></span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -553,6 +571,13 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
               {tab === "history" && <History engId={current} />}
               {/* The demo has no Team tab, so its retention panel is shown with the history. */}
               {tab === "history" && DEMO && <Retention engId={current} onChanged={hostsChanged} />}
+              {tab === "accounts" && works && (
+                <TestAccounts engId={current} canWork={works}
+                              hosts={coverage.assets.filter((a) => a.in_scope).map((a) => a.host)} />
+              )}
+              {tab === "approvals" && works && (
+                <Approvals engId={current} canRules={can(me, current, "rules")} onCount={setWaiting} />
+              )}
               {tab === "team" && owner && (
                 <>
                   <Team engId={current} separation={!!coverage.separation_of_duties}

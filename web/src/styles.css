@@ -1125,3 +1125,42 @@ a.btn.ghost { color: var(--text); }
 .retention-list-title { margin: 0; }
 .retention-list { margin: 0; padding-left: 1.1rem; font-size: var(--step--1); }
 .retention-list li { margin: 0.15rem 0; }
+
+/* ---- test accounts and the approval queue (D-040, D-041) ---------------------------------- */
+.accounts, .approvals { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.9rem; max-width: 56rem; }
+.approvals { margin-top: 1.25rem; }
+.accounts p, .approvals p { margin: 0; }
+.accounts .check, .approvals .check { align-items: flex-start; }
+.sub-title { margin: 0.4rem 0 0; font: 700 var(--step-0) / 1.2 var(--slab); }
+.account-list, .write-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+.account-card, .write-card { display: grid; gap: 0.6rem; min-width: 0; padding: 0.8rem 0.9rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); }
+.account-head { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; font-size: var(--step--1); }
+.account-label { font: 700 var(--step-0) / 1 var(--slab); color: var(--ink); }
+.account-facts { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.2rem 0.9rem; font-size: var(--step--1); }
+.account-facts dt { color: var(--text-faint); }
+.account-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.account-form { display: grid; gap: 0.75rem; min-width: 0; }
+.account-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.75rem 1rem; }
+.accounts .field, .approvals .field { display: grid; gap: 0.3rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.accounts .field > label, .approvals .field > label, .accounts legend { font-size: var(--step--1); color: var(--text-soft); padding: 0; }
+.host-choice, .kind-choice { display: flex !important; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.host-choice legend, .kind-choice legend { width: 100%; margin-bottom: 0.2rem; }
+.host-choice .hint { width: 100%; }
+.accounts input:not([type="checkbox"]):not([type="radio"]), .accounts textarea, .approvals input:not([type="checkbox"]) {
+  width: 100%; max-width: 100%; padding: 0.45rem 0.6rem; background: var(--bg); color: var(--text);
+  border: 1px solid var(--rule); border-radius: var(--radius); font: var(--step--1) / 1.4 var(--body);
+}
+.accounts textarea { font-family: var(--mono, ui-monospace, monospace); resize: vertical; }
+.accounts input:focus-visible, .accounts textarea:focus-visible, .approvals input:focus-visible { outline: 2px solid var(--ink); outline-offset: 0; border-color: transparent; }
+.accounts .btn[type="submit"] { justify-self: start; }
+.write-line { display: flex; gap: 0.5rem; align-items: baseline; min-width: 0; margin: 0; }
+.write-url { min-width: 0; overflow-wrap: anywhere; font-size: var(--step--1); }
+.method { flex: none; font: 700 var(--step--2) / 1 var(--body); letter-spacing: 0.04em; padding: 0.25rem 0.45rem; border-radius: var(--radius); color: var(--ink); border: 1px solid var(--ink); }
+.method.m-delete { color: var(--red); border-color: var(--red); background: var(--red-wash); }
+.write-request summary { cursor: pointer; font-size: var(--step--1); }
+.write-request pre { margin: 0.4rem 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow-y: auto; }
+.write-decide { display: grid; gap: 0.5rem; }
+.write-list.decided .write-card { background: transparent; }
+.tab-count.waiting { color: var(--sheet); background: var(--red); border-color: var(--red); font-weight: 700; }
+/* Keep screen-reader text inside its box: in the scrolling tab row it would widen the page. */
+.tab-count.waiting, .accounts .btn, .approvals .btn { position: relative; }

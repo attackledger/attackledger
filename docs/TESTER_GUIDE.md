@@ -137,6 +137,42 @@ by you:
 4. Read its evidence and what it left open (**Show log** shows each step). The agent cannot
    close a lane: a reviewer signs it, as for a manual lane.
 
+### Test accounts for the agent
+
+Authorization tests need signed-in sessions, often two (can A read B's order?). You create the
+accounts on the target and sign in to them yourself; AttackLedger never creates accounts or
+types passwords.
+
+1. Open the **Test accounts** tab. Give the account a **Label** (A, B, ...), its **Role in the
+   application**, and tick the in-scope **Hosts it is for**.
+2. Choose what you are pasting: a **Cookie header** value, a **Bearer token**, or **Headers**
+   (one `Name: value` per line), paste it and **Add test account**. It is stored encrypted and
+   never shown again: the tab shows a fingerprint, when it was added, replaced and last used.
+3. The agent sees only the labels and roles. When it sends a request "as A", the gateway adds A's
+   session for those hosts only, and removes it from the response. The evidence says "as test
+   account A".
+4. When a session expires, sign in again and **Replace** it. **Delete** it when you are done.
+   Every change is in the History tab, without the value. Deleting the engagement's data deletes
+   the accounts too. Accounts need evidence redaction on.
+
+### Writes the agent proposes
+
+By default agents send read-only requests only. An owner can tick **Allow agents to propose
+writes** on the **Approvals** tab. Then the agent may propose a POST, PUT, PATCH or DELETE; nothing
+is sent until a tester approves it. The tab's badge counts what is waiting.
+
+1. Read the whole request: method, URL, headers, body, the test account, the item and the agent's
+   reason.
+2. **Approve and send once**, with a note if you like, or write a note and **Reject**. The agent
+   reads your note.
+3. A DELETE needs a second step: type the URL's path exactly, then **Confirm DELETE**.
+4. The approval is for that exact request and expires after 15 minutes. The agent's run sends it
+   once, the next time it checks its writes; the exchange becomes evidence that says who approved
+   it. If the run ends first, the write expires unsent.
+
+With separation of duties on, whoever started the agent run cannot approve its writes. Viewers
+and reviewers do not see the queue. The design is in `docs/APPROVALS.md`.
+
 ## 5. Import from Burp, Caido or a browser
 
 Export the traffic from your tool, upload the file, then map each entry to checklist items.

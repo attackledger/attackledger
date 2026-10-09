@@ -24,6 +24,7 @@ and marking jobs whose worker went away as interrupted (maintenance, started by 
 import base64
 import binascii
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -37,7 +38,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from . import agentloop, agenttools, auditlog, egress, executors, gates, jobgates, ledger, modules, packs, redact, scope, triage, urls
+from . import agentloop, agenttools, approvals, auditlog, egress, executors, gates, jobgates, ledger, modules, packs, redact, scope, triage, urls
 from . import targets as targeting
 from . import vault
 from .db import SessionLocal, get_session
@@ -77,7 +78,7 @@ WRITES: dict[str, dict] = {
     # Agent runs write only through agent/exchange and agent/call (agenttools.Toolbox).
     "agent": {"agent": True},
 }
-AGENT_CALLS = ("add_evidence", "mark_item", "record_lead")
+AGENT_CALLS = ("add_evidence", "mark_item", "record_lead", "propose_write", "write_status")
 AGENT_OUTCOMES = {"finished", "ended", "turn_limit", "cost_limit", "cancelled", "timed_out", "refused"}
 
 
@@ -95,10 +96,12 @@ def token_matches(job: Job, token: str) -> bool:
 
 
 def end_tokens(session, job: Job) -> None:
-    """The job's token and its gateway secret stop working; its exchange ids are forgotten."""
+    """The job's token and its gateway secret stop working; its exchange ids are forgotten, and
+    the writes it proposed can no longer be sent (D-041)."""
     job.worker_token_sha256 = None
     job.gateway_secret_sha256 = None
     session.execute(sa_delete(AgentExchange).where(AgentExchange.job_id == job.id))
+    approvals.end_job(session, job.id)
 
 
 def _log(job: Job, *lines: str) -> None:
@@ -475,7 +478,7 @@ def _toolbox(session, job: Job) -> agenttools.Toolbox:
         rep.kinds = dict((x.redaction or {}).get("kinds") or {})
         rep.not_redacted = list((x.redaction or {}).get("not_redacted") or [])
         tb.exchanges[x.xid] = {"sha256": x.sha256, "method": x.method, "url": x.url, "status": x.status,
-                               "redaction": rep}
+                               "redaction": rep, "account": x.account, "approval_id": x.approval_id}
     return tb
 
 
@@ -488,6 +491,9 @@ class ExchangeIn(BaseModel):
     body_b64: str = Field(max_length=(agenttools.MAX_READ_BYTES * 4) // 3 + 8)
     at: str = Field(max_length=64)
     view: str = Field(default="auto", max_length=8)    # what the model is shown (agenttools.VIEWS)
+    account: str | None = Field(default=None, max_length=16)       # sent as this test account (D-040)
+    approval_id: int | None = None                                  # an approved write (D-041)
+    request_body_b64: str | None = Field(default=None, max_length=(agenttools.MAX_WRITE_BODY * 4) // 3 + 8)
 
 
 @router.post("/worker/jobs/{job_id}/agent/exchange")
@@ -501,13 +507,21 @@ def agent_exchange(job_id: int, body: ExchangeIn, session: Session = Depends(get
     except (binascii.Error, ValueError):
         raise HTTPException(422, "body_b64 is not base64")
     try:
+        sent_body = base64.b64decode(body.request_body_b64, validate=True) if body.request_body_b64 else b""
+    except (binascii.Error, ValueError):
+        raise HTTPException(422, "request_body_b64 is not base64")
+    try:
         rec = tb.record_sent(body.method.upper(), body.url, body.headers, body.status, body.response_headers,
-                             raw, body.at, body.view)
+                             raw, body.at, body.view, account=body.account, approval_id=body.approval_id,
+                             request_body=sent_body)
     except agenttools.ToolError as e:
         raise HTTPException(422, str(e))
+    except vault.ContentDeleted as e:
+        raise HTTPException(409, str(e))
     x = tb.exchanges[rec["exchange_id"]]
     session.add(AgentExchange(job_id=job.id, xid=rec["exchange_id"], sha256=x["sha256"], method=x["method"],
-                              url=x["url"], status=x["status"],
+                              url=x["url"], status=x["status"], account=x.get("account"),
+                              approval_id=x.get("approval_id"),
                               redaction={"kinds": x["redaction"].kinds, "not_redacted": x["redaction"].not_redacted}))
     session.commit()
     text = rec["text"]
@@ -526,10 +540,19 @@ def agent_call(job_id: int, body: CallIn, session: Session = Depends(get_session
     if body.name not in AGENT_CALLS:
         raise HTTPException(422, f"{body.name[:32]} is not a tool the API runs for an agent")
     tb = _toolbox(session, job)
-    text, is_error = tb.call(body.name, body.args)
+    to_send = []
+    if body.name == "write_status":
+        # The worker sends what a person approved, through the gateway (it uses the approval).
+        try:
+            statuses, to_send = tb.write_status(agenttools._ids(body.args))
+            text, is_error = json.dumps({"writes": statuses}, ensure_ascii=False), False
+        except agenttools.ToolError as e:
+            text, is_error = str(e), True
+    else:
+        text, is_error = tb.call(body.name, body.args)
     session.commit()
     return {"text": text, "is_error": is_error, "evidence_added": tb.evidence_added,
-            "items_marked": tb.items_marked, "leads_added": tb.leads_added}
+            "items_marked": tb.items_marked, "leads_added": tb.leads_added, "to_send": to_send}
 
 
 # ---- finish -------------------------------------------------------------------------------------

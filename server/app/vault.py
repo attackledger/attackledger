@@ -265,6 +265,39 @@ def open_summary(eng_id: int, sealed: str, summary_sha256: str, key: bytes | Non
     return text if hashlib.sha256(text.encode()).hexdigest() == summary_sha256 else None
 
 
+def _secret_aad(eng_id: int, purpose: str, digest: str) -> bytes:
+    return b"attackledger-secret\0" + f"{int(eng_id)}\0{purpose}\0{digest}".encode()
+
+
+def seal_secret(eng_id: int, purpose: str, plaintext: str) -> tuple[str, str]:
+    """(sealed text, sha256 of the plaintext) for a test account's session material or a
+    proposed write (D-040, D-041). The purpose and the hash are associated data: a sealed value
+    copied to another row, purpose or engagement does not open."""
+    digest = hashlib.sha256(plaintext.encode()).hexdigest()
+    key = data_key(eng_id, create=True)
+    nonce = secrets.token_bytes(12)
+    ct = AESGCM(key).encrypt(nonce, plaintext.encode(), _secret_aad(eng_id, purpose, digest))
+    return SUMMARY_PREFIX + base64.b64encode(nonce + ct).decode(), digest
+
+
+def open_secret(eng_id: int, purpose: str, sealed: str | None, digest: str) -> str | None:
+    """The plaintext, or None once the content was deleted or when it does not open or match."""
+    if not sealed or not sealed.startswith(SUMMARY_PREFIX):
+        return None
+    try:
+        key = data_key(eng_id)
+    except (ContentDeleted, StoreError):
+        return None
+    if key is None:
+        return None
+    try:
+        raw = base64.b64decode(sealed[len(SUMMARY_PREFIX):], validate=True)
+        text = AESGCM(key).decrypt(raw[:12], raw[12:], _secret_aad(eng_id, purpose, digest)).decode()
+    except (InvalidTag, ValueError, binascii.Error, UnicodeDecodeError):
+        return None
+    return text if hashlib.sha256(text.encode()).hexdigest() == digest else None
+
+
 class Keys:
     """Data keys for one request or report, read once per engagement."""
 
@@ -345,6 +378,9 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
         counts[name] = session.execute(sa_delete(model).where(model.engagement_id == eng.id)).rowcount or 0
     from . import inbox                 # imported entries: URLs and labels go too (D-029)
     counts.update(inbox.wipe(session, eng.id))
+    from . import approvals, testaccounts   # test accounts and proposed writes (D-040, D-041)
+    counts.update(testaccounts.wipe(session, eng.id))
+    counts.update(approvals.wipe(session, eng.id))
     now = datetime.now(timezone.utc)
     by = "the retention policy" if reason == "retention" else auditlog.actor_label(actor)
     note = f"Log deleted with the engagement's content on {now.date().isoformat()}.\n"

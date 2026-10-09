@@ -31,6 +31,7 @@ ACTORS = {
     "open": "open mode (no sign-in)",
     "backfill": "recorded when the audit log was added",
     "retention": "the retention policy",
+    "gateway": "the traffic gateway",               # it sends an approved write (D-041)
 }
 ACTIONS = (
     "engagement.created", "scope.updated", "engagement.authorized", "engagement.settings", "members.updated",
@@ -40,6 +41,8 @@ ACTIONS = (
     "import.batch", "import.dismissed", "import.restored",
     # A receipted lane changed: its receipt is void until someone signs again (gates.py).
     "lane.receipt_voided", "lane.item_updated",
+    "account.added", "account.replaced", "account.deleted", "engagement.writes",
+    "write.approved", "write.delete_confirmed", "write.rejected", "write.sent",
 )
 RECORD_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
 CLI = {"kind": "cli", "user_id": None, "name": "operator CLI", "email": None}
@@ -372,6 +375,33 @@ def describe(rec: dict) -> str:
             return f"{what} on {where}, whose receipt {sha} is void; the lane needs a new signature"
         return (f"{what} on {where}, which voided its receipt {sha} signed by {rc.get('closed_by') or 'someone'}. "
                 "The lane needs a new signature, even if it is changed back")
+    if a in ("account.added", "account.replaced", "account.deleted"):
+        acc = after if a != "account.deleted" else (before or {})
+        what = (f"test account {acc.get('label')} ({acc.get('role')}, {acc.get('kind')}, for "
+                f"{', '.join(acc.get('hosts') or []) or 'no host'}, fingerprint {acc.get('fingerprint')})")
+        if a == "account.added":
+            return f"Added {what}; the session material is stored encrypted and never shown"
+        if a == "account.deleted":
+            return f"Deleted {what}"
+        changed = [k for k in ("role", "hosts", "kind", "fingerprint") if (before or {}).get(k) != after.get(k)]
+        return f"Replaced {', '.join('the session material' if k == 'fingerprint' else k for k in changed)} of {what}"
+    if a == "engagement.writes":
+        return ("Allowed agents to propose writes; each one waits for a person's approval" if after.get("allow_writes")
+                else "Stopped agents proposing writes: only read-only requests are sent")
+    if a.startswith("write."):
+        w = after
+        req = f"write {w.get('proposal')} ({w.get('method')} on {w.get('host')}" + (
+            f" as test account {w['account']}" if w.get("account") else "") + \
+            f", request SHA-256 {str(w.get('request_sha256'))[:12]}…)"
+        note = f": {w['note']}" if w.get("note") else ""
+        if a == "write.approved":
+            return f"Approved {req}{note}" + ("; it waits for the DELETE confirmation" if
+                                               w.get("waits_for_delete_confirmation") else "")
+        if a == "write.delete_confirmed":
+            return f"Confirmed the DELETE of {req} by typing its path {w.get('path')}"
+        if a == "write.rejected":
+            return f"Rejected {req}{note}"
+        return f"Sent the approved {req}, once"
     person = _who(ch.get("person"))
     if a == "person.created":
         if snapshot:

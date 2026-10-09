@@ -114,6 +114,10 @@ def gateway_flags(cmd: list[str], gw: "egress.Egress", r: "Run | None" = None) -
     waybackurls, Arjun) use the proxy environment. The worker has no other route, so a tool
     that ignored both would fail, never bypass the gateway."""
     tool = os.path.basename(cmd[0])
+    return [*_proxy_flags(tool, gw, r), *(f for f in egress.tool_flags(tool) if f not in cmd)]
+
+
+def _proxy_flags(tool: str, gw: "egress.Egress", r: "Run | None") -> list[str]:
     url = gw.proxy_url(tool)
     if tool == "subfinder":
         return ["-proxy", url]

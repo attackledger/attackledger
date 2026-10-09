@@ -110,7 +110,20 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
 
     ("GET", "/engagements/{eng_id}/gateway-log"): ("read", ENG),
 
+    # Test accounts (D-040): who may add, replace and delete them; nobody can read the material.
+    ("GET", "/engagements/{eng_id}/test-accounts"): ("read", ENG),
+    ("POST", "/engagements/{eng_id}/test-accounts"): ("tester", ENG),
+    ("PUT", "/engagements/{eng_id}/test-accounts/{account_id}"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/test-accounts/{account_id}/delete"): ("tester", ENG),
+    # Writes with a person's approval (D-041): testers decide, viewers and reviewers do not.
+    ("GET", "/engagements/{eng_id}/approvals"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/approvals/{pid}/approve"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/approvals/{pid}/confirm-delete"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/approvals/{pid}/reject"): ("tester", ENG),
+
     ("POST", "/gateway/session"): ("gateway", None),
+    ("POST", "/gateway/account"): ("gateway", None),
+    ("POST", "/gateway/approval"): ("gateway", None),
     ("GET", "/gateway/dns-scopes"): ("gateway", None),
     ("POST", "/gateway/log"): ("gateway", None),
 

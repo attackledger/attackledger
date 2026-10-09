@@ -76,6 +76,13 @@ come first by kind and severity.
 with the exact observation; a person validates findings.
 - Evidence summaries are read by an auditor: one or two plain sentences on what was requested and \
 what the response showed.
+- Test accounts: when the lane context lists test_accounts, http_request (and propose_write) can send a \
+request as one of them with as_account. A person signed in to them; the gateway adds the session and you \
+never see it. Use two accounts to test whether one can reach the other's objects.
+- Writes: only when the lane context says writes are allowed. propose_write puts one POST, PUT, PATCH or \
+DELETE in a queue for a person; nothing is sent until they approve that exact request. Do not wait idle: \
+work other items, then call write_status, which sends approved writes once and reports rejections with the \
+person's note. Propose only writes the checklist item needs, on the test accounts' own data.
 - Call finish when every open item is done, N/A, or cannot be tested, with a summary for the reviewer."""
 
 
@@ -111,12 +118,12 @@ def first_message(ctx: dict) -> str:
             + "\n\nWork the open items of this lane.")
 
 
-def request_params(model: str, messages: list) -> dict:
+def request_params(model: str, messages: list, tools: list | None = None) -> dict:
     params = {
         "model": model,
         "max_tokens": MAX_TOKENS,
         "system": SYSTEM,
-        "tools": agenttools.TOOLS,
+        "tools": tools or agenttools.TOOLS,
         "messages": messages,
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": EFFORT},
@@ -180,7 +187,7 @@ def run_loop(tools, ctx: dict, client, *, model: str = MODEL, max_turns: int = D
             result.detail = f"stopped at the cost limit (about ${result.cost_usd:.2f} of ${max_cost_usd:.2f})"
             break
         result.turns = turn
-        response = client.beta.messages.create(**request_params(model, messages))
+        response = client.beta.messages.create(**request_params(model, messages, getattr(tools, "definitions", None)))
         _add_usage(result, _get(response, "usage"))
         stop = _get(response, "stop_reason")
         content = _get(response, "content") or []
