@@ -5,6 +5,10 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
+Test accounts and approved writes for agents, and organizations on every record.
+
 ### Added
 - **Organizations** (D-042, migration 0022). Every record belongs to one. The migration
   makes a default organization and moves every existing row into it; a self-hosted

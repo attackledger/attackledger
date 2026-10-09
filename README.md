@@ -368,7 +368,7 @@ assumes and enforces:
 
 ## Status
 
-`v0.7.1`, the MVP for a design partner (see [`CHANGELOG.md`](CHANGELOG.md) and
+`v0.8.0`, the MVP for a design partner plus test accounts, approved writes and organizations (see [`CHANGELOG.md`](CHANGELOG.md) and
 [`docs/MVP.md`](docs/MVP.md)). Before 1.0, minor versions may change the data model;
 migrations upgrade existing databases. Hunt agents are a preview and have not yet run
 against the live API. Expect rough edges.
