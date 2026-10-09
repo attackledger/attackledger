@@ -40,6 +40,12 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **Client-facing HTML report.** Cover, a summary for the client with what the report
+  does and does not prove, scope and authorization, a hosts × lanes coverage matrix,
+  per-lane receipts (hash, signer, key, timestamp, void state) and step-by-step
+  verification with the pinned DigiCert root; prints cleanly to A4 PDF. The JSON report
+  adds `engagement.pack.lanes`, `engagement.separation_of_duties` and
+  `engagement.require_signatures` (additive; format unchanged).
 - **Role-aware web app and a Verify tab.** Viewers get a read-only app, and each role
   sees only the actions the server accepts (tester works, reviewer signs, owner manages);
   one helper (`web/src/access.ts`) mirrors `authz.RULES`. The Verify tab checks each

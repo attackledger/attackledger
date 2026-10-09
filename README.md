@@ -220,6 +220,9 @@ public key, so `tools/verify_report.py` checks who signed what without trusting 
 server. Turn on *require signatures* on the Team tab to refuse unsigned closes.
 Signing needs HTTPS or localhost.
 
+The HTML report (`/engagements/{id}/report.html`) is written for clients and auditors: open
+it in a browser and print to PDF, or check it offline with `python3 verify_report.py report.html`.
+
 Clients and auditors sign in as viewers: they read coverage, evidence and reports, and
 the Verify tab checks every receipt's signature in their browser. The authoritative check
 is `python3 verify_report.py report.json --tsa-root digicert-trusted-root-g4.pem`.

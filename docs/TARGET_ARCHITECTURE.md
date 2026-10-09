@@ -162,6 +162,7 @@ How AttackLedger is offered is not decided. The architecture keeps every option 
    format version 2, verifier update.
    Signatures built 2026-10-09 (D-033); timestamps built 2026-10-09 (D-034).
 3. **Client and auditor views.** A client-facing report and a read-only viewer role.
+   Built 2026-10-09: the HTML report for clients, a role-aware web app and a Verify tab.
 4. **Deployment decision** (D-030), with what the first three taught us.
 
 Later (D-035): the import inbox and adapters for Caido, Burp and nuclei. Each is an
