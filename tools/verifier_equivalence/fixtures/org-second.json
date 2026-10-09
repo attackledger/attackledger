@@ -9,7 +9,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.566988+00:00",
+    "at": "2026-10-09T23:39:54.369106+00:00",
     "change": {
      "after": {
       "disabled": false,
@@ -36,7 +36,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.591254+00:00",
+    "at": "2026-10-09T23:39:54.393365+00:00",
     "change": {
      "after": {
       "disabled": false,
@@ -63,7 +63,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.593553+00:00",
+    "at": "2026-10-09T23:39:54.395749+00:00",
     "change": {
      "after": {
       "engagement_type": "bug_bounty",
@@ -84,7 +84,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.595819+00:00",
+    "at": "2026-10-09T23:39:54.398092+00:00",
     "change": {
      "after": {
       "crawl_depth": 3,
@@ -119,10 +119,10 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.598034+00:00",
+    "at": "2026-10-09T23:39:54.400238+00:00",
     "change": {
      "after": {
-      "authorized_at": "2026-10-09T23:30:12.597815+00:00",
+      "authorized_at": "2026-10-09T23:39:54.400037+00:00",
       "authorized_by": "Olive two",
       "policy_url": "https://example.com/policy"
      },
@@ -144,7 +144,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.601235+00:00",
+    "at": "2026-10-09T23:39:54.403727+00:00",
     "change": {
      "after": [
       {
@@ -179,7 +179,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.603688+00:00",
+    "at": "2026-10-09T23:39:54.406246+00:00",
     "change": {
      "after": {
       "allow_writes": true
@@ -200,7 +200,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.604101+00:00",
+    "at": "2026-10-09T23:39:54.406637+00:00",
     "change": {
      "after": {
       "retain_until": "2099-01-01"
@@ -221,7 +221,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.756692+00:00",
+    "at": "2026-10-09T23:39:54.560444+00:00",
     "change": {
      "after": {
       "accepted": 3,
@@ -248,7 +248,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.765418+00:00",
+    "at": "2026-10-09T23:39:54.569244+00:00",
     "change": {
      "after": {
       "entries": [
@@ -269,7 +269,7 @@
      "name": "Olive Two",
      "user_id": 4
     },
-    "at": "2026-10-09T23:30:12.768136+00:00",
+    "at": "2026-10-09T23:39:54.571979+00:00",
     "change": {
      "after": {
       "fingerprint": "sha256:b6ea0d23d865e4f1",
@@ -291,74 +291,74 @@
   ],
   "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
   "head": {
-   "entry_hash": "d80c0513f922d1bd9fabae1c1455c81a8248f6a18019d37d6ed679e50fe0ae17",
+   "entry_hash": "b7bae06a3800212452c2e29b0b0c13e137f20e46007a5c8df7d688bd49969e84",
    "seq": 12
   },
   "links": [
    {
-    "entry_hash": "376437dee918aa0551a760cbb050c06d176ee3a6658696fd293eb029ed7d412b",
-    "prev_hash": "a5dbbeada3c76ab45a0e101220655f9bf560b80ac6006b9422ff19ed0c4af000",
-    "record_sha256": "fd731d494beb3f65b636a2a4ae4775b71b698a25b6faf9701204b3db4fc0559a",
+    "entry_hash": "1a22c9a8deddb0fb5f414753f394da6f5853523b730a37f7d74ae49e79d9e4e0",
+    "prev_hash": "ec16504badb6b815e0a152bd9e7c87ecbe6b50333d2e7ceedc712453dbd2fd58",
+    "record_sha256": "6053619d18dbf74b5d30118fc8cc999e12a910e39e9d05fb493d12dd44399626",
     "seq": 2
    },
    {
-    "entry_hash": "b2275b8dc952206742052e6cc44521a555be9c94d9285465f6bcd61d45d25ddd",
-    "prev_hash": "376437dee918aa0551a760cbb050c06d176ee3a6658696fd293eb029ed7d412b",
-    "record_sha256": "e2b4bb74165214c4eaca5dd765d97ff83ce9ff15510bdce3c9b24210d54f2f31",
+    "entry_hash": "00b786f99a9da5d958924291cc060399f9d998f030103df450ece1cdba46238d",
+    "prev_hash": "1a22c9a8deddb0fb5f414753f394da6f5853523b730a37f7d74ae49e79d9e4e0",
+    "record_sha256": "556f7bae21d82116cc634db5aae0ffb2143678666eb68875df58106f675ef59f",
     "seq": 3
    },
    {
-    "entry_hash": "182fd5c305bb2fb806d95e8feb35bbb30835080ff38ae802212062f0a2ff795e",
-    "prev_hash": "b2275b8dc952206742052e6cc44521a555be9c94d9285465f6bcd61d45d25ddd",
-    "record_sha256": "784d6b48e71f05a3eaabfc893cbee58e65a8fb00bf66c92e16fc078362e4d2b1",
+    "entry_hash": "7decaf8592d9691dbf9a1b752420c04b20befd4f5f457049b19bb1444ea18a51",
+    "prev_hash": "00b786f99a9da5d958924291cc060399f9d998f030103df450ece1cdba46238d",
+    "record_sha256": "5b085d494f2d9d90701799ebcd243ea4896c7650270e32e1605a3ba794198dc6",
     "seq": 4
    },
    {
-    "entry_hash": "4b7595da10aac8651465e4e551a1d4204595dac57d7935cf2eef5b9d2f4900b2",
-    "prev_hash": "182fd5c305bb2fb806d95e8feb35bbb30835080ff38ae802212062f0a2ff795e",
-    "record_sha256": "abc8ac046825b5f8649c5b2db8e5721e0d53ac8d59b00aa28d6caf3dcad1fad6",
+    "entry_hash": "50edab42672688a5db5ceb2224c8bc7ed7b6d0bc0058cb8c80ab56b7f0ea1c83",
+    "prev_hash": "7decaf8592d9691dbf9a1b752420c04b20befd4f5f457049b19bb1444ea18a51",
+    "record_sha256": "21c05bbd1c31e9b4b6f3ac406afcbad3accb8e07a4a49ade4f0274a6b5c2c71c",
     "seq": 5
    },
    {
-    "entry_hash": "e5874a00306c616e835d1d0c104d5dcac40ecb3f71387f41e862b3ad566debcf",
-    "prev_hash": "4b7595da10aac8651465e4e551a1d4204595dac57d7935cf2eef5b9d2f4900b2",
-    "record_sha256": "236eba7abac14b89d6d99ed2a306e012b3551926dbc99c3584564b0ade8dcc8a",
+    "entry_hash": "13d05489866b820c2195d27fce251da40a62ae8802d374a7bc33613a701bf722",
+    "prev_hash": "50edab42672688a5db5ceb2224c8bc7ed7b6d0bc0058cb8c80ab56b7f0ea1c83",
+    "record_sha256": "05160d556e1f2d842e987892cd3235540805ea277482fc0afd6f080c7acbbfb3",
     "seq": 6
    },
    {
-    "entry_hash": "a34e6f916428029c319efa06c74a58358a4bd74fe466d5c9240323a52258f40a",
-    "prev_hash": "e5874a00306c616e835d1d0c104d5dcac40ecb3f71387f41e862b3ad566debcf",
-    "record_sha256": "4cf15ac0b5b51845f338c9f462ab333a24a3ea05924b701b8e7a61079ccf0022",
+    "entry_hash": "abe7f3968b9ec1f0047bf9bbb979ad0045a22e8f2e859a4b3f873d296253f041",
+    "prev_hash": "13d05489866b820c2195d27fce251da40a62ae8802d374a7bc33613a701bf722",
+    "record_sha256": "9681f91d53a8e898e69a728463206bd2a71a4f1b1a6df2bd5fc9a44445b92e70",
     "seq": 7
    },
    {
-    "entry_hash": "19ceb3255cd4af2348c003ec54f7cfbe7e6ce8e3eae4498b8c92da030d5a848d",
-    "prev_hash": "a34e6f916428029c319efa06c74a58358a4bd74fe466d5c9240323a52258f40a",
-    "record_sha256": "530db4d2903ef4e8d729bb8ec0c4a65f917d0df534065710edd56a310c5efde4",
+    "entry_hash": "0576d2d81ba94d8b40177817301668fd8ef1e4c81187016a9554e258d031ab0c",
+    "prev_hash": "abe7f3968b9ec1f0047bf9bbb979ad0045a22e8f2e859a4b3f873d296253f041",
+    "record_sha256": "664ea54a0d6729b61895d5223ee869e3ca2d8be4d828051ee6d66d2128184e6b",
     "seq": 8
    },
    {
-    "entry_hash": "1dfc57ab7e1142e02387791aa0e6ce2506d9652b3cc63468771159b12b4fa838",
-    "prev_hash": "19ceb3255cd4af2348c003ec54f7cfbe7e6ce8e3eae4498b8c92da030d5a848d",
-    "record_sha256": "19aca074e3c8ae2154c6831488fad76ee4dac665982c6755c1c338f6a4c6dcc5",
+    "entry_hash": "be75a7f87428a0c2b2b1b2664f41ebaf127c3786d28344830b294c8541b3b806",
+    "prev_hash": "0576d2d81ba94d8b40177817301668fd8ef1e4c81187016a9554e258d031ab0c",
+    "record_sha256": "da62e4186eb999efedc6b6d29e47cb0eb10a29eb40598a5dfbdbb01026330cc3",
     "seq": 9
    },
    {
-    "entry_hash": "3d809c28d3d460d8125583865cb8485ecc5e9ec1ed6e4a2e1053344e787f9493",
-    "prev_hash": "1dfc57ab7e1142e02387791aa0e6ce2506d9652b3cc63468771159b12b4fa838",
-    "record_sha256": "dd6231c985275270e646f4e39b124c6b355416e898b0d1206ebae1e3052be440",
+    "entry_hash": "41e8a93aaf553e011319f05f53935403da04795b457295203cd97c04b9271551",
+    "prev_hash": "be75a7f87428a0c2b2b1b2664f41ebaf127c3786d28344830b294c8541b3b806",
+    "record_sha256": "40bf723d726aa6a67ddf691984f1bde7250584b24fcd752443a42f96750c061c",
     "seq": 10
    },
    {
-    "entry_hash": "ca8a2f99d5c40b1428725eebc42a205d11b57dcd0558855b59a5c2a3e5b0d1d2",
-    "prev_hash": "3d809c28d3d460d8125583865cb8485ecc5e9ec1ed6e4a2e1053344e787f9493",
-    "record_sha256": "66f4ea8c40d29d7fe0c2fdfa4c08ef28d70ecc4edd923d2d7b34d1866371f9af",
+    "entry_hash": "72134114852a94a50c4acc42d36ec53bba3d9d412ebb59fadfb83bba70b6fc86",
+    "prev_hash": "41e8a93aaf553e011319f05f53935403da04795b457295203cd97c04b9271551",
+    "record_sha256": "31fbc8ed1ea93c67d8cdac33e269abf167ccf40120fc9e31d123243afdade98a",
     "seq": 11
    },
    {
-    "entry_hash": "d80c0513f922d1bd9fabae1c1455c81a8248f6a18019d37d6ed679e50fe0ae17",
-    "prev_hash": "ca8a2f99d5c40b1428725eebc42a205d11b57dcd0558855b59a5c2a3e5b0d1d2",
-    "record_sha256": "0d14b9db30cc3094e0f4f5d3ad65a1b27913a0bd888e67120f229ceca6b67d5b",
+    "entry_hash": "b7bae06a3800212452c2e29b0b0c13e137f20e46007a5c8df7d688bd49969e84",
+    "prev_hash": "72134114852a94a50c4acc42d36ec53bba3d9d412ebb59fadfb83bba70b6fc86",
+    "record_sha256": "0139e6f01cd9fc08bb2ec6d717ae07862a37d4a976b2270173e59bda9f5b77e7",
     "seq": 12
    }
   ]
@@ -710,7 +710,7 @@
   }
  },
  "engagement": {
-  "authorized_at": "2026-10-09T23:30:12.597815+00:00",
+  "authorized_at": "2026-10-09T23:39:54.400037+00:00",
   "authorized_by": "Olive two",
   "content_deleted": null,
   "id": 2,
@@ -771,7 +771,7 @@
  "evidence": [
   {
    "chain_hash": "77301619c4d6a7bc99eb21b964f8f42108df30a53939fce7ddb5ed8fc7f30052",
-   "created_at": "2026-10-09T23:30:12.620469+00:00",
+   "created_at": "2026-10-09T23:39:54.422991+00:00",
    "host": "shop.two.example.com",
    "id": 5,
    "item_id": null,
@@ -789,7 +789,7 @@
   },
   {
    "chain_hash": "aa16e79d95abead336203e00192e592a8309791496b36b00043165ac686ecb85",
-   "created_at": "2026-10-09T23:30:12.634382+00:00",
+   "created_at": "2026-10-09T23:39:54.436560+00:00",
    "host": "shop.two.example.com",
    "id": 6,
    "item_id": 30,
@@ -807,7 +807,7 @@
   },
   {
    "chain_hash": "68dd6eae7ed490a83689bf6a6a5faac001eee4d29dd29d97a9bbf21b16d2290a",
-   "created_at": "2026-10-09T23:30:12.762978+00:00",
+   "created_at": "2026-10-09T23:39:54.566738+00:00",
    "host": "shop.two.example.com",
    "id": 7,
    "item_id": 47,
@@ -824,8 +824,8 @@
    "v": 2
   },
   {
-   "chain_hash": "7563dd279bf966469c00cfec62a4ea6b0700985dfdef4efdbc5c2ab13f791ef4",
-   "created_at": "2026-10-09T23:30:12.779741+00:00",
+   "chain_hash": "31e0eb63d3195d205d4e94cee29c1919393f30cf176cb457287b175c928ca534",
+   "created_at": "2026-10-09T23:39:54.583839+00:00",
    "host": "shop.two.example.com",
    "id": 8,
    "item_id": 48,
@@ -834,7 +834,7 @@
    "prev_hash": "68dd6eae7ed490a83689bf6a6a5faac001eee4d29dd29d97a9bbf21b16d2290a",
    "role": "mapper",
    "seq": 4,
-   "sha256": "be44eef7e3e4f10b43781df9c276046161f23802a514ba4a81677f5cf00cf43f",
+   "sha256": "12393186a097a2319fefdba36932a87373096756c7b6d354aeee3cf362f10347",
    "source": "agent",
    "summary": "[agent] GET https://shop.two.example.com/ -> 200. agent saw two",
    "summary_sha256": "ba2f2d5c06a7c20bb2b358bdcc4cb14ddaba5e29886a7d92edd38d6730bc0874",
@@ -843,7 +843,7 @@
   }
  ],
  "format": "attackledger-report/2",
- "generated_at": "2026-10-09T23:30:12.804032+00:00",
+ "generated_at": "2026-10-09T23:39:54.608569+00:00",
  "hosts": [
   {
    "host": "shop.two.example.com",
@@ -852,27 +852,27 @@
  ],
  "integrity": {
   "algorithm": "sha256",
-  "body_sha256": "363672deb62c84a515b832728dd4c2d774e9ad92f5d3ced938bb67d0a7d79aec",
+  "body_sha256": "cba25b8de5dcba8e98b768c913a3ced4d2caad7fc5ab6e2b8492a060af0ded38",
   "chain_genesis": "0000000000000000000000000000000000000000000000000000000000000000"
  },
  "jobs": [
   {
-   "finished_at": "2026-10-09T23:30:12.620815+00:00",
+   "finished_at": "2026-10-09T23:39:54.423344+00:00",
    "id": 4,
    "kind": "resolve",
    "output_sha256": "b9d77eb591f999fe2b29bc85d23e3361e85e28b5a3eac2118bea46efa82b5c42",
    "result_count": 1,
-   "started_at": "2026-10-09T23:30:12.612948+00:00",
+   "started_at": "2026-10-09T23:39:54.415326+00:00",
    "status": "done",
    "targets": 1
   },
   {
-   "finished_at": "2026-10-09T23:30:12.630598+00:00",
+   "finished_at": "2026-10-09T23:39:54.433013+00:00",
    "id": 5,
    "kind": "wellknown",
    "output_sha256": null,
    "result_count": 2,
-   "started_at": "2026-10-09T23:30:12.624697+00:00",
+   "started_at": "2026-10-09T23:39:54.427131+00:00",
    "status": "done",
    "targets": 1
   },
@@ -882,7 +882,7 @@
    "kind": "agent",
    "output_sha256": null,
    "result_count": 0,
-   "started_at": "2026-10-09T23:30:12.772877+00:00",
+   "started_at": "2026-10-09T23:39:54.576964+00:00",
    "status": "running",
    "targets": 1
   }
@@ -891,9 +891,9 @@
   "entries": [
    {
     "algorithm": "Ed25519",
-    "at": "2026-10-09T23:30:12.715960+00:00",
+    "at": "2026-10-09T23:39:54.520295+00:00",
     "event": "registered",
-    "key_fingerprint": "4285683cdc6596e4778dc46134102f40c7f0a65f40cc0199163481ffd553756b",
+    "key_fingerprint": "5ed18f882a3af6c6d41f4a1b6010fe08f71e5d2484f5b4eecae72ff2187b175f",
     "seq": 1,
     "user_id": 5,
     "user_name": "Rita two",
@@ -902,14 +902,14 @@
   ],
   "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
   "head": {
-   "entry_hash": "a0bd0ed4e415918318b7cedae0d8e1a3ee4dfc54c8e962118c73bb40704e839d",
+   "entry_hash": "3bfadb6b579e527404b1fd113357954db59664c9afb671d042e35fdb003b9ff6",
    "seq": 1
   },
   "links": [
    {
-    "entry_hash": "a0bd0ed4e415918318b7cedae0d8e1a3ee4dfc54c8e962118c73bb40704e839d",
+    "entry_hash": "3bfadb6b579e527404b1fd113357954db59664c9afb671d042e35fdb003b9ff6",
     "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "record_sha256": "34db51f046ec9fd2d47d450485f604c95ddebcd7dc156a88ba3488b23626e652",
+    "record_sha256": "ea2d056371e59224c2888c9177756380e0e1fa941f09ef1cf3095a16080a83f8",
     "seq": 1
    }
   ]
@@ -1222,14 +1222,14 @@
     "closed_by": "Rita two",
     "closed_by_email": "reviewer-two@example.com",
     "closed_by_user": 5,
-    "issued_at": "2026-10-09T23:30:12.722171+00:00",
+    "issued_at": "2026-10-09T23:39:54.526622+00:00",
     "manifest_sha256": "ee43304fe6cdd49a6c190715f241d0969b36a40345262e7b8018f5f3275fcd47",
     "signature": {
      "algorithm": "Ed25519",
-     "key_fingerprint": "4285683cdc6596e4778dc46134102f40c7f0a65f40cc0199163481ffd553756b",
-     "payload": "{\"chain\":{\"head\":\"aa16e79d95abead336203e00192e592a8309791496b36b00043165ac686ecb85\",\"seq\":2},\"engagement\":{\"id\":2,\"name\":\"Engagement two\"},\"format\":\"attackledger-receipt-v3\",\"issued_at\":\"2026-10-09T23:30:12+00:00\",\"key_fingerprint\":\"4285683cdc6596e4778dc46134102f40c7f0a65f40cc0199163481ffd553756b\",\"lane\":{\"host\":\"shop.two.example.com\",\"id\":3,\"role\":\"recon\"},\"manifest_sha256\":\"ee43304fe6cdd49a6c190715f241d0969b36a40345262e7b8018f5f3275fcd47\",\"signer\":{\"email\":\"reviewer-two@example.com\",\"id\":5,\"name\":\"Rita two\"}}",
-     "public_key": "MCowBQYDK2VwAyEAs2+pGvEG3pFAg9f/KV345mdIpXSNxPVlyB76f4ll9Sc=",
-     "value": "HzMHNnYkVexufx43LHDA4QOQ9OMK+0EDHk64tKGCS1gvxhGH2vKWXk1CQZyaXMQyZ6aKQNv5hxQCBS5uYmRKBg=="
+     "key_fingerprint": "5ed18f882a3af6c6d41f4a1b6010fe08f71e5d2484f5b4eecae72ff2187b175f",
+     "payload": "{\"chain\":{\"head\":\"aa16e79d95abead336203e00192e592a8309791496b36b00043165ac686ecb85\",\"seq\":2},\"engagement\":{\"id\":2,\"name\":\"Engagement two\"},\"format\":\"attackledger-receipt-v3\",\"issued_at\":\"2026-10-09T23:39:54+00:00\",\"key_fingerprint\":\"5ed18f882a3af6c6d41f4a1b6010fe08f71e5d2484f5b4eecae72ff2187b175f\",\"lane\":{\"host\":\"shop.two.example.com\",\"id\":3,\"role\":\"recon\"},\"manifest_sha256\":\"ee43304fe6cdd49a6c190715f241d0969b36a40345262e7b8018f5f3275fcd47\",\"signer\":{\"email\":\"reviewer-two@example.com\",\"id\":5,\"name\":\"Rita two\"}}",
+     "public_key": "MCowBQYDK2VwAyEAt1/hAwJMAJnqecT7SCNJHpDeFeUahEnZbXVIk/O/oj0=",
+     "value": "UqKD2lvwEDCScaJrssY43bTWaDeWrJcChIT1InS17Y323oaYMrB3dIRrOUtBeTwluQxJ2q30dm2P6yO/8n1kDQ=="
     }
    },
    "role": "recon",
@@ -1359,7 +1359,7 @@
   }
  ],
  "summary": {
-  "chain_head": "7563dd279bf966469c00cfec62a4ea6b0700985dfdef4efdbc5c2ab13f791ef4",
+  "chain_head": "31e0eb63d3195d205d4e94cee29c1919393f30cf176cb457287b175c928ca534",
   "evidence_entries": 4,
   "hosts_in_scope": 1,
   "lanes_opened": 2,

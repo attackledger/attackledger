@@ -211,7 +211,8 @@ account in more than one.
 ## Tests (`tests/test_organizations.py`)
 
 Two organizations are filled through the API with the same script; organization 1's names,
-hosts and texts carry a marker.
+hosts and texts carry a marker. They run on SQLite, and on Postgres with
+`ATTACKLEDGER_TEST_PG_EMPTY_URL` set to a database they may empty (all 16 pass on both).
 
 - **The walk.** Every route in `authz.RULES` (the test fails if the table and the routes
   differ), called by organization 2's owner and by a member with every role, with organization

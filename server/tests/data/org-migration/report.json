@@ -9,7 +9,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.732642+00:00",
+    "at": "2026-10-09T23:39:45.336933+00:00",
     "change": {
      "after": {
       "disabled": false,
@@ -36,7 +36,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.757481+00:00",
+    "at": "2026-10-09T23:39:45.361249+00:00",
     "change": {
      "after": {
       "disabled": false,
@@ -63,7 +63,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.760847+00:00",
+    "at": "2026-10-09T23:39:45.364780+00:00",
     "change": {
      "after": {
       "engagement_type": "bug_bounty",
@@ -84,7 +84,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.765678+00:00",
+    "at": "2026-10-09T23:39:45.369665+00:00",
     "change": {
      "after": {
       "crawl_depth": 3,
@@ -119,10 +119,10 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.768064+00:00",
+    "at": "2026-10-09T23:39:45.372269+00:00",
     "change": {
      "after": {
-      "authorized_at": "2026-10-09T22:59:32.767965+00:00",
+      "authorized_at": "2026-10-09T23:39:45.372164+00:00",
       "authorized_by": "Olive alpha",
       "policy_url": "https://example.com/policy"
      },
@@ -144,7 +144,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.771406+00:00",
+    "at": "2026-10-09T23:39:45.375766+00:00",
     "change": {
      "after": [
       {
@@ -179,7 +179,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.774063+00:00",
+    "at": "2026-10-09T23:39:45.378301+00:00",
     "change": {
      "after": {
       "allow_writes": true
@@ -200,7 +200,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.774301+00:00",
+    "at": "2026-10-09T23:39:45.378520+00:00",
     "change": {
      "after": {
       "retain_until": "2099-01-01"
@@ -221,7 +221,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.937336+00:00",
+    "at": "2026-10-09T23:39:45.546537+00:00",
     "change": {
      "after": {
       "accepted": 3,
@@ -248,7 +248,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.947863+00:00",
+    "at": "2026-10-09T23:39:45.556941+00:00",
     "change": {
      "after": {
       "entries": [
@@ -269,7 +269,7 @@
      "name": "Olive alpha",
      "user_id": 1
     },
-    "at": "2026-10-09T22:59:32.951140+00:00",
+    "at": "2026-10-09T23:39:45.560106+00:00",
     "change": {
      "after": {
       "fingerprint": "sha256:e75c5c295ab76724",
@@ -291,74 +291,74 @@
   ],
   "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
   "head": {
-   "entry_hash": "feb546f7bee90c09b8af5b3b8c8dd316df183268c3a3f5607eb4662c44e426a0",
+   "entry_hash": "e2d62ec1371de9bb3faf301b9522f360d64e1d8b6bb24c0b1178eccf144122b1",
    "seq": 12
   },
   "links": [
    {
-    "entry_hash": "161fbf582c4cdbc69fce9bcf9606b77c5eea7ffd15b3bea7113b2b25c0d487a3",
-    "prev_hash": "bdbbe65aa90b2d69831f4a17d41b3a82ad4ba1533f0a9a6f7f043ede028c15bd",
-    "record_sha256": "8af9a58ff5e806f115d99bcbbfd477343e7f8a2d83ffc9e44f9fe0c91cbace0b",
+    "entry_hash": "f9a9c175b58d3e27774c0b29d18d35291de85f3585731f1770c0b53fe007ca57",
+    "prev_hash": "afd51deec48bedd42db16f90ba347bb38c96b87dc68d19f6f2aa82b0656dd488",
+    "record_sha256": "689133da4ef17612955232f82fd6468e4ce826a4b9fc01ba40b627adbb99008c",
     "seq": 2
    },
    {
-    "entry_hash": "84038cf810be6c53ffc65c7178663c0e04414a555fb94a9bc86025a8e28e3a77",
-    "prev_hash": "161fbf582c4cdbc69fce9bcf9606b77c5eea7ffd15b3bea7113b2b25c0d487a3",
-    "record_sha256": "b55abeca32ea887619300e030ebb09fcb25a80979a76005dccec586a1cc44156",
+    "entry_hash": "945be23fa6a8ba49388066de15c3c5289e20a583cba2da373a35ec5713bccfd6",
+    "prev_hash": "f9a9c175b58d3e27774c0b29d18d35291de85f3585731f1770c0b53fe007ca57",
+    "record_sha256": "a98b06ac949c166560d706f8d576a8228ba6c8c4f12558b00c49d8e1fb6bf3f0",
     "seq": 3
    },
    {
-    "entry_hash": "2663b75f3096834e15fddfa3de6b21d7e77625120b22b28904b3f3b964f995af",
-    "prev_hash": "84038cf810be6c53ffc65c7178663c0e04414a555fb94a9bc86025a8e28e3a77",
-    "record_sha256": "4f5e084a9b8f5926d248e50126f0ce5112b276d88ecbe62cbbf8001f955e96fe",
+    "entry_hash": "b7097ebb9754a4e677ad75bb73dd8c5a5f45fa0256e7e1a604ea6b50001802cf",
+    "prev_hash": "945be23fa6a8ba49388066de15c3c5289e20a583cba2da373a35ec5713bccfd6",
+    "record_sha256": "b0e9ed19422b04507acf8d9f4264b4e6f6754d16d65246ab786f533bd999599e",
     "seq": 4
    },
    {
-    "entry_hash": "0fdeee9f781dc74abf1ded8468d762baf29221bf1044c0fd883d511c32910e75",
-    "prev_hash": "2663b75f3096834e15fddfa3de6b21d7e77625120b22b28904b3f3b964f995af",
-    "record_sha256": "24971373540d96c0a7485fff52fb0324e4f59bc7963519f4e4bf5920f2fbb7b3",
+    "entry_hash": "60457c359d2d9acd26b99f8e6aa133f1ed83e3453a37154b88188c55d782f20b",
+    "prev_hash": "b7097ebb9754a4e677ad75bb73dd8c5a5f45fa0256e7e1a604ea6b50001802cf",
+    "record_sha256": "00a174f37671014e82b919a9be165b293482ddcac391475cf84d3ba44aad7a15",
     "seq": 5
    },
    {
-    "entry_hash": "666580735c1f517dd8058c16c934004ba39dce7a7db9380f30c653a0846ef2a1",
-    "prev_hash": "0fdeee9f781dc74abf1ded8468d762baf29221bf1044c0fd883d511c32910e75",
-    "record_sha256": "b14fc89431f0cd208d7e36cf89a669f57e9104a3e6b9a3f03657feff9bd52bf6",
+    "entry_hash": "b9df8ede0b1a11ff512b0e75f547fa9ec8e0b5e8b2b326d9859687218015ea79",
+    "prev_hash": "60457c359d2d9acd26b99f8e6aa133f1ed83e3453a37154b88188c55d782f20b",
+    "record_sha256": "9a80e13b7e10183bf6f119ceaa4faad266e66e82e865981fdc415ecb73ff272d",
     "seq": 6
    },
    {
-    "entry_hash": "b34a1750f286b299a5f41e49fc007c5150e237cf9ef4071414b93ebd5711961a",
-    "prev_hash": "666580735c1f517dd8058c16c934004ba39dce7a7db9380f30c653a0846ef2a1",
-    "record_sha256": "a405934f465782b8d9fe45a268ce7ada71a721ce1e7cef57dc963addbefef35a",
+    "entry_hash": "9cff2b7dd3cc7b102e24a8f1e6a1c2d8eac6555aba257280359ac7095c7f00b7",
+    "prev_hash": "b9df8ede0b1a11ff512b0e75f547fa9ec8e0b5e8b2b326d9859687218015ea79",
+    "record_sha256": "2d6feddcdd4dae2e6ca7052d79197feaa82bb4d45849f5a484526bc7fe9c7e94",
     "seq": 7
    },
    {
-    "entry_hash": "2ae31030beabb3a60e3c45ac1a7fa5a880b1ddf9b72c8c055f84593d5b06239e",
-    "prev_hash": "b34a1750f286b299a5f41e49fc007c5150e237cf9ef4071414b93ebd5711961a",
-    "record_sha256": "b78d7a87b845c8375218212321ee31cb2a8912a7f86a853e23aabfb083685759",
+    "entry_hash": "21ee654d95b7bd25e62cf101d8305e3e91b9be3003c9b3a419a3cfe363472170",
+    "prev_hash": "9cff2b7dd3cc7b102e24a8f1e6a1c2d8eac6555aba257280359ac7095c7f00b7",
+    "record_sha256": "cf877a280763e8a4b82fa8628a8b44657917a133a297195a1af5173fd8b5e995",
     "seq": 8
    },
    {
-    "entry_hash": "863ce7b683c3897c5c9206c65a2bd9da4717e0f78554364436e1541e9daa3b42",
-    "prev_hash": "2ae31030beabb3a60e3c45ac1a7fa5a880b1ddf9b72c8c055f84593d5b06239e",
-    "record_sha256": "03c647fb1b1c733369a19a325d901047dfda4fee09061a7bd163ce61798cb566",
+    "entry_hash": "b92a2536718502d1afb3bf367be759db100b05b07e0dbd22eda801be4dc1ca93",
+    "prev_hash": "21ee654d95b7bd25e62cf101d8305e3e91b9be3003c9b3a419a3cfe363472170",
+    "record_sha256": "58f6d9d6358a91f25df632ca700422a7c8e39d5e580a7306d3709e9b875de89d",
     "seq": 9
    },
    {
-    "entry_hash": "ac884fe5fdf1f874cf49b8ff8a8001442ad700e8c1f406dc9b46406e2ff78cf0",
-    "prev_hash": "863ce7b683c3897c5c9206c65a2bd9da4717e0f78554364436e1541e9daa3b42",
-    "record_sha256": "5735defa14b6dce4d96dc9a5dda7a9dddd162fea782fadae2367fca155f90e47",
+    "entry_hash": "d9008ecc345e8d55b151c0bd47901d31ae0e339e60e069efe940692153c8029e",
+    "prev_hash": "b92a2536718502d1afb3bf367be759db100b05b07e0dbd22eda801be4dc1ca93",
+    "record_sha256": "4704327b774102ff103a95c9bc65a28b0093f1ff9c79758272e7ab8bf18272dd",
     "seq": 10
    },
    {
-    "entry_hash": "53d6c82f0dd56dd752ba420dc9d598e046c406cde657a073257c941b9c47f0e3",
-    "prev_hash": "ac884fe5fdf1f874cf49b8ff8a8001442ad700e8c1f406dc9b46406e2ff78cf0",
-    "record_sha256": "d335e2ff4022211366aa0efe1c5f95f2b4e6c14e76f997adcacd4020dd94581c",
+    "entry_hash": "c4578c8d4da4a40544c14b19c9de6c325bcfe7a62da270422855b968a09aa07b",
+    "prev_hash": "d9008ecc345e8d55b151c0bd47901d31ae0e339e60e069efe940692153c8029e",
+    "record_sha256": "4fc868d90a568c1f443952cb94e6d87323119d69a6f784c76be59dca8797cbdf",
     "seq": 11
    },
    {
-    "entry_hash": "feb546f7bee90c09b8af5b3b8c8dd316df183268c3a3f5607eb4662c44e426a0",
-    "prev_hash": "53d6c82f0dd56dd752ba420dc9d598e046c406cde657a073257c941b9c47f0e3",
-    "record_sha256": "58de6ededaf91e6af63a3776d31b440e4e275e8c214445abf05e73dee40e9d3e",
+    "entry_hash": "e2d62ec1371de9bb3faf301b9522f360d64e1d8b6bb24c0b1178eccf144122b1",
+    "prev_hash": "c4578c8d4da4a40544c14b19c9de6c325bcfe7a62da270422855b968a09aa07b",
+    "record_sha256": "0a8ae0069195208031bc30455b7950055b412edc9532ca358f1785d6a862d0c7",
     "seq": 12
    }
   ]
@@ -710,7 +710,7 @@
   }
  },
  "engagement": {
-  "authorized_at": "2026-10-09T22:59:32.767965+00:00",
+  "authorized_at": "2026-10-09T23:39:45.372164+00:00",
   "authorized_by": "Olive alpha",
   "content_deleted": null,
   "id": 1,
@@ -771,7 +771,7 @@
  "evidence": [
   {
    "chain_hash": "bd5fb7adb077359454666177d4c8bf2d5482e01d11e9b58f03bb4c9dce19d36f",
-   "created_at": "2026-10-09T22:59:32.798363+00:00",
+   "created_at": "2026-10-09T23:39:45.404955+00:00",
    "host": "shop.alpha.example.com",
    "id": 1,
    "item_id": null,
@@ -789,7 +789,7 @@
   },
   {
    "chain_hash": "d74da03e843ac71da65064395cfad216babc134d33863aaa1a7cc539cdb72ad4",
-   "created_at": "2026-10-09T22:59:32.814977+00:00",
+   "created_at": "2026-10-09T23:39:45.423216+00:00",
    "host": "shop.alpha.example.com",
    "id": 2,
    "item_id": 1,
@@ -807,7 +807,7 @@
   },
   {
    "chain_hash": "2bfe84b21844fbd73318350d8a56414bbccb3ab6243e66bb213506d0265cf232",
-   "created_at": "2026-10-09T22:59:32.944998+00:00",
+   "created_at": "2026-10-09T23:39:45.553949+00:00",
    "host": "shop.alpha.example.com",
    "id": 3,
    "item_id": 18,
@@ -824,8 +824,8 @@
    "v": 2
   },
   {
-   "chain_hash": "700e29ffb6bfa0bb4660a0b0b79f7a7684705e80d13d407f9eeb1e508a3370fc",
-   "created_at": "2026-10-09T22:59:32.967458+00:00",
+   "chain_hash": "affe9ce7bb4de6a8b7d05415a1ea42cf4a76aed2b0eab651e65ed8e21acef0ae",
+   "created_at": "2026-10-09T23:39:45.575961+00:00",
    "host": "shop.alpha.example.com",
    "id": 4,
    "item_id": 19,
@@ -834,7 +834,7 @@
    "prev_hash": "2bfe84b21844fbd73318350d8a56414bbccb3ab6243e66bb213506d0265cf232",
    "role": "mapper",
    "seq": 4,
-   "sha256": "1fdabc37846379faefd1a0dbb8020f6d8334efbd8cd780540b63f35b4270d64f",
+   "sha256": "9f90d4f480319488a5c1419a67474ba8e4239e587308dd0b4500072319e5a519",
    "source": "agent",
    "summary": "[agent] GET https://shop.alpha.example.com/ -> 200. agent saw alpha",
    "summary_sha256": "5d92b66b50ffd1a639a2e71c4039d53db9b945c34e66a618962a597ade6bd2cf",
@@ -843,7 +843,7 @@
   }
  ],
  "format": "attackledger-report/2",
- "generated_at": "2026-10-09T22:59:32.980845+00:00",
+ "generated_at": "2026-10-09T23:39:45.589882+00:00",
  "hosts": [
   {
    "host": "shop.alpha.example.com",
@@ -852,27 +852,27 @@
  ],
  "integrity": {
   "algorithm": "sha256",
-  "body_sha256": "b6d26e270135482a82c6c0b2e079734751bfa56ffd578e99be2e38aa778b2d4e",
+  "body_sha256": "89570cac8db0d0c3c130935af217686c62cca88316d82e48a8a725133c914309",
   "chain_genesis": "0000000000000000000000000000000000000000000000000000000000000000"
  },
  "jobs": [
   {
-   "finished_at": "2026-10-09T22:59:32.798862+00:00",
+   "finished_at": "2026-10-09T23:39:45.405434+00:00",
    "id": 1,
    "kind": "resolve",
    "output_sha256": "7dcb150b7a43ef52e2e2b85fabf3b5e5544f0854969af0c100201dcc93dddc67",
    "result_count": 1,
-   "started_at": "2026-10-09T22:59:32.786317+00:00",
+   "started_at": "2026-10-09T23:39:45.391287+00:00",
    "status": "done",
    "targets": 1
   },
   {
-   "finished_at": "2026-10-09T22:59:32.810541+00:00",
+   "finished_at": "2026-10-09T23:39:45.418472+00:00",
    "id": 2,
    "kind": "wellknown",
    "output_sha256": null,
    "result_count": 2,
-   "started_at": "2026-10-09T22:59:32.802857+00:00",
+   "started_at": "2026-10-09T23:39:45.409749+00:00",
    "status": "done",
    "targets": 1
   },
@@ -882,7 +882,7 @@
    "kind": "agent",
    "output_sha256": null,
    "result_count": 0,
-   "started_at": "2026-10-09T22:59:32.955849+00:00",
+   "started_at": "2026-10-09T23:39:45.564994+00:00",
    "status": "running",
    "targets": 1
   }
@@ -891,9 +891,9 @@
   "entries": [
    {
     "algorithm": "Ed25519",
-    "at": "2026-10-09T22:59:32.894181+00:00",
+    "at": "2026-10-09T23:39:45.503106+00:00",
     "event": "registered",
-    "key_fingerprint": "2653e843a2ed5336edf6004fa8c4044e48e7351c2d5ba21cef53ae483bc903cd",
+    "key_fingerprint": "2ae8e19906c979cf1cffc03abcd8ca7bd0f82e255b44ba6730e84f2b34fd44c5",
     "seq": 1,
     "user_id": 2,
     "user_name": "Rita alpha",
@@ -902,14 +902,14 @@
   ],
   "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
   "head": {
-   "entry_hash": "add3cd097e4706fcda44d601f853c2f87811d143c828f5ea4ce8351c7356bc16",
+   "entry_hash": "6fa0267ca411ccf5ffc5695ed05ffacdc37a25628f1c753271bd4ac4fad0f651",
    "seq": 1
   },
   "links": [
    {
-    "entry_hash": "add3cd097e4706fcda44d601f853c2f87811d143c828f5ea4ce8351c7356bc16",
+    "entry_hash": "6fa0267ca411ccf5ffc5695ed05ffacdc37a25628f1c753271bd4ac4fad0f651",
     "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "record_sha256": "62a28693a66abd956eb36e637f4ae5403ef856bf057832e70a986ae390d73f29",
+    "record_sha256": "7bd84b19967dd2fd256b1c28f8bf6404eac41946716e9ebd51b6e686820fa49f",
     "seq": 1
    }
   ]
@@ -1222,14 +1222,14 @@
     "closed_by": "Rita alpha",
     "closed_by_email": "reviewer-alpha@example.com",
     "closed_by_user": 2,
-    "issued_at": "2026-10-09T22:59:32.900829+00:00",
+    "issued_at": "2026-10-09T23:39:45.509645+00:00",
     "manifest_sha256": "90728ca69fe07c2b1c8242c24621b1fb235685e7b732f6fdaba9009ee7d92d0d",
     "signature": {
      "algorithm": "Ed25519",
-     "key_fingerprint": "2653e843a2ed5336edf6004fa8c4044e48e7351c2d5ba21cef53ae483bc903cd",
-     "payload": "{\"chain\":{\"head\":\"d74da03e843ac71da65064395cfad216babc134d33863aaa1a7cc539cdb72ad4\",\"seq\":2},\"engagement\":{\"id\":1,\"name\":\"Engagement alpha\"},\"format\":\"attackledger-receipt-v3\",\"issued_at\":\"2026-10-09T22:59:32+00:00\",\"key_fingerprint\":\"2653e843a2ed5336edf6004fa8c4044e48e7351c2d5ba21cef53ae483bc903cd\",\"lane\":{\"host\":\"shop.alpha.example.com\",\"id\":1,\"role\":\"recon\"},\"manifest_sha256\":\"90728ca69fe07c2b1c8242c24621b1fb235685e7b732f6fdaba9009ee7d92d0d\",\"signer\":{\"email\":\"reviewer-alpha@example.com\",\"id\":2,\"name\":\"Rita alpha\"}}",
-     "public_key": "MCowBQYDK2VwAyEA/tg/XfhmiwBAXAN5oRtLH7l8rbyfyPlXKi/7ojKn+Xo=",
-     "value": "edVGSorOXnqGt0htf+fRGZRbCBFNslXAmN4m21vORGMR3JTcyYkzrU1wOlqblp64U7IQYZDRXYO4gEeNnoE8Dw=="
+     "key_fingerprint": "2ae8e19906c979cf1cffc03abcd8ca7bd0f82e255b44ba6730e84f2b34fd44c5",
+     "payload": "{\"chain\":{\"head\":\"d74da03e843ac71da65064395cfad216babc134d33863aaa1a7cc539cdb72ad4\",\"seq\":2},\"engagement\":{\"id\":1,\"name\":\"Engagement alpha\"},\"format\":\"attackledger-receipt-v3\",\"issued_at\":\"2026-10-09T23:39:45+00:00\",\"key_fingerprint\":\"2ae8e19906c979cf1cffc03abcd8ca7bd0f82e255b44ba6730e84f2b34fd44c5\",\"lane\":{\"host\":\"shop.alpha.example.com\",\"id\":1,\"role\":\"recon\"},\"manifest_sha256\":\"90728ca69fe07c2b1c8242c24621b1fb235685e7b732f6fdaba9009ee7d92d0d\",\"signer\":{\"email\":\"reviewer-alpha@example.com\",\"id\":2,\"name\":\"Rita alpha\"}}",
+     "public_key": "MCowBQYDK2VwAyEA5Xw3WtF7IBtZH5yvQbxs3Fxt6YMS2HIhzfGiZHzTbRk=",
+     "value": "FmFECQ7FzVlXrbtx3cBtnI4BrXa8U82cM+uNs4q2CgVqbEGoSci1OBRpAe81x3WgqDV2Z2/6yqN3IoHnQoZWCA=="
     }
    },
    "role": "recon",
@@ -1359,7 +1359,7 @@
   }
  ],
  "summary": {
-  "chain_head": "700e29ffb6bfa0bb4660a0b0b79f7a7684705e80d13d407f9eeb1e508a3370fc",
+  "chain_head": "affe9ce7bb4de6a8b7d05415a1ea42cf4a76aed2b0eab651e65ed8e21acef0ae",
   "evidence_entries": 4,
   "hosts_in_scope": 1,
   "lanes_opened": 2,

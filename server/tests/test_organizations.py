@@ -10,6 +10,7 @@ chains, sign-in and the single-organization install are tested after it.
 """
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -37,6 +38,19 @@ W2, G2 = "worker-token-of-org-two-000000000000", "gateway-token-of-org-two-00000
 NEVER = 987654                             # an id no table uses
 
 
+def _engine():
+    """SQLite in memory; or, with ATTACKLEDGER_TEST_PG_EMPTY_URL, a Postgres database these
+    tests may empty (the claim's SKIP LOCKED and the chains' advisory locks run there)."""
+    url = os.environ.get("ATTACKLEDGER_TEST_PG_EMPTY_URL")
+    if url:
+        eng = create_engine(url)
+        db.Base.metadata.drop_all(eng)
+    else:
+        eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.Base.metadata.create_all(eng)
+    return eng
+
+
 @pytest.fixture()
 def orgs2(monkeypatch):
     """Two organizations, each filled through the API: org 1 is the default one (the
@@ -45,8 +59,7 @@ def orgs2(monkeypatch):
     monkeypatch.setenv("ATTACKLEDGER_WORKER_TOKEN", W1)
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", G1)
     auth._failures.clear()
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    db.Base.metadata.create_all(eng)
+    eng = _engine()
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 
     def _session():
