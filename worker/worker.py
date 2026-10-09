@@ -41,6 +41,7 @@ from sqlalchemy import select  # noqa: E402
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
 from app import agentloop, agenttools, passive, triage  # noqa: E402
+from app.text import plural  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lane, Lead, Observation  # noqa: E402
 
@@ -189,7 +190,7 @@ class Run:
             raise Cancelled("timed out")
 
     def tool_lines(self, name: str, cmd: list[str], stdin_lines: list[str]):
-        self.log(f"$ {' '.join(cmd)}  ({len(stdin_lines)} input line(s))")
+        self.log(f"$ {' '.join(cmd)}  ({plural(len(stdin_lines), 'input line')})")
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True)
         proc.stdin.write("\n".join(stdin_lines) + "\n")
@@ -246,14 +247,14 @@ def run_subdomains(r: Run, roots: list[str]) -> int:
     for root in roots:
         names = crtsh_names(root)
         r.digest.update(("crtsh\t" + "\n".join(names)).encode())
-        r.log(f"crt.sh {root}: {len(names)} name(s)")
+        r.log(f"crt.sh {root}: {plural(len(names), 'name')}")
         for n in names:
             found[n].add("crtsh")
         r.check_stop()
 
     # Ownership + scope filter before anything is resolved.
     candidates = sorted(h for h in found if r.in_scope(h))
-    r.log(f"{len(found)} candidate name(s), {len(candidates)} in scope")
+    r.log(f"{plural(len(found), 'candidate name')}, {len(candidates)} in scope")
     if not candidates:
         return 0
     records = resolve_hosts(r, candidates)
@@ -349,7 +350,7 @@ def store_endpoints(r: Run, raw_urls: dict[str, set]) -> int:
         r.session.add(Endpoint(engagement_id=r.eng.id, job_id=r.job.id, host=host, url=url,
                                url_sha256=h, source=src, is_js=is_js))
         added += 1
-    r.log(f"{len(raw_urls)} URL(s) seen, {len(cleaned)} in scope after clean-up, {added} new")
+    r.log(f"{plural(len(raw_urls), 'URL')} seen, {len(cleaned)} in scope after clean-up, {added} new")
     return added
 
 
@@ -423,7 +424,7 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
     endpoints: dict[str, set] = defaultdict(set)
     analysed = leads = noise = 0
     failures: dict[str, int] = defaultdict(int)
-    r.log(f"analysing {len(js_urls)} JavaScript file(s)")
+    r.log(f"analysing {plural(len(js_urls), 'JavaScript file')}")
     for n, url in enumerate(js_urls, start=1):
         body, why = get(url)
         if body is None:
@@ -460,7 +461,7 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
             if isinstance(m, dict):
                 srcs = [str(x) for x in (m.get("sources") or [])]
                 leads += add_lead(r, host, url, "sourcemap",
-                                  f"Sourcemap with {len(srcs)} source file(s)"
+                                  f"Sourcemap with {plural(len(srcs), 'source file')}"
                                   + (" and embedded source" if m.get("sourcesContent") else ""),
                                   detail={"map_url": ref, "sources": srcs[:50],
                                           "sources_content": bool(m.get("sourcesContent"))})
@@ -471,8 +472,8 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
     if failures:
         r.fetch_failures += sum(failures.values())
         r.log("fetch failures: " + ", ".join(f"{k} ×{v}" for k, v in sorted(failures.items())))
-    r.log(f"{analysed} file(s) analysed, {leads} new lead(s), {noise} noise match(es) ignored, "
-          f"{added} new endpoint(s)")
+    r.log(f"{plural(analysed, 'file')} analysed, {plural(leads, 'new lead')}, "
+          f"{plural(noise, 'noise match', 'noise matches')} ignored, {plural(added, 'new endpoint')}")
     return analysed
 
 
@@ -535,7 +536,8 @@ def run_nuclei(r: Run, urls_: list[str]) -> int:
     if not hasattr(r, "nuclei_plan"):
         r.nuclei_plan = nuclei_plan(r.session, r.eng, r.job.targets)
         r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
-        r.log(f"{len(r.job.targets)} live service(s), {len(r.nuclei_plan['reps'])} cluster representative(s), "
+        r.log(f"{plural(len(r.job.targets), 'live service')}, "
+              f"{plural(len(r.nuclei_plan['reps']), 'cluster representative')}, "
               f"{len(r.nuclei_plan['golden'])} on golden hosts")
     plan = r.nuclei_plan
     urls_ = [u for u in urls_ if r.in_scope(urls.host_of(u))]
@@ -686,7 +688,7 @@ def run_params(r: Run, urls_: list[str]) -> int:
             params = sorted(set((res or {}).get("params") or []))
             host = urls.host_of(url)
             if params and r.in_scope(host):
-                found += add_lead(r, host, url, "parameter", f"{len(params)} hidden parameter(s): "
+                found += add_lead(r, host, url, "parameter", f"{plural(len(params), 'hidden parameter')}: "
                                   + ", ".join(params[:8]) + ("…" if len(params) > 8 else ""),
                                   detail={"params": params, "method": (res or {}).get("method", "GET")},
                                   key=",".join(params))
@@ -711,7 +713,8 @@ def run_paramclass(r: Run, urls_: list[str]) -> int:
                           detail={"class": row["class"], "param": row["param"], "lane": row["lane"],
                                   "urls": row["urls"]},
                           key=f"{row['class']}|{row['param']}")
-    r.log(f"{len(params)} URL(s) with parameters, {len(rows)} routed parameter(s), {found} new lead(s)")
+    r.log(f"{plural(len(params), 'URL')} with parameters, {plural(len(rows), 'routed parameter')}, "
+          f"{plural(found, 'new lead')}")
     return found
 
 
@@ -764,7 +767,7 @@ def run(session, job: Job) -> "Run":
         # Never drop silently: what does not fit is listed as remaining.
         targets, over_limit = targets[:m.max_targets], targets[m.max_targets:]
     if len(targets) != len(job.targets):
-        job.log += f"skipped {len(job.targets) - len(targets)} target(s) outside scope\n"
+        job.log += f"skipped {plural(len(job.targets) - len(targets), 'target')} outside scope\n"
     if not targets:
         raise RuntimeError("no in-scope targets")
 
@@ -790,7 +793,7 @@ def run(session, job: Job) -> "Run":
     job.result_count = kept
     session.commit()
     if stopped:
-        r.log(f"stopped ({stopped}) after {len(done)} of {len(targets)} target(s); "
+        r.log(f"stopped ({stopped}) after {len(done)} of {plural(len(targets), 'target')}; "
               f"{len(remaining)} not run")
     r.stopped = stopped
     if not stopped and kept == 0 and (r.failed_tools or r.fetch_failures):
@@ -810,7 +813,7 @@ def run(session, job: Job) -> "Run":
         lane = next((l for l in asset.lanes if l.role == recon_lane), None) if asset and asset.id else None
         if lane:
             ledger.append_evidence(session, lane, kind="file", sha256_hex=job.output_sha256,
-                                   uri=f"job:{job.id}", summary=f"{job.kind} run, job {job.id}",
+                                   uri=f"job:{job.id}", summary=f"{m.title} run, job {job.id}",
                                    created_by=job.created_by)
     session.commit()
     return r
@@ -860,8 +863,8 @@ def run_agent(session, job: Job, client=None) -> "Run":
     job.result_count = res.evidence_added
     job.targets_done = 1 if res.status == "finished" else 0
     session.commit()
-    r.log(f"agent {res.status}: {res.turns} turn(s), {res.requests} request(s), "
-          f"{res.evidence_added} evidence, {res.items_marked} item(s) marked, "
+    r.log(f"agent {res.status}: {plural(res.turns, 'turn')}, {plural(res.requests, 'request')}, "
+          f"{plural(res.evidence_added, 'evidence entry', 'evidence entries')}, {plural(res.items_marked, 'item')} marked, "
           f"~${res.cost_usd:.2f} estimated" + (f"; {res.detail}" if res.detail else ""))
     if res.status == "refused":
         raise RuntimeError(f"the model {res.detail}; nothing further was run")
@@ -922,7 +925,7 @@ def main():
     with SessionLocal() as session:
         stale = recover_interrupted(session, all_running=True)
     if stale:
-        print(f"marked {len(stale)} interrupted job(s) failed: {stale}", flush=True)
+        print(f"marked {plural(len(stale), 'interrupted job')} failed: {stale}", flush=True)
     print("worker ready", flush=True)
     while True:
         with SessionLocal() as session:

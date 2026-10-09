@@ -16,6 +16,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
 
 from .db import Base, engine
+from .text import plural
 
 INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 class MigrationError(RuntimeError):
@@ -47,7 +48,7 @@ def upgrade_head() -> None:
         if diff:
             raise MigrationError(
                 f"existing database predates migrations and does not match the models "
-                f"({len(diff)} difference(s)); refusing to stamp it. Back it up and migrate by hand."
+                f"({plural(len(diff), 'difference')}); refusing to stamp it. Back it up and migrate by hand."
             )
         command.stamp(_config(), "head")
     command.upgrade(_config(), "head")

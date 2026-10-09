@@ -15,8 +15,9 @@ from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
-from . import gates, ledger, packs
+from . import gates, ledger, modules, packs
 from .models import Engagement, Evidence, iso_utc
+from .text import plural
 
 REPORT_FORMAT = "attackledger-report/2"   # 2: receipts may carry a signature
 
@@ -124,6 +125,15 @@ def _e(v) -> str:
 _STATUS = {"closed": "Receipted", "stale": "Void", "open": "In progress", None: "Not opened"}
 _TYPES = {"bug_bounty": "Bug bounty", "pentest": "Penetration test", "internal": "Internal assessment"}
 _ITEM = {"done": "Evidence recorded", "na": "Not applicable", "open": "Open"}
+_EVIDENCE = {"note": "Note", "file": "File", "request": "Request", "response": "Response"}
+_JOB = {"done": "Done", "partial": "Partial", "skipped": "Skipped", "failed": "Failed", "cancelled": "Cancelled",
+        "queued": "Queued", "running": "Running"}
+
+
+def _evidence_label(e: dict) -> str:
+    if (e.get("uri") or "").startswith("job:"):
+        return "Recon run"
+    return _EVIDENCE.get(e["kind"], e["kind"])
 # tools/tsa-roots/README.md lists the same root; shown so a reader can check the file they use.
 _DIGICERT_ROOT = ("digicert-trusted-root-g4.pem", "DigiCert Trusted Root G4",
                   "552F7BDCF1A7AF9E6CE672017F4F12ABF77240C78E761AC203D1D9D20AC89988")
@@ -134,10 +144,6 @@ _FAVICON = "data:image/svg+xml," + quote(' '.join("""<svg xmlns="http://www.w3.o
   <rect x="3.75" y="3.75" width="24.5" height="24.5" rx="4" fill="none" stroke="#86d3a2" stroke-width="1.5"/>
   <path d="M9.5 16.5l4.4 4.4 8.6-9.2" fill="none" stroke="#86d3a2" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>""".split()))
-
-
-def _n(count: int, one: str, many: str) -> str:
-    return f"{count} {one if count == 1 else many}"
 
 
 def _when(iso: str | None) -> str:
@@ -291,12 +297,12 @@ def _summary(r: dict, lanes: list) -> str:
     name_only = len(with_rc) - signed
     return f"""<section id="summary" class="pb"><h2>Summary</h2>
 <div class="tiles">{''.join(f'<div class="tile"><b>{_e(v)}</b><span>{_e(t)}</span></div>' for v, t in tiles)}</div>
-{f'<p class="warn">{_n(void, "receipt is", "receipts are")} void: the ledger changed after the receipt was issued, so it no longer proves that lane.</p>' if void else ''}
-<p>Of {_n(s['lanes_possible'], 'possible lane', 'possible lanes')} ({_n(s['hosts_in_scope'], 'in-scope host', 'in-scope hosts')}
-× {s['lanes_per_host']} lanes), {s['lanes_opened']} {'was' if s['lanes_opened'] == 1 else 'were'} opened and
+{f'<p class="warn">{plural(void, "receipt is", "receipts are")} void: the ledger changed after the receipt was issued, so it no longer proves that lane.</p>' if void else ''}
+<p>Of {plural(s['lanes_possible'], 'possible lane', 'possible lanes')} ({plural(s['hosts_in_scope'], 'in-scope host', 'in-scope hosts')}
+× {plural(s['lanes_per_host'], 'lane')}), {s['lanes_opened']} {'was' if s['lanes_opened'] == 1 else 'were'} opened and
 <strong>{s['lanes_receipted']} {'is' if s['lanes_receipted'] == 1 else 'are'} receipted</strong>: every checklist item
 has evidence or a written reason, the receipt matches the ledger, and a named person reviewed the lane and closed it.
-{'No receipts are void.' if not void else _n(void, 'receipt is', 'receipts are') + ' void.'}
+{'No receipts are void.' if not void else plural(void, 'receipt is', 'receipts are') + ' void.'}
 Lanes that were not opened were not tested.</p>
 <div class="callout"><p><strong>What this report proves.</strong> It is a record of what was tested, not a judgement of
 how well. It shows which checklist items were recorded as tested or not applicable, which evidence was attached to each,
@@ -305,7 +311,7 @@ who closed each lane and when, and that none of this changed after it was record
 re-check all of it offline.</p>
 <p>It does not prove that the tests themselves were thorough or correct, that untested lanes or hosts are free of issues,
 or that a signing key belongs to the person named; compare key fingerprints with the signers for that. It is not a list
-of findings.{' ' + _n(name_only, 'receipt carries', 'receipts carry') + ' only a name, which rests on the tester’s own records.' if name_only else ''}</p></div>
+of findings.{' ' + plural(name_only, 'receipt carries', 'receipts carry') + ' only a name, which rests on the tester’s own records.' if name_only else ''}</p></div>
 </section>"""
 
 
@@ -396,7 +402,7 @@ authority shows it existed at that time.</p>"""]
                f"{''.join(rows)}</table></div>")
     unclosed = sum(1 for l in r["lanes"] if not l["receipt"])
     if unclosed:
-        out.append(f"<p class='note'>{_n(unclosed, 'opened lane has', 'opened lanes have')} no receipt yet.</p>")
+        out.append(f"<p class='note'>{plural(unclosed, 'opened lane has', 'opened lanes have')} no receipt yet.</p>")
     out.append("</section>")
     return "".join(out)
 
@@ -493,7 +499,7 @@ def _items(r: dict) -> str:
             else:
                 result = _e(result)
             ev_html = "<br>".join(
-                f"#{_e(e['seq'])} {_e(e['kind'])}: {_e(e['summary'])} <code>{_e(e['sha256'][:12])}</code>"
+                f"#{_e(e['seq'])} {_e(_evidence_label(e))}: {_e(e['summary'])} <code>{_e(e['sha256'][:12])}</code>"
                 + (f"<br><span class='muted small'>{_e(e['uri'])}</span>" if e.get("uri") else "") for e in evs)
             rows.append(f"<tr><td><span class='muted'>{_e(i['key'])}</span><br>{_e(i['text'])}</td>"
                         f"<td>{result}</td><td>{ev_html or '<span class=muted>none</span>'}</td></tr>")
@@ -503,7 +509,8 @@ def _items(r: dict) -> str:
 
 
 def _recon(r: dict) -> str:
-    rows = [f"<tr><td>#{_e(j['id'])} {_e(j['kind'])}</td><td>{_e(j['status'])}</td><td>{_e(j['targets'])}</td>"
+    title = lambda kind: (modules.get(kind).title if modules.get(kind) else "Claude agent" if kind == "agent" else kind)  # noqa: E731
+    rows = [f"<tr><td>#{_e(j['id'])} {_e(title(j['kind']))}</td><td>{_e(_JOB.get(j['status'], j['status']))}</td><td>{_e(j['targets'])}</td>"
             f"<td>{_e(j['result_count'])}</td><td>{_e(_when(j['started_at']))}<br>{_e(_when(j['finished_at']))}</td>"
             f"<td><code>{_e(j['output_sha256'] or '')}</code></td></tr>" for j in r["jobs"]]
     return ("<section id='recon'><h2>Recon runs</h2>"

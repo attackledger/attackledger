@@ -540,3 +540,29 @@ def test_attach_run_needs_a_finished_run_from_the_same_engagement(client):
 
 def h_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
+
+
+def test_report_labels_recon_runs_and_counts(client):
+    from app import db
+    from app.models import Job, JobStatus
+    e, lane = _lane(client)
+    s = next(app.dependency_overrides[db.get_session]())
+    run = Job(engagement_id=e, kind="probe", targets=["shop.lab.test"], status=JobStatus.done, output_sha256="a" * 64)
+    skipped = Job(engagement_id=e, kind="archive", targets=[], status=JobStatus.skipped, deferred=True)
+    s.add_all([run, skipped])
+    s.commit()
+    client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "run", "job_id": run.id})
+    client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note", "text": "checked by hand"})
+    page = client.get(f"/engagements/{e}/report.html").text
+    items = page[page.index("id='items'"):]
+    assert f"Recon run: Find live web servers run, job {run.id}" in items and " file: " not in items
+    assert "Note: checked by hand" in items
+    recon = page[page.index("id='recon'"):]
+    assert "Find live web servers" in recon and "Skipped" in recon and "Collect archived URLs" in recon
+    assert "1 in-scope host " in page or "1 in-scope host\n" in page
+
+
+def test_plural():
+    from app.text import plural
+    assert plural(1, "result") == "1 result" and plural(0, "result") == "0 results"
+    assert plural(2, "match", "matches") == "2 matches"
