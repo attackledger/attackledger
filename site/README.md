@@ -15,4 +15,14 @@ Static site: `index.html` plus a sample report that anyone can verify offline.
 - `demo/`: the web app built in read-only demo mode (`VITE_DEMO=1`) with a snapshot from a
   demo stack (`tools/build_demo.sh`). Fictional hosts only; recon comes from a lab run.
 
-Not deployed yet. Publishing the site is Murat's decision.
+Deployed to Cloudflare Pages, project `attackledger` (first deployment 2026-10-09).
+To publish a new version (needs `npx wrangler@3.114.0 login` once):
+
+```bash
+tools/build_pages.sh
+npx wrangler@3.114.0 pages deploy dist/pages --project-name attackledger --branch main \
+  --commit-hash "$(git rev-parse HEAD)" --commit-dirty=true
+```
+
+`404.html` is the not-found page; without it Pages would answer every unknown path with the
+home page.

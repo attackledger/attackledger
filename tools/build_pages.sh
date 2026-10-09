@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 OUT=${1:-dist/pages}
 rm -rf "$OUT"
 mkdir -p "$OUT"
-cp site/index.html site/sample-report.html site/sample-report.json site/verify_report.py \
+cp site/index.html site/404.html site/sample-report.html site/sample-report.json site/verify_report.py \
    site/digicert-trusted-root-g4.pem "$OUT"/
 cp -R site/demo "$OUT"/demo
 python3 -I - "$OUT" <<'PY'
