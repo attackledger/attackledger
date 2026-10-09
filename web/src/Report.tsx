@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { api } from "./api";
+import { DEMO, demoUrl } from "./demo";
 
 interface ReportSummary {
   generated_at: string;
@@ -26,8 +28,7 @@ export function Report({ engId }: { engId: number }) {
 
   useEffect(() => {
     setR(null);
-    fetch(`/api/engagements/${engId}/report`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`Request failed (${res.status})`))))
+    api.report<ReportSummary>(engId)
       .then(setR)
       .catch((e) => setError(e.message));
   }, [engId]);
@@ -35,6 +36,10 @@ export function Report({ engId }: { engId: number }) {
   if (!r) return <p className="muted">{error ?? "Building report…"}</p>;
   const s = r.summary;
   const base = `/api/engagements/${engId}`;
+  // The demo ships each report as a static file next to the app.
+  const links = DEMO
+    ? { html: demoUrl(`reports/${engId}.html`), htmlDl: demoUrl(`reports/${engId}.html`), json: demoUrl(`reports/${engId}.json`) }
+    : { html: `${base}/report.html`, htmlDl: `${base}/report.html?download=true`, json: `${base}/report?download=true` };
 
   return (
     <div className="report">
@@ -53,9 +58,9 @@ export function Report({ engId }: { engId: number }) {
           )}
         </div>
         <div className="report-actions">
-          <a className="btn" href={`${base}/report.html`} target="_blank" rel="noopener">Open printable report</a>
-          <a className="btn ghost" href={`${base}/report.html?download=true`}>Download HTML</a>
-          <a className="btn ghost" href={`${base}/report?download=true`}>Download JSON</a>
+          <a className="btn" href={links.html} target="_blank" rel="noopener">Open printable report</a>
+          <a className="btn ghost" href={links.htmlDl} download>Download HTML</a>
+          <a className="btn ghost" href={links.json} download>Download JSON</a>
         </div>
       </section>
 

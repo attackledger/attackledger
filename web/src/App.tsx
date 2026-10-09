@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneContext, LaneDetail, PackSummary } from "./api";
 import { Executor } from "./Agent";
+import { DEMO } from "./demo";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
@@ -129,6 +130,12 @@ function Workspace() {
       </aside>
 
       <main className="ledger">
+        {DEMO && (
+          <p className="demo-banner">
+            Read-only demo with fictional hosts. The recon data comes from a real run against a local lab; buttons that
+            change or run something are switched off. <a href="../">About AttackLedger</a>
+          </p>
+        )}
         {notice && (
           <p className="notice" role="alert">
             {notice}

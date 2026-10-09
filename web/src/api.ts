@@ -1,3 +1,5 @@
+import { DEMO, demoCall } from "./demo";
+
 export type CellStatus = "not_opened" | "open" | "closed" | "stale";
 
 export interface Cell {
@@ -259,6 +261,7 @@ export interface EndpointRow {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  if (DEMO) return demoCall<T>(path, init);
   const res = await fetch(`/api${path}`, {
     headers: { "content-type": "application/json" },
     ...init,
@@ -347,6 +350,7 @@ export const api = {
     call<Job>(`/lanes/${laneId}/agent-runs`, {
       method: "POST", body: JSON.stringify({ max_turns, max_requests, max_cost_usd }),
     }),
+  report: <T,>(engId: number) => call<T>(`/engagements/${engId}/report`),
   closeLane: (laneId: number, closed_by: string, reviewed: boolean) =>
     call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST", body: JSON.stringify({ closed_by, reviewed }) }),
 };

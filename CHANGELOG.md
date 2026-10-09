@@ -27,6 +27,10 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **Read-only demo** (`site/demo/`): the real web app built with `VITE_DEMO=1`. Reads come
+  from a snapshot exported by `tools/export_demo.py`, every change is refused with a
+  message, and reports are static files. `tools/build_demo.sh` builds it from a demo stack
+  with fictional data; the Lab recon data comes from a real pipeline run against the lab.
 - **Recon screen reorganised into six steps** (D-026), like ars0n-framework-v2:
   a target bar with the rules, a funnel from host names to leads, numbered steps with
   "Run step" and "How this step works", one card per tool (tools used, last run,
