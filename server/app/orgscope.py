@@ -79,7 +79,7 @@ def default_id(session) -> int:
     with unscoped(session):
         org = session.scalar(select(func.min(Organization.id)))
     if org is None:
-        raise TenancyError("no organization exists; run the migrations (python -m app.migrate)")
+        raise TenancyError("no organization exists: the database is not migrated (the API migrates it when it starts)")
     return org
 
 
