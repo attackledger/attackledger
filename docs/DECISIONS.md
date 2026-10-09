@@ -301,6 +301,39 @@ options considered and who decided.
 - **Not copied from ars0n:** company and ASN workflows, brute-force DNS and automatic
   rounds of re-probing; they are not in the original pipeline either.
 
+### D-027 · Receipts are signed by a person and timestamped (2026-10-09, decided by Murat)
+- **Decision:** each receipt is signed with a key that only the reviewer holds (created in
+  their browser, never sent to the server) and timestamped by an RFC 3161 authority. The
+  report carries the public keys and tokens, and verifies offline.
+- **Why:** a hash in the tester's own database can be recomputed by anyone with access to
+  it. A client or auditor needs proof that does not depend on trusting the tester, the
+  server or its administrator.
+- **Considered:** storing receipt hashes in a hosted ledger (trust moves to our service),
+  keeping the local chain only (weakest).
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-028 · First users: pentest teams and auditors (2026-10-09, decided by Murat)
+- **Decision:** the architecture is shaped around pentest teams who must prove coverage to a
+  client, and the auditors who read that proof. Bug bounty stays supported.
+- **Consequences:** roles (tester, reviewer, viewer) and separation of duties; a
+  client-facing report; the WSTG pack and control mappings are first-class.
+- **Considered:** bug bounty hunters first (more users, less revenue), both equally (no focus).
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-029 · Importing evidence from other tools is part of the core (2026-10-09, decided by Murat)
+- **Decision:** an adapter interface turns tool output into inbox entries; a person maps
+  them to checklist items before anything reaches the ledger. Evidence records their
+  source. Caido is the first adapter.
+- **Why:** pentest teams already work in Caido, Burp and scanners; proof has to come from
+  where the work happens.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak.
+
+### D-030 · Deployment model: open (2026-10-09)
+- **Status:** not decided. Options: self-hosted only; self-hosted testing with a hosted
+  service that stores, timestamps and verifies (no target traffic from our side); fully
+  hosted. The architecture keeps workers separable so that every option stays possible.
+- **Decided by:** Murat Kabak, later.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

@@ -1,5 +1,7 @@
 # Architecture
 
+This file describes what runs today. Where the architecture is going: `TARGET_ARCHITECTURE.md`.
+
 AttackLedger has one job: **prove what was tested**. Every part of the system
 either produces evidence, gates who may produce it, or turns it into a
 verifiable statement of coverage.
