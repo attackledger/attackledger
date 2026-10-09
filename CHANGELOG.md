@@ -27,6 +27,8 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **"Start here" guide in the demo:** five steps (recon steps, golden targets, the coverage
+  ledger, a receipted lane, the report), each with a button that opens the right view.
 - **Work a lane from the lane panel.** On a manually worked lane, each item now has Add
   evidence (a note, a file up to 5 MB, or a finished recon run), Mark done, Not applicable
   (with a reason) and Reopen. `POST /lanes/{id}/attach` hashes notes and files on the

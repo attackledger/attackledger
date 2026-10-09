@@ -847,3 +847,13 @@ a.btn.ghost { color: var(--text); }
 
 .demo-banner { margin: 0 0 1.25rem; padding: 0.6rem 0.9rem; border: 1px dashed var(--ink); border-radius: var(--radius); color: var(--text); font-size: var(--step--1); background: var(--sheet); }
 .demo-banner a { color: var(--ink); }
+
+.demo-guide { margin: 0 0 1.5rem; padding: 1rem 1.2rem; background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--stamp); border-radius: var(--radius); }
+.demo-guide-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.demo-guide h2 { margin: 0; font: 700 var(--step-1) / 1.2 var(--slab); }
+.demo-guide ol { list-style: none; counter-reset: guide; margin: 0.75rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.75rem 1.25rem; }
+.demo-guide li { counter-increment: guide; display: flex; flex-direction: column; gap: 0.5rem; justify-content: space-between; padding-top: 0.6rem; border-top: 1px solid var(--rule-strong); min-width: 0; }
+.demo-guide h3 { margin: 0; font: 700 var(--step-0) / 1.3 var(--body); }
+.demo-guide h3::before { content: counter(guide) " "; color: var(--stamp); font-family: var(--slab); }
+.demo-guide p { margin: 0.2rem 0 0; font-size: var(--step--1); color: var(--text-soft); }
+.demo-guide .btn { align-self: flex-start; }

@@ -137,6 +137,13 @@ function Workspace() {
             change or run something are switched off. <a href="../">About AttackLedger</a>
           </p>
         )}
+        {DEMO && engagements && engagements.length > 0 && (
+          <DemoGuide engagements={engagements} go={(engId, t, lane) => {
+            setCurrent(engId);
+            setTab(t);
+            setLaneId(lane ?? null);
+          }} />
+        )}
         {notice && (
           <p className="notice" role="alert">
             {notice}
@@ -202,6 +209,65 @@ function StampGlyph() {
       <rect x="8" y="8" width="24" height="24" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
       <path d="M13 20.5l4.5 4.5L27 15" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/** Demo only: where to look, in order, with buttons that take you there. */
+function DemoGuide({ engagements, go }: {
+  engagements: EngagementSummary[]; go: (engId: number, tab: Tab, laneId?: number) => void;
+}) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem("attackledger-demo-guide") !== "hidden"; } catch { return true; }
+  });
+  const [receipted, setReceipted] = useState<{ engId: number; laneId: number } | null>(null);
+  useEffect(() => {
+    // The engagement with the most receipted lanes shows the ledger, the receipt and the report best.
+    Promise.all(engagements.map((e) => api.coverage(e.id).then((c) => ({ e, c })))).then((rows) => {
+      const best = rows.sort((a, b) => b.c.closed_cells - a.c.closed_cells)[0];
+      const lane = best?.c.assets.flatMap((a) => Object.values(a.roles)).find((cell) => cell.status === "closed");
+      if (best && lane?.lane_id) setReceipted({ engId: best.e.id, laneId: lane.lane_id });
+    }).catch(() => {});
+  }, [engagements]);
+
+  function toggle() {
+    setOpen(!open);
+    try { localStorage.setItem("attackledger-demo-guide", open ? "hidden" : "shown"); } catch { /* ignore */ }
+  }
+
+  const lab = engagements[0];
+  const steps: { title: string; text: string; action?: () => void }[] = [
+    { title: "Recon, step by step", action: () => go(lab.id, "recon"),
+      text: `${lab.name} ran the full pipeline against a local lab. Each step lists its tools, its last run and what it found.` },
+    { title: "Golden targets", action: () => { go(lab.id, "recon"); setTimeout(() => document.getElementById("results")?.scrollIntoView({ behavior: "smooth" }), 300); },
+      text: "Every live host is scored from what it answers. The highest scores are where testing starts." },
+    { title: "The coverage ledger", action: receipted ? () => go(receipted.engId, "ledger") : undefined,
+      text: "One row per host, one column per lane. A cell is receipted only when every item has evidence or a reason; a change afterwards makes it void." },
+    { title: "A receipted lane", action: receipted ? () => go(receipted.engId, "ledger", receipted.laneId) : undefined,
+      text: "The checklist, the hash-chained evidence behind each item and the reviewer's signature." },
+    { title: "The report", action: receipted ? () => go(receipted.engId, "report") : undefined,
+      text: "Coverage mapped to controls, with everything needed to verify it offline using only Python." },
+  ];
+
+  return (
+    <section className="demo-guide" aria-labelledby="demo-guide-title">
+      <div className="demo-guide-head">
+        <h2 id="demo-guide-title">Start here</h2>
+        <button className="btn ghost small" aria-expanded={open} onClick={toggle}>{open ? "Hide" : "Show"}</button>
+      </div>
+      {open && (
+        <ol>
+          {steps.map((st) => (
+            <li key={st.title}>
+              <div>
+                <h3>{st.title}</h3>
+                <p>{st.text}</p>
+              </div>
+              {st.action && <button className="btn small" onClick={st.action}>Show me</button>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }
 
