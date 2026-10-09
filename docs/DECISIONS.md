@@ -748,6 +748,17 @@ options considered and who decided.
 - **Made by:** Claude, from the second design-partner review, under Murat's overnight
   permission.
 
+### D-053 · The web app keeps its place in a hash route (2026-10-10, made autonomously)
+- **Decision:**
+  - The app keeps its place in a hash route (`#/e/<id>/<tab>/lane/<n>`), not History API
+    paths. It works unchanged behind nginx's SPA fallback and under `/demo/` on a static
+    host, and nothing after `#` reaches the server.
+  - Unsent text is kept in memory and in `sessionStorage` for the tab. Text that looks
+    like a credential is never kept there.
+  - Drafts are cleared on sign-out, or when another person signs in.
+- **Made by:** Claude, from the second design-partner review, under Murat's overnight
+  permission.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

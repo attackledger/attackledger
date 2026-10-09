@@ -36,6 +36,20 @@ Fixes from the second design-partner review of 0.7.0.
   - the Verify tab as it is;
   - `.env.example` matches where each key goes.
 
+- **Web**:
+  - Links to an engagement, tab, lane and import entry (`#/e/3/ledger/lane/12`), with
+    Back and Forward, reload, and "Copy link" on the lane panel. They work in the demo
+    too (D-053).
+  - An expired session says so, keeps unsent notes and reasons, and returns you to where
+    you were.
+  - Import marks items on receipted lanes "(voids receipt)" and asks before voiding them.
+  - An engagement whose content was deleted shows a banner on every tab and disables
+    import, runs and mapping.
+  - Lane evidence is shown in chain order, with View raw for imported entries.
+  - Cells show "Signed after …", and people who cannot sign see why.
+  - Times are local, with UTC on hover. Fingerprints have one format. The offline
+    command uses the report's real file name.
+
 ### Fixed
 - **Controls**: the status when only not-applicable items are resolved.
 - **Recon**: the per-step lead counts.
