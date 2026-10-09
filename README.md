@@ -382,6 +382,7 @@ Copyright (C) 2026 Murat Kabak.
 
 ## Contributing
 
-Contributions are welcome. To keep dual licensing possible, contributors are
-asked to sign a Contributor License Agreement (CLA) before a pull request is
-merged.
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). To keep dual
+licensing possible, every contributor signs the [Contributor License Agreement](CLA.md)
+once, by replying to the bot's comment on their first pull request. Contributors keep
+the copyright in their work.

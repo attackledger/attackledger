@@ -689,6 +689,22 @@ options considered and who decided.
     claim.
 - **Made by:** Claude, under Murat's permission ("bunları da hallet").
 
+### D-051 · Contributions need a CLA (2026-10-09, decided by Murat)
+- **Decision:** every commit author of a pull request signs `CLA.md` once before it can
+  be merged.
+  - The CLA is a licence grant, not a copyright transfer. Contributors keep their
+    copyright and grant a broad copyright and patent licence that allows the work to be
+    licensed under the AGPL and commercially.
+  - Signing happens through CLA Assistant Lite, a GitHub Action pinned by commit. It
+    stores signatures in this repository on the unprotected branch `cla-signatures`, so no
+    third-party service or extra token is involved.
+- **Why:** dual licensing (D-044) needs the right to license every line both ways. The
+  repository became public on 2026-10-09 (D-048).
+- **Note:** the text was drafted by Claude from the common structure of individual CLAs.
+  It has not been reviewed by a lawyer. Have it reviewed before the first commercial
+  licence is sold.
+- **Proposed by:** a side note in the session. **Decided by:** Murat Kabak ("bunu yapalım").
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

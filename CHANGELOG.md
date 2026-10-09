@@ -195,6 +195,8 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Changed
+- **Contributions need a CLA** (D-051). See `CLA.md` and `CONTRIBUTING.md`. A bot asks each
+  new contributor to sign once.
 - **Control mappings reviewed** (D-050, docs/CONTROLS.md). They were checked against PCI
   DSS v4.0.1, ISO/IEC 27001:2022 Annex A and DORA, with the TLPT RTS (EU) 2025/1190.
   - Each mapping states its evidence strength: partial or supporting; none is full. The
