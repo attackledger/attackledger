@@ -1099,7 +1099,7 @@ function Folio({ laneId, me, link, onClose, onChanged, onGoLane, onGoImport, onL
   // The server's word on whether this person can sign this lane now; servers before 0.7.1 do not say,
   // and then the role decides as before.
   const signRefusal = lane?.can_sign && !lane.can_sign.ok
-    ? (lane.can_sign.reason ?? "You cannot sign this lane.") : null;
+    ? (lane.can_sign.reason ?? "The server does not say why") : null;
   // Chain order, the same for every source: the oldest first, the newest last.
   const evidence = useMemo(() => [...(lane?.evidence ?? [])].sort((a, b) => a.id - b.id), [lane]);
   const [copied, setCopied] = useState<"yes" | "show" | null>(null);
@@ -1349,7 +1349,7 @@ function Folio({ laneId, me, link, onClose, onChanged, onGoLane, onGoImport, onL
             ) : signRefusal ? (
               <p className="muted sign-refusal">
                 {lane.status === "stale" ? "The receipt is void. " : "Not receipted yet. "}
-                <strong>You cannot sign this lane:</strong> {signRefusal.replace(/\.$/, "")}.
+                <strong>You cannot sign this lane.</strong> {signRefusal.replace(/\.$/, "")}.
               </p>
             ) : (
               <div className="sign">
@@ -1413,8 +1413,18 @@ function StatusLine({ lane, needs, waiting }: { lane: LaneDetail; needs: number;
         Receipted. Manifest <code>{lane.receipt.sha256.slice(0, 16)}</code>
       </p>
     );
-  if (lane.status === "stale")
-    return <p className="status bad">The ledger changed after the receipt was issued. Review the new entries and close again.</p>;
+  if (lane.status === "stale") {
+    // D-052: a void receipt stays void until someone signs again, even if the change is undone.
+    const v = lane.receipt?.void;
+    return (
+      <p className="status bad">
+        {v ? <>The receipt is void. {v.text.replace(/\.$/, "")} (<When iso={v.at} />).</>
+           : <>The receipt is void: the ledger changed after it was issued. It stays void until a reviewer signs again,
+               even if the change is undone.</>}
+        {" "}Review the lane and sign again.
+      </p>
+    );
+  }
   const after = (lane.waiting_on ?? []).map((w) => w.name).join(", ");
   if (needs === 0 && waiting === 0)
     return after

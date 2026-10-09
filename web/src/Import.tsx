@@ -192,14 +192,14 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
   const roleOf = (laneId: number) => e.targets.find((t) => t.lane_id === laneId)?.role ?? String(laneId);
   const laneName = (laneId: number) => e.targets.find((t) => t.lane_id === laneId)?.name ?? `Lane ${laneId}`;
   const mapped = new Set(e.mappings.map((m) => `${roleOf(m.lane_id)}:${m.item_idx}`));
-  // A receipted lane: adding evidence to it voids its receipt. The server says so per item and
-  // suggestion (receipted, lane_status); an older server only gives the lane's status.
+  // A receipt in force: adding evidence voids it. The server says so per lane, item and suggestion
+  // (receipted, lane_status); an older server only gives the lane's status.
   const targetOf = (role: string) => e.targets.find((t) => t.role === role);
   const receipted = (role: string, idx: number) => {
     const t = targetOf(role);
     const it = t?.items.find((x) => x.idx === idx);
     const sug = e.suggestions.find((x) => x.role === role && x.item_idx === idx);
-    const flag = it?.receipted ?? sug?.receipted;
+    const flag = it?.receipted ?? sug?.receipted ?? t?.receipted;
     if (typeof flag === "boolean") return flag;
     return (it?.lane_status ?? sug?.lane_status ?? t?.status) === "closed";
   };
@@ -272,6 +272,9 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
           : "Already mapped to these items; nothing was added.",
         r.opened.some((x) => x.startsWith("host ")) ? `Added ${e.host} to the ledger.` : "",
         lanes ? `Opened ${plural(lanes, "lane")}.` : "",
+        r.receipts_voided?.length
+          ? `Voided ${plural(r.receipts_voided.length, "receipt")}; ${r.receipts_voided.length === 1 ? "it stays" : "they stay"} void until a reviewer signs again.`
+          : "",
         r.marked_done.length ? `Marked ${plural(r.marked_done.length, "item")} done.`
           : markDone ? "" : "The items stay open until someone marks them done.",
       ];
@@ -381,7 +384,7 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
                   <option value="">Choose an item on {e.host}…</option>
                   {e.targets.map((t) => (
                     <optgroup key={t.role} disabled={!t.opened && !t.can_open}
-                              label={t.opened ? `${t.name}${t.status === "closed" ? VOIDS : ""}`
+                              label={t.opened ? `${t.name}${(t.receipted ?? t.status === "closed") ? VOIDS : ""}`
                                 : t.can_open ? `${t.name} (opens the lane)` : `${t.name} (${t.why_not})`}>
                       {t.items.map((i) => {
                         const k = `${t.role}:${i.idx}`;
@@ -440,8 +443,9 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
                     {voids.length === 1 ? `${voids[0]} on ${e.host} has a receipt.`
                       : `These lanes on ${e.host} have receipts: ${voids.join(", ")}.`}
                   </strong>{" "}
-                  Adding evidence voids {voids.length === 1 ? "it" : "them"}, and the client will see the
-                  receipt{voids.length === 1 ? "" : "s"} as void until a reviewer signs again.
+                  Adding evidence voids {voids.length === 1 ? "it" : "them"}. The client sees the
+                  receipt{voids.length === 1 ? "" : "s"} as void until a reviewer signs again; removing the evidence
+                  later does not bring {voids.length === 1 ? "it" : "them"} back.
                 </p>
                 <div className="work-buttons">
                   <button type="button" className="btn small" disabled={busy} autoFocus onClick={() => send(true)}>

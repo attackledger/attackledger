@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, EndpointRow, Job, Lead, ObservationRow, ReconModule, ReconPhase, ReconSummary, Scope, ScopeImport,
          TriageReport } from "./api";
 import { AddHost } from "./AddHost";
+import { When } from "./display";
 import { latestLine, secondsSince, shownStatus, skipReason, STATUS_WORD } from "./jobs";
 import { duration, plural, termsFor, type Terms } from "./words";
 
@@ -188,10 +189,12 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
     subdomains: plural(s.hosts, "host name") + " in scope",
     live: `${plural(s.resolved, "host")} resolve, ${s.live.toLocaleString()} answer on the web, ${s.golden.toLocaleString()} golden`,
     urls: `${plural(s.urls, "URL")}, ${s.js.toLocaleString()} JavaScript`,
-    js: plural((s.lead_kinds.secret ?? 0) + (s.lead_kinds.graphql ?? 0) + (s.lead_kinds.sourcemap ?? 0)
+    // Leads by the step whose run recorded them (step_leads), so the steps add up to the counter;
+    // a server without it is counted by lead kind as before.
+    js: plural(s.step_leads?.js ?? (s.lead_kinds.secret ?? 0) + (s.lead_kinds.graphql ?? 0) + (s.lead_kinds.sourcemap ?? 0)
                + (s.lead_kinds.parameter ?? 0) + (s.lead_kinds["param-class"] ?? 0), "lead"),
-    issues: plural(s.lead_kinds.nuclei ?? 0, "finding") + " to verify",
-    manual: plural(s.lead_kinds.dork ?? 0, "query", "queries"),
+    issues: plural(s.step_leads?.issues ?? s.lead_kinds.nuclei ?? 0, "finding") + " to verify",
+    manual: plural(s.step_leads?.manual ?? s.lead_kinds.dork ?? 0, "query", "queries"),
   } : {};
 
   return (
@@ -464,7 +467,7 @@ function Runs({ jobs, mods, refresh, onError, canRun, liveLine }: {
                 : shownStatus(j) === "done" ? `${plural(j.targets.length, "target")}, ${plural(j.result_count, "result")}`
                 : plural(j.targets.length, "target")}
             </span>
-            <span className="muted job-time">{new Date(j.created_at).toLocaleTimeString()}</span>
+            <span className="muted job-time"><When iso={j.finished_at ?? j.started_at ?? j.created_at} /></span>
             <span className="job-actions">
               {canRun && j.remaining > 0 && (j.status === "partial" || j.status === "cancelled") && (
                 <button className="btn small" onClick={async () => {

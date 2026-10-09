@@ -122,7 +122,8 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
         <div className="confirm void-confirm" role="group" aria-labelledby={`${id}-void`}>
           <p id={`${id}-void`}>
             <strong>This lane has a {lane.receipt?.signed ? "signed receipt" : "receipt"}.</strong> Changing an item voids
-            it, and the client will see the receipt as void until a reviewer signs again.
+            it. The client sees the receipt as void until a reviewer signs again; undoing the change does not bring it
+            back.
           </p>
           <div className="work-buttons">
             <button type="button" className="btn small" disabled={busy} autoFocus
