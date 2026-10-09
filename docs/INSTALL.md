@@ -45,6 +45,7 @@ where it finds its settings (`.env`). Replace `attackledger.example.com` and
 16. [Monitoring and logs](#16-monitoring-and-logs)
 17. [Uninstall and delete the data](#17-uninstall-and-delete-the-data)
 18. [Troubleshooting](#18-troubleshooting)
+19. [Practise against the lab](#19-practise-against-the-lab)
 
 ## 1. What you need
 
@@ -197,7 +198,16 @@ name. Do not remove those two lines.
 
 Caddy terminates HTTPS and renews certificates by itself. HTTPS is not optional: the
 session cookie is sent only over HTTPS, and browsers create reviewers' signing keys only
-on secure pages. Choose one of the three options and run its commands.
+on secure pages. Choose one of the options and run its commands.
+
+| Option | Suitable for |
+|---|---|
+| A. Let's Encrypt | a server with a public DNS name. Real work. |
+| B. Your organisation's certificate | internal names, or when policy requires your own CA. Real work. |
+| C. Caddy's internal CA | a test install that several people reach over the network, when A and B are not possible yet. Everyone must trust Caddy's root first. |
+| D. Plain HTTP on `attackledger.localhost`, over an SSH tunnel | a trial by one or a few people with fictional data. Nothing is reachable from the network. |
+
+For client work use A or B.
 
 **Option A: Let's Encrypt.** The DNS name must resolve to this server from the internet,
 and port 80 must be reachable from the internet. The email address receives expiry
@@ -220,23 +230,122 @@ sed -i "s|^ATTACKLEDGER_TLS=.*|ATTACKLEDGER_TLS=/certs/fullchain.pem /certs/key.
 
 When you renew it, replace the two files and run `docker compose restart caddy`.
 
-**Option C: Caddy's internal CA, for a trial only.** Caddy issues its own certificate.
-Browsers warn until you trust Caddy's root, so use this for a test install, with a name
-like `attackledger.localhost` or `attackledger.test`:
+**Option C: Caddy's internal CA, for a test install.** Caddy creates its own certificate
+authority and issues the server's certificate from it. Until a machine trusts that
+authority's root, its browsers block the page with a certificate error (for example
+`NET::ERR_CERT_AUTHORITY_INVALID` or `SEC_ERROR_UNKNOWN_ISSUER`), and there is no safe way
+to click through it.
 
 ```sh
 sed -i "s|^ATTACKLEDGER_TLS=.*|ATTACKLEDGER_TLS=internal|" .env
 ```
 
-After step 8 you can copy Caddy's root certificate out, to trust it on test machines or
-to pass it to `curl`:
+After section 8, trust the root on each machine that opens AttackLedger:
 
-```sh
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
-```
+1. On the server, copy the root certificate out and print its fingerprint:
 
-If ports 80 and 443 are taken on the server, set `ATTACKLEDGER_HTTP_PORT` and
-`ATTACKLEDGER_HTTPS_PORT` in `.env` (Let's Encrypt needs port 80 itself).
+   ```sh
+   cd /opt/attackledger
+   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+   openssl x509 -in caddy-root.crt -noout -subject -fingerprint -sha256
+   ```
+
+   The subject is `CN=Caddy Local Authority - <year> ECC Root`. The root is valid for ten
+   years.
+
+2. Copy `caddy-root.crt` to the user's machine (for example
+   `scp admin@attackledger.example.com:/opt/attackledger/caddy-root.crt .`). On that
+   machine, check that the fingerprint matches the one the server printed before you trust
+   it (`openssl x509 -in caddy-root.crt -noout -fingerprint -sha256`, or the certificate's
+   details window).
+
+3. Trust it, for the machine's operating system:
+
+   - **macOS** (Safari, Chrome, Edge). In Terminal:
+
+     ```sh
+     sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain caddy-root.crt
+     ```
+
+     Or in Keychain Access: drag the file into **System**, open it, expand **Trust** and
+     set **When using this certificate** to **Always Trust**.
+   - **Windows** (Edge, Chrome). In a Command Prompt run as administrator:
+
+     ```bat
+     certutil -addstore -f Root caddy-root.crt
+     ```
+
+     Or double-click the file, **Install Certificate**, **Local Machine**, **Place all
+     certificates in the following store**, **Trusted Root Certification Authorities**.
+   - **Ubuntu** (the system store, used by `curl`, Python and most tools):
+
+     ```sh
+     sudo cp caddy-root.crt /usr/local/share/ca-certificates/attackledger-caddy-root.crt
+     sudo update-ca-certificates
+     ```
+
+     Chrome and Chromium on Linux read their own store as well. Add the root there too
+     (`sudo apt-get install -y libnss3-tools` first):
+
+     ```sh
+     certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "AttackLedger Caddy root" -i caddy-root.crt
+     ```
+
+   - **Firefox**, on any system, keeps its own list: **Settings**, **Privacy & Security**,
+     **Certificates**, **View Certificates**, **Authorities** tab, **Import**, choose
+     `caddy-root.crt`, tick **Trust this CA to identify websites**, **OK**.
+
+4. Restart the browser and open `https://attackledger.example.com`.
+
+A trusted root can vouch for any website on that machine, and its private key is on the
+AttackLedger server (in the `caddy_data` volume). Trust it only on machines that need it,
+and remove it when the test ends: on macOS delete it in Keychain Access, on Windows run
+`certutil -delstore Root "Caddy Local Authority - <year> ECC Root"`, on Ubuntu delete the
+file and run `sudo update-ca-certificates --fresh`, and in Firefox delete it in
+**Authorities**. The root changes if the `caddy_data` volume is lost; section 14 says how
+to keep it.
+
+**Option D: plain HTTP on `attackledger.localhost`, for a trial.** Nothing to trust and no
+DNS name to set up. Caddy serves plain HTTP on the server's loopback address only, and each
+user reaches it through an SSH tunnel. Browsers treat `http://*.localhost` as a secure page,
+so the HTTPS-only session cookie and reviewers' signing keys work. Use it only for a trial
+with fictional data: everyone who uses it needs SSH access to the server.
+
+1. Set the name with `http://` in front, and publish the ports on the loopback address only
+   (replace the step 3 value of `ATTACKLEDGER_HOSTNAME` from section 4):
+
+   ```sh
+   sed -i "s|^ATTACKLEDGER_HOSTNAME=.*|ATTACKLEDGER_HOSTNAME=http://attackledger.localhost|" .env
+   sed -i "s|^ATTACKLEDGER_TLS=.*|ATTACKLEDGER_TLS=internal|" .env
+   sed -i "s|^ATTACKLEDGER_HTTP_PORT=.*|ATTACKLEDGER_HTTP_PORT=127.0.0.1:80|" .env
+   sed -i "s|^ATTACKLEDGER_HTTPS_PORT=.*|ATTACKLEDGER_HTTPS_PORT=127.0.0.1:443|" .env
+   ```
+
+   (`ATTACKLEDGER_TLS=internal` is only there because the setting may not be empty; with an
+   `http://` name Caddy issues no certificate.)
+
+2. After section 8, each user opens a tunnel from their own machine and leaves it open:
+
+   ```sh
+   ssh -N -L 8080:127.0.0.1:80 admin@attackledger.example.com
+   ```
+
+3. They open `http://attackledger.localhost:8080` in Chrome or Edge.
+
+Signing in, staying signed in and creating a signing key were tested this way in Chromium,
+the engine of Chrome and Edge. Firefox and Safari also treat `*.localhost` as a secure page,
+but were not tested; if signing in there sends you back to the sign-in page, use Chrome or
+Edge. A reviewer's signing key belongs to the exact address, port included,
+so keep the same local port (`8080`) each time. To move on to real work, choose A or B, set
+`ATTACKLEDGER_HOSTNAME` to the real name, reset the two ports to `80` and `443`, and run
+`docker compose up -d --wait`. Reviewers then get new keys on the new address (section 11).
+
+**Other ports.** If ports 80 and 443 are taken on the server, set `ATTACKLEDGER_HTTP_PORT`
+and `ATTACKLEDGER_HTTPS_PORT` in `.env` (Let's Encrypt needs port 80 itself). With another
+HTTPS port, give people the address with the port, such as
+`https://attackledger.example.com:8443`. Caddy's redirect from HTTP does not know the port
+Docker publishes, so `http://attackledger.example.com:8080` sends the browser to
+`https://attackledger.example.com/` without the port, where nothing answers.
 
 ## 6. Traffic gateway
 
@@ -417,7 +526,8 @@ docker compose exec api python -m app.vault encrypt-existing
    docker compose ps
    ```
 
-4. Check HTTPS and the API (with option C, add `--cacert caddy-root.crt`):
+4. Check HTTPS and the API. With option C, add `--cacert caddy-root.crt`. With option D,
+   run `curl -fsS -H 'Host: attackledger.localhost' http://127.0.0.1/api/health` instead.
 
    ```sh
    curl -fsS https://attackledger.example.com/api/health
@@ -487,8 +597,13 @@ Owners manage people. Everyone else sees only the engagements they have a role o
 rules, and gives the team their roles. Testers who work in Burp, Caido or a browser bring
 their traffic in as an export file (HAR, Burp XML or Caido JSON, up to 50 MB each): it
 waits in the engagement's inbox, redacted and checked against the scope, until a person
-maps each entry to checklist items. `docs/IMPORT.md` describes the formats and the inbox
-for testers.
+maps each entry to checklist items.
+
+**Give testers [`docs/TESTER_GUIDE.md`](TESTER_GUIDE.md).** It walks through an engagement
+in the app: signing in, the rules, lanes and checklist items, evidence, importing from
+Burp, Caido or a browser, and getting lanes signed. `docs/IMPORT.md` is the technical
+description of the import formats. To let people practise before a real engagement, start
+the bundled practice target (section 19).
 
 On the server, for the cases the app deliberately does not cover:
 
@@ -569,6 +684,7 @@ docker compose up -d --wait
 | Session cookies | the database, as SHA-256 hashes | staying signed in (12 hours) | yes (hashes only) |
 | Reviewers' private signing keys | each reviewer's browser only | signing receipts | no, and they never reach the server |
 | TLS private key | `deploy/certs/key.pem` (option B) or the `caddy_data` volume (options A and C) | HTTPS | no; re-issue or copy it yourself |
+| Caddy's internal CA key (option C) | the `caddy_data` volume | the certificate that users' machines trust | no; copy it yourself (section 14) |
 
 `.env`, `/etc/attackledger/` and `deploy/certs/` are readable by root only (the key file
 also by uid 10001, the containers' user). Docker shows environment variables
@@ -589,6 +705,37 @@ key, and the backups' evidence content is lost too, even though the chain and re
 still verify. `.env` is not needed for a restore; a new install generates its own.
 The gateway's volumes (its CA and its token, section 6) are not backed up either: the gateway
 makes new ones on a fresh install, and its request log is in the database.
+
+Caddy's volume (`caddy_data`) is not backed up. With Let's Encrypt (option A) that costs
+nothing: Caddy gets a new certificate. With Caddy's internal CA (option C), a new server or
+a lost volume means a **new root**, and every machine that trusted the old one shows the
+certificate error again until it trusts the new root (section 5). To avoid that, keep a
+copy of the CA, readable by root only, next to your other backups:
+
+```sh
+cd /opt/attackledger
+install -m 700 -d /var/backups/attackledger/caddy-local-ca
+docker compose cp caddy:/data/caddy/pki/authorities/local/. /var/backups/attackledger/caddy-local-ca/
+chmod 600 /var/backups/attackledger/caddy-local-ca/*
+```
+
+The folder holds the root and intermediate certificates and their private keys. Whoever has
+the root key can make certificates that the machines trusting it accept for any site, so
+guard it like the master key. It does not change once made, so one copy is enough.
+
+To put it back on a new server, after the restore below (Caddy is running):
+
+```sh
+cd /opt/attackledger
+docker compose cp /var/backups/attackledger/caddy-local-ca/. caddy:/data/caddy/pki/authorities/local/
+docker compose exec caddy rm -rf /data/caddy/certificates/local
+docker compose restart caddy
+```
+
+The second command removes the server certificate Caddy issued from its new CA, so that it
+issues one from the restored CA. Check with
+`curl -fsS --cacert caddy-root.crt https://attackledger.example.com/api/health`, using the
+`caddy-root.crt` you gave users.
 
 Why the two parts together: the database's encrypted summaries open only with the data keys
 in the blob store, and the API refuses to start when an engagement's key file is missing.
@@ -782,11 +929,12 @@ This deletes every engagement, evidence entry, receipt and person on this server
 keep a final backup first if your contract or policy requires one.
 
 1. Stop and remove the containers, the volumes (database, blob store, Caddy's
-   certificates) and the images built here:
+   certificates) and the images built here. `--profile lab` also removes the practice
+   target if it was started (section 19):
 
    ```sh
    cd /opt/attackledger
-   docker compose down --volumes --rmi local
+   docker compose --profile lab down --volumes --rmi local
    docker builder prune --all --force
    ```
 
@@ -842,7 +990,8 @@ are not in `/opt/attackledger`, or `.env` lacks the `COMPOSE_FILE` and
 **"Nobody can sign in yet"** on the sign-in page. There is no owner; see section 9.
 
 **Signed in, but sent back to the sign-in page at once.** The session cookie is HTTPS-only.
-Open the `https://` address with the configured name, not the IP address or `http://`.
+Open the `https://` address with the configured name, not the IP address or `http://`
+(with option D in section 5, `http://attackledger.localhost:8080` through the tunnel).
 
 **"Too many failed sign-ins; try again in 15 minutes".** Five failures from one address
 for one email lock it for 15 minutes. Wait, or clear all lockouts with
@@ -905,3 +1054,134 @@ newer AttackLedger. Check out that version (section 15), build, and restore agai
 **The disk is full.** `docker system df` shows what uses it. `docker builder prune` frees the
 build cache after an upgrade. Old backups on the server are removed by the cron job in
 section 14.
+
+## 19. Practise against the lab
+
+AttackLedger comes with a small practice target: a fictional shop that answers as
+`shop.lab.test`. It is useful for a first engagement before a real one: recon runs against
+it, testers browse it and import what they captured, and reviewers sign its lanes. The
+production file does not start it (`profiles: ["lab"]` in `deploy/compose.prod.yml`); you
+start it when you want it.
+
+The lab is on its own internal network (`lab`), with no route out. Two containers can reach
+it: the **gateway**, which is how the worker's recon tools and agents reach it, with the
+engagement's scope, rate and read-only rules, and the **lab proxy**, an HTTP proxy for a
+person's browser, published on the server's loopback address only (port 3128). The lab proxy
+forwards to `shop.lab.test` and refuses every other host, so it is no way out of the server.
+Unlike the gateway, it lets a browser send forms (POST) to the lab, because a person is
+driving it.
+
+### Start and stop it
+
+1. Start the lab and its proxy:
+
+   ```sh
+   cd /opt/attackledger
+   docker compose --profile lab up -d lab lab-proxy
+   ```
+
+2. Check that both are running:
+
+   ```sh
+   docker compose --profile lab ps lab lab-proxy
+   ```
+
+3. When you no longer need them, stop and remove them. The rest keeps running:
+
+   ```sh
+   docker compose --profile lab rm --stop --force lab lab-proxy
+   ```
+
+Plain `docker compose` commands leave the lab alone, because they do not name the
+profile. In particular, `docker compose down` without `--profile lab` leaves it running and
+cannot remove the networks it uses; add `--profile lab`. To use another port for the lab
+proxy, set `ATTACKLEDGER_LAB_PROXY_PORT` in `.env` before step 1.
+
+### A practice engagement
+
+An owner sets it up once:
+
+1. **New engagement** (left), name it `Lab practice`, choose a methodology (for example
+   **Web application pentest (OWASP WSTG)**), **Create**.
+2. On the **Recon** tab, under **Rules of engagement**:
+   - **In scope**: `shop.lab.test`
+   - **Research header**: `X-Bug-Bounty: lab-practice`
+   - **Requests per second**: `5`
+   - Under **Authorization**: **Program policy URL** `https://example.com/policy`, your
+     name, and tick **I am authorized to test this program and will follow its policy**.
+   - **Save rules**. `shop.lab.test` becomes a row in the ledger.
+3. On the **Team** tab, give the people who practise their roles (section 10).
+
+Recon: on the **Recon** tab, **Find live web servers**, **Run** (or **Run all steps**). Its
+requests go through the gateway and are listed per engagement at
+`GET /api/engagements/<id>/gateway-log`. The steps that ask public sources (subdomains,
+archived URLs) have nothing to find for a `.test` name; that is expected.
+
+### Capture a HAR of the lab from a browser
+
+The lab is not reachable from people's machines directly. Each person opens an SSH tunnel to
+the lab proxy and points a separate browser profile at it, so their normal browsing is not
+affected.
+
+1. On your own machine, open the tunnel and leave it open (it needs SSH access to the
+   server; with option D in section 5, add `-L 8080:127.0.0.1:80` to the same command):
+
+   ```sh
+   ssh -N -L 3128:127.0.0.1:3128 admin@attackledger.example.com
+   ```
+
+2. Start a browser with its own profile that uses the tunnel as its proxy:
+
+   - Chrome on macOS:
+
+     ```sh
+     open -na "Google Chrome" --args --user-data-dir="$HOME/.attackledger-lab-chrome" --proxy-server=http://127.0.0.1:3128
+     ```
+
+   - Chrome on Windows (Command Prompt):
+
+     ```bat
+     "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="%TEMP%\attackledger-lab-chrome" --proxy-server=http://127.0.0.1:3128
+     ```
+
+   - Chrome on Linux:
+
+     ```sh
+     google-chrome --user-data-dir="$HOME/.attackledger-lab-chrome" --proxy-server=http://127.0.0.1:3128
+     ```
+
+   - Firefox: create a profile on `about:profiles`, start it, then **Settings**, **Network
+     Settings**, **Manual proxy configuration**, **HTTP Proxy** `127.0.0.1`, **Port** `3128`.
+
+3. Open the developer tools (F12), select the **Network** tab and tick **Preserve log**
+   (Firefox: **Persist Logs**, in the gear menu).
+
+4. Go to `http://shop.lab.test/` (type `http://`; the lab has no HTTPS) and click through
+   the shop: products, about, search, admin.
+
+5. Save the capture as a HAR file. Chrome: the **Export HAR** button (a downward arrow) in
+   the Network tab's toolbar, or right-click any request, **Save all as HAR**. Firefox:
+   right-click any request, **Save All As HAR**.
+
+6. In AttackLedger, open the practice engagement, **Import** tab, choose the file,
+   **Import**. The result line says how many entries reached the inbox. Repeated page loads
+   count as duplicates, and any request the browser made to another host is refused as out
+   of scope and listed by row and host only.
+
+7. Map the entries to checklist items, as in `docs/TESTER_GUIDE.md`.
+
+Measured on a test install: headless Chrome 155 through the lab proxy, driven by a script
+that clicked through the shop, captured 25 requests. The import added 9 entries to the
+inbox, counted 16 duplicates, and refused as out of scope a row added for another host.
+
+To practise the Burp or Caido import instead, point the tool's upstream proxy at the
+tunnel for `shop.lab.test` only, browse the lab through the tool, and export as in the
+tester guide:
+- Burp: **Settings**, **Network**, **Connections**, **Upstream proxy servers**, **Add**:
+  **Destination host** `shop.lab.test`, **Proxy host** `127.0.0.1`, **Proxy port** `3128`.
+- Caido: **Settings** (account menu, top right), **Network**, **HTTP Proxies**,
+  **+ Add Proxy**: address `127.0.0.1`, port `3128`, **Included Hosts** `shop.lab.test`,
+  **+ Create**.
+
+When you finish, close the browser and delete its profile folder
+(`$HOME/.attackledger-lab-chrome`, or the Firefox profile on `about:profiles`).

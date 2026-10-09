@@ -109,12 +109,13 @@ an explicit command encrypts it.**
 
 ## Retention and deletion
 
-- **Delete now.** An owner opens the engagement's Settings, chooses "Delete this
-  engagement's data", sees what will be deleted and what stays, and confirms by typing the
-  engagement's name. The API (`POST /engagements/{id}/content/delete`) refuses unless
-  `confirm_name` equals the name exactly. It cannot be undone.
-- **Delete after a date.** An owner sets "Keep the content until" (a UTC date,
-  `PATCH /engagements/{id}` with `retain_until`). The worker checks once a minute and
+- **Delete now.** An owner opens the engagement's **Team** tab and, under **Data and
+  retention**, chooses "Delete this engagement's data", sees what will be deleted and what
+  stays, and confirms by typing the engagement's name. The API
+  (`POST /engagements/{id}/content/delete`) refuses unless `confirm_name` equals the name
+  exactly. It cannot be undone.
+- **Delete after a date.** In the same place, an owner sets "Keep the content until (UTC)"
+  (`PATCH /engagements/{id}` with `retain_until`). The worker checks once a minute and
   deletes the content of every engagement whose date has passed (the day after it). No date
   means the content is kept until someone deletes it. The decision's default of one year
   after an engagement closes needs an engagement close event, which does not exist yet; a

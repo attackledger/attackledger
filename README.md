@@ -105,6 +105,7 @@ open http://localhost:8080
    research header such as `X-Bug-Bounty: your-handle` for the steps that send traffic.
    Record the authorization with a policy URL (`https://example.com/policy` for the lab).
 3. Run recon from the Recon tab, work the lanes on the Ledger tab, and close them.
+   [docs/TESTER_GUIDE.md](docs/TESTER_GUIDE.md) walks a tester through an engagement.
 
 All ports bind to `127.0.0.1`. To require a token (do this before exposing the API
 anywhere else), set `ATTACKLEDGER_API_TOKEN` in a `.env` file next to `docker-compose.yml`.
