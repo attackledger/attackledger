@@ -46,7 +46,8 @@ export function People({ mode }: { mode: "open" | "token" | "people" }) {
   return (
     <div className="people">
       <section className="panel" aria-labelledby="people-title">
-        <h3 id="people-title" className="panel-title">People</h3>
+        {/* The page's own heading: the sidebar's h2 comes before it, so not an h3 (axe heading-order). */}
+        <h2 id="people-title" className="panel-title">People</h2>
         <p className="muted">Everyone who can sign in. Roles are given per engagement, on its Team tab.
           Owners manage people and engagements and can do everything. Nobody sets another person's password
           here: each person changes their own, and a forgotten one is reset on the server

@@ -206,6 +206,9 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   // The URL follows the place. A person's own move adds a history entry (so Back returns to where
   // they were); a choice the app makes for them (the opening tab, a correction) replaces it.
   const pushNext = useRef(false);
+  // The address last written or followed. A change of address fires both popstate and hashchange;
+  // following it twice would undo what happened in between (a lane's engagement being corrected).
+  const applied = useRef(window.location.hash);
   const navigate = useCallback(() => { pushNext.current = true; }, []);
   useEffect(() => {
     const want = formatRoute(page === "people" ? { page: "people" }
@@ -214,6 +217,7 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
     const push = pushNext.current;
     pushNext.current = false;
     if (!want || want === window.location.hash) return;
+    applied.current = want;
     const url = `${window.location.pathname}${window.location.search}${want}`;
     if (push) window.history.pushState(null, "", url);
     else window.history.replaceState(null, "", url);
@@ -223,6 +227,8 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   listRef.current = engagements;
   useEffect(() => {
     const go = () => {
+      if (window.location.hash === applied.current) return;
+      applied.current = window.location.hash;
       const r = parseRoute(window.location.hash);
       setMenuOpen(false);
       if (r.page === "people") return setPage("people");
@@ -230,8 +236,9 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
       if (listRef.current && !listRef.current.some((e) => e.id === r.eng)) {
         setNotice(GONE);
         pushNext.current = false;   // the URL goes back to where the person is
-        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${formatRoute({
-          page: "work", eng: currentRef.current ?? undefined, tab: currentRef.current != null ? tabRef.current : undefined })}`);
+        applied.current = formatRoute({
+          page: "work", eng: currentRef.current ?? undefined, tab: currentRef.current != null ? tabRef.current : undefined });
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${applied.current}`);
         return;
       }
       setPage("work");
