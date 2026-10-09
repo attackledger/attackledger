@@ -672,8 +672,9 @@ def lane_context(lane_id: int, session: Session = Depends(get_session)):
 
 
 class AgentRunIn(BaseModel):
-    max_turns: int = Field(default=40, ge=1, le=100)
-    max_requests: int = Field(default=200, ge=1, le=1000)
+    max_turns: int = Field(default=15, ge=1, le=100)
+    max_requests: int = Field(default=30, ge=1, le=1000)
+    max_cost_usd: float = Field(default=0.50, ge=0.05, le=20)   # estimated; checked after each turn
 
 
 @app.post("/lanes/{lane_id}/agent-runs", status_code=201)
@@ -697,7 +698,8 @@ def start_agent_run(lane_id: int, body: AgentRunIn | None = None, session: Sessi
         raise HTTPException(409, f"an agent run is already queued or running on this lane (job {busy})")
     job = Job(engagement_id=lane.asset.engagement_id, kind="agent", lane_id=lane.id,
               targets=[lane.asset.host],
-              result={"limits": {"max_turns": body.max_turns, "max_requests": body.max_requests}})
+              result={"limits": {"max_turns": body.max_turns, "max_requests": body.max_requests,
+                                 "max_cost_usd": body.max_cost_usd}})
     session.add(job)
     session.commit()
     return _job_view(job)

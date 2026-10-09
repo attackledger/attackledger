@@ -133,8 +133,8 @@ export interface Job {
 }
 
 export interface AgentResult {
-  limits?: { max_turns?: number; max_requests?: number };
-  status?: "finished" | "ended" | "turn_limit" | "cancelled" | "refused" | "timed_out";
+  limits?: { max_turns?: number; max_requests?: number; max_cost_usd?: number };
+  status?: "finished" | "ended" | "turn_limit" | "cost_limit" | "cancelled" | "refused" | "timed_out";
   model?: string;
   turns?: number;
   requests?: number;
@@ -316,8 +316,10 @@ export const api = {
   setExecutor: (laneId: number, executor: string) =>
     call<LaneDetail>(`/lanes/${laneId}`, { method: "PATCH", body: JSON.stringify({ executor }) }),
   agentRuns: (laneId: number) => call<Job[]>(`/lanes/${laneId}/agent-runs`),
-  startAgentRun: (laneId: number, max_turns: number, max_requests: number) =>
-    call<Job>(`/lanes/${laneId}/agent-runs`, { method: "POST", body: JSON.stringify({ max_turns, max_requests }) }),
+  startAgentRun: (laneId: number, max_turns: number, max_requests: number, max_cost_usd: number) =>
+    call<Job>(`/lanes/${laneId}/agent-runs`, {
+      method: "POST", body: JSON.stringify({ max_turns, max_requests, max_cost_usd }),
+    }),
   closeLane: (laneId: number, closed_by: string, reviewed: boolean) =>
     call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST", body: JSON.stringify({ closed_by, reviewed }) }),
 };

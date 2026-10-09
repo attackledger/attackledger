@@ -536,7 +536,7 @@ def test_agent_runs_need_agents_enabled_the_agent_executor_and_the_gates(api, mo
     assert r.status_code == 201
     job = r.json()
     assert job["kind"] == "agent" and job["lane_id"] == lane
-    assert job["result"]["limits"] == {"max_turns": 5, "max_requests": 20}
+    assert job["result"]["limits"] == {"max_turns": 5, "max_requests": 20, "max_cost_usd": 0.5}
     assert api.post(f"/lanes/{lane}/agent-runs").status_code == 409     # one run at a time per lane
 
     # The recon job endpoints cannot start or resume an agent run.
@@ -622,3 +622,35 @@ def test_jobs_left_running_are_marked_failed(session):
     assert worker.recover_interrupted(session, all_running=True) == [fresh.id]
     assert {j.status for j in (fresh, old)} == {JobStatus.failed}
     assert queued.status == JobStatus.queued and done.status == JobStatus.done
+
+
+# ---- keeping runs small --------------------------------------------------------
+
+def test_body_shown_to_the_model_has_a_per_run_budget(session):
+    lane, job = make_lane(session)
+    body = b"B" * 10_000
+    tb = toolbox(session, lane, job, transport=FakeTransport(body=body), max_requests=50)
+    shown = []
+    for n in range(12):
+        res, err = get(tb, f"https://{HOST}/{n}")
+        assert not err
+        shown.append(res["body_shown_chars"])
+        assert blobs.get(tb.exchanges[res["exchange_id"]]["sha256"]).endswith(body)   # evidence stays complete
+    assert max(shown) == agenttools.MAX_BODY_CHARS
+    assert sum(shown) == agenttools.RUN_BODY_BUDGET and shown[-1] == 0 and "budget" in res["body_note"]
+
+
+def test_run_stops_at_the_cost_limit(session):
+    lane, job = make_lane(session)
+    # Each turn: 100k input + 10k output on Opus 5.5 = $0.40 + $0.20 = $0.60.
+    turns = [reply(tool_use(f"t{n}", "record_lead", {"title": f"l{n}", "detail": "d", "severity": "", "url": ""}),
+                   usage=(100_000, 10_000)) for n in range(5)]
+    client = FakeClient(turns)
+    res = agentloop.run(session, lane, job.id, client, transport=FakeTransport(), max_cost_usd=1.0)
+    assert res.status == "cost_limit" and res.turns == 2 and len(client.requests) == 2
+    assert res.cost_usd == 1.2 and "cost limit" in res.detail
+
+
+def test_defaults_are_small():
+    assert agentloop.DEFAULT_LIMITS == {"max_turns": 15, "max_requests": 30, "max_cost_usd": 0.5}
+    assert agentloop.CONTEXT_LIMIT <= 50 and agenttools.MAX_BODY_CHARS <= 4_000

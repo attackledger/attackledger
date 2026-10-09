@@ -6,6 +6,7 @@ const OUTCOME: Record<string, string> = {
   finished: "Finished",
   ended: "Stopped without finishing",
   turn_limit: "Reached the turn limit",
+  cost_limit: "Reached the cost limit",
   cancelled: "Cancelled",
   timed_out: "Reached the time limit",
   refused: "The model declined",
@@ -57,8 +58,9 @@ export function Executor({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChan
 
 function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (l: LaneDetail) => void }) {
   const [runs, setRuns] = useState<Job[]>([]);
-  const [turns, setTurns] = useState(40);
-  const [requests, setRequests] = useState(200);
+  const [turns, setTurns] = useState(15);
+  const [requests, setRequests] = useState(30);
+  const [cost, setCost] = useState(0.5);
   const [openLog, setOpenLog] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,7 +88,7 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
 
   async function start() {
     try {
-      await api.startAgentRun(lane.id, turns, requests);
+      await api.startAgentRun(lane.id, turns, requests, cost);
       setError(null);
       await load();
     } catch (e) {
@@ -107,12 +109,18 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
             <input type="number" min={1} max={1000} value={requests}
                    onChange={(e) => setRequests(Number(e.target.value))} />
           </label>
+          <label>
+            Cost limit, $
+            <input type="number" min={0.05} max={20} step={0.05} value={cost}
+                   onChange={(e) => setCost(Number(e.target.value))} />
+          </label>
           <button className="btn" disabled={active} onClick={start}>Start agent run</button>
         </div>
       )}
       <p className="hint">
         Read-only requests to {lane.host}, with your research identification and rate limit. The agent attaches
-        evidence and marks items; you review it and sign the receipt.
+        evidence and marks items; you review it and sign the receipt. The run stops at the first limit it
+        reaches. Cost is an estimate, checked after each turn.
       </p>
       {error && <p className="field-error" role="alert">{error}</p>}
       {runs.length > 0 && (

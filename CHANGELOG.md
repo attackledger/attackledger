@@ -27,6 +27,12 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **Small runs by default, with a cost limit.** Defaults are 15 turns, 30 requests and an
+  estimated $0.50; the run stops at whichever comes first (cost is checked after each
+  turn, so a run can go over by at most one turn). The model sees at most 4,000
+  characters of each response and 40,000 per run, because every tool result is sent
+  again on each later turn; the full response is always kept as evidence. The first
+  message carries at most 50 recon rows of each kind.
 - **Interrupted jobs are recovered.** At startup the worker marks every job left
   `running` as failed with a reason; between jobs it does the same for any run past the
   time limit plus `WORKER_STALE_GRACE` (default 10 min). Results from finished batches

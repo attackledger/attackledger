@@ -803,7 +803,7 @@ def run(session, job: Job) -> "Run":
 
 
 # Agent outcomes that leave work undone: the job is partial, never done.
-AGENT_PARTIAL = {"ended", "turn_limit", "cancelled"}
+AGENT_PARTIAL = {"ended", "turn_limit", "cost_limit", "cancelled"}
 
 
 def anthropic_client():
@@ -835,7 +835,7 @@ def run_agent(session, job: Job, client=None) -> "Run":
 
     try:
         res = agentloop.run(session, lane, job.id, client or anthropic_client(), model=model,
-                            max_turns=limits.get("max_turns", 40), max_requests=limits.get("max_requests", 200),
+                            **{k: limits.get(k, v) for k, v in agentloop.DEFAULT_LIMITS.items()},
                             should_stop=should_stop, log=r.log)
     except agenttools.RunRefused as e:
         raise RuntimeError(str(e))

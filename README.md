@@ -194,8 +194,10 @@ from the lane. The agent:
 `claude-sonnet-5-5` (half the price) or `claude-haiku-5-5` (much cheaper, weaker for
 this work). Set a monthly spend limit in the Anthropic Console before the first run.
 
-Runs stop at a turn limit, a request budget and the worker time limit. The run shows a
-token cost estimate. The loop has not yet run against the live API: try it on the lab first.
+Runs stop at the first limit they reach: turns (default 15), requests (30), an estimated
+cost (default $0.50, checked after each turn) and the worker time limit. The model sees
+only the first 4,000 characters of each response, and 40,000 per run; the full response
+is kept as evidence. The loop has not yet run against the live API: try it on the lab first.
 
 ## Database migrations
 

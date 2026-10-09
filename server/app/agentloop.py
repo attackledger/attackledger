@@ -11,6 +11,8 @@ Run outcomes (RunResult.status):
   finished    the agent called finish
   ended       the model stopped without calling finish
   turn_limit  max_turns reached
+  cost_limit  the estimated cost reached max_cost_usd (checked after each turn, so a run
+              can go over by at most one turn)
   cancelled   should_stop() said so between turns
   refused     the model declined (stop_reason "refusal"); category in the log
 """
@@ -131,8 +133,14 @@ def _add_usage(result: RunResult, usage) -> None:
     result.usage["cache_write"] += _get(usage, "cache_creation_input_tokens", 0) or 0
 
 
-def run(session, lane, job_id: int, client, *, model: str = MODEL, max_turns: int = 40,
-        max_requests: int = 200, transport=None, sleep=time.sleep, should_stop=lambda: False,
+DEFAULT_LIMITS = {"max_turns": 15, "max_requests": 30, "max_cost_usd": 0.50}
+# Lane context sent with the first message: enough recon to pick targets, not all of it.
+CONTEXT_LIMIT = 50
+
+
+def run(session, lane, job_id: int, client, *, model: str = MODEL,
+        max_turns: int = DEFAULT_LIMITS["max_turns"], max_requests: int = DEFAULT_LIMITS["max_requests"],
+        max_cost_usd: float = DEFAULT_LIMITS["max_cost_usd"], transport=None, sleep=time.sleep, should_stop=lambda: False,
         log=lambda line: None) -> RunResult:
     """Work the lane until the agent finishes or a limit is reached. Commits after every
     turn, so evidence written before a failure is kept. Raises agenttools.RunRefused
@@ -141,7 +149,7 @@ def run(session, lane, job_id: int, client, *, model: str = MODEL, max_turns: in
         raise ValueError(f"unsupported agent model: {model}")
     tools = agenttools.Toolbox(session, lane, job_id, transport=transport, sleep=sleep,
                                max_requests=max_requests)
-    messages = [{"role": "user", "content": first_message(executors.lane_context(session, lane))}]
+    messages = [{"role": "user", "content": first_message(executors.lane_context(session, lane, limit=CONTEXT_LIMIT))}]
     result = RunResult(status="turn_limit", model=model)
 
     def sync():
@@ -151,6 +159,10 @@ def run(session, lane, job_id: int, client, *, model: str = MODEL, max_turns: in
     for turn in range(1, max_turns + 1):
         if should_stop():
             result.status = "cancelled"
+            break
+        if result.cost_usd >= max_cost_usd:
+            result.status = "cost_limit"
+            result.detail = f"stopped at the cost limit (about ${result.cost_usd:.2f} of ${max_cost_usd:.2f})"
             break
         result.turns = turn
         response = client.beta.messages.create(**request_params(model, messages))
