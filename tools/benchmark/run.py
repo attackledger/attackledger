@@ -2,6 +2,8 @@
 """AttackLedger benchmark against OWASP Juice Shop (docs/BENCHMARK.md).
 
   python3 tools/benchmark/run.py up        retag the main stack's images, start the bench stack
+                                           (BENCH_KEEP_IMAGES=1: use attackledger-bench-* images
+                                           built from a branch instead of retagging)
   python3 tools/benchmark/run.py recon     engagement, scope, authorization, lanes, full pipeline;
                                            waits, then writes the recon part of the results
   python3 tools/benchmark/run.py score     reads agent runs, the agent findings file and Juice
@@ -17,6 +19,7 @@ Files (DATE defaults to today, UTC):
   tools/benchmark/agent-findings-DATE.json  the agent part, recorded by hand (see BENCHMARK.md)
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -74,6 +77,10 @@ def ts(s: str | None) -> float | None:
 
 def up() -> None:
     for name in ("api", "worker"):
+        if os.environ.get("BENCH_KEEP_IMAGES") == "1":
+            subprocess.run(["docker", "image", "inspect", f"attackledger-bench-{name}:latest"], check=True,
+                           stdout=subprocess.DEVNULL)
+            continue
         subprocess.run(["docker", "tag", f"attackledger-{name}:latest", f"attackledger-bench-{name}:latest"],
                        check=True)
     compose("up", "-d", *SERVICES)

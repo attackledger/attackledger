@@ -252,15 +252,76 @@ def test_nuclei_refuses_without_exclusion_list(monkeypatch):
 def test_nuclei_command_is_safe_by_construction(nuclei_exclude):
     c = worker.nuclei_cmd(eng("X-Bug-Bounty: r1", rps=3), worker._tpl("exposures"))
     assert "-ni" in c and "-dr" in c                     # no OOB callbacks, no redirects
-    assert c[c.index("-et") + 1] == str(nuclei_exclude)  # raw/unsafe + OOB-literal templates excluded
-    for t in ("dos", "fuzz", "intrusive", "default-login", "credential-stuffing", "token-spray"):
+    assert c[c.index("-et") + 1] == str(nuclei_exclude)  # every template not provably read-only
+    for t in ("dos", "fuzz", "intrusive", "instrusive", "default-login", "credential-stuffing", "token-spray"):
         assert t in c[c.index("-etags") + 1].split(",")
-    assert c[c.index("-rl") + 1] == "3" and "X-Bug-Bounty: r1" in c
+    assert "X-Bug-Bounty: r1" in c
     assert c[c.index("-severity") + 1] == "medium,high,critical"
     paths = [c[i + 1] for i, x in enumerate(c) if x == "-t"]
     for p in paths:
         for banned in ("default-logins", "credential-stuffing", "token-spray", "fuzzing"):
             assert f"/{banned}/" not in p
+
+
+@pytest.mark.parametrize("rps,tick_ms", [(2, 1050), (3, 525), (5, 263), (20, 56), (100, 11)])
+def test_nuclei_pacing_is_one_request_per_tick(nuclei_exclude, rps, tick_ms):
+    c = worker.nuclei_cmd(eng("X-Bug-Bounty: r1", rps=rps))
+    assert c[c.index("-rl") + 1] == "1" and c[c.index("-rld") + 1] == f"{tick_ms}ms"
+    assert c[c.index("-retries") + 1] == "0"
+    # A window holds at most one request per tick inside it plus one refilled just before it.
+    ticks_in_window = -(-1000 // tick_ms)
+    assert ticks_in_window + 1 <= rps
+
+
+def test_nuclei_refuses_limits_it_cannot_keep(nuclei_exclude):
+    with pytest.raises(RuntimeError, match="at least 2"):
+        worker.nuclei_cmd(eng("X-Bug-Bounty: r1", rps=1))
+    from app import jobgates
+    e = SimpleNamespace(authorized_at=1, scope_include=["*.x.test"], enabled_modules=["nuclei"], rate_limit_rps=1,
+                        research_header="X-Bug-Bounty: r1", research_user_agent=None)
+    with pytest.raises(jobgates.GateError, match="at least 2"):
+        jobgates.check_engagement(e, "nuclei")
+
+
+def test_nuclei_templates_are_reverified_before_the_first_scan(tmp_path, monkeypatch):
+    root = tmp_path / "t" / "http"
+    root.mkdir(parents=True)
+    (root / "post.yaml").write_text("id: p\ninfo: {name: p}\nhttp:\n  - method: POST\n    path: ['{{BaseURL}}/']\n")
+    (root / "get.yaml").write_text("id: g\ninfo: {name: g}\nhttp:\n  - method: GET\n    path: ['{{BaseURL}}/']\n")
+    listed = tmp_path / "exclude.txt"
+    listed.write_text(str(tmp_path / "t" / "http" / "other.yaml") + "\n")   # misses post.yaml
+    monkeypatch.setattr(worker, "NUCLEI_TEMPLATES", str(tmp_path / "t"))
+    monkeypatch.setattr(worker, "NUCLEI_EXCLUDE_FILE", str(listed))
+    worker._verified.clear()
+    with pytest.raises(RuntimeError, match="not provably read-only"):
+        worker.verify_nuclei_templates()
+    listed.write_text(str(root / "post.yaml") + "\n")
+    assert worker.verify_nuclei_templates() == {"safe": 1, "excluded": 1}
+    worker._verified.clear()
+
+
+def test_run_nuclei_verifies_templates_before_any_request(monkeypatch):
+    def refuse():
+        raise RuntimeError("not provably read-only")
+    monkeypatch.setattr(worker, "verify_nuclei_templates", refuse)
+    sent = []
+    r = SimpleNamespace(tool_lines=lambda *a: sent.append(a) or iter(()), log=lambda line: None)
+    with pytest.raises(RuntimeError, match="not provably read-only"):
+        worker.run_nuclei(r, ["http://a.x.test/"])
+    assert sent == []
+
+
+def test_nuclei_passes_never_share_a_second(monkeypatch, nuclei_exclude):
+    sleeps, passes = [], []
+    monkeypatch.setattr(worker.time, "sleep", sleeps.append)
+    u = "http://a.x.test/"
+    r = SimpleNamespace(eng=eng("X-Bug-Bounty: r1", rps=20), in_scope=lambda h: True, log=lambda line: None,
+                        nuclei_plan={"reps": {u}, "golden": {u}, "tags": {u: {"nginx"}}},
+                        tool_lines=lambda name, cmd, inputs: passes.append(name) or iter(()))
+    worker.run_nuclei(r, [u])
+    worker.run_nuclei(r, [u])        # the next target batch
+    assert passes == ["nuclei-takeovers", "nuclei-generic", "nuclei-stack", "nuclei-golden"] * 2
+    assert sleeps == [worker.NUCLEI_PASS_GAP] * 7 and worker.NUCLEI_PASS_GAP > 1
 
 
 def test_nuclei_refuses_without_identification():

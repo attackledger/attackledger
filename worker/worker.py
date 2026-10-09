@@ -26,6 +26,7 @@ as a marker, so it is neither stored nor sent again by a later step.
 """
 import hashlib
 import json
+import math
 import os
 import re
 import ssl
@@ -44,7 +45,7 @@ from sqlalchemy import select  # noqa: E402
 
 from app import jobgates, jsanalysis, ledger, migrate, modules, packs, redact, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
-from app import agentloop, agenttools, passive, triage  # noqa: E402
+from app import agentloop, agenttools, nucleisafe, passive, triage  # noqa: E402
 from app.text import plural  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lane, Lead, Observation  # noqa: E402
@@ -490,25 +491,48 @@ def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
 
 
 NUCLEI_TEMPLATES = os.environ.get("WORKER_NUCLEI_TEMPLATES", "/opt/nuclei-templates")
-# Never run these, whatever a template's own tags say.
-NUCLEI_EXCLUDE_TAGS = "dos,fuzz,fuzzing,intrusive,bruteforce,brute-force,default-login,credential-stuffing,token-spray"
+# Never run these, whatever a template's own tags say. Tags are a second line only: upstream
+# tags have typos ("instrusive"), so what may run is decided by content (app/nucleisafe.py).
+NUCLEI_EXCLUDE_TAGS = ("dos,fuzz,fuzzing,intrusive,instrusive,bruteforce,brute-force,default-login,"
+                       "credential-stuffing,token-spray")
 NUCLEI_SEVERITY = "medium,high,critical"
 NUCLEI_EXCLUDE_FILE = os.environ.get("WORKER_NUCLEI_EXCLUDE", "/opt/nuclei-exclude.txt")
+# Seconds between nuclei passes, so one process's last requests and the next one's first
+# never share a one-second window.
+NUCLEI_PASS_GAP = 1.1
+
+
+def nuclei_pacing(rps: int) -> tuple[str, str]:
+    """-rl/-rld for a hard ceiling of rps requests in ANY one-second window.
+
+    nuclei's limiter hands out -rl tokens per -rld tick and refills them all at once, so
+    "-rl 20" lets 20 requests through at the end of one tick and 20 more at the start of the
+    next (measured: 40 in one sliding second, 29 in one calendar second, at a limit of 20).
+    With one token per tick, a window holds at most one request per tick inside it plus one
+    refilled just before it, so the tick must be at least 1/(rps-1) s. Five per cent more
+    absorbs scheduling and network jitter. Effective rate: (rps-1)/1.05 per second."""
+    if rps < 2:
+        raise RuntimeError("nuclei needs a rate limit of at least 2/s to keep every one-second window "
+                           "at or under the limit")
+    return "1", f"{math.ceil(1000 * 1.05 / (rps - 1))}ms"
 
 
 def nuclei_cmd(eng, templates: list[str] | None = None, tags: list[str] | None = None,
                severity: str | None = NUCLEI_SEVERITY) -> list[str]:
     flags = require_identification(eng)
     if not os.path.isfile(NUCLEI_EXCLUDE_FILE) or os.path.getsize(NUCLEI_EXCLUDE_FILE) == 0:
-        # Fail closed: without the exclusion list, raw and out-of-band templates would run.
+        # Fail closed: without the exclusion list, templates that write or call out would run.
         raise RuntimeError(f"nuclei exclusion list missing ({NUCLEI_EXCLUDE_FILE}); refusing to scan")
+    rl, rld = nuclei_pacing(eng.rate_limit_rps)
     cmd = [tool("nuclei"), "-silent", "-jsonl", "-nc", "-duc",
-           "-et", NUCLEI_EXCLUDE_FILE,  # raw/unsafe and out-of-band templates (see Dockerfile)
+           "-et", NUCLEI_EXCLUDE_FILE,  # every template not provably read-only (app/nucleisafe.py)
            "-ni",                       # no interactsh: no out-of-band callbacks to third parties
            "-dr",                       # follow no redirects, whatever a template asks for
            "-etags", NUCLEI_EXCLUDE_TAGS,
-           "-rl", str(eng.rate_limit_rps), "-c", str(min(5, eng.rate_limit_rps)), "-bs", "5",
-           "-retries", "1", "-timeout", "8", *flags]
+           "-rl", rl, "-rld", rld,      # one request per tick: a hard ceiling (nuclei_pacing)
+           "-c", str(min(5, eng.rate_limit_rps)), "-bs", "5",
+           # No retries: a retry is sent by the HTTP client inside one rate-limit token.
+           "-retries", "0", "-timeout", "8", *flags]
     for t in templates or [os.path.join(NUCLEI_TEMPLATES, "http")]:
         cmd += ["-t", t]
     if tags:
@@ -516,6 +540,20 @@ def nuclei_cmd(eng, templates: list[str] | None = None, tags: list[str] | None =
     if severity:
         cmd += ["-severity", severity]
     return cmd
+
+
+_verified: dict = {}
+
+
+def verify_nuclei_templates() -> dict:
+    """Re-classify the templates once per process and refuse to scan if the image's
+    exclusion list misses one that is not provably read-only (fail closed)."""
+    st = os.stat(NUCLEI_EXCLUDE_FILE) if os.path.isfile(NUCLEI_EXCLUDE_FILE) else None
+    key = (NUCLEI_TEMPLATES, NUCLEI_EXCLUDE_FILE, st.st_mtime_ns if st else None, st.st_size if st else None)
+    if key not in _verified:
+        _verified.clear()
+        _verified[key] = nucleisafe.verify(NUCLEI_TEMPLATES, NUCLEI_EXCLUDE_FILE)
+    return _verified[key]
 
 
 def _tpl(*dirs: str) -> list[str]:
@@ -546,6 +584,8 @@ def nuclei_plan(session, eng, urls_: list[str]) -> dict:
 
 def run_nuclei(r: Run, urls_: list[str]) -> int:
     if not hasattr(r, "nuclei_plan"):
+        counts = verify_nuclei_templates()      # before any request; raises if not provably safe
+        r.log(f"nuclei templates: {counts['safe']} provably read-only, {counts['excluded']} excluded")
         r.nuclei_plan = nuclei_plan(r.session, r.eng, r.job.targets)
         r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
         r.log(f"{plural(len(r.job.targets), 'live service')}, "
@@ -567,6 +607,9 @@ def run_nuclei(r: Run, urls_: list[str]) -> int:
 
     found = 0
     for name, cmd, inputs in passes:
+        if getattr(r, "nuclei_passes", 0):      # also between target batches
+            time.sleep(NUCLEI_PASS_GAP)
+        r.nuclei_passes = getattr(r, "nuclei_passes", 0) + 1
         for line in r.tool_lines(f"nuclei-{name}", cmd, inputs):
             try:
                 rec = json.loads(line)

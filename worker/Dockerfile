@@ -31,19 +31,6 @@ RUN set -eux; \
     curl -fsSL -o /tmp/nt.tar.gz https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/v10.4.9.tar.gz; \
     echo "d7cd989935f9a84943cba8a193f567db37626dbf4e526ff57ba5b1f24badd5d6  /tmp/nt.tar.gz" | sha256sum -c -; \
     mkdir -p /opt/nuclei-templates && tar -xzf /tmp/nt.tar.gz -C /opt/nuclei-templates --strip-components=1
-# Templates AttackLedger never runs, found by content rather than by tags:
-#  - raw ("unsafe") requests: nuclei does not apply -H to all of them, so they can leave
-#    without the research identification (measured);
-#  - hard-coded out-of-band hosts (oast.*, interact.sh) and interactsh URLs: they can make
-#    the target call a third party.
-#  - digest authentication (digest-username/password): a login attempt, and nuclei's digest
-#    client drops custom headers (measured).
-RUN set -eux; cd /opt/nuclei-templates; \
-    { grep -rlE 'unsafe: *true' http || true; \
-      grep -rlE 'oast\.(me|pro|fun|live|site|online|today)|interact\.sh|interactsh-url' http || true; \
-      grep -rlE 'digest-(username|password)' http || true; } \
-      | sort -u | sed 's#^#/opt/nuclei-templates/#' > /opt/nuclei-exclude.txt; \
-    test -s /opt/nuclei-exclude.txt; wc -l /opt/nuclei-exclude.txt
 RUN set -eux; mkdir -p /opt/wordlists; \
     curl -fsSL -o /opt/wordlists/common.txt \
       https://raw.githubusercontent.com/danielmiessler/SecLists/2f19f39928b78e4be8b9a0f0a263baf531e33025/Discovery/Web-Content/common.txt; \
@@ -59,13 +46,18 @@ COPY --from=tools /go/bin/ /opt/pd/bin/
 COPY --from=nuclei /go/bin/nuclei /opt/pd/bin/nuclei
 COPY --from=assets /opt/bin/feroxbuster /opt/pd/bin/feroxbuster
 COPY --from=assets /opt/nuclei-templates /opt/nuclei-templates
-COPY --from=assets /opt/nuclei-exclude.txt /opt/nuclei-exclude.txt
 COPY --from=assets /opt/wordlists /opt/wordlists
 WORKDIR /srv
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir --target /opt/arjun arjun==2.2.7
 COPY server/app ./app
+# nuclei templates AttackLedger never runs, found by content (app/nucleisafe.py, D-020): every
+# template that cannot be proven to send only GET/HEAD/OPTIONS requests to the target, with the
+# research identification, no body and no out-of-band callback. Fails the build if the list is
+# empty or nothing is left; the worker re-checks the list before its first scan.
+RUN python -m app.nucleisafe build /opt/nuclei-templates /opt/nuclei-exclude.txt \
+ && test -s /opt/nuclei-exclude.txt && chmod 444 /opt/nuclei-exclude.txt
 COPY server/alembic.ini ./alembic.ini
 COPY server/migrations ./migrations
 COPY worker/worker.py .
