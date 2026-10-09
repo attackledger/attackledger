@@ -238,6 +238,9 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
             ok = auth.verify_password(body.password or "", u.password_hash if u else auth._DUMMY_HASH)
             if ok and u is not None and not u.disabled and user is None:
                 user = u
+        for u in candidates:
+            if u is not user:            # another organization's account leaves this session
+                session.expunge(u)
         if user is None:
             auth.record_failure(email, addr)
             raise HTTPException(401, "wrong email or password")

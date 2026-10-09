@@ -446,7 +446,8 @@ def _legacy(session, eng_id: int) -> list[str]:
     for sha, other in session.execute(select(Evidence.sha256, Evidence.engagement_id)
                                       .where(Evidence.sha256.in_(sorted(mine)), Evidence.engagement_id != eng_id)):
         others.setdefault(sha, set()).add(other)
-    live = {e.id for e in session.scalars(select(Engagement).where(Engagement.content_deleted_at.is_(None)))}
+    # Ids only: no other organization's row enters this session's identity map.
+    live = set(session.scalars(select(Engagement.id).where(Engagement.content_deleted_at.is_(None))))
     return sorted(s for s in mine if not (others.get(s, set()) & live))
 
 
