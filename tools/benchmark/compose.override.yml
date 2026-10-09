@@ -1,0 +1,66 @@
+# Benchmark stack: AttackLedger against OWASP Juice Shop (docs/BENCHMARK.md).
+#
+#   docker compose -f docker-compose.yml -f tools/benchmark/compose.override.yml \
+#     up -d db api worker juice juice-proxy
+#   python3 tools/benchmark/run.py            # recon run, measurement, results JSON
+#   docker compose -f docker-compose.yml -f tools/benchmark/compose.override.yml down -v
+#
+# Isolation:
+#   - its own project (attackledger-bench), database and volumes; the main stack
+#     (attackledger-*) and the demo stack (attackledger-demo-*) are never touched;
+#   - the lab network is internal: Juice Shop and the worker cannot reach the internet,
+#     and nothing outside this machine can reach them. Only the API is also attached to a
+#     second network, to publish 127.0.0.1:8099 (no timestamp authority: TSA is off);
+#   - Juice Shop's port is not published. Inside the network it answers as juice.lab.test:3000
+#     through juice-proxy, a byte-for-byte TCP relay that logs every request head, so each
+#     request can be counted and checked for the identification and the rate limit.
+#
+# Images: the API and worker images are the main stack's images retagged by run.py
+# (attackledger-bench-*), so they are never rebuilt here; Juice Shop is pinned by digest.
+name: attackledger-bench
+
+services:
+  db:
+    networks: [default]
+  api:
+    image: attackledger-bench-api:latest
+    build: !reset null
+    pull_policy: never
+    ports: !override ["127.0.0.1:8099:8000"]
+    environment:
+      ATTACKLEDGER_TSA_URL: "off"
+    networks: [default, front]
+  worker:
+    image: attackledger-bench-worker:latest
+    build: !reset null
+    pull_policy: never
+    networks: [default]
+  # Not used by the benchmark; kept off the run (start only the services listed above).
+  lab:
+    networks:
+      default:
+        aliases: !override [shop.lab.test]
+
+  juice:
+    # OWASP Juice Shop v20.2.0 (published 2026-08-10), pinned by its image index digest.
+    image: bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b
+    pull_policy: missing
+    networks: [default]
+
+  juice-proxy:
+    image: attackledger-bench-worker:latest
+    pull_policy: never
+    user: "10001"
+    entrypoint: ["python", "-u", "/bench/countproxy.py"]
+    command: ["--listen", "3000", "--upstream", "juice:3000", "--log", "/tmp/requests.jsonl"]
+    volumes:
+      - ./tools/benchmark/countproxy.py:/bench/countproxy.py:ro
+    depends_on: [juice]
+    networks:
+      default:
+        aliases: [juice.lab.test]
+
+networks:
+  default:
+    internal: true
+  front: {}

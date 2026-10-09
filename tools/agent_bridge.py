@@ -9,7 +9,7 @@ no redirects, rate limit, request budget, no tool that closes a lane. State betw
 
 Run inside the worker container (it has the database and the lab network):
 
-  docker exec -i <worker> python - start LANE_ID "DRIVER" < tools/agent_bridge.py
+  docker exec -i <worker> python - start LANE_ID "DRIVER" [MAX_REQUESTS] < tools/agent_bridge.py
   docker exec -i <worker> python - context            < tools/agent_bridge.py
   docker exec -i <worker> python - call TOOL 'JSON'   < tools/agent_bridge.py
   docker exec -i <worker> python - end                < tools/agent_bridge.py
@@ -62,9 +62,12 @@ def main(argv: list[str]) -> None:
         if cmd == "start":
             lane = s.get(Lane, int(argv[1]))
             driver = argv[2]
+            max_requests = int(argv[3]) if len(argv) > 3 else 30   # the loop's default (D-025)
+            if not 1 <= max_requests <= 200:
+                sys.exit("the request budget must be between 1 and 200")
             lane.executor = "agent"
             agenttools.check_lane(lane)
-            limits = {"max_turns": None, "max_requests": 30}
+            limits = {"max_turns": None, "max_requests": max_requests}
             job = Job(engagement_id=lane.asset.engagement_id, kind="agent", lane_id=lane.id,
                       targets=[lane.asset.host], status=JobStatus.running,
                       started_at=datetime.now(timezone.utc), result={"limits": limits})
