@@ -20,7 +20,11 @@ purpose: it re-derives every hash itself. Checks:
      manifest hash and signature, the timestamp authority's signature verifies, its
      certificate is for timestamping, and its chain reaches a root you trust and was
      valid at the token's time. Trusted roots are the PEM files in tsa-roots/ next to
-     this script and any you pass with --tsa-root.
+     this script and any you pass with --tsa-root,
+  6. (format 2, reports with a key log) every signing key: its key log entries hash
+     correctly and link into the log in order up to the head the report names, it was
+     registered to the signer before the receipt's payload was issued, and it was not
+     revoked before that.
 
 Checks 4 and 5 print SKIP, which is neither a pass nor a failure, when no receipt in
 the report is signed or timestamped: there is nothing for them to check. With
@@ -29,8 +33,9 @@ the report is signed or timestamped: there is nothing for them to check. With
 Signatures are Ed25519 or ECDSA P-256 with SHA-256, checked with the pure-Python
 code below (RFC 8032 and SEC 1), so no third-party package is needed; timestamp
 authorities may also use RSA (PKCS #1 v1.5) or ECDSA P-384. A signature
-proves the key holder signed; to tie the key to a person, compare its fingerprint
-with the one the signer gives you.
+proves the key holder signed. The key log says when and how each key was registered
+to its signer; for high assurance, also compare each fingerprint with the one the
+signer gives you.
 
 Exit code 0 means no check failed; 1 means one did; 2 means the report or the
 arguments could not be used.
@@ -43,6 +48,13 @@ import sys
 GENESIS = "0" * 64
 FORMATS = ("attackledger-report/1", "attackledger-report/2")
 CHAIN_FIELDS = ("seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary")
+KEY_LOG_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
+KEY_VIA = {
+    "own_session": "from their own session",
+    "assigned_password": "from a session signed in with a password someone else set",
+    "operator_cli": "by the operator on the server",
+    "backfill": "before the key log existed (recorded when it was added)",
+}
 
 
 def sha(text: str) -> str:
@@ -348,6 +360,112 @@ def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[st
     if receipted and signed < receipted:
         notes.append(f"{receipted - signed} of {_receipts(receipted)} {'is' if receipted - signed == 1 else 'are'} "
                      "not signed (a name only)")
+    return problems, notes
+
+
+# ---- the key log ------------------------------------------------------------------
+#
+# Every key registration and revocation on the server is an entry in one hash chain:
+# entry_hash = sha256(prev_hash + sha256(canonical(record))). The report carries the full
+# records of the keys that signed it, and the links (hashes only) from the first of them
+# to the head, so the records can be placed in the chain without seeing anyone else's.
+
+def _utc(text: str, whole_seconds: bool = False):
+    from datetime import datetime, timezone
+    t = datetime.fromisoformat(text)
+    t = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    return t.replace(microsecond=0) if whole_seconds else t
+
+
+def check_key_log(r: dict) -> tuple[list[str], list[str]]:
+    problems, notes = [], []
+    signed = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed" and l["receipt"].get("signature")]
+    log = r.get("key_log")
+    if log is None:
+        if signed:
+            notes.append("this report has no key history (made before the key log); compare each signer's key "
+                         "fingerprint with the one they give you")
+        return problems, notes
+    if log.get("genesis") != GENESIS:
+        problems.append("unexpected key log genesis value")
+    links, prev = log.get("links") or [], None
+    for n, ln in enumerate(links):
+        try:
+            seq, ph, rsha, eh = ln["seq"], ln["prev_hash"], ln["record_sha256"], ln["entry_hash"]
+        except (KeyError, TypeError):
+            problems.append("a key log link cannot be read")
+            return problems, notes
+        if n == 0 and seq == 1 and ph != GENESIS:
+            problems.append("key log entry #1 does not start from the genesis value")
+        if n > 0 and seq != links[n - 1]["seq"] + 1:
+            problems.append(f"key log entry #{seq}: out of sequence (expected #{links[n - 1]['seq'] + 1})")
+        if n > 0 and ph != prev:
+            problems.append(f"key log entry #{seq}: does not link to the previous entry")
+        if sha(ph + rsha) != eh:
+            problems.append(f"key log entry #{seq}: does not match its chain hash")
+        prev = eh
+    head = log.get("head") or {}
+    if links and (head.get("seq") != links[-1]["seq"] or head.get("entry_hash") != links[-1]["entry_hash"]):
+        problems.append("the key log head does not match its last link")
+    by_seq = {ln["seq"]: ln for ln in links}
+    history: dict[str, list[dict]] = {}
+    latest = None
+    for e in sorted(log.get("entries") or [], key=lambda e: e.get("seq") or 0):
+        ln = by_seq.get(e.get("seq"))
+        if ln is None:
+            problems.append(f"key log entry #{e.get('seq')} is not in the chain the report carries")
+        elif sha(canonical({k: e.get(k) for k in KEY_LOG_FIELDS})) != ln["record_sha256"]:
+            problems.append(f"key log entry #{e.get('seq')}: content does not match its record hash")
+        try:
+            at = _utc(e["at"])
+        except (ValueError, KeyError, TypeError):
+            problems.append(f"key log entry #{e.get('seq')}: its time cannot be read")
+            continue
+        if latest is not None and at < latest:          # appended later, but dated earlier
+            problems.append(f"key log entry #{e.get('seq')} is dated before an earlier entry")
+        latest = max(at, latest or at)
+        history.setdefault(e.get("key_fingerprint"), []).append(e)
+
+    described = set()
+    for lane in signed:
+        label = f"{lane['host']} / {lane['name']}"
+        sig = lane["receipt"]["signature"]
+        fp = sig.get("key_fingerprint") or ""
+        try:
+            payload = json.loads(sig["payload"])
+            issued, signer = _utc(payload["issued_at"]), payload["signer"]
+        except (ValueError, KeyError, TypeError):
+            problems.append(f"{label}: the signed payload cannot be read")
+            continue
+        events = history.get(fp, [])
+        reg = next((e for e in events if e.get("event") == "registered"), None)
+        if reg is None:
+            problems.append(f"{label}: the key log has no registration for key {fp[:16]}")
+            continue
+        mine = []
+        try:
+            if reg.get("user_id") != signer.get("id"):
+                mine.append(f"{label}: key {fp[:16]} is registered to {reg.get('user_name')}, not the signer")
+            # A payload's issue time is in whole seconds; compare key log times the same way.
+            if _utc(reg["at"], True) > issued:
+                mine.append(f"{label}: key {fp[:16]} was registered after the receipt was issued")
+            revoked = [e for e in events if e.get("event") == "revoked"]
+            for e in revoked:
+                if e["seq"] < reg["seq"]:
+                    mine.append(f"{label}: key {fp[:16]} was revoked before it was registered")
+                if _utc(e["at"], True) < issued:
+                    mine.append(f"{label}: key {fp[:16]} was revoked before the receipt was issued")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            mine.append(f"{label}: the key log entries for key {fp[:16]} cannot be read")
+            revoked = []
+        problems += mine
+        if not mine and fp not in described:
+            described.add(fp)
+            when = _utc(reg["at"]).strftime("%Y-%m-%d %H:%M UTC")
+            later = (f"; revoked {_utc(revoked[0]['at']).strftime('%Y-%m-%d %H:%M UTC')}, after it signed"
+                     if revoked else "")
+            notes.append(f"{signer.get('name')} signed with key {fp[:16]}, registered {when} "
+                         f"{KEY_VIA.get(reg.get('via'), 'in a way this verifier does not know')}{later}")
     return problems, notes
 
 
@@ -683,6 +801,11 @@ def main(argv: list[str]) -> int:
             skip = None if have else (f"0 of {_receipts(receipted)} {done}" if receipted else "no receipts")
             results.append((name, problems, skip))
             notes += more
+            if field == "signature":
+                key_problems, key_notes = check_key_log(r)
+                if "key_log" in r:
+                    results.append(("Signing key history", key_problems, None))
+                notes += key_notes
     elif require:
         results.append(("Receipt signatures", ["this report format carries no signatures"], None))
 

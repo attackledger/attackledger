@@ -82,10 +82,31 @@ receipt verifiable without trusting the database, the server or the tester:
    signed at}` with a key that only they hold.
    - The private key is created in the reviewer's browser (WebCrypto, non-extractable,
      Ed25519 where supported, otherwise ECDSA P-256) and never reaches the server. The
-     server stores only the public key, registered to the person. A server administrator
-     therefore cannot sign in someone else's name.
+     server stores only the public key, registered to the person. Nobody who runs or
+     administers the server can forge a signature made with someone's key.
    - A lost key is replaced by registering a new one; signatures made with the old key
      stay valid, because the report carries the public key that made them.
+   - **Key registration is the weak point, so it is logged (D-036).** Whoever could sign
+     in as a person could register a new key in their name and sign with it. Through the
+     application, nobody sets another person's password: an owner sets only the first one
+     when adding someone, the person changes it with their current password, and a
+     forgotten one is reset on the server. Whoever has shell or database access to the
+     server is still the root of trust and could reset a password, sign in and register
+     a key. What they cannot do is make that silent:
+     - every key registration and revocation is an entry in an append-only, hash-chained
+       key log, recording the person, the fingerprint, the time and how it happened
+       (the person's own session, a session with a password someone else set, or the
+       operator on the server);
+     - the person sees keys registered or revoked for them since their previous sign-in,
+       and can revoke one they did not make;
+     - every report carries the key log entries of each key that signed it, with the chain
+       links up to the head, and `verify_report.py` checks that each key was registered to
+       its signer before the receipt was issued and not revoked before it. Hiding or
+       backdating a key means rewriting or reordering the log, and every report already
+       issued carries the log's head at the time, so comparing them shows it.
+   - For high assurance, the reader compares each signer's key fingerprint with the one
+     the signer gives them through a channel they trust. That check does not depend on
+     the server at all.
 3. **Timestamps.** Each signature is sent, as a hash only, to an RFC 3161 timestamp
    authority. The token proves the receipt existed at that time and was not changed
    afterwards. The authority is configurable; no evidence content leaves the deployment.

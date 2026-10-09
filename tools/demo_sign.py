@@ -8,8 +8,10 @@ Runs inside the demo API container (it needs httpx and cryptography, which the i
 DEMO_TOKEN is the demo API's ATTACKLEDGER_API_TOKEN; DEMO_LANES=12,13 signs only those
 lanes. The script adds a demo owner and a
 "Demo Reviewer" (fictional, random passwords that are thrown away), makes the reviewer a
-reviewer on every engagement, creates an Ed25519 key in memory as a browser would, and
-signs every lane that is closed now. Each signature issues a new receipt on top of the
+reviewer on every engagement, signs in as the reviewer, who chooses their own password,
+creates an Ed25519 key in memory as a browser would, and signs every lane that is closed
+now. The API sets nobody else's password (D-036), so on a rerun the reviewer's password is
+reset the way an operator does it, with python -m app.people on the server. Each signature issues a new receipt on top of the
 existing one; lanes that are VOID stay VOID. With a timestamp authority set, each new
 receipt is also timestamped. "Client web app" then requires signed receipts.
 
@@ -19,6 +21,8 @@ reviewer's browser (D-033); here a script stands in for the browser.
 import base64
 import os
 import secrets
+import subprocess
+import sys
 
 import httpx
 from cryptography.hazmat.primitives import serialization
@@ -37,14 +41,18 @@ def ok(r: httpx.Response) -> dict:
     return r.json()
 
 
-if not any(p["email"] == "reviewer@demo.test" for p in ok(owner.get("/people"))):
+password = secrets.token_urlsafe(18)    # the reviewer's first password, for this run only
+emails = {p["email"] for p in ok(owner.get("/people"))}
+if "owner@demo.test" not in emails:
     ok(owner.post("/people", json={"email": "owner@demo.test", "name": "Demo Owner",
                                    "password": secrets.token_urlsafe(18), "is_owner": True}))
+if "reviewer@demo.test" not in emails:
     ok(owner.post("/people", json={"email": "reviewer@demo.test", "name": "Demo Reviewer",
-                                   "password": secrets.token_urlsafe(18), "is_owner": False}))
+                                   "password": password, "is_owner": False}))
+else:
+    subprocess.run([sys.executable, "-m", "app.people", "set-password", "--email", "reviewer@demo.test"],
+                   env={**os.environ, "ATTACKLEDGER_NEW_PASSWORD": password}, check=True, stdout=subprocess.DEVNULL)
 reviewer_id = next(p["id"] for p in ok(owner.get("/people")) if p["email"] == "reviewer@demo.test")
-password = secrets.token_urlsafe(18)
-ok(owner.patch(f"/people/{reviewer_id}", json={"password": password}))
 
 engagements = ok(owner.get("/engagements"))
 for e in engagements:
@@ -55,6 +63,7 @@ for e in engagements:
 
 rev = httpx.Client(base_url=BASE, timeout=60)
 ok(rev.post("/auth/login", json={"email": "reviewer@demo.test", "password": password}))
+ok(rev.post("/auth/password", json={"current_password": password, "new_password": secrets.token_urlsafe(18)}))
 key = ed25519.Ed25519PrivateKey.generate()
 spki = base64.b64encode(key.public_key().public_bytes(serialization.Encoding.DER,
                                                       serialization.PublicFormat.SubjectPublicKeyInfo)).decode()

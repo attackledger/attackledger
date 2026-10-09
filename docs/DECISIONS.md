@@ -432,6 +432,24 @@ options considered and who decided.
   must never carry the author's own credentials.
 - **Proposed by:** Murat Kabak. **Decided by:** Murat Kabak.
 
+### D-036 · Key trust: no password setting for others, and a key log (2026-10-09)
+- **Problem:** an owner could set another person's password through the API, sign in as
+  them, register a key and sign receipts in their name; the report would look valid.
+- **Decision:** no one sets another person's password through the API. Owners set the
+  first password only; people change their own (`POST /auth/password`, current password
+  required, other sessions end); an operator resets on the server
+  (`python -m app.people set-password`). Every key registration and revocation is appended
+  to a hash-chained key log (migration `0014`; existing keys backfilled), recording how it
+  happened (own session, a session on a password someone else set, operator CLI). People
+  see key changes since their last sign-in and can revoke them. Reports carry each signing
+  key's history, and the verifier checks it.
+- **Boundary:** anyone with shell or database access is still the root of trust. They
+  cannot forge a signature with someone's key; a key they register leaves an entry, shows
+  in the person's notice and in every report it signs. For high assurance, compare key
+  fingerprints out of band. Not yet covered: an owner renaming an account to look like
+  someone else, and checking the key log in the browser's Verify tab.
+- **Proposed and built by:** Claude, at Murat's request (from a product critique).
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

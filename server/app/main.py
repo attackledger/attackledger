@@ -9,13 +9,14 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
+from . import keylog
 from . import targets as targeting
 from .db import get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
@@ -168,8 +169,10 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
             auth.record_failure(email, addr)
             raise HTTPException(401, "wrong email or password")
         auth.clear_failures(email, addr)
-        return _session_cookie(JSONResponse({"ok": True, "mode": m, "name": user.name}),
-                               auth.new_session(session, user.id))
+        user.previous_sign_in_at, user.last_sign_in_at = user.last_sign_in_at, datetime.now(timezone.utc)
+        value = auth.new_session(session, user.id)
+        return _session_cookie(JSONResponse({"ok": True, "mode": m, "name": user.name,
+                                             "key_notice": _key_notice(session, user)}), value)
     tok = auth.token()
     if tok is None:
         if m == "open":
@@ -200,6 +203,23 @@ def _key_view(k: SigningKey) -> dict:
             "created_at": iso_utc(k.created_at), "revoked": k.revoked_at is not None}
 
 
+def _key_notice(session, user: User) -> dict:
+    """Keys registered or revoked for this person since their previous sign-in (all of them
+    at the first sign-in), so a key they did not make does not go unseen."""
+    keys = {k.fingerprint: k for k in session.scalars(select(SigningKey).where(SigningKey.user_id == user.id))}
+    events = []
+    for e in keylog.since(session, user.id, user.previous_sign_in_at):
+        k = keys.get(e.key_fingerprint)
+        events.append({"event": e.event, "key_fingerprint": e.key_fingerprint, "algorithm": e.algorithm,
+                       "at": e.at, "via": e.via, "key_id": k.id if k else None,
+                       "key_revoked": bool(k and k.revoked_at is not None)})
+    return {"since": iso_utc(user.previous_sign_in_at), "events": events}
+
+
+def _via(user: User) -> str:
+    return "own_session" if user.password_chosen else "assigned_password"
+
+
 def _person(request: Request):
     who = authz.current(request)
     if who.kind != "person":
@@ -226,9 +246,13 @@ def add_key(body: KeyIn, request: Request, session: Session = Depends(get_sessio
     key = SigningKey(user_id=who.user_id, algorithm=body.algorithm, public_key=body.public_key, fingerprint=fp)
     session.add(key)
     try:
-        session.commit()
+        session.flush()
     except IntegrityError:
+        session.rollback()
         raise HTTPException(409, "that key is already registered")
+    user = session.get(User, who.user_id)
+    keylog.append(session, user=user, key=key, event="registered", via=_via(user))
+    session.commit()
     return _key_view(key)
 
 
@@ -240,6 +264,8 @@ def revoke_key(key_id: int, request: Request, session: Session = Depends(get_ses
         raise HTTPException(404, "not found")
     if key.revoked_at is None:
         key.revoked_at = datetime.now(timezone.utc)
+        user = session.get(User, who.user_id)
+        keylog.append(session, user=user, key=key, event="revoked", via=_via(user))
         session.commit()
     return _key_view(key)
 
@@ -247,8 +273,40 @@ def revoke_key(key_id: int, request: Request, session: Session = Depends(get_ses
 @app.get("/auth/me")
 def me(request: Request, session: Session = Depends(get_session)):
     who = authz.current(request)
-    return {"kind": who.kind, "user_id": who.user_id, "name": who.name, "is_owner": who.is_owner,
-            "mode": auth.mode(session), "roles": {str(k): list(v) for k, v in who.roles.items()}}
+    out = {"kind": who.kind, "user_id": who.user_id, "name": who.name, "is_owner": who.is_owner,
+           "mode": auth.mode(session), "roles": {str(k): list(v) for k, v in who.roles.items()}}
+    if who.kind == "person":
+        user = session.get(User, who.user_id)
+        out.update(password_chosen=user.password_chosen, key_notice=_key_notice(session, user))
+    return out
+
+
+class PasswordIn(BaseModel):
+    current_password: str = Field(max_length=256)
+    new_password: str = Field(max_length=256)
+
+
+@app.post("/auth/password")
+def change_password(body: PasswordIn, request: Request, session: Session = Depends(get_session)):
+    """Change your own password. It needs the current one, and signs you out everywhere else."""
+    who = authz.current(request)
+    if who.kind != "person":
+        raise HTTPException(422, "only a person signed in with their account has a password")
+    user = session.get(User, who.user_id)
+    addr = request.client.host if request.client else ""
+    if auth.locked(user.email, addr):
+        raise HTTPException(429, "too many failed attempts; try again in 15 minutes")
+    if not auth.verify_password(body.current_password, user.password_hash):
+        auth.record_failure(user.email, addr)
+        raise HTTPException(403, "your current password is not right")
+    why = auth.check_password_rules(body.new_password)
+    if why:
+        raise HTTPException(422, f"new password: {why}")
+    auth.clear_failures(user.email, addr)
+    user.password_hash, user.password_chosen = auth.hash_password(body.new_password), True
+    auth.end_sessions(session, user.id, keep=request.cookies.get(auth.COOKIE, ""))
+    session.commit()
+    return {"ok": True}
 
 
 @app.post("/engagements", status_code=201)
@@ -1128,14 +1186,16 @@ class PersonIn(BaseModel):
 
 
 class PersonPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    password: str | None = Field(default=None, max_length=256)
+    password: str | None = Field(default=None, max_length=256)   # refused: see update_person
     is_owner: bool | None = None
     disabled: bool | None = None
 
 
 def _person_view(u: User) -> dict:
-    return {"id": u.id, "email": u.email, "name": u.name, "is_owner": u.is_owner, "disabled": u.disabled}
+    return {"id": u.id, "email": u.email, "name": u.name, "is_owner": u.is_owner, "disabled": u.disabled,
+            "password_chosen": u.password_chosen}
 
 
 def _active_owners(session) -> int:
@@ -1172,16 +1232,19 @@ def update_person(user_id: int, body: PersonPatch, session: Session = Depends(ge
     if losing_owner and _active_owners(session) <= 1:
         raise HTTPException(422, "this is the last active owner; make someone else an owner first")
     if body.password is not None:
-        why = auth.check_password_rules(body.password)
-        if why:
-            raise HTTPException(422, f"password: {why}")
-        user.password_hash = auth.hash_password(body.password)
+        # Whoever can set a password can sign in as that person and register a key in their
+        # name. People change their own (POST /auth/password); an operator with access to the
+        # server resets a forgotten one there.
+        raise HTTPException(422, "people change their own password; to reset a forgotten one, run "
+                                 "python -m app.people set-password on the server")
     if body.name is not None:
         user.name = body.name.strip()
     if body.is_owner is not None:
         user.is_owner = body.is_owner
     if body.disabled is not None:
         user.disabled = body.disabled
+        if body.disabled:
+            auth.end_sessions(session, user.id)
     session.commit()
     return _person_view(user)
 

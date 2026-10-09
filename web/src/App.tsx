@@ -4,6 +4,7 @@ import { api, ApiError, Cell, Coverage, CoverageRow, EngagementSummary, Job, Lan
 import { AddHost } from "./AddHost";
 import { plural } from "./words";
 import { People, Team } from "./People";
+import { Account } from "./Account";
 import { Executor } from "./Agent";
 import { BulkNotApplicable, ItemWork } from "./LaneWork";
 import { DEMO, demoUrl } from "./demo";
@@ -185,6 +186,7 @@ function Workspace() {
               <button className="link-button" onClick={async () => { await api.logout(); window.location.reload(); }}>
                 Sign out
               </button>
+              <Account me={me} />
             </div>
           )}
           {owner && (

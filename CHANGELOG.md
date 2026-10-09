@@ -40,6 +40,12 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **Key trust** (D-036). Owners can no longer set other people's passwords; people change
+  their own (`POST /auth/password`) and an operator resets on the server
+  (`python -m app.people set-password`, `revoke-key`, `key-log`). Key registrations and
+  revocations go into a hash-chained key log (migration `0014`); people see key changes at
+  sign-in in a "Your account" dialog; reports carry each signing key's history and
+  `verify_report.py` checks it.
 - **Fixes from a fresh-install trial.**
   - Exact scope entries become hosts when the rules are saved (`hosts_added` in the
     response); wildcards stay rules. Recon says when there are no hosts and lets you add

@@ -264,6 +264,18 @@ The command asks for the password in the terminal (not echoed). In a script, pas
 `ATTACKLEDGER_NEW_PASSWORD` instead (`docker compose exec -e ATTACKLEDGER_NEW_PASSWORD ...`);
 it is never taken as an argument.
 
+Owners set a person's first password only; people then change their own under "Your
+account". A forgotten password is reset on the server, which also ends that person's
+sessions:
+
+```bash
+docker compose exec -it api python -m app.people set-password --email someone@example.com
+```
+
+Every signing key registered or revoked is recorded in a hash-chained key log
+(`python -m app.people key-log` lists and checks it), and the person sees new keys the
+next time they sign in.
+
 From then on everyone signs in with email and password. Owners add people and give them
 roles per engagement on its Team tab: **viewer** (reads coverage, evidence and reports),
 **tester** (runs recon, works lanes, attaches evidence) and **reviewer** (signs receipts).

@@ -13,6 +13,11 @@ Passwords are hashed with scrypt (standard library). A session cookie holds a ra
 value; only its SHA-256 is stored, so a database leak does not leak sessions. Cookies
 are HttpOnly and SameSite=Strict. Failed sign-ins are counted per email and address,
 and further attempts are refused for a while after too many.
+
+An owner sets a person's first password when adding them. After that only the person
+changes it (POST /auth/password, with their current one), or an operator resets it on the
+server (python -m app.people set-password). Nobody sets another person's password through
+the API, so an owner cannot sign in as someone else and register a key in their name.
 """
 import hashlib
 import hmac
@@ -133,6 +138,16 @@ def end_session(session, value: str) -> None:
     if row:
         session.delete(row)
         session.commit()
+
+
+def end_sessions(session, user_id: int, keep: str | None = None) -> None:
+    """Sign a person out everywhere (but the session `keep`, if given). The caller commits."""
+    from .models import UserSession
+    q = select(UserSession).where(UserSession.user_id == user_id)
+    if keep:
+        q = q.where(UserSession.token_sha256 != _sha(keep))
+    for row in session.scalars(q):
+        session.delete(row)
 
 
 def people_exist(session) -> bool:
