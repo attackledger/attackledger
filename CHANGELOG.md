@@ -40,6 +40,9 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **Security policy** at `/security`, `/.well-known/security.txt` (RFC 9116) and `SECURITY.md`:
+  scope, testing rules, how to report to murat@attackledger.com, 90-day coordinated
+  disclosure and safe harbor (no bounty).
 - **Client-facing HTML report.** Cover, a summary for the client with what the report
   does and does not prove, scope and authorization, a hosts × lanes coverage matrix,
   per-lane receipts (hash, signer, key, timestamp, void state) and step-by-step
