@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<!DOCTYPE items [
+<!ELEMENT items (item*)>
+<!ATTLIST items burpVersion CDATA "">
+<!ATTLIST items exportTime CDATA "">
+<!ELEMENT item (time, url, host, port, protocol, method, path, extension, request, status, responselength, mimetype, response, comment)>
+<!ELEMENT time (#PCDATA)>
+<!ELEMENT url (#PCDATA)>
+<!ELEMENT host (#PCDATA)>
+<!ATTLIST host ip CDATA "">
+<!ELEMENT port (#PCDATA)>
+<!ELEMENT protocol (#PCDATA)>
+<!ELEMENT method (#PCDATA)>
+<!ELEMENT path (#PCDATA)>
+<!ELEMENT extension (#PCDATA)>
+<!ELEMENT request (#PCDATA)>
+<!ATTLIST request base64 (true|false) "false">
+<!ELEMENT status (#PCDATA)>
+<!ELEMENT responselength (#PCDATA)>
+<!ELEMENT mimetype (#PCDATA)>
+<!ELEMENT response (#PCDATA)>
+<!ATTLIST response base64 (true|false) "false">
+<!ELEMENT comment (#PCDATA)>
+]>
+<items burpVersion="2026.9" exportTime="Thu Oct 09 10:05:00 UTC 2026">
+  <item>
+    <time>Thu Oct 09 10:00:00 UTC 2026</time>
+    <url><![CDATA[https://shop.example.com/api/Basket/3]]></url>
+    <host ip="192.0.2.10">shop.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[GET]]></method>
+    <path><![CDATA[/api/Basket/3]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[R0VUIC9hcGkvQmFza2V0LzMgSFRUUC8xLjENCkhvc3Q6IHNob3AuZXhhbXBsZS5jb20NCkNvb2tpZTogdG9rZW49bGFiLWJ1cnAtY29va2llLTUNClgtQXBpLUtleTogbGFiLWJ1cnAta2V5LTYNCg0K]]></request>
+    <status>200</status>
+    <responselength>78</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCg0KeyJpZCI6Mywib3duZXIiOiJsYWItdXNlciJ9]]></response>
+    <comment>basket of another user</comment>
+  </item>
+  <item>
+    <time>Thu Oct 09 10:00:00 UTC 2026</time>
+    <url><![CDATA[https://tracker.example.net/pixel]]></url>
+    <host ip="192.0.2.10">tracker.example.net</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[GET]]></method>
+    <path><![CDATA[/pixel]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[R0VUIC9waXhlbCBIVFRQLzEuMQ0KSG9zdDogdHJhY2tlci5leGFtcGxlLm5ldA0KQ29va2llOiB0PWxhYi1idXJwLW91dC1vZi1zY29wZQ0KDQo=]]></request>
+    <status>200</status>
+    <responselength>19</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[SFRUUC8xLjEgMjAwIE9LDQoNCg==]]></response>
+    <comment></comment>
+  </item>
+  <item>
+    <time>Thu Oct 09 10:00:00 UTC 2026</time>
+    <url><![CDATA[http://shop.example.com:8080/admin?next=/home]]></url>
+    <host ip="192.0.2.10">shop.example.com</host>
+    <port>8080</port>
+    <protocol>http</protocol>
+    <method><![CDATA[OPTIONS]]></method>
+    <path><![CDATA[/admin?next=/home]]></path>
+    <extension>null</extension>
+    <request base64="false"><![CDATA[OPTIONS /admin?next=/home HTTP/1.1
+Host: shop.example.com:8080
+Authorization: Basic bGFiOmxhYi1idXJwLXBhc3M=
+
+]]></request>
+    <status></status>
+    <responselength>0</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="false"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+  <item>
+    <time>Thu Oct 09 10:00:00 UTC 2026</time>
+    <url><![CDATA[]]></url>
+    <host ip="192.0.2.10">shop.example.com</host>
+    <port>443</port>
+    <protocol>https</protocol>
+    <method><![CDATA[]]></method>
+    <path><![CDATA[/x]]></path>
+    <extension>null</extension>
+    <request base64="true"><![CDATA[]]></request>
+    <status></status>
+    <responselength>0</responselength>
+    <mimetype>JSON</mimetype>
+    <response base64="true"><![CDATA[]]></response>
+    <comment></comment>
+  </item>
+</items>

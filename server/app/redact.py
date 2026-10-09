@@ -366,3 +366,41 @@ def walk(value, rep: Report):
     if isinstance(value, dict):
         return {k: walk(v, rep) for k, v in value.items()}
     return value
+
+
+# ---- raw HTTP messages ----------------------------------------------------------------
+
+_HEAD_END = re.compile(rb"\r?\n\r?\n")
+
+
+def _header_line(line: str, rep: Report) -> str:
+    # HTTP/2 pseudo-headers (":authority: x") start with a colon that is part of the name.
+    name, sep, value = (line[1:].partition(":") if line.startswith(":") else line.partition(":"))
+    if not sep:
+        return text(line, rep)
+    name = (":" + name) if line.startswith(":") else name
+    lead = value[:len(value) - len(value.lstrip())]
+    v = value.strip()
+    new = header_value(name.strip(), v, rep)
+    if new == v:            # not a secret header: a token or a secret parameter may still be in it
+        new = text(v, rep)
+    return f"{name}{sep}{lead}{new}"
+
+
+def http_message(raw: bytes | None, rep: Report, *, personal: bool = False,
+                 what: str = "binary body") -> bytes | None:
+    """One raw HTTP request or response, as an import or a proxy recorded it. Every header
+    line is a header, so each one goes through the header rules whatever its name; the
+    start line (the URL) and the body go through the text rules; a binary or compressed
+    body is kept as it is and noted."""
+    if not raw:
+        return raw
+    m = _HEAD_END.search(raw)
+    head_b, sep, body = (raw[:m.start()], raw[m.start():m.end()], raw[m.end():]) if m else (raw, b"", b"")
+    head = head_b.decode("utf-8", "surrogateescape")
+    lines = re.split(r"(\r?\n)", head)
+    out = [text(lines[0], rep)] if lines else []
+    for i, part in enumerate(lines[1:], start=1):
+        out.append(part if i % 2 else _header_line(part, rep))
+    new_head = "".join(out).encode("utf-8", "surrogateescape")
+    return new_head + sep + data(body, rep, personal=personal, what=what)

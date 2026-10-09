@@ -16,11 +16,11 @@ from sqlalchemy.orm import Session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import auditlog, keylog, redact, vault
+from . import auditlog, importers, inbox, keylog, redact, vault
 from . import targets as targeting
 from .db import SessionLocal, get_session
-from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
-                     Lane, Lead, Membership, Observation, Receipt, SigningKey, User)
+from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
+                     ItemState, Job, JobStatus, Lane, Lead, Membership, Observation, Receipt, SigningKey, User)
 
 ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 
@@ -29,6 +29,7 @@ ENGAGEMENT_TYPES = {"bug_bounty", "pentest", "internal"}
 async def lifespan(_app: FastAPI):
     packs.all_packs()  # fail fast on a broken pack
     vault.master_key()  # fail closed: no master key, no API (D-043)
+    importers.registry()  # and on an import adapter that does not meet the contract
     migrate.upgrade_head()
     with SessionLocal() as s:
         vault.check_store(s)
@@ -1545,3 +1546,190 @@ def engagement_audit(eng_id: int, session: Session = Depends(get_session)):
 def audit_all(session: Session = Depends(get_session)):
     """Every administrative change in this deployment, and whether the chain is intact."""
     return _audit_view(session, session.scalars(select(auditlog.AuditEntry).order_by(auditlog.AuditEntry.seq)))
+
+
+# ---- evidence import (D-029) ----------------------------------------------------------
+#
+# A tester uploads an export file; its in-scope entries wait in the engagement's inbox,
+# redacted, until a person maps them to checklist items (inbox.py). The file is sent as the
+# request body, not as JSON, so a 50 MB export is not inflated by base64 on the way.
+
+async def _upload_body(request: Request) -> bytes:
+    """The request body, read up to the import limit and no further."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > importers.MAX_FILE_BYTES:
+        raise HTTPException(413, f"the file is larger than {importers.MAX_FILE_BYTES // 1_000_000} MB; "
+                                 "export fewer items")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > importers.MAX_FILE_BYTES:
+            raise HTTPException(413, f"the file is larger than {importers.MAX_FILE_BYTES // 1_000_000} MB; "
+                                     "export fewer items")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@app.get("/imports/formats")
+def import_formats():
+    """What can be imported, the limits, and the rules that make suggestions."""
+    return {"formats": [{"id": a.id, "title": a.title, "summary": a.summary, "extensions": list(a.extensions)}
+                        for a in importers.registry().values()],
+            "limits": {"file_bytes": importers.MAX_FILE_BYTES, "entries": importers.MAX_ENTRIES,
+                       "part_bytes": importers.MAX_PART_BYTES},
+            "suggestion_rules": inbox.RULE_HELP}
+
+
+@app.post("/engagements/{eng_id}/imports", status_code=201)
+def import_file(eng_id: int, request: Request, format: str | None = None, filename: str | None = None,
+                data: bytes = Depends(_upload_body), session: Session = Depends(get_session)):
+    eng = _get(session, Engagement, eng_id)
+    who = authz.current(request)
+    try:
+        batch = inbox.import_file(session, eng, data, fmt=format or None, filename=filename,
+                                  actor=auditlog.actor(who), user_id=who.user_id)
+    except importers.ImportRefused as e:
+        session.rollback()
+        raise HTTPException(422, str(e))
+    session.commit()
+    return inbox.batch_view(batch)
+
+
+@app.get("/engagements/{eng_id}/imports")
+def list_imports(eng_id: int, session: Session = Depends(get_session)):
+    _get(session, Engagement, eng_id)
+    rows = session.scalars(select(ImportBatch).where(ImportBatch.engagement_id == eng_id)
+                           .order_by(ImportBatch.id.desc()).limit(200))
+    return [inbox.batch_view(b) for b in rows]
+
+
+def _entry_of(session, eng_id: int, entry_id: int) -> InboxEntry:
+    e = session.get(InboxEntry, entry_id)
+    if e is None or e.engagement_id != eng_id:
+        raise HTTPException(404, f"no inbox entry {entry_id} in this engagement")
+    return e
+
+
+@app.get("/engagements/{eng_id}/inbox")
+def list_inbox(eng_id: int, state: str | None = None, host: str | None = None, method: str | None = None,
+               status: str | None = None, batch: int | None = None, q: str | None = None,
+               offset: int = 0, limit: int = 100, session: Session = Depends(get_session)):
+    """Inbox entries, newest batch first, with filters. status: a code (404) or a class (4xx),
+    or "none" for entries without a response."""
+    _get(session, Engagement, eng_id)
+    if state is not None and state not in inbox.STATES:
+        raise HTTPException(422, f"state is one of {', '.join(inbox.STATES)}")
+    query = select(InboxEntry).where(InboxEntry.engagement_id == eng_id)
+    if state:
+        query = query.where(InboxEntry.state == state)
+    if host:
+        query = query.where(InboxEntry.host == host.strip().lower())
+    if method:
+        query = query.where(InboxEntry.method == method.strip().upper())
+    if batch is not None:
+        query = query.where(InboxEntry.batch_id == batch)
+    if status:
+        s = status.strip().lower()
+        if s == "none":
+            query = query.where(InboxEntry.status.is_(None))
+        elif len(s) == 3 and s[0] in "12345" and s[1:] == "xx":
+            query = query.where(InboxEntry.status >= int(s[0]) * 100, InboxEntry.status < int(s[0]) * 100 + 100)
+        elif s.isdigit():
+            query = query.where(InboxEntry.status == int(s))
+        else:
+            raise HTTPException(422, "status is a code such as 404, a class such as 4xx, or none")
+    if q:
+        query = query.where(InboxEntry.url.contains(q.strip()[:200], autoescape=True))
+    limit, offset = max(1, min(limit, 500)), max(offset, 0)
+    total = session.scalar(select(func.count()).select_from(query.subquery()))
+    rows = session.scalars(query.order_by(InboxEntry.batch_id.desc(), InboxEntry.row).offset(offset).limit(limit))
+    counts = dict.fromkeys(inbox.STATES, 0) | dict(session.execute(
+        select(InboxEntry.state, func.count()).where(InboxEntry.engagement_id == eng_id).group_by(InboxEntry.state)).all())
+    hosts = sorted(session.scalars(select(InboxEntry.host).where(InboxEntry.engagement_id == eng_id).distinct()))
+    return {"total": total, "offset": offset, "limit": limit, "counts": counts, "hosts": hosts,
+            "entries": [inbox.entry_view(e) for e in rows]}
+
+
+@app.get("/engagements/{eng_id}/inbox/{entry_id}")
+def get_inbox_entry(eng_id: int, entry_id: int, session: Session = Depends(get_session)):
+    """One entry, the lanes on its host that it can be mapped to, and suggested items."""
+    e = _entry_of(session, eng_id, entry_id)
+    lanes = inbox.lanes_on(session, eng_id, e.host)
+    return {**inbox.entry_view(e), "targets": inbox.item_targets(lanes), "suggestions": inbox.suggest(e, lanes)}
+
+
+@app.get("/engagements/{eng_id}/inbox/{entry_id}/raw/{part}")
+def get_inbox_raw(eng_id: int, entry_id: int, part: str, session: Session = Depends(get_session)):
+    """The stored (redacted) request, response, or the record that evidence commits to."""
+    e = _entry_of(session, eng_id, entry_id)
+    digest = {"request": e.request_sha256, "response": e.response_sha256, "record": e.record_sha256}.get(part, "")
+    if part not in ("request", "response", "record"):
+        raise HTTPException(404, "part is request, response or record")
+    if not digest:
+        raise HTTPException(404, f"the export had no raw {part} for this entry")
+    data = blobs.get(digest, engagement_id=eng_id)
+    if data is None:
+        raise HTTPException(404, "the bytes for this hash are not in the blob store")
+    return Response(data, media_type="text/plain; charset=utf-8",
+                    headers={"Content-Security-Policy": "default-src 'none'; sandbox",
+                             "X-Content-Type-Options": "nosniff"})
+
+
+class MapTarget(BaseModel):
+    lane_id: int
+    item_idx: int
+
+
+class MapIn(BaseModel):
+    entry_ids: list[int] = Field(min_length=1, max_length=inbox.MAX_MAP_ENTRIES)
+    targets: list[MapTarget] = Field(min_length=1, max_length=inbox.MAX_MAP_TARGETS)
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class EntryIdsIn(BaseModel):
+    entry_ids: list[int] = Field(min_length=1, max_length=inbox.MAX_MAP_ENTRIES)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+@app.post("/engagements/{eng_id}/inbox/map")
+def map_inbox(eng_id: int, body: MapIn, request: Request, session: Session = Depends(get_session)):
+    """Map entries to checklist items: one evidence entry per entry and item, source import:<tool>."""
+    eng = _get(session, Engagement, eng_id)
+    who = authz.current(request)
+    try:
+        added = inbox.map_entries(session, eng, body.entry_ids, [(t.lane_id, t.item_idx) for t in body.targets],
+                                  note=body.note, user_id=who.user_id, user_name=auditlog.actor_label(
+                                      auditlog.actor(who)))
+    except inbox.InboxError as e:
+        session.rollback()
+        raise HTTPException(422, str(e))
+    session.commit()
+    return {"evidence_added": added,
+            "entries": [inbox.entry_view(_entry_of(session, eng_id, i)) for i in dict.fromkeys(body.entry_ids)]}
+
+
+@app.post("/engagements/{eng_id}/inbox/dismiss")
+def dismiss_inbox(eng_id: int, body: EntryIdsIn, request: Request, session: Session = Depends(get_session)):
+    """Set entries aside. They stay in the inbox as dismissed, and the audit log records it."""
+    eng = _get(session, Engagement, eng_id)
+    who = authz.current(request)
+    try:
+        rows = inbox.dismiss(session, eng, body.entry_ids, reason=body.reason, actor=auditlog.actor(who),
+                             user_id=who.user_id)
+    except inbox.InboxError as e:
+        session.rollback()
+        raise HTTPException(422, str(e))
+    session.commit()
+    return {"entries": [inbox.entry_view(e) for e in rows]}
+
+
+@app.post("/engagements/{eng_id}/inbox/restore")
+def restore_inbox(eng_id: int, body: EntryIdsIn, request: Request, session: Session = Depends(get_session)):
+    eng = _get(session, Engagement, eng_id)
+    try:
+        rows = inbox.restore(session, eng, body.entry_ids, actor=auditlog.actor(authz.current(request)))
+    except inbox.InboxError as e:
+        session.rollback()
+        raise HTTPException(422, str(e))
+    session.commit()
+    return {"entries": [inbox.entry_view(e) for e in rows]}
