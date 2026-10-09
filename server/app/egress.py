@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 
 DEFAULT_CA = "/data/gateway-public/ca.pem"
 REFUSED_HEADER = "X-AttackLedger-Gateway"
+ERRORS_HEADER = "X-AttackLedger-Errors"
 # Nmap's top 100 TCP ports, as naabu's -top-ports 100 (port 25 is never probed).
 TOP_100_PORTS = [
     7, 9, 13, 21, 22, 23, 25, 26, 37, 53, 79, 80, 81, 88, 106, 110, 111, 113, 119, 135, 139, 143, 144, 179, 199,
@@ -81,7 +82,16 @@ class Egress:
         return f"job-{self.job_id}.{_tool_name(tool)}"
 
     def proxy_url(self, tool: str) -> str:
-        return f"http://{self.user(tool)}:{self.secret}@{self.address}"
+        return f"http://{self.user(tool)}:{self.secret}@{self._proxy_address()}"
+
+    def _proxy_address(self) -> str:
+        """The gateway as ip:port. Tools that resolve names with their own resolver (httpx and
+        katana with -r) would ask the gateway's DNS for "gateway", which answers in-scope names only."""
+        host, port = self._host_port(self.address, 8080)
+        try:
+            return f"{socket.gethostbyname(host)}:{port}"
+        except OSError:
+            return self.address          # unresolvable: the tool fails, nothing is sent
 
     def mask(self, text: str) -> str:
         return text.replace(self.secret, "********") if self.secret else text
@@ -121,9 +131,12 @@ class Egress:
 
     def opener(self, tool: str, *, verify: bool = False) -> urllib.request.OpenerDirector:
         url = self.proxy_url(tool)
-        return urllib.request.build_opener(
+        opener = urllib.request.build_opener(
             urllib.request.ProxyHandler({"http": url, "https": url}), _NoRedirect,
             urllib.request.HTTPSHandler(context=self.ssl_context(verify)))
+        # Ask for the gateway's reason when a target cannot be reached (it removes the header).
+        opener.addheaders = [("User-Agent", "AttackLedger"), (ERRORS_HEADER, "respond")]
+        return opener
 
     def probe(self, host: str, port: int, timeout: float = PROBE_TIMEOUT) -> tuple[int, str]:
         """(status, reason) of a port probe: 200 open, 502 closed or timed out, 403/407/503 refused."""

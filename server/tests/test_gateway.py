@@ -364,6 +364,9 @@ def test_urllib_through_the_gateway_like_the_worker(stack, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as e:
         gw.opener("jsanalyze").open("http://evil.test/", timeout=10)
     assert egress.refusal(e.value.headers.items())
+    with pytest.raises(urllib.error.HTTPError) as e:                 # unreachable: the reason, for our clients
+        gw.opener("jsanalyze").open("http://app.example.com:8081/", timeout=10)
+    assert e.value.code == 502 and b"could not connect" in e.value.read()
 
 
 def test_a_tunnel_that_does_not_start_tls_is_closed_and_nothing_is_relayed(stack):
@@ -404,6 +407,24 @@ def test_host_header_must_match_the_tunnel(stack):
     c.request("GET", "/", headers={"Host": "evil.test"})
     r = c.getresponse()
     assert r.status == 403 and b"Host header" in r.read() and stack.up.requests == []
+
+
+def test_an_unreachable_target_looks_unreachable_to_tools(stack):
+    """A scanner must not record the gateway's 502 as the target's answer: it gets a closed
+    connection, as from the target itself. AttackLedger's own clients ask for the reason."""
+    status, _, _ = stack.get("http://app.example.com:81/")
+    assert status == 0                                        # no HTTP response at all
+    status, headers, text = stack.get("http://app.example.com:81/", headers={"X-AttackLedger-Errors": "respond"})
+    assert status == 502 and b"could not connect" in text and headers["x-attackledger-gateway"] == "refused"
+    assert [r["verdict"] for r in stack.rows(2)] == ["failed", "failed"]
+    stack.get("http://app.example.com/", headers={"X-AttackLedger-Errors": "respond"})
+    assert stack.up.header(0, "X-AttackLedger-Errors") == []            # never forwarded
+
+
+def test_passive_sources_over_plain_http_on_port_80_only(stack):
+    stack.api.add(5, kind="archive", traffic="passive")
+    assert stack.get("http://web.archive.org/cdx?url=x", auth=stack.auth(job=5, tool="wayback"))[0] == 200
+    assert stack.get("http://web.archive.org:8080/", auth=stack.auth(job=5))[0] == 403
 
 
 # ---- rate ceiling ----------------------------------------------------------------------

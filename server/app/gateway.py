@@ -67,6 +67,10 @@ HOP_BY_HOP = frozenset({"connection", "keep-alive", "proxy-authorization", "prox
                         "te", "trailer", "transfer-encoding", "upgrade", "expect", "host", "content-length"})
 OVERRIDE_HEADERS = frozenset({"x-http-method-override", "x-http-method", "x-method-override"})
 PROBE_HEADER = b"x-attackledger-probe"
+# Sent by AttackLedger's own clients (app.egress): they want the gateway's reason when a
+# target cannot be reached. Other tools get what an unreachable target gives them, a closed
+# connection, so a scanner never records the gateway's 502 as the target's answer.
+ERRORS_HEADER = b"x-attackledger-errors"
 REFUSED_HEADER = "X-AttackLedger-Gateway"
 REALM = 'Basic realm="AttackLedger gateway"'
 USER_RE = re.compile(r"^job-(\d{1,12})(?:\.([a-z0-9][a-z0-9-]{0,31}))?$")
@@ -353,7 +357,8 @@ def gateway_token(create: bool = False) -> str | None:
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
     value = secrets.token_urlsafe(32)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+    # Readable by the API's user: only the gateway and the API mount this volume, never the worker.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     with os.fdopen(fd, "w") as f:
         f.write(value)
     return value
@@ -404,8 +409,8 @@ class Policy:
         if host in self.passive_hosts:
             if rules.traffic not in ("passive", "dns"):
                 raise Refused(403, f"{host} is a passive source; a {rules.kind} job does not use passive sources")
-            if scheme != "https" or port != 443:
-                raise Refused(403, f"passive sources are reached over HTTPS on port 443 only")
+            if (scheme, port) not in (("https", 443), ("http", 80)):
+                raise Refused(403, "passive sources are reached on ports 443 (HTTPS) and 80 (HTTP) only")
             return "passive"
         if host in self.service_hosts:
             if rules.traffic != "agent" or scheme != "https" or port != 443:
@@ -443,7 +448,7 @@ class Policy:
     def headers(self, rules: Rules, kind: str, headers, host_header: str) -> list[tuple[bytes, bytes]]:
         """The headers sent upstream: the tool's (as received), minus hop-by-hop and
         identification names, then Host, the identification (targets) and Connection: close."""
-        drop = set(HOP_BY_HOP)
+        drop = set(HOP_BY_HOP) | {ERRORS_HEADER.decode()}
         conn = _header(headers, b"connection") or ""
         drop |= {t.strip().lower() for t in conn.split(",") if t.strip()}
         ident = [(n.encode(), v.encode()) for n, v in rules.identification()] if kind == "target" else []
@@ -781,10 +786,10 @@ class Gateway:
             await self._refuse(conn, writer, ev.method, e)
             return False
         return await self._forward(conn, writer, rules, tool, kind, method, scheme, host, port, path, out, body,
-                                   url, started)
+                                   url, started, wants_errors=_header(ev.headers, ERRORS_HEADER) is not None)
 
     async def _forward(self, conn, writer, rules, tool, kind, method, scheme, host, port, path, headers, body,
-                       url, started) -> bool:
+                       url, started, wants_errors: bool = True) -> bool:
         status, received, reason = None, 0, ""
         upw = None
         try:
@@ -820,6 +825,8 @@ class Gateway:
                         continue
                     break
             except (h11.ProtocolError, OSError, asyncio.TimeoutError) as e:
+                if upc.their_state is h11.SEND_RESPONSE and isinstance(e, h11.RemoteProtocolError):
+                    raise Refused(502, f"{host} closed the connection without a response")
                 raise Refused(502, f"{host} sent no valid response: {str(e)[:120] or type(e).__name__}")
             if not isinstance(resp, h11.Response):
                 raise Refused(502, f"{host} closed the connection without a response")
@@ -829,7 +836,8 @@ class Gateway:
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
                         status=e.status, verdict="refused" if e.status in (403, 429) else "failed",
                         reason=e.reason, sent=0, started=started)
-            await self._refuse(conn, writer, method.encode(), e)
+            if e.status != 502 or wants_errors:
+                await self._refuse(conn, writer, method.encode(), e)
             return False
         status = resp.status_code
         keep = True
