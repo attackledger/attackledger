@@ -91,7 +91,10 @@ def remove_plain(digest: str) -> bool:
     if not _HEX.match(digest or ""):
         return False
     path = plain_path(digest)
-    if path.is_file():
+    try:
         path.unlink()
-        return True
-    return False
+    except FileNotFoundError:
+        return False
+    except PermissionError:      # a folder made by another user before the store was shared; status shows it
+        return False
+    return True

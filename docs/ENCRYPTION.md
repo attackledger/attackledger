@@ -49,8 +49,12 @@ instead; that is not in the MVP.
   decrypt, and deleting one engagement's folder deletes its key and blobs together without
   touching any other engagement. Consequence for backups: the database and the blob store
   must be backed up together (they always had to be; the evidence is in the blob store).
-- **Startup checks.** The API and the worker check that every key file was wrapped by the
-  configured master key, and the API checks that every engagement with encrypted
+- **One user for the blob store.** The API and the worker both run as uid 10001, because
+  each reads the keys and writes into the engagement folders the other made. A blob volume
+  from an earlier version holds folders made by the API as root; give it to that user once
+  when upgrading: `docker compose run --rm --user 0 --no-deps api chown -R 10001 /data/blobs`.
+- **Startup checks.** The API and the worker check that they can write to the blob store,
+  that every key file was wrapped by the configured master key, and the API checks that every engagement with encrypted
   summaries still has its key file (unless its content was deleted). Either failing stops
   startup with the fix in the message, so a wrong key or an unmounted volume never looks
   like deleted content.
@@ -122,8 +126,9 @@ an explicit command encrypts it.**
   then it writes a tombstone in the engagement's folder, deletes the key file and every
   blob in the folder, and deletes plaintext blobs only this engagement cites. If the
   process stops between the two steps, the worker finishes the file step on its next pass.
-- **Afterwards** the engagement takes no new evidence, jobs or agent runs (refused with a
-  message, not an error). Its lanes, items, receipts, hashes and audit history stay; every
+- **Afterwards** the engagement takes no new evidence, jobs or agent runs, and no new
+  receipts, because nobody can review evidence that can no longer be read (refused with a
+  message, not an error). Receipts issued before stay valid. Its lanes, items, receipts, hashes and audit history stay; every
   evidence entry shows "Content deleted on <date> by <who>". `GET /blobs/{sha}` answers
   410 with the same sentence. Nothing answers 500.
 - **Retention date changes** are audit log entries (`engagement.retention`).

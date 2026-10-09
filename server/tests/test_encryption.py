@@ -377,6 +377,11 @@ def test_deleting_content_makes_blobs_and_summaries_unreadable_and_the_report_st
     assert api.post(f"/lanes/{lane['id']}/attach", json={"item_idx": 1, "kind": "note", "text": "x"}).status_code == 409
     r = api.post(f"/lanes/{lane['id']}/evidence", json={"kind": "note", "sha256": sha(b"y"), "summary": "y"})
     assert r.status_code == 409 and "deleted on" in r.json()["detail"]
+    asset = api.get(f"/engagements/{e}/coverage").json()["assets"][0]["asset_id"]
+    mapper = api.post("/lanes", json={"asset_id": asset, "role": "mapper"})
+    assert mapper.status_code == 201
+    r = api.post(f"/lanes/{mapper.json()['id']}/close", json=SIGN)     # nothing left to review: no new receipt
+    assert r.status_code == 409 and "can no longer be reviewed" in r.json()["detail"]
 
     # A report built afterwards verifies, with the summaries null; so does the one from before.
     after = api.get(f"/engagements/{e}/report").json()
@@ -517,3 +522,15 @@ def test_encrypt_existing_moves_old_blobs_into_each_engagement(api):
     assert api.get(f"/blobs/{sha(only)}").content == only
     with api.Session() as s:                                   # v1 summaries stay plaintext: the chain covers them
         assert s.scalars(select(Evidence).where(Evidence.summary == "only one")).one()
+
+
+def test_a_blob_store_this_process_cannot_write_stops_startup():
+    blobs.put(b"x", engagement_id=5)
+    folder = vault.eng_dir(5)
+    folder.chmod(0o555)
+    try:
+        with pytest.raises(vault.StoreError, match="cannot write"):
+            vault.check_store()
+    finally:
+        folder.chmod(0o755)
+    vault.check_store()

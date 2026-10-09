@@ -448,6 +448,13 @@ def check_store(session=None) -> MasterKey:
     """Fail closed: a master key must be configured, every key file must be wrapped by it,
     and (with a session) every engagement with encrypted summaries must still have its key."""
     mk = master_key()
+    root = blob_root()
+    unwritable = [str(d) for d in [root, root / "e", *sorted((root / "e").glob("*"))]
+                  if d.is_dir() and not os.access(d, os.W_OK | os.X_OK)]
+    if unwritable:
+        raise StoreError(f"this process (uid {os.getuid()}) cannot write to {', '.join(unwritable[:5])} in the blob "
+                         "store, which the API and the worker share; give it to that user, for example "
+                         "docker compose run --rm --user 0 --no-deps api chown -R 10001 /data/blobs")
     wrong = []
     for eng_id, path in key_files():
         try:

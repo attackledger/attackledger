@@ -97,7 +97,7 @@ export function Retention({ engId, onChanged }: { engId: number; onChanged: () =
             {st.encryption.master_key === "development" && " (under the public development master key: for a local trial only)"}.
             Deleting the key makes the raw evidence and the summaries unreadable. Hashes, receipts and the change history
             stay, so reports still verify.</p>
-          <form className="work-form retention-date" onSubmit={(e) => { e.preventDefault(); void saveDate(until || null); }}>
+          <form className="retention-date" onSubmit={(e) => { e.preventDefault(); void saveDate(until || null); }}>
             <label htmlFor={`retain-${engId}`}>Keep the content until (UTC)</label>
             <div className="retention-row">
               <input id={`retain-${engId}`} type="date" min={today()} value={until} onChange={(e) => setUntil(e.target.value)} />

@@ -619,6 +619,9 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     who = authz.current(request)
     if not body.reviewed:
         raise HTTPException(422, "confirm that you reviewed this lane's evidence before closing it")
+    if lane.asset.engagement.content_deleted_at is not None:     # nobody can review what can no longer be read
+        raise HTTPException(409, vault.deleted_sentence(vault.deleted_info(lane.asset.engagement))
+                            + " Its evidence can no longer be reviewed, so no new receipt is issued.")
     signer = who.name if who.kind == "person" else (body.closed_by or "").strip()
     if not signer:
         raise HTTPException(422, "a receipt needs the name of the person signing it")
