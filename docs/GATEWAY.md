@@ -182,8 +182,8 @@ before (nmap's list, port 25 skipped). naabu and libpcap are no longer in the wo
 ### 7. Methods and requests
 
 Allowed to targets: GET, HEAD, OPTIONS, with no body (no `Content-Length` above 0, no
-`Transfer-Encoding`). Refused: every other method (POST, PUT, PATCH, DELETE, TRACE, DEBUG,
-PROPFIND, ...), method override headers (`X-HTTP-Method-Override` and the like) and `_method=`
+`Transfer-Encoding`), and a write a person approved (decision 9). Refused: every other method
+(POST, PUT, PATCH, DELETE without an approval; TRACE, DEBUG, PROPFIND, ... always), method override headers (`X-HTTP-Method-Override` and the like) and `_method=`
 parameters naming another method (a method name only: Arjun and scanners send `_method` with
 numbers and payloads, which no framework reads as a method), `Upgrade` (WebSocket, h2c), `https://` in absolute form (it
 must use CONNECT), a `Host` that differs from the CONNECT target, credentials in the URL, and
@@ -226,18 +226,50 @@ Nothing is sent when:
   refused until the API takes them;
 - the engagement has no identification (target traffic), no scope, or no authorization.
 
-### 9. Hooks for D-040 and D-041
+### 9. Test accounts and approved writes (D-040, D-041)
 
-`gateway.Policy` has two methods that do nothing yet:
+Built 2026-10-09 (migration `0021`); the approval design is `APPROVALS.md`. Both are for agent
+runs only (traffic class `agent`): a recon tool that asks for either is refused, so recon stays
+unauthenticated and read-only by construction.
 
-- `inject_credentials(rules, headers)` (D-040): where a test account's session cookie or token
-  will be added to an allowed request, after the tool's own headers and before the request is
-  logged (the log never holds header values).
-- `approved_write(rules, method, url, body_sha256)` (D-041): asked for every request whose
-  method is not read-only. It returns nothing today, so every write is refused with
-  "writes need a person's approval (D-041), which is not built yet". When the approval queue
-  exists, it will return the approval that matches this exact request, and the gateway will
-  send it once.
+**As a test account.** An agent run asks with the request header `X-AttackLedger-As: <label>`,
+which its tool sets (`agenttools`, `as_account`), never the model, and which the gateway removes.
+A per-job parameter was the alternative; a header lets one run compare two accounts (A reads B's
+object) request by request. The gateway then:
+
+- refuses unless the engagement's evidence redaction is on (D-038);
+- asks the API, `POST /gateway/account` with the job's credential, the label and the host. The
+  API answers only for a running agent job, only for a host named for that account and in scope,
+  and only while the engagement's content exists. The answer (the account's headers) is cached
+  for 2 seconds, so a replaced or deleted account takes effect within 2 seconds. The worker never
+  holds it: it is not in the claim, the lane context, the worker's channel or any job token;
+- replaces any header of the same name the tool sent (a tool's own `Cookie` never reaches the
+  target alongside the account's) and sends `Accept-Encoding: identity`;
+- reads the response whole (up to 20 MB) and scrubs it before it goes back: every value the
+  account's headers carry (whole values, each cookie value, a bearer token) becomes a redaction
+  marker wherever it appears, and cookies, tokens and other credentials are redacted
+  (`redact.header_value`, `redact.data`), so a target that echoes the session or rotates it
+  (`Set-Cookie`) does not hand it to the worker. Measured in the lab with Juice Shop's 743-character
+  tokens and with an upstream that echoes them in plain text;
+- logs the request with the label (`gateway_requests.account`), never a header value.
+
+**Approved writes.** A write is sent only with the header `X-AttackLedger-Approval: <id>`, from an
+agent job, to a target, as POST, PUT, PATCH or DELETE. The gateway reads the body (up to 1 MB),
+fetches the account if one is named, then, last, asks the API to use the approval
+(`POST /gateway/approval`: job credential, id, method, URL, body SHA-256, account). The API checks
+that it is this job's, approved, not expired and not used, that the method, URL (normalised: case,
+default port, no fragment), body and account are the approved ones, marks it sent and writes the
+`write.sent` audit entry in one transaction. From then on it is used, whether or not the target
+answers. The gateway sends the approved request itself: the approved headers, not the tool's, then
+the identification and the account, under the same scope, address, rate and logging rules as
+every request. The log row carries the approval id; the API takes the response status from it
+(or marks the write failed with the reason).
+
+**Requests the gateway answers itself.** katana, given `-proxy`, first asks its proxy whether it
+is Burp Suite (`GET http://burpsuite/`, from ProjectDiscovery's proxy helper; katana has no flag to
+skip it, and ignores the proxy environment, so it needs `-proxy`). The gateway answers it with a
+404 from a job's credential, sends nothing and logs nothing: it is the tool talking to its proxy,
+not a request towards anyone. Every other request to that name is refused as out of scope.
 
 ## Threat model
 
@@ -249,7 +281,9 @@ covers the whole worker process too.
 
 - reach the internet, a target, or a passive source except through the gateway (no route; no
   external DNS);
-- send a write method, a body, a WebSocket or any non-HTTP protocol to a target;
+- send a write method or a body to a target unless a person approved that exact request, for
+  an agent run, and only once (decision 9); or a WebSocket or any non-HTTP protocol at all;
+- get a test account's session: the gateway adds it, and scrubs it from the response;
 - reach a host outside its engagement's scope, port 25, or the deployment's own containers
   through the gateway;
 - go over the engagement's rate ceiling, whatever its concurrency (requests queue or are refused);
@@ -290,12 +324,21 @@ passive sources and the Claude API.
   `ATTACKLEDGER_GATEWAY_DNS`, `ATTACKLEDGER_GATEWAY_CA`, `ATTACKLEDGER_WORKER_API` (default
   `http://gateway:8081`).
 - The request log: `GET /engagements/{id}/gateway-log` (any role on the engagement), with
-  totals by verdict, kind and method and the latest rows.
+  totals by verdict, kind and method and the latest rows. `bytes_sent` is the request as the
+  gateway wrote it upstream, head and body (it was always 0 before 2026-10-09); each row names the
+  test account (`account`) and the approval (`approval_id`) it used, if any.
+- Tools never check for updates: every ProjectDiscovery tool (subfinder, dnsx, httpx, katana,
+  nuclei) runs with `-duc` (`egress.tool_flags`). Without it each asks `api.pdtm.sh` (nuclei also
+  `api.github.com`) on every start, which the log showed as refused, out-of-scope CONNECTs
+  (measured: 14 for one run of each, none with `-duc`). Their cloud features need
+  `PDCP_API_KEY`, which no tool's environment carries.
 
 ## Not done here
 
 - HTTP/2 to targets and to clients (everything is HTTP/1.1), DNS over TCP, and keep-alive to
   targets (a new connection per request).
-- Credential injection and the approval queue (D-040, D-041): hooks only.
+- ~~Credential injection and the approval queue (D-040, D-041): hooks only.~~ Built 2026-10-09
+  (decision 9, `APPROVALS.md`).
+- Checking a recorded exchange against the gateway's own log row before it becomes evidence.
 - A UI view of the request log (API only).
 - ~~The worker still uses the database directly (D-042).~~ Done 2026-10-09: `WORKER_API.md`.
