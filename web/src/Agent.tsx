@@ -18,7 +18,9 @@ function plural(n: number, one: string, many = `${one}s`) {
 }
 
 /** Who works the lane, and the agent's runs when it is the Claude agent. */
-export function Executor({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (l: LaneDetail) => void }) {
+export function Executor({ lane, canWork = true, onLaneChanged }: {
+  lane: LaneDetail; canWork?: boolean; onLaneChanged: (l: LaneDetail) => void;
+}) {
   const [executors, setExecutors] = useState<ExecutorInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +38,15 @@ export function Executor({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChan
   }
 
   const agent = executors.find((e) => e.key === "agent");
+  if (!canWork) {
+    // Read only: who works the lane is shown above; an agent's runs stay readable.
+    return lane.executor === "agent"
+      ? <section className="executor" aria-labelledby="executor-title">
+          <h3 id="executor-title">Agent runs</h3>
+          <AgentRuns lane={lane} canWork={false} onLaneChanged={onLaneChanged} />
+        </section>
+      : null;
+  }
   return (
     <section className="executor" aria-labelledby="executor-title">
       <h3 id="executor-title">Who works this lane</h3>
@@ -52,12 +63,14 @@ export function Executor({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChan
         ))}
       </div>
       {error && <p className="field-error" role="alert">{error}</p>}
-      {lane.executor === "agent" && (agent?.available || DEMO) && <AgentRuns lane={lane} onLaneChanged={onLaneChanged} />}
+      {lane.executor === "agent" && (agent?.available || DEMO) && <AgentRuns lane={lane} canWork onLaneChanged={onLaneChanged} />}
     </section>
   );
 }
 
-function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (l: LaneDetail) => void }) {
+function AgentRuns({ lane, canWork, onLaneChanged }: {
+  lane: LaneDetail; canWork: boolean; onLaneChanged: (l: LaneDetail) => void;
+}) {
   const [runs, setRuns] = useState<Job[]>([]);
   const [turns, setTurns] = useState(15);
   const [requests, setRequests] = useState(30);
@@ -99,7 +112,7 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
 
   return (
     <div className="agent-runs">
-      {lane.status !== "closed" && !DEMO && (
+      {lane.status !== "closed" && !DEMO && canWork && (
         <div className="agent-start">
           <label>
             Turns
@@ -118,11 +131,11 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
           <button className="btn" disabled={active} onClick={start}>Start agent run</button>
         </div>
       )}
-      <p className="hint">
+      {canWork && <p className="hint">
         Read-only requests to {lane.host}, with your research identification and rate limit. The agent attaches
         evidence and marks items; you review it and sign the receipt. The run stops at the first limit it
         reaches. Cost is an estimate, checked after each turn.
-      </p>
+      </p>}
       {error && <p className="field-error" role="alert">{error}</p>}
       {runs.length > 0 && (
         <ul className="jobs">
@@ -147,7 +160,7 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
                     </span>
                   )}
                   <span className="job-actions">
-                    {(j.status === "queued" || j.status === "running") && (
+                    {(j.status === "queued" || j.status === "running") && canWork && (
                       <button className="btn ghost small" onClick={async () => { await api.cancelJob(j.id); load(); }}>
                         Cancel
                       </button>

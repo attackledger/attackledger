@@ -41,8 +41,8 @@ function ago(iso: string | null) {
   return new Date(iso).toLocaleDateString();
 }
 
-export function Recon({ engId, onAssetsChanged, canManage = true }: {
-  engId: number; onAssetsChanged: () => void; canManage?: boolean;
+export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true }: {
+  engId: number; onAssetsChanged: () => void; canManage?: boolean; canRun?: boolean;   // owner; tester
 }) {
   const [scope, setScope] = useState<Scope | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -169,10 +169,12 @@ export function Recon({ engId, onAssetsChanged, canManage = true }: {
       <section aria-labelledby="workflow-title" className="panel workflow">
         <div className="panel-head">
           <h3 id="workflow-title" className="panel-title">Recon workflow</h3>
-          <button className="btn" disabled={!authorized || !hasScope || active} onClick={() => queue()}
-                  title="Queue every step that passes its gates, in order">
-            {active ? "Running…" : "Run all steps"}
-          </button>
+          {canRun ? (
+            <button className="btn" disabled={!authorized || !hasScope || active} onClick={() => queue()}
+                    title="Queue every step that passes its gates, in order">
+              {active ? "Running…" : "Run all steps"}
+            </button>
+          ) : active && <span className="chip running">running</span>}
         </div>
         {pipeMsg && <p className="saved" role="status">{pipeMsg}</p>}
         {error && <p className="field-error" role="alert">{error}</p>}
@@ -195,11 +197,13 @@ export function Recon({ engId, onAssetsChanged, canManage = true }: {
                     <p>{p.summary}</p>
                     {stat[p.key] && <p className="phase-stat">{stat[p.key]}</p>}
                   </div>
-                  <button className="btn ghost small" disabled={active || runnable.length === 0}
-                          onClick={() => queue(runnable)}
-                          title={runnable.length ? `Queue ${runnable.length} of ${p.kinds.length} tools in this step` : "Nothing in this step can run yet"}>
-                    Run step
-                  </button>
+                  {canRun && (
+                    <button className="btn ghost small" disabled={active || runnable.length === 0}
+                            onClick={() => queue(runnable)}
+                            title={runnable.length ? `Queue ${runnable.length} of ${p.kinds.length} tools in this step` : "Nothing in this step can run yet"}>
+                      Run step
+                    </button>
+                  )}
                 </div>
                 <details className="phase-help">
                   <summary>How this step works</summary>
@@ -212,7 +216,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true }: {
                 </details>
                 <ul className="tools">
                   {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
-                    <ToolCard key={m.kind} m={m} last={jobs.find((j) => j.kind === m.kind)} why={blocker(m.kind)}
+                    <ToolCard key={m.kind} m={m} last={jobs.find((j) => j.kind === m.kind)} why={blocker(m.kind)} canRun={canRun}
                               onRun={() => run(m.kind)} onResults={() => showResults(m.kind)} />
                   ))}
                 </ul>
@@ -245,7 +249,7 @@ export function Recon({ engId, onAssetsChanged, canManage = true }: {
         {tab === "urls" && <Endpoints engId={engId} version={jobs.length} module={only ?? undefined} />}
         {tab === "leads" && <Leads engId={engId} version={jobs.filter((j) => j.status === "done").length}
                                    module={only ?? undefined} />}
-        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} />}
+        {tab === "runs" && <Runs jobs={jobs} mods={mods} refresh={refresh} onError={setError} canRun={canRun} />}
       </section>
     </div>
   );
@@ -301,8 +305,8 @@ function TargetBar({ scope, mods, editing, canClose, onToggle }: {
   );
 }
 
-function ToolCard({ m, last, why, onRun, onResults }: {
-  m: ReconModule; last?: Job; why: string | null; onRun: () => void; onResults: () => void;
+function ToolCard({ m, last, why, canRun, onRun, onResults }: {
+  m: ReconModule; last?: Job; why: string | null; canRun: boolean; onRun: () => void; onResults: () => void;
 }) {
   const [log, setLog] = useState(false);
   const busy = !!last && (last.status === "queued" || last.status === "running");
@@ -325,10 +329,10 @@ function ToolCard({ m, last, why, onRun, onResults }: {
             <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>
           </>
         ) : <span className="muted">Not run yet</span>}
-        {why && <span className="tool-why">{why}</span>}
+        {why && canRun && <span className="tool-why">{why}</span>}
       </p>
       <div className="tool-actions">
-        <button className="btn small" disabled={!!why || busy} onClick={onRun}>{busy ? "Running…" : "Run"}</button>
+        {canRun && <button className="btn small" disabled={!!why || busy} onClick={onRun}>{busy ? "Running…" : "Run"}</button>}
         <button className="btn ghost small" onClick={onResults}>Results</button>
         {last && (
           <button className="btn ghost small" aria-expanded={log} onClick={() => setLog(!log)}>
@@ -341,11 +345,11 @@ function ToolCard({ m, last, why, onRun, onResults }: {
   );
 }
 
-function Runs({ jobs, mods, refresh, onError }: {
-  jobs: Job[]; mods: ReconModule[]; refresh: () => Promise<void>; onError: (m: string) => void;
+function Runs({ jobs, mods, refresh, onError, canRun }: {
+  jobs: Job[]; mods: ReconModule[]; refresh: () => Promise<void>; onError: (m: string) => void; canRun: boolean;
 }) {
   const [openLog, setOpenLog] = useState<number | null>(null);
-  if (jobs.length === 0) return <p className="muted">No runs yet. Run a step above, or every step at once.</p>;
+  if (jobs.length === 0) return <p className="muted">{canRun ? "No runs yet. Run a step above, or every step at once." : "No runs yet."}</p>;
   return (
     <ul className="jobs">
       {jobs.map((j) => (
@@ -361,14 +365,14 @@ function Runs({ jobs, mods, refresh, onError }: {
             </span>
             <span className="muted job-time">{new Date(j.created_at).toLocaleTimeString()}</span>
             <span className="job-actions">
-              {j.remaining > 0 && (j.status === "partial" || j.status === "cancelled") && (
+              {canRun && j.remaining > 0 && (j.status === "partial" || j.status === "cancelled") && (
                 <button className="btn small" onClick={async () => {
                   try { await api.resumeJob(j.id); await refresh(); } catch (e) { onError((e as Error).message); }
                 }}>
                   Run remaining {j.remaining}
                 </button>
               )}
-              {(j.status === "queued" || j.status === "running") && (
+              {canRun && (j.status === "queued" || j.status === "running") && (
                 <button className="btn ghost small" onClick={async () => { await api.cancelJob(j.id); refresh(); }}>
                   Cancel
                 </button>

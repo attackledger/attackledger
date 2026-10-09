@@ -757,6 +757,26 @@ a.btn.ghost { color: var(--text); }
 }
 @media (max-width: 640px) { .facts div { grid-template-columns: 1fr; gap: 0.15rem; } }
 
+/* ---- verify ------------------------------------------------------------- */
+
+.verify-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.verify-item { padding: 0.75rem 0.9rem 0.25rem; border: 1px solid var(--rule); border-left: 4px double var(--rule-strong); border-radius: var(--radius); background: var(--sheet); }
+.verify-item.ok { border-left-color: var(--stamp); }
+.verify-item.bad { border-left-color: var(--red); background: var(--red-wash); }
+.verify-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem 1rem; margin-bottom: 0.5rem; }
+.verify-lane { overflow-wrap: anywhere; }
+/* The outcome reads like a small stamp: word and mark, never colour alone. */
+.verify-outcome { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.5rem; border: 2px solid currentColor; border-radius: 4px; font: 700 var(--step--1) / 1.2 var(--slab); letter-spacing: 0.02em; }
+.verify-outcome.ok { color: var(--stamp); }
+.verify-outcome.bad { color: var(--red); }
+.verify-outcome.plain { color: var(--text-soft); border-style: dashed; }
+.verify-facts { margin-bottom: 0.5rem; }
+.verify-facts div { grid-template-columns: 9rem 1fr; padding: 0.3rem 0; }
+.verify-problems { margin: 0 0 0.75rem; padding-left: 1.2rem; font-size: var(--step--1); }
+.verify-problems.bad { color: var(--red); }
+.readonly-note { margin: 0 0 1rem; font-size: var(--step--1); color: var(--text-soft); }
+.cell.plain { cursor: default; color: var(--text-faint); font-size: var(--step--1); }
+
 /* ---- recon v0.3 --------------------------------------------------------- */
 
 .traffic { display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.45rem; border-radius: 999px; font: 400 var(--step--2) / 1.4 var(--body); vertical-align: 0.1em; border: 1px solid currentColor; }

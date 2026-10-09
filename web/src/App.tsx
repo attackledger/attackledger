@@ -8,6 +8,8 @@ import { ensureKey, localKey, sign, type LocalKey } from "./signing";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
 import { Report } from "./Report";
+import { Verify } from "./Verify";
+import { can, readOnly, rolesOn } from "./access";
 import { ThemeToggle } from "./theme";
 
 const TYPE_NAMES: Record<string, string> = {
@@ -16,8 +18,10 @@ const TYPE_NAMES: Record<string, string> = {
   internal: "Internal assessment",
 };
 
-type Tab = "recon" | "ledger" | "controls" | "report" | "team";
-const TAB_NAMES: Record<Tab, string> = { recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", team: "Team" };
+type Tab = "recon" | "ledger" | "controls" | "report" | "verify" | "team";
+const TAB_NAMES: Record<Tab, string> = {
+  recon: "Recon", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", team: "Team",
+};
 
 export function App() {
   const [needLogin, setNeedLogin] = useState(false);
@@ -96,7 +100,7 @@ function Workspace() {
   const [me, setMe] = useState<Me | null>(null);
   const [page, setPage] = useState<"work" | "people">("work");
   useEffect(() => { if (!DEMO) api.me().then(setMe).catch(() => {}); }, []);
-  const owner = !DEMO && !!me?.is_owner;
+  const owner = can(me, null, "team");   // People page and Team tab
 
   const loadEngagements = useCallback(async () => {
     try {
@@ -161,7 +165,7 @@ function Workspace() {
               ))}
             </ul>
           )}
-          {(!me || me.is_owner) && (
+          {can(me, null, "create") && (
             <NewEngagement onCreated={async (id) => { await loadEngagements(); setCurrent(id); setPage("work"); }} />
           )}
         </nav>
@@ -221,8 +225,7 @@ function Workspace() {
             <header className="eng-head">
               <h2 className="eng-title">{coverage.engagement}</h2>
               <div className="tabs" role="tablist" aria-label="Engagement views">
-                {(owner ? (["recon", "ledger", "controls", "report", "team"] as const)
-                        : (["recon", "ledger", "controls", "report"] as const)).map((t) => (
+                {(["recon", "ledger", "controls", "report", "verify", ...(owner ? ["team"] as const : [])] as const).map((t) => (
                   <button
                     key={t}
                     role="tab"
@@ -240,13 +243,22 @@ function Workspace() {
                 ))}
               </div>
             </header>
+            {readOnly(me, current) && (
+              <p className="readonly-note" role="note">
+                You can read this engagement{rolesOn(me, current).length ? ` (${rolesOn(me, current).join(", ")})` : ""}:
+                its coverage, evidence and reports, and verify its receipts. Changes are made by its testers, reviewers and owners.
+              </p>
+            )}
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-              {tab === "recon" && <Recon engId={current} onAssetsChanged={loadCoverage} canManage={DEMO || !me || me.is_owner} />}
+              {tab === "recon" && <Recon engId={current} onAssetsChanged={loadCoverage} canManage={can(me, current, "rules")}
+                                         canRun={can(me, current, "work")} />}
               {tab === "ledger" && (
-                <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage} />
+                <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={loadCoverage}
+                        canWork={can(me, current, "work")} />
               )}
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
               {tab === "report" && <Report engId={current} />}
+              {tab === "verify" && <Verify engId={current} />}
               {tab === "team" && owner && (
                 <Team engId={current} separation={!!coverage.separation_of_duties}
                       signatures={!!coverage.require_signatures} onChanged={loadCoverage} />
@@ -381,11 +393,12 @@ function isGapRow(row: CoverageRow) {
   return row.in_scope && Object.values(row.roles).some((c) => c.status !== "closed");
 }
 
-function Matrix({ coverage, engId, onOpen, onAdded }: {
+function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
   coverage: Coverage;
   engId: number;
   onOpen: (assetId: number, role: string, cell: Cell) => void;
   onAdded: () => void;
+  canWork: boolean;   // testers open lanes and add hosts
 }) {
   const [host, setHost] = useState("");
   const [inScope, setInScope] = useState(true);
@@ -438,7 +451,7 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
       </header>
 
       {coverage.assets.length === 0 ? (
-        <p className="empty-row">Add a host below to open its row in the ledger.</p>
+        <p className="empty-row">{canWork ? "Add a host below to open its row in the ledger." : "No hosts in this engagement yet."}</p>
       ) : (
         <div className="sheet" role="region" aria-label="Coverage ledger" tabIndex={0}>
           <table style={{ minWidth: `${12 + coverage.roles.length * 7.5}rem` }}>
@@ -475,6 +488,7 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
                         disabled={!row.in_scope}
                         label={`${laneName(r)} on ${row.host}`}
                         lockedBy={blockers(row, r).map(laneName)}
+                        canOpen={canWork}
                         onClick={() => onOpen(row.asset_id, r, row.roles[r])}
                       />
                     </td>
@@ -498,7 +512,7 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
 
       <Legend />
 
-      <form className="inline-form add-host" onSubmit={add}>
+      {canWork && <form className="inline-form add-host" onSubmit={add}>
         <label htmlFor="new-host">Add a host</label>
         <div className="field-row">
           <input id="new-host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="app.example.com" />
@@ -509,7 +523,7 @@ function Matrix({ coverage, engId, onOpen, onAdded }: {
           <button type="submit" className="btn">Add host</button>
         </div>
         {error && <p className="field-error">{error}</p>}
-      </form>
+      </form>}
     </section>
   );
 }
@@ -525,8 +539,8 @@ function Legend() {
   );
 }
 
-function CellMark({ cell, label, lockedBy, disabled, onClick }: {
-  cell: Cell; label: string; lockedBy: string[]; disabled: boolean; onClick: () => void;
+function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
+  cell: Cell; label: string; lockedBy: string[]; disabled: boolean; canOpen: boolean; onClick: () => void;
 }) {
   if (disabled) return <span className="cell-blank" aria-label={`${label}: out of scope`} />;
   switch (cell.status) {
@@ -557,6 +571,7 @@ function CellMark({ cell, label, lockedBy, disabled, onClick }: {
             Needs {lockedBy.length === 1 ? lockedBy[0].toLowerCase() : `${lockedBy.length} lanes`}
           </span>
         );
+      if (!canOpen) return <span className="cell plain" aria-label={`${label}: not opened`}>Not opened</span>;
       return (
         <button className="cell unopened" onClick={onClick} aria-label={`Open ${label}`}>
           Open
@@ -631,6 +646,9 @@ function Folio({ laneId, me, onClose, onChanged }: {
     }
   }
 
+  const canWork = !!lane && can(me, lane.engagement_id, "work");
+  const canSign = !!lane && can(me, lane.engagement_id, "sign");
+
   const counts = lane && {
     done: lane.items.filter((i) => i.state === "done").length,
     na: lane.items.filter((i) => i.state === "na").length,
@@ -693,7 +711,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
                         {i.controls.map((c) => <span key={c} className="tag">{c}</span>)}
                       </span>
                     )}
-                    {lane.executor === "manual" && (
+                    {lane.executor === "manual" && canWork && (
                       <ItemWork lane={lane} item={i} runs={runs} titles={titles} onChanged={(l) => { setLane(l); onChanged(); }} />
                     )}
                   </li>
@@ -731,7 +749,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
               </ul>
             )}
 
-            <Executor lane={lane} onLaneChanged={(l) => { setLane(l); onChanged(); }} />
+            <Executor lane={lane} canWork={canWork} onLaneChanged={(l) => { setLane(l); onChanged(); }} />
           </div>
         )}
         {raw && (
@@ -760,12 +778,19 @@ function Folio({ laneId, me, onClose, onChanged }: {
                 )}
                 {!lane.receipt!.timestamp && lane.receipt!.timestamp_error && (
                   <> Not timestamped: {lane.receipt!.timestamp_error}.{" "}
-                    <button className="linklike" onClick={async () => {
-                      try { setLane(await api.timestampReceipt(laneId)); setError(null); onChanged(); }
-                      catch (e) { setError((e as Error).message); }
-                    }}>Timestamp now</button>
+                    {canSign && (
+                      <button className="linklike" onClick={async () => {
+                        try { setLane(await api.timestampReceipt(laneId)); setError(null); onChanged(); }
+                        catch (e) { setError((e as Error).message); }
+                      }}>Timestamp now</button>
+                    )}
                   </>
                 )}
+              </p>
+            ) : !canSign ? (
+              <p className="muted">
+                {lane.status === "stale" ? "The receipt is void. " : "Not receipted yet. "}
+                A reviewer on this engagement signs and closes the lane once every item has evidence or a reason.
               </p>
             ) : (
               <div className="sign">
