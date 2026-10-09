@@ -4,7 +4,7 @@ import { plural } from "./words";
 
 // Same words as the report (report.py _CONTROL_STATUS). "Partial" is avoided here because
 // it is also an evidence strength.
-const STATUS_TEXT: Record<ControlRow["status"], string> = {
+const STATUS_TEXT: Record<string, string> = {
   evidenced: "All mapped items receipted",
   resolved: "Resolved, partly not applicable",
   not_applicable: "Not applicable",
@@ -12,6 +12,11 @@ const STATUS_TEXT: Record<ControlRow["status"], string> = {
   only_not_applicable: "Only not-applicable items resolved",
   none: "No mapped item receipted",
 };
+
+/** A status this app does not know yet (from a newer server) still reads as words. */
+function statusText(status: string): string {
+  return STATUS_TEXT[status] ?? status.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
 
 const STRENGTH_TEXT: Record<ControlRow["strength"], string> = {
   full: "Full evidence",
@@ -85,7 +90,7 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
                       </div>
                       <span className="bar-label">{c.evidenced}/{c.required}{na > 0 && `, ${na} N/A`}</span>
                     </td>
-                    <td><span className={`ctl-status ${c.status}`}>{STATUS_TEXT[c.status]}</span></td>
+                    <td><span className={`ctl-status ${c.status in STATUS_TEXT ? c.status : "none"}`}>{statusText(c.status)}</span></td>
                   </tr>
                 );
               })}

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { DEMO, demoUrl } from "./demo";
 import { OfflineVerifier, VERIFY_PAGE } from "./OfflineVerifier";
+import { Fingerprint, When } from "./display";
+import { reportFilename } from "./Report";
 import { cliText, decodeFile, ed25519Native, pageWording, selfTest, verifyReport, type CheckResult, type Outcome } from "./verify_report";
 
 // The same module as the public verifier page (attackledger.com/verify): a port of
@@ -32,12 +34,6 @@ function tsaHost(url: string | null | undefined): string | null {
   try { return new URL(url).host; } catch { return url; }
 }
 
-function when(iso: string | null | undefined): string {
-  if (!iso) return "unknown";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { timeZoneName: "short" });
-}
-
 function signerOf(lane: Lane): { name: string | null; email: string | null } {
   try {
     const p = JSON.parse(lane.receipt?.signature?.payload ?? "null") as { signer?: { name?: string; email?: string } } | null;
@@ -54,8 +50,10 @@ export function Verify({ engId }: { engId: number }) {
   const [self, setSelf] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Same origin and no Content-Disposition, so the download is saved as report.json, the name the command uses.
+  // Same origin and no Content-Disposition, so the download takes the name given here: the name the server
+  // gives a downloaded report (attackledger-<name>-<id>.json), which the offline command then uses as it is.
   const json = DEMO ? demoUrl(`reports/${engId}.json`) : `/api/engagements/${engId}/report`;
+  const [file, setFile] = useState("report.json");
 
   useEffect(() => {
     let live = true;
@@ -71,8 +69,14 @@ export function Verify({ engId }: { engId: number }) {
       const res = await fetch(json);
       if (!res.ok) throw new Error(res.status === 403 ? "Your role on this engagement does not allow this." : `The report could not be loaded (${res.status}).`);
       const text = decodeFile(new Uint8Array(await res.arrayBuffer()));
-      const o = await verifyReport(text, "report.json");
+      let name = "report.json";
+      try {
+        const eng = (JSON.parse(text) as { engagement?: { name?: string } }).engagement;
+        if (typeof eng?.name === "string") name = reportFilename(eng.name, engId, "json");
+      } catch { /* the verifier reports an unreadable report */ }
+      const o = await verifyReport(text, name);
       if (!live) return;
+      setFile(name);
       setOutcome(o);
       try {
         setLanes((JSON.parse(text) as { lanes: Lane[] }).lanes.filter((l) => l.receipt && l.status === "closed"));
@@ -81,7 +85,7 @@ export function Verify({ engId }: { engId: number }) {
       }
       setEdNative(await ed25519Native());
       if (o.results.find((c) => c.name === "Receipt signatures")?.verdict === "PASS") {
-        const ok = await selfTest(text, "report.json").catch(() => false);
+        const ok = await selfTest(text, name).catch(() => false);
         if (live) setSelf(ok);
       }
     })().catch((e) => live && setError((e as Error).message));
@@ -113,7 +117,7 @@ export function Verify({ engId }: { engId: number }) {
           {!outcome && !error && <p className="muted">Checking the report…</p>}
         </div>
         <div className="report-actions">
-          <a className="btn" href={json} download="report.json">Download report JSON</a>
+          <a className="btn" href={json} download={file}>Download report JSON</a>
         </div>
       </section>
 
@@ -164,7 +168,7 @@ export function Verify({ engId }: { engId: number }) {
 
       <section className="panel" aria-labelledby="offline-title">
         <h3 id="offline-title" className="panel-title">The same check, offline</h3>
-        <OfflineVerifier file="report.json" />
+        <OfflineVerifier file={file} saved />
         <p className="muted">
           A signature proves the key holder signed; to tie a key to a person, compare its fingerprint with the one the
           signer gives you.
@@ -202,14 +206,14 @@ function ReceiptRow({ lane, outcome }: { lane: Lane; outcome: Outcome }) {
           </dd>
         </div>
         {sig && <div><dt>Algorithm</dt><dd>{sig.algorithm}</dd></div>}
-        {sig && <div><dt>Key fingerprint</dt><dd><code>{sig.key_fingerprint}</code></dd></div>}
+        {sig && <div><dt>Key fingerprint</dt><dd><Fingerprint fp={sig.key_fingerprint} full /></dd></div>}
         <div><dt>Manifest</dt><dd><code>{rc.manifest_sha256}</code></dd></div>
-        <div><dt>Issued</dt><dd>{when(rc.issued_at)}</dd></div>
+        <div><dt>Issued</dt><dd><When iso={rc.issued_at} /></dd></div>
         <div>
           <dt>Timestamp</dt>
           <dd>
             {rc.timestamp
-              ? <>{when(rc.timestamp.time)}{tsaHost(rc.timestamp.tsa) && <> by {tsaHost(rc.timestamp.tsa)}</>}</>
+              ? <><When iso={rc.timestamp.time} />{tsaHost(rc.timestamp.tsa) && <> by {tsaHost(rc.timestamp.tsa)}</>}</>
               : <span className="muted">None</span>}
           </dd>
         </div>

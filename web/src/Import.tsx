@@ -1,10 +1,12 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api, ApiError, type AlreadyImported, type ImportBatch, type ImportFormats, type InboxEntry, type InboxEntryDetail,
-  type InboxFilter, type InboxPage, type MapTarget, type RefusedRow,
+  type InboxFilter, type InboxPage, type MapTarget, type RefusedRow, type WouldVoidReceipts,
 } from "./api";
 import { DEMO, demoInboxRaw } from "./demo";
 import { plural } from "./words";
+import { bytes as size, localTime as when, When } from "./display";
+import { useDraft } from "./drafts";
 
 // Evidence import (D-029). A tester uploads an export from Burp, Caido or a browser; its
 // in-scope entries wait here, redacted, until a person maps each one to checklist items.
@@ -22,17 +24,6 @@ const STATUS = [
   { key: "", label: "Any status" }, { key: "2xx", label: "2xx" }, { key: "3xx", label: "3xx" },
   { key: "4xx", label: "4xx" }, { key: "5xx", label: "5xx" }, { key: "none", label: "No response" },
 ];
-
-function when(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { timeZoneName: "short" });
-}
-
-function size(n: number): string {
-  if (n < 1000) return `${n} B`;
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)} kB`;
-  return `${(n / 1_000_000).toFixed(1)} MB`;
-}
 
 function code(status: number | null) {
   if (status == null) return <span className="muted">none</span>;
@@ -82,8 +73,8 @@ function Refused({ rows, total }: { rows: RefusedRow[]; total: number }) {
   );
 }
 
-function Upload({ engId, formats, onDone }: {
-  engId: number; formats: ImportFormats | null; onDone: (b: ImportBatch) => void;
+function Upload({ engId, formats, onStart, onDone }: {
+  engId: number; formats: ImportFormats | null; onStart: () => void; onDone: (b: ImportBatch) => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [format, setFormat] = useState("");
@@ -93,11 +84,12 @@ function Upload({ engId, formats, onDone }: {
   const limit = formats?.limits.file_bytes ?? 50_000_000;
 
   async function send(form: HTMLFormElement, reimport: boolean) {
-    if (!file) return setError("Choose a file to import.");
-    if (file.size > limit) return setError(`Files are limited to ${size(limit)}. Export fewer items.`);
+    if (!file) { onStart(); return setError("Choose a file to import."); }
+    if (file.size > limit) { onStart(); return setError(`Files are limited to ${size(limit)}. Export fewer items.`); }
     setBusy(true);
     setError(null);
     setRepeat(null);
+    onStart();   // the previous file's result line would read as this one's
     try {
       onDone(await api.importFile(engId, file, format || null, reimport));
       setFile(null);
@@ -135,7 +127,7 @@ function Upload({ engId, formats, onDone }: {
       {repeat && (
         <div className="field-error" role="alert">
           <p>
-            This file was already imported on {when(repeat.earlier.created_at)} by {repeat.earlier.created_by_name}
+            This file was already imported on <When iso={repeat.earlier.created_at} /> by {repeat.earlier.created_by_name}
             {repeat.earlier.filename ? ` (as ${repeat.earlier.filename})` : ""}. Importing it again adds nothing new:
             its rows already in the inbox count as duplicates.
           </p>
@@ -163,7 +155,8 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
   const [error, setError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string[]>([]);       // "role:idx": one lane per role on a host
   const [extra, setExtra] = useState("");
-  const [note, setNote] = useState("");
+  // Unsent, kept as a draft: an expired session or a reload brings it back (drafts.ts).
+  const [note, setNote, clearNote] = useDraft(`import-note:${engId}:${id}`);
   const [also, setAlso] = useState(false);
   // Off by default: one imported exchange is often part of a test, and "done" says the test was
   // performed. The lane counts items that have evidence and still wait to be marked done.
@@ -171,12 +164,18 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  // Lanes whose receipts this mapping would void, waiting for the person to accept that.
+  const [voids, setVoids] = useState<string[] | null>(null);
+  const doneRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { setVoids(null); }, [chosen]);   // the question was about the items chosen then
+  // The result is the next thing to read: focus it (it is also announced as a status).
+  useEffect(() => { if (done) doneRef.current?.focus(); }, [done]);
 
   const load = useCallback(() => {
     api.inboxEntry(engId, id).then(setE).catch((x) => setError((x as Error).message));
   }, [engId, id]);
   useEffect(() => {
-    setE(null); setChosen([]); setNote(""); setDone(null); setError(null); setAlso(false); setMarkDone(false);
+    setE(null); setChosen([]); setDone(null); setError(null); setAlso(false); setMarkDone(false); setVoids(null);
     load();
   }, [load]);
 
@@ -188,39 +187,84 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
   const name = (k: string) => {
     const { role, idx } = split(k);
     const i = items.find((x) => x.role === role && x.idx === idx);
-    return i ? `${i.key} ${i.text}${i.opened ? "" : " (opens the lane)"}` : k;
+    return i ? `${i.key} ${i.text}${i.opened ? "" : " (opens the lane)"}${receipted(role, idx) ? VOIDS : ""}` : k;
   };
   const roleOf = (laneId: number) => e.targets.find((t) => t.lane_id === laneId)?.role ?? String(laneId);
+  const laneName = (laneId: number) => e.targets.find((t) => t.lane_id === laneId)?.name ?? `Lane ${laneId}`;
   const mapped = new Set(e.mappings.map((m) => `${roleOf(m.lane_id)}:${m.item_idx}`));
+  // A receipt in force: adding evidence voids it. The server says so per lane, item and suggestion
+  // (receipted, lane_status); an older server only gives the lane's status.
+  const targetOf = (role: string) => e.targets.find((t) => t.role === role);
+  const receipted = (role: string, idx: number) => {
+    const t = targetOf(role);
+    const it = t?.items.find((x) => x.idx === idx);
+    const sug = e.suggestions.find((x) => x.role === role && x.item_idx === idx);
+    const flag = it?.receipted ?? sug?.receipted ?? t?.receipted;
+    if (typeof flag === "boolean") return flag;
+    return (it?.lane_status ?? sug?.lane_status ?? t?.status) === "closed";
+  };
+  const VOIDS = " (voids receipt)";
   const toggle = (k: string) => setChosen((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]));
   const others = selectedSameHost.filter((x) => x !== e.id);
   const raw = (part: string) => DEMO ? demoInboxRaw(engId, e.id, part) : `/api/engagements/${engId}/inbox/${e.id}/raw/${part}`;
 
-  async function run(fn: () => Promise<string>) {
+  /** `fn` says what happened, or null when nothing was done and the form asks a question instead. */
+  async function run(fn: () => Promise<string | null>) {
     setBusy(true);
     setError(null);
+    setDone(null);
     try {
-      setDone(await fn());
+      const said = await fn();
+      if (said === null) return;
+      setDone(said);
       onChanged();
       load();
     } catch (x) {
+      setDone(null);   // an earlier success line would read as this attempt's
       setError((x as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
+  // The receipted lanes the chosen items are on, by name.
+  const voided = [...new Set(chosen.map(split).filter(({ role, idx }) => receipted(role, idx))
+    .map(({ role }) => targetOf(role)?.name ?? role))];
+
   const map = (ev: FormEvent) => {
     ev.preventDefault();
+    if (voided.length) {
+      // The same question the lane panel asks before any change to a receipted lane.
+      setError(null);
+      setDone(null);
+      return setVoids(voided);
+    }
+    send(false);
+  };
+
+  const send = (confirmVoid: boolean) => {
+    setVoids(null);
     const targets: MapTarget[] = chosen.map((k) => {
       const { role, idx } = split(k);
       const lane = e.targets.find((t) => t.role === role)?.lane_id;
       return lane != null ? { lane_id: lane, item_idx: idx } : { role, item_idx: idx };   // by role: the lane opens
     });
     void run(async () => {
-      const r = await api.mapEntries(engId, [e.id, ...(also ? others : [])], targets, note, markDone);
+      let r;
+      try {
+        r = await api.mapEntries(engId, [e.id, ...(also ? others : [])], targets, note, markDone, confirmVoid);
+      } catch (x) {
+        // The server knows of a receipt this view did not (another person signed meanwhile): ask, then retry.
+        const d = x instanceof ApiError && x.status === 409 ? x.detail as WouldVoidReceipts | null : null;
+        if (!confirmVoid && d && typeof d === "object" && d.error === "would_void_receipts") {
+          const names = [...new Set((d.lanes ?? []).map((l) => l.name || targetOf(l.role)?.name || l.role).filter(Boolean))];
+          setVoids(names.length ? names : voided.length ? voided : ["A lane"]);
+          return null;
+        }
+        throw x;
+      }
       setChosen([]);
-      setNote("");
+      clearNote();
       const lanes = r.opened.filter((x) => x.startsWith("lane ")).length;
       const said = [
         r.evidence_added.length
@@ -228,6 +272,9 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
           : "Already mapped to these items; nothing was added.",
         r.opened.some((x) => x.startsWith("host ")) ? `Added ${e.host} to the ledger.` : "",
         lanes ? `Opened ${plural(lanes, "lane")}.` : "",
+        r.receipts_voided?.length
+          ? `Voided ${plural(r.receipts_voided.length, "receipt")}; ${r.receipts_voided.length === 1 ? "it stays" : "they stay"} void until a reviewer signs again.`
+          : "",
         r.marked_done.length ? `Marked ${plural(r.marked_done.length, "item")} done.`
           : markDone ? "" : "The items stay open until someone marks them done.",
       ];
@@ -271,7 +318,11 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
           <h4 className="sub-label">In the ledger</h4>
           <ul className="import-mapped">
             {e.mappings.map((m) => (
-              <li key={m.evidence_id}>{name(`${m.lane_id}:${m.item_idx}`)} <span className="hint">· by {m.by_name}, {when(m.at)}</span></li>
+              <li key={m.evidence_id}>
+                {laneName(m.lane_id)} / item {m.item_idx}
+                {m.item_key && <span className="hint"> {m.item_key}</span>}
+                <span className="hint"> · by {m.by_name}, <When iso={m.at} /></span>
+              </li>
             ))}
           </ul>
         </>
@@ -280,7 +331,7 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
       {e.state === "dismissed" && e.dismissed && (
         <div className="import-dismissed">
           <p>
-            Dismissed by {e.dismissed.by_name ?? "someone"} on {when(e.dismissed.at)}
+            Dismissed by {e.dismissed.by_name ?? "someone"} on <When iso={e.dismissed.at} />
             {e.dismissed.reason ? `: ${e.dismissed.reason.replace(/[.!?]+$/, "")}` : ""}. The dismissal is in the change history.
           </p>
           {canWork && (
@@ -314,6 +365,7 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
                           <span>
                             <strong>{s.key}</strong> {s.text}{mapped.has(k) ? " (already mapped)" : ""}
                             {!s.opened && " (opens the lane)"}
+                            {receipted(s.role, s.item_idx) && <span className="voids">{VOIDS}</span>}
                           </span>
                         </label>
                         <span className="hint import-why" id={sid}>Suggested: {s.why.join("; ")}.</span>
@@ -332,10 +384,13 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
                   <option value="">Choose an item on {e.host}…</option>
                   {e.targets.map((t) => (
                     <optgroup key={t.role} disabled={!t.opened && !t.can_open}
-                              label={t.opened ? t.name : t.can_open ? `${t.name} (opens the lane)` : `${t.name} (${t.why_not})`}>
+                              label={t.opened ? `${t.name}${(t.receipted ?? t.status === "closed") ? VOIDS : ""}`
+                                : t.can_open ? `${t.name} (opens the lane)` : `${t.name} (${t.why_not})`}>
                       {t.items.map((i) => {
                         const k = `${t.role}:${i.idx}`;
-                        return <option key={k} value={k} disabled={mapped.has(k)}>{i.key} {i.text}</option>;
+                        return <option key={k} value={k} disabled={mapped.has(k)}>
+                          {i.key} {i.text}{receipted(t.role, i.idx) ? VOIDS : ""}
+                        </option>;
                       })}
                     </optgroup>
                   ))}
@@ -381,11 +436,33 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
                 {rules.map((r) => <li key={r.id}>{r.title}: items that mention {r.words.join(", ")}</li>)}
               </ul>
             </details>
-            <div className="work-buttons">
-              <button type="submit" className="btn" disabled={busy || chosen.length === 0}>
-                Add to the ledger{chosen.length ? ` (${plural(chosen.length, "item")})` : ""}
-              </button>
-            </div>
+            {voids ? (
+              <div className="confirm void-confirm" role="group" aria-labelledby={`voids-${e.id}`}>
+                <p id={`voids-${e.id}`}>
+                  <strong>
+                    {voids.length === 1 ? `${voids[0]} on ${e.host} has a receipt.`
+                      : `These lanes on ${e.host} have receipts: ${voids.join(", ")}.`}
+                  </strong>{" "}
+                  Adding evidence voids {voids.length === 1 ? "it" : "them"}. The client sees the
+                  receipt{voids.length === 1 ? "" : "s"} as void until a reviewer signs again; removing the evidence
+                  later does not bring {voids.length === 1 ? "it" : "them"} back.
+                </p>
+                <div className="work-buttons">
+                  <button type="button" className="btn small" disabled={busy} autoFocus onClick={() => send(true)}>
+                    Add to the ledger and void the receipt{voids.length === 1 ? "" : "s"}
+                  </button>
+                  <button type="button" className="btn ghost small" onClick={() => setVoids(null)}>
+                    Keep the receipt{voids.length === 1 ? "" : "s"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="work-buttons">
+                <button type="submit" className="btn" disabled={busy || chosen.length === 0}>
+                  Add to the ledger{chosen.length ? ` (${plural(chosen.length, "item")})` : ""}
+                </button>
+              </div>
+            )}
           </form>
         )
       )}
@@ -400,23 +477,31 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
           <button type="submit" className="btn ghost small" disabled={busy}>Dismiss</button>
         </form>
       )}
-      {done && <p className="status ok" role="status">{done}</p>}
+      {done && <p className="status ok" role="status" ref={doneRef} tabIndex={-1}>{done}</p>}
       {error && <p className="field-error" role="alert">{error}</p>}
     </section>
   );
 }
 
-export function Import({ engId, canWork, onMapped }: { engId: number; canWork: boolean; onMapped: () => void }) {
+/** The Import tab. The open entry is in the URL (route.ts), so `entryId` and `onEntry` come from the app.
+ *  `deleted`: the engagement's content was deleted, so nothing can be imported or mapped any more. */
+export function Import({ engId, canWork: mayWork, deleted = false, entryId, onEntry, onMapped }: {
+  engId: number; canWork: boolean; deleted?: boolean; entryId: number | null; onEntry: (id: number | null) => void;
+  onMapped: () => void;
+}) {
+  const canWork = mayWork && !deleted;
   const [formats, setFormats] = useState<ImportFormats | null>(null);
   const [batches, setBatches] = useState<ImportBatch[] | null>(null);
   const [last, setLast] = useState<ImportBatch | null>(null);
   const [filter, setFilter] = useState<InboxFilter>({ state: "new" });
   const [page, setPage] = useState<InboxPage | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
-  const [openId, setOpenId] = useState<number | null>(null);
+  const openId = entryId;
+  const setOpenId = onEntry;
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { api.importFormats().then(setFormats).catch(() => undefined); }, []);
   const loadBatches = useCallback(() => {
@@ -425,8 +510,11 @@ export function Import({ engId, canWork, onMapped }: { engId: number; canWork: b
   const loadPage = useCallback(() => {
     api.inbox(engId, filter).then(setPage).catch((e) => setError((e as Error).message));
   }, [engId, filter]);
-  useEffect(() => { setLast(null); setOpenId(null); setSelected([]); loadBatches(); }, [loadBatches]);
+  // A new engagement starts clean; the open entry is the app's (it follows the URL).
+  useEffect(() => { setLast(null); setSelected([]); loadBatches(); }, [loadBatches]);
   useEffect(() => { loadPage(); }, [loadPage]);
+  // The import's result is what to read next: focus it (it is also announced as a status).
+  useEffect(() => { if (last) resultRef.current?.focus(); }, [last]);
 
   const set = (patch: InboxFilter) => { setSelected([]); setFilter((f) => ({ ...f, offset: 0, ...patch })); };
   const entries = page?.entries ?? [];
@@ -459,17 +547,26 @@ export function Import({ engId, canWork, onMapped }: { engId: number; canWork: b
           Bring in what you captured in Burp, Caido or a browser. Each in-scope request waits in the inbox below until a
           person maps it to checklist items; nothing reaches the ledger before that.
         </p>
-        {canWork
-          ? <Upload engId={engId} formats={formats} onDone={(b) => {
-              setLast(b); loadBatches(); setOpenId(null); set({ state: "new", batch: b.id });
+        {deleted
+          ? <p className="hint">Nothing can be imported: this engagement's content was deleted, and its lanes can never be
+              receipted again. The inbox below keeps each entry's hashes and history.</p>
+          : canWork
+          ? <Upload engId={engId} formats={formats} onStart={() => setLast(null)} onDone={(b) => {
+              setLast(b); loadBatches(); if (openId != null) setOpenId(null);
+              // A file that added nothing (imported again, every row a duplicate) would show an empty
+              // inbox under its own filter while entries wait: keep every file in view then.
+              set({ state: "new", batch: b.accepted > 0 ? b.id : undefined });
             }} />
           : <p className="hint">
               Testers import files and map their entries. You can read every entry, including the ones not mapped yet
               and the dismissed ones with their reasons, to judge whether coverage is complete.
             </p>}
         {last && (
-          <div className="import-result" role="status">
+          <div className="import-result" role="status" ref={resultRef} tabIndex={-1}>
             <p className="status ok">Imported {last.filename ?? "the file"} ({last.format_title}): <BatchSummary b={last} /></p>
+            {last.accepted === 0 && (
+              <p className="hint">Nothing new was added, so the inbox below shows the entries of every file.</p>
+            )}
             <Refused rows={last.refused} total={last.out_of_scope + last.duplicates + last.unreadable} />
           </div>
         )}
@@ -598,7 +695,7 @@ export function Import({ engId, canWork, onMapped }: { engId: number; canWork: b
                 <div className="job-row">
                   <span className="job-kind">{b.filename ?? `Import ${b.id}`}</span>
                   <span>{b.format_title}{b.creator ? ` · ${b.creator}` : ""}</span>
-                  <span className="job-time">{when(b.created_at)}</span>
+                  <span className="job-time"><When iso={b.created_at} /></span>
                   <span>by {b.created_by_name}</span>
                   {b.repeat_of != null && <span className="hint">same file as import {b.repeat_of}</span>}
                 </div>

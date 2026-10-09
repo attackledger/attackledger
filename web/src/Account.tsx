@@ -7,6 +7,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, type KeyNotice, type Me, type SigningKeyView } from "./api";
 import { localKey } from "./signing";
+import { Fingerprint, When } from "./display";
 import "./Account.css";
 
 const VIA: Record<string, string> = {
@@ -15,15 +16,6 @@ const VIA: Record<string, string> = {
   operator_cli: "by the operator on the server",
   backfill: "before the key log existed",
 };
-
-function when(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
-}
-
-function short(fp: string): string {
-  return `${fp.slice(0, 4)} ${fp.slice(4, 8)} ${fp.slice(8, 12)} ${fp.slice(12, 16)}…`;
-}
 
 function seenKey(me: Me): string {
   return `attackledger-key-notice:${me.user_id}:${me.key_notice?.since ?? "first"}:${me.key_notice?.events.length ?? 0}`;
@@ -125,14 +117,19 @@ export function Account({ me }: { me: Me | null }) {
           recorded in the key log as registered on a password someone else set.</p>
       )}
       <form className="person-form" onSubmit={change}>
-        <label>Current password
-          <input ref={currentRef} type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-          {!chosen && <span className="hint">The one you were given.</span>}
-        </label>
-        <label>New password
-          <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
-          <span className="hint">At least 12 characters. Changing it signs you out on every other device.</span>
-        </label>
+        {/* Hints are described-by, not part of the label, so a screen reader names each field by its label alone. */}
+        <div className="field">
+          <label htmlFor="pw-current">Current password</label>
+          <input id="pw-current" ref={currentRef} type="password" autoComplete="current-password" value={current}
+                 onChange={(e) => setCurrent(e.target.value)} aria-describedby={!chosen ? "pw-current-hint" : undefined} />
+          {!chosen && <span className="hint" id="pw-current-hint">The one you were given.</span>}
+        </div>
+        <div className="field">
+          <label htmlFor="pw-new">New password</label>
+          <input id="pw-new" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)}
+                 aria-describedby="pw-new-hint" />
+          <span className="hint" id="pw-new-hint">At least 12 characters. Changing it signs you out on every other device.</span>
+        </div>
         <label>New password again
           <input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} />
         </label>
@@ -158,15 +155,15 @@ export function Account({ me }: { me: Me | null }) {
         {notice && (
           <section className="key-notice" aria-labelledby="key-notice-title">
             <h3 id="key-notice-title">
-              {notice.since ? `Key changes since your last sign-in (${when(notice.since)})` : "Key changes on your account"}
+              {notice.since ? <>Key changes since your last sign-in (<When iso={notice.since} />)</> : "Key changes on your account"}
             </h3>
             <ul>
               {notice.events.map((e, i) => (
                 <li key={i}>
                   <span>
                     <strong>{e.event === "registered" ? "New signing key" : "Key revoked"}</strong>{" "}
-                    <code title={e.key_fingerprint}>{short(e.key_fingerprint)}</code>{" "}
-                    <span className="muted">{e.algorithm}, {when(e.at)}, {VIA[e.via] ?? e.via}</span>
+                    <Fingerprint fp={e.key_fingerprint} />{" "}
+                    <span className="muted">{e.algorithm}, <When iso={e.at} />, {VIA[e.via] ?? e.via}</span>
                   </span>
                   {e.event === "registered" && active(e.key_id) && (
                     <button className="btn ghost small" onClick={() => revoke(e.key_id!)}>Revoke</button>
@@ -189,8 +186,8 @@ export function Account({ me }: { me: Me | null }) {
               {keys.map((k) => (
                 <li key={k.id} className={k.revoked ? "off" : undefined}>
                   <span>
-                    <code title={k.fingerprint}>{short(k.fingerprint)}</code>{" "}
-                    <span className="muted">{k.algorithm}, registered {when(k.created_at)}</span>
+                    <Fingerprint fp={k.fingerprint} />{" "}
+                    <span className="muted">{k.algorithm}, registered <When iso={k.created_at} /></span>
                     {k.fingerprint === mine && <span className="tag">This browser</span>}
                     {k.revoked && <span className="tag">Revoked</span>}
                   </span>

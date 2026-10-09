@@ -88,7 +88,8 @@ export interface ControlRow {
   evidenced: number;
   not_applicable?: number;   // resolved as not applicable, with a reason; never counted as evidence
   lanes: string[];
-  status: "evidenced" | "resolved" | "not_applicable" | "partial" | "only_not_applicable" | "none";
+  // A server newer than this app may send a status it does not know; it is shown by its name.
+  status: "evidenced" | "resolved" | "not_applicable" | "partial" | "only_not_applicable" | "none" | (string & {});
   strength: "full" | "partial" | "supporting";
   note?: string;             // when the mapping holds, from the catalog
 }
@@ -613,6 +614,11 @@ export interface InboxFilter {
   state?: string; host?: string; method?: string; status?: string; batch?: number; q?: string; offset?: number;
 }
 
+// Whether this page has been signed in at some point: a 401 after that means the session expired,
+// not that nobody has signed in yet.
+let signedIn = false;
+export function sessionSeen(): boolean { return signedIn; }
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (DEMO) return demoCall<T>(path, init);
   let res: Response;
@@ -628,6 +634,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401 && !path.startsWith("/auth/")) {
     window.dispatchEvent(new Event("attackledger:auth-required"));
   }
+  if (res.ok && path !== "/health" && !path.startsWith("/auth/login")) signedIn = true;
   if (!res.ok) {
     const detail = body?.detail;
     throw new ApiError(readableDetail(detail, res.status), res.status, detail);

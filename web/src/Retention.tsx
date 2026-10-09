@@ -6,11 +6,13 @@ import { plural } from "./words";
 // content is encrypted with a key per engagement; deleting the key makes the raw evidence and
 // the summaries unreadable, while hashes, receipts and the history stay, so reports still verify.
 
+/** The day, in the reader's time zone like every time in the app. */
 function day(iso: string): string {
-  return iso.slice(0, 10);
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toLocaleDateString(undefined, { dateStyle: "long" });
 }
 
-/** "Deleted on 2026-10-09 by Olive Owner (owner@example.com)": one sentence for every view. */
+/** "Content deleted on 9 October 2026 by Olive Owner (owner@example.com).": one sentence for every view. */
 export function deletedText(d: ContentDeleted): string {
   return `Content deleted on ${day(d.at)} by ${d.by}.`;
 }
@@ -108,7 +110,7 @@ export function Retention({ engId, onChanged }: { engId: number; onChanged: () =
             </div>
             <span className="hint">
               {st.retain_until
-                ? `The worker deletes the content after ${st.retain_until}.`
+                ? `AttackLedger deletes the content after ${st.retain_until}.`
                 : "No date: the content is kept until an owner deletes it."}
             </span>
           </form>
@@ -124,9 +126,24 @@ export function Retention({ engId, onChanged }: { engId: number; onChanged: () =
                 {" "}{plural(st.encrypted_summaries, "evidence summary", "evidence summaries")},
                 {" "}{plural(st.observations, "recon observation")}, {plural(st.endpoints, "URL")},
                 {" "}{plural(st.leads, "lead")} and the job logs. No new evidence or runs afterwards.</p>
-              <p>Kept: hosts, lanes, items, hashes, receipts, signatures, timestamps and the change history
-                {st.v1_summaries > 0 && `, and ${plural(st.v1_summaries, "summary", "summaries")} recorded before chain record v2`}.
-                Reports built afterwards still verify.</p>
+              {st.removes?.length ? (
+                <>
+                  <p className="retention-list-title">In detail, removed:</p>
+                  <ul className="retention-list">{st.removes.map((r) => <li key={r}>{r}</li>)}</ul>
+                </>
+              ) : null}
+              {st.keeps?.length ? (
+                // What stays is what the chain, receipts and history commit to: the server's own sentences,
+                // so the screen says exactly what remains readable, query strings included.
+                <>
+                  <p className="retention-list-title">What stays, readable, because reports commit to it:</p>
+                  <ul className="retention-list">{st.keeps.map((k) => <li key={k}>{k}</li>)}</ul>
+                </>
+              ) : (
+                <p>Kept: hosts, lanes, items, hashes, receipts, signatures, timestamps and the change history
+                  {st.v1_summaries > 0 && `, and ${plural(st.v1_summaries, "summary", "summaries")} recorded before chain record v2`}.
+                  Reports built afterwards still verify.</p>
+              )}
               <label htmlFor={`confirm-${engId}`}>Type the engagement's name, <strong>{st.engagement}</strong>, to confirm</label>
               <input id={`confirm-${engId}`} value={typed} autoComplete="off" onChange={(e) => setTyped(e.target.value)} />
               <div className="retention-row">

@@ -1,6 +1,6 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, LaneItem, Me,
-         PackSummary, type EvidenceEntry } from "./api";
+         PackSummary, sessionSeen, type EvidenceEntry } from "./api";
 import { focusWhenReady, nextStep, SetupData, SetupGuide, SetupStep, setupComplete, setupSteps } from "./Setup";
 import { AddHost } from "./AddHost";
 import { plural } from "./words";
@@ -9,7 +9,7 @@ import { Retention, deletedText } from "./Retention";
 import { Account } from "./Account";
 import { Executor } from "./Agent";
 import { BulkNotApplicable, ItemWork, RedactionNote } from "./LaneWork";
-import { DEMO, demoUrl } from "./demo";
+import { DEMO, demoImportRecord, demoUrl } from "./demo";
 import { ensureKey, localKey, sign, type LocalKey } from "./signing";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
@@ -19,6 +19,9 @@ import { History } from "./History";
 import { Import } from "./Import";
 import { can, readOnly, rolesOn } from "./access";
 import { ThemeToggle } from "./theme";
+import { formatRoute, linkTo, parseRoute, type Route } from "./route";
+import { claimDrafts, clearAllDrafts, hasDrafts } from "./drafts";
+import { Fingerprint, When } from "./display";
 
 const TYPE_NAMES: Record<string, string> = {
   bug_bounty: "Bug bounty",
@@ -30,6 +33,7 @@ type Tab = "recon" | "import" | "ledger" | "controls" | "report" | "verify" | "h
 const TAB_NAMES: Record<Tab, string> = {
   recon: "Recon", import: "Import", ledger: "Ledger", controls: "Controls", report: "Report", verify: "Verify", history: "History", team: "Team",
 };
+const isTab = (t: string | undefined): t is Tab => !!t && t in TAB_NAMES;
 
 /** Who the caller is on an engagement, for the tab it opens on and the order of the tabs. */
 type Home = "owner" | "worker" | "viewer" | "unknown";
@@ -45,22 +49,32 @@ const WORK_TABS: Tab[] = ["recon", "import", "ledger", "controls", "report", "ve
 
 type LoginMode = "token" | "people" | "setup";
 
+const GONE = "The engagement in this link is not one you can open. It may have been removed, or you have no role on it.";
+
 export function App() {
   // Null while signed in. Signing out sets it in place, without reloading the page: a reload left a
   // moment in which what a person typed went to the page being replaced and was lost (and the form
   // could first show the token field until the server said how it signs in).
-  const [login, setLogin] = useState<{ mode?: LoginMode; signedOut?: boolean } | null>(null);
+  const [login, setLogin] = useState<{ mode?: LoginMode; signedOut?: boolean; expired?: boolean } | null>(null);
+  // A new workspace after signing in again: it reads its place from the URL and the unsent text
+  // from the drafts, so the person is back where they were, with what they typed.
+  const [epoch, setEpoch] = useState(0);
   useEffect(() => {
     // Every refused request sends this; only the first one changes anything, so the form never remounts.
-    const on = () => setLogin((l) => l ?? {});
+    const on = () => setLogin((l) => l ?? { expired: sessionSeen() });
     window.addEventListener("attackledger:auth-required", on);
     return () => window.removeEventListener("attackledger:auth-required", on);
   }, []);
-  if (login) return <Login known={login.mode} signedOut={login.signedOut} onDone={() => window.location.reload()} />;
-  return <Workspace onSignedOut={(mode) => setLogin({ mode, signedOut: true })} />;
+  if (login) {
+    return <Login known={login.mode} signedOut={login.signedOut} expired={login.expired}
+                  onDone={() => { setLogin(null); setEpoch((n) => n + 1); }} />;
+  }
+  return <Workspace key={epoch} onSignedOut={(mode) => { clearAllDrafts(); setLogin({ mode, signedOut: true }); }} />;
 }
 
-function Login({ known, signedOut, onDone }: { known?: LoginMode; signedOut?: boolean; onDone: () => void }) {
+function Login({ known, signedOut, expired, onDone }: {
+  known?: LoginMode; signedOut?: boolean; expired?: boolean; onDone: () => void;
+}) {
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,6 +90,9 @@ function Login({ known, signedOut, onDone }: { known?: LoginMode; signedOut?: bo
     try {
       if (mode === "people") await api.loginPerson(email, password);
       else await api.login(token);
+      // Drafts kept from before belong to whoever typed them; another person starts clean.
+      const me = await api.me().catch(() => null);
+      claimDrafts(me ? `${me.kind}:${me.user_id ?? ""}` : "unknown");
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -114,6 +131,7 @@ function Login({ known, signedOut, onDone }: { known?: LoginMode; signedOut?: bo
         <form className="panel login-card" onSubmit={submit}>
           <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
           {signedOut && <p className="muted" role="status">You have signed out.</p>}
+          {expired && <Expired />}
           <label className="sign-name">
             Email
             <input id="login-email" type="email" autoComplete="username" value={email}
@@ -135,6 +153,7 @@ function Login({ known, signedOut, onDone }: { known?: LoginMode; signedOut?: bo
       <form className="panel login-card" onSubmit={submit}>
         <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
         {signedOut && <p className="muted" role="status">You have signed out.</p>}
+        {expired && <Expired />}
         <p className="muted">This ledger requires the operator token.</p>
         <label className="sign-name">
           API token
@@ -147,16 +166,28 @@ function Login({ known, signedOut, onDone }: { known?: LoginMode; signedOut?: bo
   );
 }
 
+function Expired() {
+  return (
+    <p className="notice-inline login-expired" role="alert">
+      Your session expired. Sign in again to continue.
+      {hasDrafts() && " What you typed and had not sent is kept."}
+    </p>
+  );
+}
+
 function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) {
+  // The place to start from is the URL's: a reload, a shared link or signing in again lands there.
+  const [start] = useState<Route>(() => parseRoute(window.location.hash));
   const [engagements, setEngagements] = useState<EngagementSummary[] | null>(null);
-  const [current, setCurrent] = useState<number | null>(null);
+  const [current, setCurrent] = useState<number | null>(start.eng ?? null);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
-  const [laneId, setLaneId] = useState<number | null>(null);
+  const [laneId, setLaneId] = useState<number | null>(start.lane ?? null);
+  const [entryId, setEntryId] = useState<number | null>(start.entry ?? null);   // the open import entry
   const [notice, setNotice] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("recon");
+  const [tab, setTab] = useState<Tab>(isTab(start.tab) ? start.tab : "recon");
   const [me, setMe] = useState<Me | null>(null);
   const [meKnown, setMeKnown] = useState(DEMO);
-  const [page, setPage] = useState<"work" | "people">("work");
+  const [page, setPage] = useState<"work" | "people">(start.page);
   const [menuOpen, setMenuOpen] = useState(false);   // narrow screens: the engagement list folds away
   useEffect(() => {
     if (!DEMO) api.me().then(setMe).catch(() => {}).finally(() => setMeKnown(true));
@@ -164,23 +195,87 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   const owner = can(me, null, "team");   // People page and Team tab
 
   // The engagement whose opening tab is still to be chosen (by role, and for owners by setup).
-  // Set only when a person opens an engagement, so a tab chosen on purpose is never overridden.
-  const [chooseFor, setChooseFor] = useState<number | null>(null);
+  // Set only when a person opens an engagement, or a link names no tab, so a tab chosen on purpose
+  // is never overridden.
+  const [chooseFor, setChooseFor] = useState<number | null>(start.eng != null && !isTab(start.tab) ? start.eng : null);
   const currentRef = useRef<number | null>(null);
   currentRef.current = current;
+  const tabRef = useRef<Tab>(tab);
+  tabRef.current = tab;
+
+  // The URL follows the place. A person's own move adds a history entry (so Back returns to where
+  // they were); a choice the app makes for them (the opening tab, a correction) replaces it.
+  const pushNext = useRef(false);
+  // The address last written or followed. A change of address fires both popstate and hashchange;
+  // following it twice would undo what happened in between (a lane's engagement being corrected).
+  const applied = useRef(window.location.hash);
+  const navigate = useCallback(() => { pushNext.current = true; }, []);
+  useEffect(() => {
+    const want = formatRoute(page === "people" ? { page: "people" }
+      : { page: "work", eng: current ?? undefined, tab: current != null ? tab : undefined, lane: laneId ?? undefined,
+          entry: tab === "import" ? entryId ?? undefined : undefined });
+    const push = pushNext.current;
+    pushNext.current = false;
+    if (!want || want === window.location.hash) return;
+    applied.current = want;
+    const url = `${window.location.pathname}${window.location.search}${want}`;
+    if (push) window.history.pushState(null, "", url);
+    else window.history.replaceState(null, "", url);
+  }, [page, current, tab, laneId, entryId]);
+  // Back, Forward, or an address typed or pasted: go where the URL says.
+  const listRef = useRef<EngagementSummary[] | null>(null);
+  listRef.current = engagements;
+  useEffect(() => {
+    const go = () => {
+      if (window.location.hash === applied.current) return;
+      applied.current = window.location.hash;
+      const r = parseRoute(window.location.hash);
+      setMenuOpen(false);
+      if (r.page === "people") return setPage("people");
+      if (r.eng == null) return;
+      if (listRef.current && !listRef.current.some((e) => e.id === r.eng)) {
+        setNotice(GONE);
+        pushNext.current = false;   // the URL goes back to where the person is
+        applied.current = formatRoute({
+          page: "work", eng: currentRef.current ?? undefined, tab: currentRef.current != null ? tabRef.current : undefined });
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${applied.current}`);
+        return;
+      }
+      setPage("work");
+      setCurrent(r.eng);
+      if (isTab(r.tab)) { setTab(r.tab); setChooseFor(null); } else setChooseFor(r.eng);
+      setLaneId(r.lane ?? null);
+      setEntryId(r.entry ?? null);
+    };
+    window.addEventListener("popstate", go);
+    window.addEventListener("hashchange", go);
+    return () => { window.removeEventListener("popstate", go); window.removeEventListener("hashchange", go); };
+  }, []);
+
   const openEngagement = useCallback((id: number) => {
+    navigate();
     setCurrent(id);
     setLaneId(null);
+    setEntryId(null);
     setPage("work");
     setMenuOpen(false);
     setChooseFor(id);
-  }, []);
+  }, [navigate]);
+  const goTab = useCallback((t: Tab) => { navigate(); setTab(t); }, [navigate]);
+  const goLane = useCallback((id: number | null) => { navigate(); setLaneId(id); }, [navigate]);
 
   const loadEngagements = useCallback(async () => {
     try {
       const list = await api.engagements();
       setEngagements(list);
-      if (currentRef.current == null && list[0]) {
+      const cur = currentRef.current;
+      if (cur != null && !list.some((e) => e.id === cur)) {
+        // A link to an engagement that is gone, or that this person has no role on.
+        setNotice(GONE);
+        setLaneId(null);
+        setEntryId(null);
+      }
+      if ((cur == null || !list.some((e) => e.id === cur)) && list[0]) {
         setCurrent(list[0].id);
         setChooseFor(list[0].id);
       }
@@ -191,12 +286,16 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   }, []);
 
   const [coverageFor, setCoverageFor] = useState<number | null>(null);
+  // Only an engagement in the list is loaded: a link to one this person cannot open shows a notice
+  // (loadEngagements), not the server's refusal.
+  const listed = !!engagements?.some((e) => e.id === current);
   const loadCoverage = useCallback(async () => {
     if (current == null) return setCoverage(null);
+    if (!listed) return;
     const c = await api.coverage(current);
     setCoverage(c);
     setCoverageFor(current);
-  }, [current]);
+  }, [current, listed]);
 
   useEffect(() => { loadEngagements(); }, [loadEngagements]);
   useEffect(() => { loadCoverage().catch((e) => setNotice(e.message)); }, [loadCoverage]);
@@ -250,6 +349,7 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   useEffect(() => { document.getElementById(`tab-${tab}`)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [tab]);
 
   function goToStep(st: SetupStep) {
+    navigate();
     setTab(st.tab);
     setLaneId(null);
     focusWhenReady(st.focus);
@@ -257,6 +357,27 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
 
   const home = current != null ? homeOf(me, current) : "unknown";
   const tabs: Tab[] = [...(home === "viewer" ? VIEWER_TABS : WORK_TABS), ...(owner ? ["team" as const] : [])];
+  // A link to a tab this person does not have (the Team tab, for someone who is not an owner):
+  // the opening tab is chosen for them instead.
+  const tabMissing = meKnown && current != null && !tabs.includes(tab);
+  useEffect(() => {
+    if (!tabMissing || current == null) return;
+    const h = homeOf(me, current);
+    setTab(h === "viewer" ? "report" : h === "worker" ? "ledger" : WORK_TABS[0]);
+  }, [tabMissing, current, me]);
+  const deleted = coverage?.content_deleted ?? null;
+
+  // The tab row is one stop for Tab; the arrow keys, Home and End move between tabs (WAI-ARIA tabs).
+  function onTabKey(ev: ReactKeyboardEvent<HTMLButtonElement>) {
+    const i = tabs.indexOf(tab);
+    const to = ev.key === "ArrowRight" ? tabs[(i + 1) % tabs.length]
+      : ev.key === "ArrowLeft" ? tabs[(i - 1 + tabs.length) % tabs.length]
+      : ev.key === "Home" ? tabs[0] : ev.key === "End" ? tabs[tabs.length - 1] : null;
+    if (!to) return;
+    ev.preventDefault();
+    goTab(to);
+    document.getElementById(`tab-${to}`)?.focus();
+  }
   const currentName = engagements?.find((e) => e.id === current)?.name;
   const currentType = engagements?.find((e) => e.id === current)?.engagement_type;
   // With nothing to pick yet, the list is the only thing to show.
@@ -264,11 +385,11 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
 
   async function openCell(assetId: number, role: string, cell: Cell) {
     setNotice(null);
-    if (cell.lane_id) return setLaneId(cell.lane_id);
+    if (cell.lane_id) return goLane(cell.lane_id);
     try {
       const lane = await api.openLane(assetId, role);
       await loadCoverage();
-      setLaneId(lane.id);
+      goLane(lane.id);
     } catch (e) {
       setNotice((e as Error).message);
     }
@@ -333,7 +454,7 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
           )}
           {owner && (
             <button className={`btn ghost small${page === "people" ? " on" : ""}`}
-                    onClick={() => setPage(page === "people" ? "work" : "people")}>
+                    onClick={() => { navigate(); setPage(page === "people" ? "work" : "people"); }}>
               {page === "people" ? "Back to engagements" : "People"}
             </button>
           )}
@@ -351,8 +472,10 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
         )}
         {DEMO && engagements && engagements.length > 0 && (
           <DemoGuide engagements={engagements} go={(engId, t, lane) => {
+            navigate();
             setCurrent(engId);
             setTab(t);
+            setChooseFor(null);
             setLaneId(lane ?? null);
           }} />
         )}
@@ -385,8 +508,10 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
                     id={`tab-${t}`}
                     aria-selected={tab === t}
                     aria-controls={`panel-${t}`}
+                    tabIndex={tab === t || (!tabs.includes(tab) && t === tabs[0]) ? 0 : -1}
                     className="tab"
-                    onClick={() => setTab(t)}
+                    onClick={() => goTab(t)}
+                    onKeyDown={onTabKey}
                   >
                     {TAB_NAMES[t]}
                     {t === "ledger" && (
@@ -396,24 +521,32 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
                 ))}
               </div>
             </header>
+            {deleted && (
+              <p className="notice-inline deleted-banner" role="note">
+                {deletedText(deleted)} Its evidence can no longer be read, so nothing new can be imported, run or receipted.
+                Hashes, receipts and the change history remain, and reports still verify.
+              </p>
+            )}
             {readOnly(me, current) && (
               <p className="readonly-note" role="note">
                 You can read this engagement{rolesOn(me, current).length ? ` (${rolesOn(me, current).join(", ")})` : ""}:
                 its coverage, evidence and reports, and verify its receipts. Changes are made by its testers, reviewers and owners.
               </p>
             )}
-            {steps && !setupComplete(steps) && (tab === "recon" || tab === "ledger" || tab === "import" || tab === "team") && (
+            {steps && !setupComplete(steps) && !deleted && (tab === "recon" || tab === "ledger" || tab === "import" || tab === "team") && (
               <SetupGuide steps={steps} canDo={(who) => can(me, current, who)} onGo={goToStep} />
             )}
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
               {tab === "recon" && <Recon engId={current} onAssetsChanged={hostsChanged} canManage={can(me, current, "rules")}
-                                         canRun={can(me, current, "work")} engagementType={currentType}
+                                         canRun={can(me, current, "work")} engagementType={currentType} deleted={!!deleted}
                                          hostsInScope={coverage.assets.filter((a) => a.in_scope).length} />}
               {tab === "ledger" && (
                 <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={hostsChanged}
                         canWork={can(me, current, "work")} />
               )}
-              {tab === "import" && <Import engId={current} canWork={can(me, current, "work")} onMapped={() => { loadCoverage().catch(() => undefined); }} />}
+              {tab === "import" && <Import engId={current} canWork={can(me, current, "work")} deleted={!!deleted}
+                                           entryId={entryId} onEntry={(id) => { navigate(); setEntryId(id); }}
+                                           onMapped={() => { loadCoverage().catch(() => undefined); }} />}
               {tab === "controls" && <Controls engId={current} pack={coverage.pack.name} />}
               {tab === "report" && <Report engId={current} />}
               {tab === "verify" && <Verify engId={current} />}
@@ -432,10 +565,12 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
         )}
       </main>
 
-      {laneId != null && (
-        <Folio laneId={laneId} me={me} onClose={() => setLaneId(null)} onChanged={loadCoverage}
-               onGoLane={setLaneId}
-               onGoImport={(host) => { setLaneId(null); setTab("import"); filterImportByHost(host); }} />
+      {laneId != null && page === "work" && (
+        <Folio laneId={laneId} me={me} onClose={() => goLane(null)} onChanged={loadCoverage}
+               onGoLane={goLane}
+               onLoaded={(l) => { if (l.engagement_id !== currentRef.current) { setCurrent(l.engagement_id); setChooseFor(null); } }}
+               link={current != null ? linkTo({ page: "work", eng: current, tab, lane: laneId }) : window.location.href}
+               onGoImport={(host) => { navigate(); setLaneId(null); setEntryId(null); setTab("import"); filterImportByHost(host); }} />
       )}
     </div>
   );
@@ -627,9 +762,7 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
       </header>
 
       {deleted && (
-        <p className="notice-inline" role="note">
-          {deletedText(deleted)} {LOCKED_TEXT} New lanes cannot be opened.
-        </p>
+        <p className="notice-inline" role="note">{LOCKED_TEXT} New lanes cannot be opened.</p>
       )}
 
       {coverage.assets.length === 0 ? (
@@ -709,7 +842,7 @@ function Legend({ gate }: { gate: "open" | "close" }) {
       <div><dt><span className="mark-unopened">Not opened</span></dt><dd>Not tested yet</dd></div>
       {gate === "open"
         ? <div><dt><span className="mark-locked">Needs …</span></dt><dd>Opens once the lane it depends on is receipted</dd></div>
-        : <div><dt><span className="mark-open">Signed after …</span></dt><dd>Can be worked now; signed once the lane it depends on is receipted</dd></div>}
+        : <div><dt><span className="mark-after">Signed after …</span></dt><dd>Can be worked now; signed once the lane it depends on is receipted</dd></div>}
     </dl>
   );
 }
@@ -742,10 +875,12 @@ function CellMark({ cell, label, waitingOn, gate, disabled, canOpen, onClick }: 
                 aria-label={`${label}: in progress, ${plural(cell.unresolved ?? 0, "item")} open`
                             + (waitingOn.length ? `, signed after ${waitingOn.join(", ")}` : "")}>
           <span className="cell-word">In progress</span>
-          <span className="cell-sub">
-            {cell.unresolved ? <><span className="open-count">{cell.unresolved}</span> open</>
-              : waitingOn.length ? `signed after ${after}` : "ready to sign"}
-          </span>
+          {(cell.unresolved || waitingOn.length === 0) && (
+            <span className="cell-sub">
+              {cell.unresolved ? <><span className="open-count">{cell.unresolved}</span> open</> : "ready to sign"}
+            </span>
+          )}
+          {waitingOn.length > 0 && <span className="cell-after" aria-hidden="true">Signed after {after}</span>}
         </button>
       );
     default:
@@ -755,12 +890,18 @@ function CellMark({ cell, label, waitingOn, gate, disabled, canOpen, onClick }: 
             Needs {after}
           </span>
         );
-      if (!canOpen) return <span className="cell plain">Not opened</span>;
+      if (!canOpen)
+        return (
+          <span className="cell plain">
+            Not opened{waitingOn.length > 0 && <span className="cell-after">Signed after {after}</span>}
+          </span>
+        );
       return (
         <button className="cell unopened" onClick={onClick}
                 aria-label={`${label}: not opened. Open this lane` + (waitingOn.length ? `; it is signed after ${waitingOn.join(", ")}` : "")}>
           <span className="cell-word">Not opened</span>
           <span className="cell-sub">Open lane</span>
+          {waitingOn.length > 0 && <span className="cell-after" aria-hidden="true">Signed after {after}</span>}
         </button>
       );
   }
@@ -819,6 +960,16 @@ function isAgent(e: EvidenceEntry): boolean {
   return e.source === "agent" || (e.summary ?? "").startsWith("[agent] ");
 }
 
+function isImported(e: EvidenceEntry): boolean {
+  return !!e.source?.startsWith("import:");
+}
+
+/** Evidence whose bytes AttackLedger stores, so they can be read: an agent's exchange, a file, a note,
+ *  and an imported entry (the redacted record the evidence hash commits to). */
+function hasRaw(e: EvidenceEntry): boolean {
+  return isAgent(e) || isImported(e) || !!e.uri?.startsWith("file:") || (e.kind === "note" && !e.uri);
+}
+
 function goToItem(laneId: number, idx: number) {
   const el = document.getElementById(`lane-${laneId}-item-${idx}`);
   el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -839,9 +990,9 @@ function filterImportByHost(host: string, tries = 40) {
   if (tries > 0) setTimeout(() => filterImportByHost(host, tries - 1), 100);
 }
 
-function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
-  laneId: number; me: Me | null; onClose: () => void; onChanged: () => void;
-  onGoLane: (laneId: number) => void; onGoImport: (host: string) => void;
+function Folio({ laneId, me, link, onClose, onChanged, onGoLane, onGoImport, onLoaded }: {
+  laneId: number; me: Me | null; link: string; onClose: () => void; onChanged: () => void;
+  onGoLane: (laneId: number) => void; onGoImport: (host: string) => void; onLoaded: (l: LaneDetail) => void;
 }) {
   const [lane, setLane] = useState<LaneDetail | null>(null);
   const [ctx, setCtx] = useState<LaneContext | null>(null);
@@ -862,7 +1013,7 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
     setError(null);
     setRefused(false);
     setSignError(null);
-    api.lane(laneId).then(setLane).catch((e) => setError(e.message));
+    api.lane(laneId).then((l) => { setLane(l); onLoaded(l); }).catch((e) => setError(e.message));
     api.laneContext(laneId).then(setCtx).catch(() => {});
     api.lane(laneId)
       .then((l) => api.jobs(l.engagement_id))
@@ -945,6 +1096,27 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
   const locked = lane?.content_deleted ?? null;   // deleted content: nothing here can be receipted again
   const canWork = !!lane && can(me, lane.engagement_id, "work") && !locked;
   const canSign = !!lane && can(me, lane.engagement_id, "sign");
+  // The server's word on whether this person can sign this lane now; servers before 0.7.1 do not say,
+  // and then the role decides as before.
+  const signRefusal = lane?.can_sign && !lane.can_sign.ok
+    ? (lane.can_sign.reason ?? "The server does not say why") : null;
+  // Chain order, the same for every source: the oldest first, the newest last.
+  const evidence = useMemo(() => [...(lane?.evidence ?? [])].sort((a, b) => a.id - b.id), [lane]);
+  const [copied, setCopied] = useState<"yes" | "show" | null>(null);
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied("yes");
+    } catch {
+      setCopied("show");   // no clipboard here (an http address, or permission refused): show the link to copy
+    }
+  }
+  async function showRaw(e: EvidenceEntry) {
+    const url = e.source?.startsWith("import:") ? await demoImportRecord(lane!.engagement_id, e.sha256) : demoUrl(`blobs/${e.sha256}`);
+    fetch(url ?? "").then((r) => (r.ok ? r.text() : Promise.reject()))
+      .then((t) => setRaw({ title: e.summary ?? "", text: t }))
+      .catch(() => setError("The raw evidence is not in the demo data."));
+  }
 
   const counts = lane && itemCounts(lane);
   const problems = lane ? problemsOf(lane) : [];
@@ -960,8 +1132,24 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
             <h2 id="folio-title" className="folio-title">{lane ? lane.role_name : "Lane"}</h2>
             {lane && <p className="folio-host">{lane.host}</p>}
           </div>
-          <button ref={closeRef} className="btn ghost" onClick={onClose}>Close</button>
+          <div className="folio-actions">
+            <button type="button" className="btn ghost small" onClick={() => void copyLink()}
+                    aria-describedby={copied ? `copied-${laneId}` : undefined}>Copy link</button>
+            <button ref={closeRef} className="btn ghost" onClick={onClose}>Close</button>
+          </div>
         </div>
+        {copied && (
+          <div className="folio-link" id={`copied-${laneId}`}>
+            {copied === "yes" ? (
+              <p className="saved" role="status">Link copied. Anyone on this engagement who opens it sees this lane.</p>
+            ) : (
+              <label>
+                Copy this link to the lane
+                <input readOnly value={link} autoFocus onFocus={(ev) => ev.currentTarget.select()} />
+              </label>
+            )}
+          </div>
+        )}
 
         {!lane ? (
           <p className="folio-body">{error ?? "Loading lane…"}</p>
@@ -994,14 +1182,14 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
               </p>
             )}
             {lane.executor === "manual" && canWork && lane.status !== "closed" && (
-              <BulkNotApplicable lane={lane} onChanged={laneChanged} />
+              <BulkNotApplicable key={lane.id} lane={lane} onChanged={laneChanged} />
             )}
             <ol className="items">
               {lane.items.map((i) => {
                 const ev = lane.evidence.filter((e) => e.item_idx === i.idx);
                 const mark = i.state === "open" && ev.length ? "evidence" : i.state;
                 return (
-                  <li key={i.idx} id={`lane-${lane.id}-item-${i.idx}`} tabIndex={-1}
+                  <li key={`${lane.id}-${i.idx}`} id={`lane-${lane.id}-item-${i.idx}`} tabIndex={-1}
                       className={`item ${i.state}${mark === "evidence" ? " has-evidence" : ""}`}>
                     <span className="item-mark" aria-hidden="true">{ITEM_MARK[mark]}</span>
                     <span className="item-idx">{i.idx}</span>
@@ -1036,11 +1224,11 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
                 {deletedText(lane.content_deleted)} Its hashes, receipts and history remain, so reports still verify.
               </p>
             )}
-            {lane.evidence.length === 0 ? (
+            {evidence.length === 0 ? (
               <p className="muted">No evidence recorded yet. Agents and the API add entries as they test.</p>
             ) : (
-              <ul className="evidence">
-                {lane.evidence.map((e) => (
+              <ul className="evidence" aria-label="Evidence, oldest first">
+                {evidence.map((e) => (
                   <li key={e.id}>
                     <span className="ev-kind">{e.uri?.startsWith("job:") ? "Recon run" : e.kind.charAt(0).toUpperCase() + e.kind.slice(1)}</span>
                     <span className="ev-summary">
@@ -1055,15 +1243,15 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
                     </span>
                     <span className="ev-ref">
                       <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>
-                      {!DEMO && !lane.content_deleted && (isAgent(e) || e.uri?.startsWith("file:") || (e.kind === "note" && !e.uri)) && (
-                        <a href={`/api/blobs/${e.sha256}`} target="_blank" rel="noopener noreferrer">View raw</a>
+                      {!DEMO && !lane.content_deleted && hasRaw(e) && (
+                        <a href={`/api/blobs/${e.sha256}`} target="_blank" rel="noopener noreferrer">
+                          View raw<span className="sr-only">: {e.summary ?? e.sha256.slice(0, 10)}</span>
+                        </a>
                       )}
-                      {DEMO && isAgent(e) && (
-                        <button className="linklike" onClick={() => {
-                          fetch(demoUrl(`blobs/${e.sha256}`)).then((r) => (r.ok ? r.text() : Promise.reject()))
-                            .then((t) => setRaw({ title: e.summary ?? "", text: t }))
-                            .catch(() => setError("The raw evidence is not in the demo data."));
-                        }}>View raw</button>
+                      {DEMO && (isAgent(e) || isImported(e)) && (
+                        <button className="linklike" onClick={() => void showRaw(e)}>
+                          View raw<span className="sr-only">: {e.summary ?? e.sha256.slice(0, 10)}</span>
+                        </button>
                       )}
                     </span>
                   </li>
@@ -1130,12 +1318,12 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
               <p className="muted">
                 Receipt signed by {lane.receipt!.closed_by ?? "an unknown reviewer"}
                 {lane.receipt!.closed_by_email && <> ({lane.receipt!.closed_by_email})</>},{" "}
-                {new Date(lane.receipt!.created_at).toLocaleString()}
+                <When iso={lane.receipt!.created_at} />
                 {lane.receipt!.signed
-                  ? <>, with key <code title={lane.receipt!.key_fingerprint ?? ""}>{(lane.receipt!.key_fingerprint ?? "").slice(0, 16)}</code> ({lane.receipt!.algorithm})</>
+                  ? <>, with key <Fingerprint fp={lane.receipt!.key_fingerprint} /> ({lane.receipt!.algorithm})</>
                   : " (a name, not a cryptographic signature)"}.
                 {lane.receipt!.timestamp && (
-                  <> Timestamped {new Date(lane.receipt!.timestamp.time).toLocaleString()}
+                  <> Timestamped <When iso={lane.receipt!.timestamp.time} />
                     {lane.receipt!.timestamp.tsa && <> by {tsaHost(lane.receipt!.timestamp.tsa)}</>}.</>
                 )}
                 {!lane.receipt!.timestamp && lane.receipt!.timestamp_error && (
@@ -1158,13 +1346,18 @@ function Folio({ laneId, me, onClose, onChanged, onGoLane, onGoImport }: {
                 {lane.status === "stale" ? "The receipt is void. " : "Not receipted yet. "}
                 A reviewer on this engagement signs and closes the lane once every item has evidence or a reason.
               </p>
+            ) : signRefusal ? (
+              <p className="muted sign-refusal">
+                {lane.status === "stale" ? "The receipt is void. " : "Not receipted yet. "}
+                <strong>You cannot sign this lane.</strong> {signRefusal.replace(/\.$/, "")}.
+              </p>
             ) : (
               <div className="sign">
                 {me?.kind === "person" ? (
                   <>
                     <p className="muted">
                       You sign as <strong>{me.name}</strong>
-                      {key ? <> with your key <code title={key.fingerprint}>{key.fingerprint.slice(0, 16)}</code> ({key.algorithm})</>
+                      {key ? <> with your key <Fingerprint fp={key.fingerprint} /> ({key.algorithm})</>
                            : keyReady === false ? " with a new key made in this browser; it never leaves it"
                            : ". A signing key is created in this browser the first time you sign; it never leaves it"}.
                     </p>
@@ -1220,8 +1413,18 @@ function StatusLine({ lane, needs, waiting }: { lane: LaneDetail; needs: number;
         Receipted. Manifest <code>{lane.receipt.sha256.slice(0, 16)}</code>
       </p>
     );
-  if (lane.status === "stale")
-    return <p className="status bad">The ledger changed after the receipt was issued. Review the new entries and close again.</p>;
+  if (lane.status === "stale") {
+    // D-052: a void receipt stays void until someone signs again, even if the change is undone.
+    const v = lane.receipt?.void;
+    return (
+      <p className="status bad">
+        {v ? <>The receipt is void. {v.text.replace(/\.$/, "")} (<When iso={v.at} />).</>
+           : <>The receipt is void: the ledger changed after it was issued. It stays void until a reviewer signs again,
+               even if the change is undone.</>}
+        {" "}Review the lane and sign again.
+      </p>
+    );
+  }
   const after = (lane.waiting_on ?? []).map((w) => w.name).join(", ");
   if (needs === 0 && waiting === 0)
     return after

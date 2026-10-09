@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type AuditEntry, type AuditLog } from "./api";
 import { plural } from "./words";
+import { When } from "./display";
 
 // The engagement's administrative history from the server's audit log (D-037): scope and
 // rules, authorization, settings, roles, and changes to the accounts of its people. Every
@@ -26,11 +27,6 @@ function groupOf(action: string): Group {
   if (action === "engagement.authorized") return "authorization";
   if (action.startsWith("import.")) return "imports";
   return "people";
-}
-
-function when(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { timeZoneName: "short" });
 }
 
 export function History({ engId }: { engId: number }) {
@@ -89,7 +85,7 @@ export function History({ engId }: { engId: number }) {
                 <tbody>
                   {rows.map((e) => (
                     <tr key={e.seq}>
-                      <td className="history-time">{when(e.at)}<span className="hint"> #{e.seq}</span></td>
+                      <td className="history-time"><When iso={e.at} /><span className="hint"> #{e.seq}</span></td>
                       <td>{e.actor_label}</td>
                       <td>{e.text}</td>
                     </tr>
