@@ -416,10 +416,11 @@ def _verify(r: dict) -> str:
         ("Lane receipts", "For every receipted lane, a manifest rebuilt from the report’s own items and evidence has the "
                           "receipt’s hash, every item marked done has evidence, and every not-applicable item has a reason."),
         ("Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its "
-                               "fingerprint, and the signed text names this lane, this manifest and a chain head in the report."),
+                               "fingerprint, and the signed text names this lane, this manifest and a chain head in the report. "
+                               "SKIP when no receipt is signed."),
         ("Receipt timestamps", "Each timestamp token covers this receipt’s manifest hash and signature, the authority’s "
-                               "signature verifies, and its certificate chain reaches a root you trust. Shown only when the "
-                               "report has timestamps."),
+                               "signature verifies, and its certificate chain reaches a root you trust. SKIP when no receipt "
+                               "is timestamped."),
     ]
     return f"""<section id="verify" class="pb"><h2>How to verify</h2>
 <p>Anyone can check this report without AttackLedger, the tester’s server or a network connection. The verifier is one
@@ -435,8 +436,10 @@ python3 verify_report.py report.html</pre>
 <p class="note">Roots in <code>tsa-roots/</code> next to the script are trusted without <code>--tsa-root</code>; pass it for
 any other authority. Running <code>python3 -I</code> keeps Python from loading modules from the current folder.</p>
 <h3>3. Read the result</h3>
-<p>Each check prints <code>PASS</code> or <code>FAIL</code>; the last line says <code>Verified.</code> and the exit code
-is 0 only if every check passed. <code>NOTE</code> lines are information, such as who signed and which receipts are not
+<p>Each check prints <code>PASS</code> or <code>FAIL</code>, or <code>SKIP</code> when there was nothing for it to check,
+such as signatures in a report whose receipts carry only a name. A skipped check neither passes nor fails. The last line
+says <code>Verified.</code> and the exit code is 0 only if no check failed. Add <code>--require-signatures</code> to fail
+any receipt that is not signed. <code>NOTE</code> lines are information, such as who signed and which receipts are not
 timestamped.</p>
 {_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks])}
 <h3>Where the timestamp root comes from</h3>

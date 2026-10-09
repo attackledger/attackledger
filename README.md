@@ -121,7 +121,7 @@ python3 tools/verify_report.py attackledger-report.html
 ```
 
 The verifier uses only the Python standard library and shares no code with
-AttackLedger. It performs three checks:
+AttackLedger. It performs these checks:
 
 1. **Body hash.** The report body matches its recorded SHA-256.
 2. **Evidence chain.** Each evidence entry is linked to the previous one
@@ -130,6 +130,14 @@ AttackLedger. It performs three checks:
 3. **Receipts.** Every lane reported as receipted is checked against a manifest
    rebuilt from the report's own items and evidence. This means that rewriting
    the whole chain and the body hash is still detected.
+4. **Signatures.** Every signed receipt verifies with the reviewer's public key
+   (see [People and roles](#people-and-roles)).
+5. **Timestamps.** Every RFC 3161 token covers its receipt and chains to a trusted root.
+
+Checks 4 and 5 print `SKIP` when no receipt is signed or timestamped: there is
+nothing to check, and a skip is neither a pass nor a failure. Add
+`--require-signatures` to fail any receipt that is not signed. The exit code is 0
+only if no check failed.
 
 The HTML report is served with `default-src 'none'`. No script runs in it and
 nothing is fetched. All evidence text is escaped.
