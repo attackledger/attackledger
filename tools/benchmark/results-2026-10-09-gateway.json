@@ -1,0 +1,582 @@
+{
+ "date": "2026-10-09-gateway",
+ "benchmark": "AttackLedger vs OWASP Juice Shop",
+ "versions": {
+  "attackledger_commit": "786bbe1d080c5d3979c2221cc763c674e4a663ca",
+  "images": {
+   "attackledger-bench-api:latest": "sha256:c68a4f1d231d13a08a18a461d7715795069a674ea8087781aafaa057337dd015",
+   "attackledger-bench-worker:latest": "sha256:796736b0499d4b90503b99435994d554a035ccb2cc5c21bc42e7d5b5c2e11ff2",
+   "bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b": "sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b"
+  },
+  "juice_shop": "v20.2.0",
+  "nuclei": "v3.11.1",
+  "nuclei_templates": "v10.4.9 (worker/Dockerfile)"
+ },
+ "settings": {
+  "include": [
+   "juice.lab.test"
+  ],
+  "exclude": [],
+  "rate_limit_rps": 20,
+  "research_header": "X-Bug-Bounty: bench-researcher",
+  "research_user_agent": "AttackLedger/0.6 (bench-researcher)",
+  "enabled_modules": [
+   "ports",
+   "content",
+   "params",
+   "nuclei"
+  ],
+  "crawl_depth": 3,
+  "policy_url": "https://example.com/policy"
+ },
+ "engagement_id": 1,
+ "lanes": {
+  "recon": 1,
+  "mapper": 2
+ },
+ "recon": {
+  "wall_seconds": 405.3,
+  "jobs": [
+   {
+    "id": 1,
+    "kind": "resolve",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "juice.lab.test"
+    ],
+    "seconds": 0.2,
+    "skipped_reason": null,
+    "requests": 0,
+    "peak_rps_1s": 0,
+    "missing_identification": 0,
+    "log_tail": "$ /opt/pd/bin/dnsx -silent -json -a -aaaa -rl 20 -r 172.22.0.2:53  (1 input line)\n$ /opt/pd/bin/dnsx -silent -json -cname -rl 20 -r 172.22.0.2:53  (1 input line)\n"
+   },
+   {
+    "id": 2,
+    "kind": "ports",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "juice.lab.test"
+    ],
+    "seconds": 4.3,
+    "skipped_reason": null,
+    "requests": 0,
+    "peak_rps_1s": 0,
+    "peak_per_calendar_second": 0,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 1,
+    "methods": {},
+    "log_tail": "probing 99 ports on 1 host through the gateway\n"
+   },
+   {
+    "id": 3,
+    "kind": "probe",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "juice.lab.test"
+    ],
+    "seconds": 0.4,
+    "skipped_reason": null,
+    "requests": 1,
+    "peak_rps_1s": 1,
+    "peak_per_calendar_second": 1,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 1,
+    "connections": 2,
+    "methods": {
+     "GET": 1
+    },
+    "log_tail": "$ /opt/pd/bin/httpx -silent -json -status-code -title -tech-detect -web-server -ip -cdn -cname -location -rl 20 -t 10 -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher) -proxy http://job-3.httpx:********@172.22.0.2:8080 -r 172.22.0.2:53  (1 input line)\n"
+   },
+   {
+    "id": 4,
+    "kind": "crawl",
+    "status": "done",
+    "result_count": 27,
+    "targets": [
+     "http://juice.lab.test:3000"
+    ],
+    "seconds": 13.3,
+    "skipped_reason": null,
+    "requests": 29,
+    "peak_rps_1s": 20,
+    "peak_per_calendar_second": 20,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 29,
+    "methods": {
+     "GET": 29
+    },
+    "log_tail": "$ /opt/pd/bin/katana -silent -j -d 3 -jc -fs fqdn -cos logout|log-out|signout|sign-out|/delete|/destroy|/remove|/revoke|/deactivate|/close-account|/unsubscribe -rl 20 -c 5 -ct 10m -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher) -proxy http://job-4.katana:********@172.22.0.2:8080 -r 172.22.0.2:53  (1 input line)\n28 URLs seen, 27 in scope after clean-up, 27 new\n"
+   },
+   {
+    "id": 5,
+    "kind": "content",
+    "status": "done",
+    "result_count": 0,
+    "targets": [
+     "http://juice.lab.test:3000"
+    ],
+    "seconds": 0.1,
+    "skipped_reason": null,
+    "requests": 2,
+    "peak_rps_1s": 2,
+    "peak_per_calendar_second": 2,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 2,
+    "methods": {
+     "GET": 2
+    },
+    "log_tail": "skipped http://juice.lab.test:3000: every path answers 200\n"
+   },
+   {
+    "id": 6,
+    "kind": "jsanalyze",
+    "status": "done",
+    "result_count": 20,
+    "targets": [
+     "http://juice.lab.test:3000/Zone.js",
+     "http://juice.lab.test:3000/about.component-CZcG2819.js",
+     "http://juice.lab.test:3000/chunk-BJ5LcrCb.js",
+     "http://juice.lab.test:3000/chunk-DAJ4olp_.js",
+     "http://juice.lab.test:3000/chunk-DBPdFzgj.js",
+     "http://juice.lab.test:3000/chunk-LgKEbQmx.js",
+     "http://juice.lab.test:3000/chunk-eYAgyLdn.js",
+     "http://juice.lab.test:3000/chunk-v9EE5s4z.js",
+     "http://juice.lab.test:3000/coding-challenge-page.component-VgIt3B-z.js",
+     "http://juice.lab.test:3000/confetti-DoPrSMNP.js",
+     "http://juice.lab.test:3000/faucet.module-60SLa5Cr.js",
+     "http://juice.lab.test:3000/hacking-instructor-BXwB7EFQ.js",
+     "http://juice.lab.test:3000/main.js",
+     "http://juice.lab.test:3000/polyfills.js",
+     "http://juice.lab.test:3000/recycle.component-BMXcwerA.js",
+     "http://juice.lab.test:3000/rolldown-runtime-BoHGiXSq.js",
+     "http://juice.lab.test:3000/scripts.js",
+     "http://juice.lab.test:3000/wallet-web3.module-s802s5aS.js",
+     "http://juice.lab.test:3000/web3-sandbox.module-C8MIIA8b.js",
+     "http://juice.lab.test:3000/zone.js"
+    ],
+    "seconds": 1.7,
+    "skipped_reason": null,
+    "requests": 20,
+    "peak_rps_1s": 13,
+    "peak_per_calendar_second": 11,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 20,
+    "methods": {
+     "GET": 20
+    },
+    "log_tail": "analysing 20 JavaScript files\n108 URLs seen, 107 in scope after clean-up, 107 new\n20 files analysed, 1 new lead, 0 noise matches ignored, 107 new endpoints\n1 sensitive value redacted before storage: key\n"
+   },
+   {
+    "id": 7,
+    "kind": "params",
+    "status": "done",
+    "result_count": 8,
+    "targets": [
+     "http://juice.lab.test:3000/api/Addresss",
+     "http://juice.lab.test:3000/api/BasketItems",
+     "http://juice.lab.test:3000/api/Cards",
+     "http://juice.lab.test:3000/api/Challenges",
+     "http://juice.lab.test:3000/api/Challenges/",
+     "http://juice.lab.test:3000/api/Complaints",
+     "http://juice.lab.test:3000/api/Deliverys",
+     "http://juice.lab.test:3000/api/Feedbacks",
+     "http://juice.lab.test:3000/api/Hints",
+     "http://juice.lab.test:3000/api/Products",
+     "http://juice.lab.test:3000/api/Quantitys",
+     "http://juice.lab.test:3000/api/Recycles",
+     "http://juice.lab.test:3000/api/SecurityAnswers",
+     "http://juice.lab.test:3000/api/SecurityQuestions",
+     "http://juice.lab.test:3000/api/Users",
+     "http://juice.lab.test:3000/application/vnd.ms-word.do",
+     "http://juice.lab.test:3000/application/vnd.openxmlformats-officedocument.wordprocessingml.do",
+     "http://juice.lab.test:3000/rest/user/change-password",
+     "http://juice.lab.test:3000/rest/user/security-question",
+     "http://juice.lab.test:3000/wQ"
+    ],
+    "seconds": 238.8,
+    "skipped_reason": null,
+    "requests": 3206,
+    "peak_rps_1s": 18,
+    "peak_per_calendar_second": 18,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 3206,
+    "methods": {
+     "GET": 3206
+    },
+    "log_tail": "jun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/application/vnd.openxmlformats-officedocument.wordprocessingml.do -o /tmp/tmpwde3_d1h/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n$ /usr/local/bin/python -c import sys, runpy; sys.path.insert(0, '/opt/arjun'); sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/rest/user/change-password -o /tmp/tmpzk1o5sem/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n$ /usr/local/bin/python -c import sys, runpy; sys.path.insert(0, '/opt/arjun'); sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/rest/user/security-question -o /tmp/tmpd2u3yrl7/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n$ /usr/local/bin/python -c import sys, runpy; sys.path.insert(0, '/opt/arjun'); sys.argv = ['arjun'] + sys.argv[1:]; runpy.run_module('arjun', run_name='__main__') -u http://juice.lab.test:3000/wQ -o /tmp/tmp_sfysr1s/arjun.json -m GET --rate-limit 20 -t 1 -d 0.050 --headers X-Bug-Bounty: bench-researcher\nUser-Agent: AttackLedger/0.6 (bench-researcher)  (0 input lines)\n"
+   },
+   {
+    "id": 8,
+    "kind": "paramclass",
+    "status": "done",
+    "result_count": 13,
+    "targets": [
+     "http://juice.lab.test:3000/api/Challenges",
+     "http://juice.lab.test:3000/api/Challenges/?key=[redacted:sha256:9d999f694192]",
+     "http://juice.lab.test:3000/api/Feedbacks",
+     "http://juice.lab.test:3000/api/Hints",
+     "http://juice.lab.test:3000/api/Products",
+     "http://juice.lab.test:3000/api/Quantitys",
+     "http://juice.lab.test:3000/api/SecurityQuestions",
+     "http://juice.lab.test:3000/rest/user/change-password",
+     "http://juice.lab.test:3000/rest/user/change-password?current=",
+     "http://juice.lab.test:3000/rest/user/security-question",
+     "http://juice.lab.test:3000/rest/user/security-question?email=",
+     "http://juice.lab.test:3000/wQ?MvO1G2"
+    ],
+    "seconds": 0.0,
+    "skipped_reason": null,
+    "requests": 0,
+    "peak_rps_1s": 0,
+    "missing_identification": 0,
+    "log_tail": "12 URLs with parameters, 13 routed parameters, 13 new leads\n"
+   },
+   {
+    "id": 9,
+    "kind": "nuclei",
+    "status": "done",
+    "result_count": 1,
+    "targets": [
+     "http://juice.lab.test:3000"
+    ],
+    "seconds": 134.5,
+    "skipped_reason": null,
+    "requests": 2249,
+    "peak_rps_1s": 19,
+    "peak_per_calendar_second": 19,
+    "seconds_over_limit": 0,
+    "missing_identification": 0,
+    "non_http_connections": 0,
+    "connections": 2249,
+    "methods": {
+     "GET": 2249
+    },
+    "log_tail": "nuclei templates: 7235 provably read-only, 6551 excluded\n1 live service, 1 cluster representative, 0 on golden hosts\n$ /opt/pd/bin/nuclei -silent -jsonl -nc -duc -et /opt/nuclei-exclude.txt -ni -dr -etags dos,fuzz,fuzzing,intrusive,instrusive,bruteforce,brute-force,default-login,credential-stuffing,token-spray -rl 1 -rld 56ms -c 5 -bs 5 -retries 0 -timeout 8 -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher) -t /opt/nuclei-templates/http/takeovers/ -p http://job-9.nuclei:********@172.22.0.2:8080 -pi -r /tmp/al-resolvers-0dnvmbn3.txt  (1 input line)\n$ /opt/pd/bin/nuclei -silent -jsonl -nc -duc -et /opt/nuclei-exclude.txt -ni -dr -etags dos,fuzz,fuzzing,intrusive,instrusive,bruteforce,brute-force,default-login,credential-stuffing,token-spray -rl 1 -rld 56ms -c 5 -bs 5 -retries 0 -timeout 8 -H X-Bug-Bounty: bench-researcher -H User-Agent: AttackLedger/0.6 (bench-researcher) -t /opt/nuclei-templates/http/exposures/ -t /opt/nuclei-templates/http/misconfiguration/ -severity medium,high,critical -p http://job-9.nuclei:********@172.22.0.2:8080 -pi -r /tmp/al-resolvers-0dnvmbn3.txt  (1 input line)\n"
+   }
+  ],
+  "traffic_totals": {
+   "requests": 5507,
+   "peak_rps_1s": 20,
+   "peak_per_calendar_second": 20,
+   "non_get": [],
+   "missing_identification": 0,
+   "methods": {
+    "GET": 5507
+   }
+  },
+  "unattributed_traffic": null,
+  "endpoints_total": 134,
+  "leads_total": 23,
+  "leads_by_kind": {
+   "nuclei": 1,
+   "param-class": 13,
+   "parameter": 8,
+   "secret": 1
+  },
+  "nuclei_leads": [
+   {
+    "title": "Prometheus Metrics - Detect",
+    "severity": "medium",
+    "url": "http://juice.lab.test:3000/metrics",
+    "template": "prometheus-metrics"
+   }
+  ],
+  "gateway": {
+   "total": 5622,
+   "by_verdict": {
+    "refused": 5,
+    "failed": 1,
+    "allowed": 5616
+   },
+   "by_kind": {
+    "dns": 10,
+    "target": 5612
+   },
+   "by_method": {
+    "GET": 5509,
+    "PROBE": 99,
+    "CONNECT": 4,
+    "DNS": 10
+   },
+   "refused": {
+    "katana GET: burpsuite is not in scope": 1,
+    "katana CONNECT: api.pdtm.sh is not in scope": 1,
+    "httpx CONNECT: api.pdtm.sh is not in scope": 1,
+    "dnsx-cname CONNECT: api.pdtm.sh is not in scope": 1,
+    "dnsx CONNECT: api.pdtm.sh is not in scope": 1
+   }
+  },
+  "endpoints": [
+   "http://juice.lab.test:3000",
+   "http://juice.lab.test:3000/",
+   "http://juice.lab.test:3000/%5C/index%5C.html",
+   "http://juice.lab.test:3000/%60+_%28i%5B11%5D%7C%7Cf%5Bg.toLowerCase%28%29%5D%29+%60",
+   "http://juice.lab.test:3000/%60+_%28i%5B8%5D%29+%60",
+   "http://juice.lab.test:3000/%7B%7Bhref%7D%7D",
+   "http://juice.lab.test:3000/0/0",
+   "http://juice.lab.test:3000/10",
+   "http://juice.lab.test:3000/16",
+   "http://juice.lab.test:3000/160",
+   "http://juice.lab.test:3000/20",
+   "http://juice.lab.test:3000/2fa/enter",
+   "http://juice.lab.test:3000/40",
+   "http://juice.lab.test:3000/60",
+   "http://juice.lab.test:3000/Zone.js",
+   "http://juice.lab.test:3000/about",
+   "http://juice.lab.test:3000/about.component-CZcG2819.js",
+   "http://juice.lab.test:3000/accounting",
+   "http://juice.lab.test:3000/address/create",
+   "http://juice.lab.test:3000/address/edit/",
+   "http://juice.lab.test:3000/address/saved",
+   "http://juice.lab.test:3000/address/select",
+   "http://juice.lab.test:3000/api/Addresss",
+   "http://juice.lab.test:3000/api/BasketItems",
+   "http://juice.lab.test:3000/api/Cards",
+   "http://juice.lab.test:3000/api/Challenges",
+   "http://juice.lab.test:3000/api/Challenges/",
+   "http://juice.lab.test:3000/api/Challenges/?key=[redacted:sha256:9d999f694192]",
+   "http://juice.lab.test:3000/api/Complaints",
+   "http://juice.lab.test:3000/api/Deliverys",
+   "http://juice.lab.test:3000/api/Feedbacks",
+   "http://juice.lab.test:3000/api/Hints",
+   "http://juice.lab.test:3000/api/Products",
+   "http://juice.lab.test:3000/api/Quantitys",
+   "http://juice.lab.test:3000/api/Recycles",
+   "http://juice.lab.test:3000/api/SecurityAnswers",
+   "http://juice.lab.test:3000/api/SecurityQuestions",
+   "http://juice.lab.test:3000/api/Users",
+   "http://juice.lab.test:3000/application-configuration",
+   "http://juice.lab.test:3000/application-version",
+   "http://juice.lab.test:3000/application/vnd.ms-word.do",
+   "http://juice.lab.test:3000/application/vnd.openxmlformats-officedocument.wordprocessingml.do",
+   "http://juice.lab.test:3000/assets/i18n/",
+   "http://juice.lab.test:3000/bQ",
+   "http://juice.lab.test:3000/basket",
+   "http://juice.lab.test:3000/chatbot",
+   "http://juice.lab.test:3000/chatbot/conversation",
+   "http://juice.lab.test:3000/chunk-BJ5LcrCb.js",
+   "http://juice.lab.test:3000/chunk-DAJ4olp_.js",
+   "http://juice.lab.test:3000/chunk-DBPdFzgj.js",
+   "http://juice.lab.test:3000/chunk-LgKEbQmx.js",
+   "http://juice.lab.test:3000/chunk-eYAgyLdn.js",
+   "http://juice.lab.test:3000/chunk-v9EE5s4z.js",
+   "http://juice.lab.test:3000/coding-challenge",
+   "http://juice.lab.test:3000/coding-challenge-page.component-VgIt3B-z.js",
+   "http://juice.lab.test:3000/complain",
+   "http://juice.lab.test:3000/confetti-DoPrSMNP.js",
+   "http://juice.lab.test:3000/contact",
+   "http://juice.lab.test:3000/data-export",
+   "http://juice.lab.test:3000/dataerasure",
+   "http://juice.lab.test:3000/delivery-method",
+   "http://juice.lab.test:3000/deluxe-membership",
+   "http://juice.lab.test:3000/engine.io",
+   "http://juice.lab.test:3000/erasure-request",
+   "http://juice.lab.test:3000/faucet.module-60SLa5Cr.js",
+   "http://juice.lab.test:3000/file-upload",
+   "http://juice.lab.test:3000/forgot-password",
+   "http://juice.lab.test:3000/hacking-instructor-BXwB7EFQ.js",
+   "http://juice.lab.test:3000/login",
+   "http://juice.lab.test:3000/main.js",
+   "http://juice.lab.test:3000/nftMintListen",
+   "http://juice.lab.test:3000/nftUnlocked",
+   "http://juice.lab.test:3000/order-completion",
+   "http://juice.lab.test:3000/order-history",
+   "http://juice.lab.test:3000/order-summary",
+   "http://juice.lab.test:3000/orders",
+   "http://juice.lab.test:3000/pQ6q2dQ7s4aQ9W6rT=m",
+   "http://juice.lab.test:3000/payment",
+   "http://juice.lab.test:3000/photo-wall",
+   "http://juice.lab.test:3000/polyfills.js",
+   "http://juice.lab.test:3000/profile",
+   "http://juice.lab.test:3000/recycle",
+   "http://juice.lab.test:3000/recycle.component-BMXcwerA.js",
+   "http://juice.lab.test:3000/register",
+   "http://juice.lab.test:3000/rest/admin",
+   "http://juice.lab.test:3000/rest/admin/application-configuration",
+   "http://juice.lab.test:3000/rest/captcha",
+   "http://juice.lab.test:3000/rest/chat",
+   "http://juice.lab.test:3000/rest/continue-code",
+   "http://juice.lab.test:3000/rest/continue-code-findIt",
+   "http://juice.lab.test:3000/rest/continue-code-findIt/apply/",
+   "http://juice.lab.test:3000/rest/continue-code-fixIt",
+   "http://juice.lab.test:3000/rest/continue-code-fixIt/apply/",
+   "http://juice.lab.test:3000/rest/continue-code/apply/",
+   "http://juice.lab.test:3000/rest/country-mapping",
+   "http://juice.lab.test:3000/rest/deluxe-membership",
+   "http://juice.lab.test:3000/rest/image-captcha/",
+   "http://juice.lab.test:3000/rest/memories",
+   "http://juice.lab.test:3000/rest/order-history",
+   "http://juice.lab.test:3000/rest/products",
+   "http://juice.lab.test:3000/rest/repeat-notification",
+   "http://juice.lab.test:3000/rest/saveLoginIp",
+   "http://juice.lab.test:3000/rest/track-order",
+   "http://juice.lab.test:3000/rest/user",
+   "http://juice.lab.test:3000/rest/user/authentication-details/",
+   "http://juice.lab.test:3000/rest/user/change-password?current=",
+   "http://juice.lab.test:3000/rest/user/login",
+   "http://juice.lab.test:3000/rest/user/reset-password",
+   "http://juice.lab.test:3000/rest/user/security-question?email=",
+   "http://juice.lab.test:3000/rest/user/whoami",
+   "http://juice.lab.test:3000/rest/wallet/balance",
+   "http://juice.lab.test:3000/rest/web3",
+   "http://juice.lab.test:3000/reviews",
+   "http://juice.lab.test:3000/rolldown-runtime-BoHGiXSq.js",
+   "http://juice.lab.test:3000/saved-payment-methods",
+   "http://juice.lab.test:3000/score-board",
+   "http://juice.lab.test:3000/scripts.js",
+   "http://juice.lab.test:3000/search",
+   "http://juice.lab.test:3000/snippets",
+   "http://juice.lab.test:3000/snippets/fixes",
+   "http://juice.lab.test:3000/snippets/verdict",
+   "http://juice.lab.test:3000/socket.io",
+   "http://juice.lab.test:3000/submitKey",
+   "http://juice.lab.test:3000/track-result",
+   "http://juice.lab.test:3000/track-result/new",
+   "http://juice.lab.test:3000/v3/",
+   "http://juice.lab.test:3000/wQ?MvO1G2",
+   "http://juice.lab.test:3000/wallet",
+   "http://juice.lab.test:3000/wallet-web3.module-s802s5aS.js",
+   "http://juice.lab.test:3000/walletExploitAddress",
+   "http://juice.lab.test:3000/walletNFTVerify",
+   "http://juice.lab.test:3000/web3-sandbox.module-C8MIIA8b.js",
+   "http://juice.lab.test:3000/ws/v3/",
+   "http://juice.lab.test:3000/zone.js"
+  ],
+  "leads": [
+   {
+    "kind": "nuclei",
+    "title": "Prometheus Metrics - Detect",
+    "url": "http://juice.lab.test:3000/metrics"
+   },
+   {
+    "kind": "param-class",
+    "title": "idor-prone parameter: id",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "idor-prone parameter: order",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "param-class",
+    "title": "lfi-prone parameter: page",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: id",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: offset",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: order",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: q",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "sqli-prone parameter: sort",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: comment",
+    "url": "http://juice.lab.test:3000/api/Feedbacks"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: email",
+    "url": "http://juice.lab.test:3000/rest/user/security-question"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: name",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: q",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "param-class",
+    "title": "xss-prone parameter: text",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "parameter",
+    "title": "1 hidden parameter: email",
+    "url": "http://juice.lab.test:3000/rest/user/security-question"
+   },
+   {
+    "kind": "parameter",
+    "title": "1 hidden parameter: new",
+    "url": "http://juice.lab.test:3000/rest/user/change-password"
+   },
+   {
+    "kind": "parameter",
+    "title": "10 hidden parameters: automation, id, offset, order, page, q, scope, signing…",
+    "url": "http://juice.lab.test:3000/api/Hints"
+   },
+   {
+    "kind": "parameter",
+    "title": "10 hidden parameters: description, id, image, name, offset, page, price, q…",
+    "url": "http://juice.lab.test:3000/api/Products"
+   },
+   {
+    "kind": "parameter",
+    "title": "12 hidden parameters: category, description, difficulty, id, key, name, offset, page…",
+    "url": "http://juice.lab.test:3000/api/Challenges"
+   },
+   {
+    "kind": "parameter",
+    "title": "7 hidden parameters: id, offset, page, q, quantity, scope, sort",
+    "url": "http://juice.lab.test:3000/api/Quantitys"
+   },
+   {
+    "kind": "parameter",
+    "title": "7 hidden parameters: id, offset, page, q, question, scope, sort",
+    "url": "http://juice.lab.test:3000/api/SecurityQuestions"
+   },
+   {
+    "kind": "parameter",
+    "title": "8 hidden parameters: comment, id, offset, page, q, rating, scope, sort",
+    "url": "http://juice.lab.test:3000/api/Feedbacks"
+   },
+   {
+    "kind": "secret",
+    "title": "Google OAuth client id",
+    "url": "http://juice.lab.test:3000/main.js"
+   }
+  ]
+ },
+ "challenges_after_recon": [
+  "errorHandlingChallenge",
+  "exposedMetricsChallenge"
+ ]
+}

@@ -1,9 +1,8 @@
 FROM golang:1.23-bookworm AS tools
-RUN apt-get update && apt-get install -y --no-install-recommends libpcap-dev && rm -rf /var/lib/apt/lists/*
+# No naabu: port probes are made by the gateway (D-039), which can check them against scope.
 RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.7 \
  && go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.2.1 \
  && go install github.com/projectdiscovery/httpx/cmd/httpx@v1.6.9 \
- && go install github.com/projectdiscovery/naabu/v2/cmd/naabu@v2.3.3 \
  && go install github.com/projectdiscovery/katana/cmd/katana@v1.1.2 \
  && go install github.com/tomnomnom/assetfinder@v0.1.1 \
  && go install github.com/tomnomnom/waybackurls@v0.1.0 \
@@ -37,10 +36,13 @@ RUN set -eux; mkdir -p /opt/wordlists; \
     echo "47fb86ca6fb3f97e5491161581900d6d99851fb16764eacddf16aa85617c956a  /opt/wordlists/common.txt" | sha256sum -c -
 
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libpcap0.8 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 10001 worker \
- && mkdir -p /data/blobs && chown worker /data/blobs   # evidence blobs volume
+ && mkdir -p /data/blobs && chown worker /data/blobs \
+ && mkdir -p /data/gateway-public && chown 10002:10002 /data/gateway-public
+# /data/blobs: evidence blobs volume. /data/gateway-public: the gateway's CA certificate
+# (written by the gateway, uid 10002; read-only here). Every tool trusts only that CA.
 # Absolute paths on purpose: the Python "httpx" package installs a CLI with the same name.
 COPY --from=tools /go/bin/ /opt/pd/bin/
 COPY --from=nuclei /go/bin/nuclei /opt/pd/bin/nuclei

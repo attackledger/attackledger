@@ -1,3 +1,10 @@
+# Networks (D-039, docs/GATEWAY.md):
+#   internal  db, api, worker, gateway. No route out: the worker reaches nothing but the
+#             database, the API and the gateway.
+#   lab       the gateway and the local practice target only, no route out.
+#   default   api (published port, timestamp authority), web and the gateway: the way out.
+# Every request a recon tool or an agent sends leaves through the gateway, which enforces the
+# engagement's scope, read-only methods, rate ceiling and identification, and logs it.
 services:
   db:
     image: postgres:16-alpine
@@ -7,6 +14,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
       - dbdata:/var/lib/postgresql/data
+    networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U attackledger"]
       interval: 3s
@@ -38,19 +46,47 @@ services:
       ATTACKLEDGER_DEV_KEY: ${ATTACKLEDGER_DEV_KEY:-}
     volumes:
       - blobs:/data/blobs
+      - gateway-control:/data/gateway-control:ro   # the gateway's token, for its routes only
+    networks: [internal, default]
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
 
+  # The only way out for the worker (D-039). Same image as the API, its own user and command.
+  # It creates its CA (private volume; the certificate goes to gateway-public for the worker)
+  # and the token it uses on the API's gateway routes (gateway-control, shared with the API).
+  gateway:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    command: ["python", "-u", "-m", "app.gateway"]
+    user: "10002:10002"
+    environment:
+      ATTACKLEDGER_API_URL: http://api:8000
+      # Extra passive-source hosts (comma-separated), for sources configured with your own keys.
+      ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS: ${ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS:-}
+    volumes:
+      - gateway-private:/data/gateway
+      - gateway-public:/data/gateway-public
+      - gateway-control:/data/gateway-control
+    networks: [internal, default, lab]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 2)"]
+      interval: 3s
+      retries: 20
+    restart: unless-stopped
+
   worker:
     build:
       context: .
       dockerfile: worker/Dockerfile
     environment:
-      # Docker's embedded DNS: resolves the local lab target and forwards everything else.
-      WORKER_RESOLVERS: 127.0.0.11
+      # Every tool and the agent go through the gateway: its proxy, its resolver, its CA.
+      ATTACKLEDGER_GATEWAY: gateway:8080
+      ATTACKLEDGER_GATEWAY_DNS: gateway:53
+      ATTACKLEDGER_GATEWAY_CA: /data/gateway-public/ca.pem
       DATABASE_URL: postgresql+psycopg://attackledger:${POSTGRES_PASSWORD:-change-me}@db:5432/attackledger
       # Optional: enables Claude agents on hunt lanes (v0.6). Put it in .env, never in this file.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -62,18 +98,25 @@ services:
       ATTACKLEDGER_DEV_KEY: ${ATTACKLEDGER_DEV_KEY:-}
     volumes:
       - blobs:/data/blobs
+      - gateway-public:/data/gateway-public:ro
+    # No route out (internal network only). Docker does not forward outside DNS questions for
+    # such containers; this unroutable resolver (TEST-NET-1) keeps it so on engines that would.
+    networks: [internal]
+    dns: [192.0.2.1]
     depends_on:
       db:
         condition: service_healthy
+      gateway:
+        condition: service_healthy
     restart: unless-stopped
 
-  # Local practice target. Reachable only inside the compose network as shop.lab.test.
+  # Local practice target. Reachable only from the gateway, as shop.lab.test.
   lab:
     image: nginx:1.27-alpine
     volumes:
       - ./lab/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      default:
+      lab:
         aliases: [shop.lab.test]
 
   web:
@@ -84,6 +127,16 @@ services:
     depends_on:
       - api
 
+networks:
+  internal:
+    internal: true
+  lab:
+    internal: true
+  default: {}
+
 volumes:
   dbdata:
   blobs:     # raw evidence (agent HTTP exchanges, notes, files), encrypted per engagement, with the wrapped keys
+  gateway-private:   # the gateway's CA key: mounted by the gateway only
+  gateway-public:    # the gateway's CA certificate, read by the worker
+  gateway-control:   # the gateway's token for the API's gateway routes

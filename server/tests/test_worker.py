@@ -42,12 +42,23 @@ def test_crawl_stays_on_host_skips_destructive_paths_and_identifies():
 
 
 def test_port_scan_needs_engagement_permission_and_skips_smtp():
+    probes = []
+
+    class Gw:
+        def probe(self, host, port):
+            probes.append((host, port))
+            return (200, "open") if port in (80, 443) else (502, "closed")
+    logs = []
+    r = SimpleNamespace(eng=eng(rps=3), gw=Gw(), in_scope=lambda h: h.endswith(".example.com"),
+                        digest=__import__("hashlib").sha256(), log=logs.append, check_stop=lambda: None,
+                        fetch_failures=0, observed={}, observe=lambda h, d: r.observed.update({h: d}))
     with pytest.raises(RuntimeError, match="not allowed"):
-        worker.commands("ports", eng())
-    c = cmd("ports", eng(ports=True, rps=3))
-    assert c[c.index("-exclude-ports") + 1] == "25" and c[c.index("-scan-type") + 1] == "c"
-    assert c[c.index("-rate") + 1] == "3"       # the engagement limit, never a multiple of it
-    assert c[c.index("-c") + 1] == "3"
+        worker.run_ports(r, ["a.example.com"])
+    r.eng = eng(ports=True, rps=3)
+    assert worker.run_ports(r, ["a.example.com", "out.other.test"]) == 1
+    assert {h for h, _ in probes} == {"a.example.com"}           # out of scope: never probed
+    assert len(probes) == 99 and 25 not in {p for _, p in probes}  # nmap's top 100 without SMTP
+    assert r.observed == {"a.example.com": {"open_ports": [80, 443]}}
 
 
 def test_passive_kinds_need_no_identification():
@@ -65,16 +76,60 @@ def test_parse_probe_strips_port_from_host():
     assert host == "app.example.com" and data["live"] and data["port"] == "8443"
 
 
-def test_resolvers_are_passed_to_dns_tools(monkeypatch):
-    monkeypatch.setattr(worker, "RESOLVERS", "127.0.0.11")
-    assert cmd("resolve", eng())[cmd("resolve", eng()).index("-r") + 1] == "127.0.0.11"
-    c = cmd("ports", eng(ports=True))
-    assert c[c.index("-r") + 1] == "127.0.0.11"
+def test_every_tool_is_pointed_at_the_gateway(monkeypatch):
+    from app import egress
+    gw = egress.Egress(7, "s3cret-value-0123456789")
+    monkeypatch.setattr(egress.Egress, "resolver", lambda self: "10.0.0.9:53")
+    proxy = lambda t: f"http://job-7.{t}:s3cret-value-0123456789@gateway.invalid:8080"  # noqa: E731
+    flags = lambda path: worker.gateway_flags([path], gw, SimpleNamespace(resolver_file=lambda: "/tmp/r.txt"))  # noqa: E731
+    assert flags(worker.tool("subfinder")) == ["-proxy", proxy("subfinder")]
+    assert flags(worker.tool("dnsx")) == ["-r", "10.0.0.9:53"]
+    assert flags(worker.tool("httpx")) == ["-proxy", proxy("httpx"), "-r", "10.0.0.9:53"]
+    assert flags(worker.tool("katana")) == ["-proxy", proxy("katana"), "-r", "10.0.0.9:53"]
+    assert flags(worker.tool("gau")) == ["--proxy", proxy("gau")]
+    assert flags(worker.tool("feroxbuster")) == ["--proxy", proxy("feroxbuster")]
+    assert flags(worker.tool("nuclei")) == ["-p", proxy("nuclei"), "-pi", "-r", "/tmp/r.txt"]
+    # Tools without a proxy flag get it from the environment, and nothing else from the worker.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    env = gw.env("assetfinder")
+    assert env["HTTPS_PROXY"] == env["https_proxy"] == env["HTTP_PROXY"] == proxy("assetfinder")
+    assert env["SSL_CERT_FILE"] == gw.ca_file and env["NO_PROXY"] == ""
+    assert "DATABASE_URL" not in env and "ANTHROPIC_API_KEY" not in env
+    assert gw.mask("x " + proxy("gau")) == "x " + proxy("gau").replace("s3cret-value-0123456789", "********")
 
 
-def test_js_fetcher_requires_identification():
+def test_tool_runs_get_the_gateway_and_never_log_the_secret(session, tmp_path):
+    from app import egress
+    job = make_job(session, ["a.example.com"])
+    gw = egress.Egress(job.id, "s3cret-value-0123456789")
+    r = worker.Run(session, job, gw)
+    out = list(r.tool_lines("env", ["/usr/bin/env"], []))
+    assert f"HTTPS_PROXY={gw.proxy_url('env')}" in out and not any(l.startswith("DATABASE_URL") for l in out)
+    assert "s3cret" not in job.log
+
+
+def test_jobs_that_send_traffic_need_the_gateway(session, monkeypatch):
+    monkeypatch.delenv("ATTACKLEDGER_GATEWAY")
+    job = make_job(session, ["a.example.com"])
+    monkeypatch.setitem(worker.RUNNERS, "resolve", lambda r, chunk: pytest.fail("ran without a gateway"))
+    with pytest.raises(RuntimeError, match="no gateway"):
+        worker.run(session, job)
+    assert job.gateway_secret_sha256                       # a credential was made, and only its hash kept
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY", "gateway.invalid:8080")
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_CA", "/nonexistent/ca.pem")
+    job2 = Job(engagement_id=job.engagement_id, kind="resolve", targets=["b.example.com"], status=JobStatus.running)
+    session.add(job2)
+    session.commit()
+    with pytest.raises(RuntimeError, match="CA certificate"):
+        worker.run(session, job2)
+
+
+def test_js_fetcher_requires_identification_and_the_gateway():
     with pytest.raises(RuntimeError, match="research header"):
         worker.fetcher(eng())
+    with pytest.raises(RuntimeError, match="no gateway"):
+        worker.fetcher(eng("X-Bug-Bounty: r1"))
 
 
 def test_js_fetcher_refuses_redirects():
@@ -85,7 +140,7 @@ def test_js_fetcher_refuses_redirects():
 @pytest.mark.parametrize("rps", [1, 5, 50])
 def test_no_step_exceeds_the_engagement_rate_limit(rps):
     e = eng("X-Bug-Bounty: r1", ports=True, rps=rps)
-    for kind in ("resolve", "ports", "probe", "crawl"):
+    for kind in ("resolve", "probe", "crawl"):
         for _, c in worker.commands(kind, e):
             flag = "-rate" if "-rate" in c else "-rl"
             assert int(c[c.index(flag) + 1]) <= rps, (kind, c)
@@ -126,6 +181,7 @@ def make_job(s, targets, kind="resolve"):
 def test_watchdog_stops_a_silent_tool(session, monkeypatch):
     monkeypatch.setattr(worker, "JOB_TIMEOUT", 1)
     r = worker.Run(session, make_job(session, ["a.example.com"]))
+    r.gw.secret = "s3cret-value-0123456789"
     t0 = __import__("time").monotonic()
     with pytest.raises(worker.Cancelled, match="timed out"):
         list(r.tool_lines("sleep", ["sleep", "30"], []))

@@ -167,3 +167,40 @@ Pacing measured by hand on the same stack (nuclei in the bench worker, through j
 Still open: **katana (crawl) reached 22 in one sliding second** at a limit of 20 in both runs (20 per
 calendar second). It is not nuclei and is left for the gateway proxy, which will enforce one ceiling for
 every tool.
+
+## Run through the traffic gateway (2026-10-09)
+
+Machine-readable results: `tools/benchmark/results-2026-10-09-gateway.json`. Same target, settings and
+pipeline; API, gateway and worker images built from branch `feat/gateway` (`BENCH_KEEP_IMAGES=1 run.py up`).
+Recon only, no agent run. What changed in the stack (D-039, `docs/GATEWAY.md`):
+
+- the worker is on the internal network only; Juice Shop and juice-proxy are on a lab network that only the
+  gateway joins, so every request reaches juice-proxy through the gateway, and juice-proxy stays an
+  independent counter downstream of it;
+- the gateway enforces the scope, GET/HEAD/OPTIONS only, a ceiling of 20 requests in any 1.05-second window
+  for the engagement (all tools together), and sets the identification itself;
+- port scanning is done by gateway probes instead of naabu (99 probes, 1 port open).
+
+| Step | Status | Seconds | Requests | Peak / calendar second | Peak / sliding 1 s |
+|---|---|---|---|---|---|
+| probe | done | 0.4 | 1 | 1 | 1 |
+| crawl | done | 13.3 | 29 | 20 | **20** |
+| content | done, skipped host | 0.1 | 2 | 2 | 2 |
+| jsanalyze | done | 1.7 | 20 | 11 | 13 |
+| params | done | 238.8 | 3,206 | 18 | 18 |
+| nuclei | done | 134.5 | 2,249 | 19 | 19 |
+
+Counted by juice-proxy: 5,507 requests, **all GET** (non-GET: 0), all with the research header and user agent,
+**peak 20 in any sliding second and 20 in any calendar second at a limit of 20** (first run: 40 and 29;
+re-run after the nuclei fix: 22 and 20, from katana). Wall time 405 s. The gateway's own log for the
+engagement agrees: 5,509 GET (5,507 sent, 1 refused, 1 failed), 99 port probes and 10 DNS questions; the 5
+refusals were katana asking for a host named `burpsuite` and four ProjectDiscovery tools calling their update
+service `api.pdtm.sh`. Recall unchanged: 134 endpoints, the same 23 leads, the same nuclei lead
+(`prometheus-metrics`), errorHandling and exposedMetrics solved by recon traffic.
+
+A misbehaving tool, by hand on the same stack: a script in the worker with a job credential sent 200 GETs from
+200 threads at once, each with a forged `X-Bug-Bounty` and `User-Agent`, plus one POST, PUT, DELETE, PATCH,
+DEBUG and TRACE. juice-proxy saw 200 requests, all GET, peak 20 in any sliding second, every one with the
+engagement's identification and none with the forged values; the six writes were refused with 403 and never
+reached it. A direct connection from the worker to juice.lab.test failed (the name does not resolve there,
+and the lab network is not attached).

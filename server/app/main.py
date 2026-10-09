@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import auditlog, importers, inbox, keylog, redact, vault
+from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault
 from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
@@ -39,6 +39,7 @@ async def lifespan(_app: FastAPI):
 # Every route passes authz.authorize first: who is calling, and may they use this route.
 app = FastAPI(title="AttackLedger", version="0.6.0.dev0", lifespan=lifespan,
               dependencies=[Depends(authz.authorize)])
+app.include_router(gatewayapi.router)
 COOKIE_SECURE = os.environ.get("ATTACKLEDGER_COOKIE_SECURE", "") == "1"   # set behind HTTPS
 
 

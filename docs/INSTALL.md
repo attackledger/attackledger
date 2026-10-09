@@ -78,7 +78,9 @@ it can resolve.
 | Out | `timestamp.digicert.com` | 80 | each time a lane is closed | RFC 3161 timestamps; only a SHA-256 hash is sent (section 12) |
 | Out | Let's Encrypt (`acme-v02.api.letsencrypt.org`), and port 80 reachable from the internet | 443 | only with Let's Encrypt | certificates (section 5) |
 | Out | test targets | as needed | during testing | **only from the gateway container** (section 6) |
-| Out | `api.anthropic.com` | 443 | only if Claude agents are turned on | the agent's model |
+| Out | passive recon sources (certificate transparency, web archives and similar; the list is in section 6) | 443, and 80 for the web archive | when the subdomain and archive steps run | recon that sends nothing to the target, **only from the gateway container**, GET only |
+| Out | `api.anthropic.com` | 443 | only if Claude agents are turned on | the agent's model, **only from the gateway container** |
+| Out | your DNS resolver | 53 | during testing | the gateway resolves target names for the worker, in-scope names only |
 
 Nothing else needs to leave the server. AttackLedger sends no telemetry.
 
@@ -238,26 +240,48 @@ If ports 80 and 443 are taken on the server, set `ATTACKLEDGER_HTTP_PORT` and
 
 ## 6. Traffic gateway
 
-> **TODO(gateway):** this section is completed when the gateway branch (D-039) is merged.
-> Names, settings and commands below are placeholders.
+Every request that recon tools and Claude agents send leaves through one gateway container
+(D-039, `docs/GATEWAY.md`). The worker has no route to the internet: it sits on the
+internal-only Docker network `internal` with the database, the API and the gateway, and the
+gateway is its only way out. The gateway enforces, in one place, each engagement's scope
+(exclusions win), read-only methods (GET, HEAD, OPTIONS; every write is refused), rate
+ceiling, research header and user agent, never follows redirects, and logs every request.
 
-Every request that recon tools and Claude agents send to a test target goes through one
-gateway container. The worker has no route to the internet: it sits on an internal-only
-Docker network, and the gateway is its only way out. The gateway enforces, in one place,
-each engagement's scope (exclusions win), allowed methods, rate ceiling, identification
-header and user agent, and redirect policy, and logs every request.
-
-- **Outbound firewall.** Only the gateway needs to reach targets. If your network filters
-  outbound traffic by source, allow target traffic from this server; the other
-  containers cannot use it. TODO(gateway): network names, and whether passive recon
-  sources (certificate transparency, web archives) also go through the gateway.
+- **Outbound firewall.** Only the gateway needs to reach targets, passive recon sources and
+  the Claude API; it is the only container on both `internal` and the outside network
+  (`default`, with the API, the web app and Caddy). If your network filters outbound traffic,
+  allow from this server: the targets of your engagements; the passive sources the
+  subdomain and archive steps use (`gateway.PASSIVE_HOSTS` in `server/app/gateway.py`:
+  certificate transparency, web archives and similar; HTTPS, and HTTP for the web archive);
+  `api.anthropic.com` on 443 if you run agents; and DNS. Passive sources and the Claude API
+  are allowlisted inside the gateway, GET only for passive sources, and are not counted
+  against an engagement's rate.
 - **The gateway's CA.** To check the method and headers of HTTPS requests, the gateway
-  terminates TLS with a certificate authority made for this deployment and trusted only
-  inside the worker. TODO(gateway): where it is created, where it is stored, whether to
-  back it up (section 14) and how to replace it.
-- **Settings.** TODO(gateway): the `.env` settings and their defaults.
-- **Check.** TODO(gateway): a command that shows the worker cannot reach the internet
-  directly and that a request through the gateway is logged.
+  terminates TLS with a certificate authority it creates on first start. The private key is
+  in the volume `gateway-private` (mounted by the gateway only); the certificate is copied
+  to `gateway-public`, which only the worker mounts, read-only. It needs no backup: a lost CA
+  is replaced by a new one on the next start. To replace it, stop the stack, remove both
+  volumes (`docker volume rm attackledger_gateway_private attackledger_gateway_public`, with your `COMPOSE_PROJECT_NAME` if you changed it) and start
+  again.
+- **The gateway token.** The gateway gets each job's rules from the API and writes its
+  request log there, with a token it creates in the volume `gateway-control` (shared with the
+  API only). To set your own instead, put `ATTACKLEDGER_GATEWAY_TOKEN` in `.env` and pass it
+  to both the `api` and `gateway` services.
+- **Settings** (all optional, in `.env`): `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`, extra passive
+  source hosts, comma-separated, for subfinder sources you configured with your own keys.
+- **Check.** The worker cannot reach the internet directly, and a request through the
+  gateway is logged:
+
+  ```sh
+  docker compose exec worker python -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)"
+  # OSError: [Errno 101] Network is unreachable
+  docker compose logs gateway | head -1
+  # gateway ready: proxy 0.0.0.0:8080, dns 53, api http://api:8000
+  ```
+
+  After a recon run, its requests are listed per engagement at
+  `GET /api/engagements/<id>/gateway-log` (totals by verdict, kind and method, and the latest
+  rows, each allowed or refused with the reason).
 
 ## 7. Encryption at rest
 
@@ -563,6 +587,8 @@ master key is what unwraps them. Stored together, anyone who gets the backup can
 engagement. Stored apart, a stolen backup alone reveals no evidence content. Lose the master
 key, and the backups' evidence content is lost too, even though the chain and receipts
 still verify. `.env` is not needed for a restore; a new install generates its own.
+The gateway's volumes (its CA and its token, section 6) are not backed up either: the gateway
+makes new ones on a fresh install, and its request log is in the database.
 
 Why the two parts together: the database's encrypted summaries open only with the data keys
 in the blob store, and the API refuses to start when an engagement's key file is missing.
