@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import (agenttools, auth, authz, blobs, signing, executors, gates, jobgates, ledger, migrate, modules, packs, report,
+from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import targets as targeting
 from .db import get_session
@@ -122,6 +122,10 @@ def _lane_view(lane: Lane) -> dict:
              "signed": bool(lane.receipts[-1].signature),
              "algorithm": lane.receipts[-1].algorithm,
              "key_fingerprint": lane.receipts[-1].key_fingerprint,
+             "timestamp": ({"time": lane.receipts[-1].timestamp_time.isoformat(),
+                            "tsa": lane.receipts[-1].timestamp_tsa}
+                           if lane.receipts[-1].timestamp_token else None),
+             "timestamp_error": lane.receipts[-1].timestamp_error,
              "created_at": lane.receipts[-1].created_at.isoformat()}
             if lane.receipts else None
         ),
@@ -134,7 +138,7 @@ def _lane_view(lane: Lane) -> dict:
 def health(session: Session = Depends(get_session)):
     # Says how callers sign in. An open API (no people, no token) must not leave localhost.
     m = auth.mode(session)
-    return {"ok": True, "auth_required": m != "open", "mode": m}
+    return {"ok": True, "auth_required": m != "open", "mode": m, "timestamps": bool(timestamps.tsa_url())}
 
 
 class LoginIn(BaseModel):
@@ -518,10 +522,46 @@ def close_lane(lane_id: int, body: CloseIn, request: Request, session: Session =
     if key is not None:
         receipt.payload, receipt.signature = body.payload, body.signature
         receipt.algorithm, receipt.public_key, receipt.key_fingerprint = key.algorithm, key.public_key, key.fingerprint
+    _timestamp(receipt)
     session.add(receipt)
     session.commit()
     session.refresh(lane)
     return {"receipt": receipt.manifest_sha256, **_lane_view(lane)}
+
+
+def _timestamp(receipt: Receipt) -> None:
+    """Ask the timestamp authority, if one is set. A failure leaves the receipt valid but
+    untimestamped, with the reason, so the close is never lost to an unreachable TSA."""
+    url = timestamps.tsa_url()
+    if not url:
+        return
+    try:
+        token, when = timestamps.fetch(url, timestamps.statement(receipt.manifest_sha256, receipt.signature))
+    except timestamps.TimestampError as e:
+        receipt.timestamp_error = str(e)[:500]
+        return
+    receipt.timestamp_token, receipt.timestamp_time, receipt.timestamp_tsa = token, when, url
+    receipt.timestamp_error = None
+
+
+@app.post("/lanes/{lane_id}/receipt/timestamp")
+def timestamp_receipt(lane_id: int, session: Session = Depends(get_session)):
+    """Timestamp the lane's current receipt now, after an earlier attempt failed or for a
+    receipt issued before a timestamp authority was set. The token shows the later time."""
+    lane = _get(session, Lane, lane_id)
+    if not timestamps.tsa_url():
+        raise HTTPException(422, "no timestamp authority is set (ATTACKLEDGER_TSA_URL)")
+    if gates.lane_status(lane) != gates.LaneStatus.closed or not lane.receipts:
+        raise HTTPException(422, "this lane has no current receipt")
+    receipt = lane.receipts[-1]
+    if receipt.timestamp_token:
+        raise HTTPException(409, "this receipt is already timestamped")
+    _timestamp(receipt)
+    session.commit()
+    session.refresh(lane)
+    if receipt.timestamp_error:
+        raise HTTPException(502, receipt.timestamp_error)
+    return _lane_view(lane)
 
 
 @app.get("/engagements")

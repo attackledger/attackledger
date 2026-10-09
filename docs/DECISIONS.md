@@ -394,6 +394,33 @@ options considered and who decided.
   signed with Ed25519, the verifier passed it and failed it after one name was changed.
 - **Proposed and built by:** Claude, at Murat's request (D-027).
 
+### D-034 · RFC 3161 timestamps on receipts (2026-10-09, step 2b of the target architecture)
+- **Decision:** when a lane closes, the server asks a timestamp authority (TSA) to
+  timestamp `attackledger-timestamp-v1`, the receipt's manifest hash and its signature
+  (one line each). Only the SHA-256 of that text leaves the deployment. The token goes on
+  the receipt and into the report (format 2, optional field). Migration `0012`.
+- **Which TSA:** set by the operator (`ATTACKLEDGER_TSA_URL`); empty means no timestamps
+  and no outside request. No default is shipped yet: the first public TSA to recommend
+  and pin a root for is Murat's call (DigiCert proposed).
+- **Server checks:** the reply must answer this request (same hash, same nonce, status
+  granted). The server does not decide whether to trust the TSA; the reader does.
+- **Unreachable TSA:** the close still succeeds; the receipt records why it has no
+  timestamp, and `POST /lanes/{id}/receipt/timestamp` (reviewer) tries again. A later
+  timestamp shows the later time; it never claims the close time.
+- **Verifier:** parses the CMS token itself (standard library only) and checks that it
+  covers this receipt, that the TSA's signature verifies (RSA PKCS #1 v1.5, ECDSA P-256 or
+  P-384, SHA-2), that the signing certificate is for timestamping, and that the chain
+  reaches a root the reader trusts and was valid at the token's time. Trusted roots are
+  PEM files in `tools/tsa-roots/` or given with `--tsa-root`. A root carried inside the
+  token is not trusted by being there. An untrusted chain fails the check.
+- **Verified:** tests against OpenSSL's own TSA (`openssl ts -reply`) for RSA and EC
+  chains with an intermediate; OpenSSL's `ts -verify` agrees with the verifier; bad
+  chains (issuer not a CA, certificate not yet valid, no timestamping purpose, a token
+  carrying its own root) and tampering are refused; each of 15 checks was broken on purpose
+  and a test failed each time. A browser close against a local TSA was timestamped and
+  verified.
+- **Proposed and built by:** Claude, at Murat's request (D-027).
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

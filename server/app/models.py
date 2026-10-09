@@ -133,6 +133,12 @@ class Receipt(Base):
     algorithm: Mapped[str | None] = mapped_column(String(20))
     public_key: Mapped[str | None] = mapped_column(Text)
     key_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    # RFC 3161 timestamp of the manifest hash and signature (timestamps.py): the token as
+    # base64 DER, its time, the authority asked, and why the last attempt failed, if it did.
+    timestamp_token: Mapped[str | None] = mapped_column(Text)
+    timestamp_time: Mapped[datetime | None] = mapped_column()
+    timestamp_tsa: Mapped[str | None] = mapped_column(String(500))
+    timestamp_error: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     lane: Mapped[Lane] = relationship(back_populates="receipts")
 

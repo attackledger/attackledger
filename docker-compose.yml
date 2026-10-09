@@ -22,6 +22,11 @@ services:
       ATTACKLEDGER_API_TOKEN: ${ATTACKLEDGER_API_TOKEN:-}
       # "1" when ANTHROPIC_API_KEY is set. The key itself stays in the worker.
       ATTACKLEDGER_AGENTS_ENABLED: ${ANTHROPIC_API_KEY:+1}
+      # "1" behind HTTPS, so session cookies are only sent over it.
+      ATTACKLEDGER_COOKIE_SECURE: ${ATTACKLEDGER_COOKIE_SECURE:-}
+      # RFC 3161 timestamp authority for receipts. Empty: receipts are not timestamped.
+      # Only a SHA-256 hash is sent to it.
+      ATTACKLEDGER_TSA_URL: ${ATTACKLEDGER_TSA_URL:-}
     volumes:
       - blobs:/data/blobs
     ports:

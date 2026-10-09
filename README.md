@@ -220,6 +220,14 @@ public key, so `tools/verify_report.py` checks who signed what without trusting 
 server. Turn on *require signatures* on the Team tab to refuse unsigned closes.
 Signing needs HTTPS or localhost.
 
+To timestamp receipts, set `ATTACKLEDGER_TSA_URL` to an RFC 3161 timestamp authority.
+Only a SHA-256 hash is sent to it. The report then carries each token, and the verifier
+checks it against the authority roots you trust:
+
+```bash
+python3 tools/verify_report.py report.json --tsa-root authority-root.pem
+```
+
 ## Database migrations
 
 The API applies Alembic migrations at startup. The worker waits until the database

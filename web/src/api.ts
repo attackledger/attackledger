@@ -102,7 +102,8 @@ export interface LaneDetail {
   items: LaneItem[];
   evidence: EvidenceEntry[];
   receipt: { sha256: string; closed_by: string | null; created_at: string; signed?: boolean;
-             algorithm?: string | null; key_fingerprint?: string | null } | null;
+             algorithm?: string | null; key_fingerprint?: string | null;
+             timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null } | null;
 }
 
 export interface Scope {
@@ -320,7 +321,7 @@ export const api = {
   login: (token: string) => call<{ ok: boolean }>("/auth/login", { method: "POST", body: JSON.stringify({ token }) }),
   loginPerson: (email: string, password: string) =>
     call<{ ok: boolean; name: string }>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
-  health: () => call<{ ok: boolean; auth_required: boolean; mode: "open" | "token" | "people" }>("/health"),
+  health: () => call<{ ok: boolean; auth_required: boolean; mode: "open" | "token" | "people"; timestamps?: boolean }>("/health"),
   me: () => call<Me>("/auth/me"),
   people: () => call<Person[]>("/people"),
   createPerson: (body: { email: string; name: string; password: string; is_owner: boolean }) =>
@@ -339,6 +340,8 @@ export const api = {
     call<LaneDetail>(`/lanes/${laneId}/close`, {
       method: "POST", body: JSON.stringify({ reviewed: true, payload, signature, key_fingerprint }),
     }),
+  timestampReceipt: (laneId: number) =>
+    call<LaneDetail>(`/lanes/${laneId}/receipt/timestamp`, { method: "POST", body: "{}" }),
   updateEngagement: (engId: number, body: { separation_of_duties?: boolean; require_signatures?: boolean }) =>
     call<{ id: number; separation_of_duties: boolean; require_signatures: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),

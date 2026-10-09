@@ -78,6 +78,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
 
     ("POST", "/lanes/{lane_id}/close"): ("reviewer", LANE),
     ("GET", "/lanes/{lane_id}/receipt-payload"): ("reviewer", LANE),
+    ("POST", "/lanes/{lane_id}/receipt/timestamp"): ("reviewer", LANE),
 }
 
 # FastAPI's own documentation routes.

@@ -117,6 +117,9 @@ enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
   lane's current manifest and chain head and stores it with the public key. Without
   accounts, or when the engagement allows it, a close with only a name is accepted and
   marked as not a cryptographic signature.
+- With `ATTACKLEDGER_TSA_URL` set, each receipt is also timestamped by that RFC 3161
+  authority (D-034): only a hash of the manifest hash and signature is sent. The verifier
+  checks the token and the authority's certificate chain against roots the reader trusts.
 - The report embeds everything needed to rebuild every receipt and walk the chain
   offline, using only the Python standard library.
 

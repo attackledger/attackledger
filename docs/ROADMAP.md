@@ -40,7 +40,7 @@ record records why. This file lists what comes next.
 - [x] Operator-token authentication (v0.5.0).
 - [x] Multi-user accounts, roles and separation of duties (D-032).
 - [x] Receipts signed with keys held in the reviewer's browser, checked offline (D-033).
-- [ ] RFC 3161 timestamps on receipts.
+- [x] RFC 3161 timestamps on receipts (D-034); choose the TSA to recommend and pin its root.
 - [ ] Evidence import, Caido first (D-029).
 - [ ] Live site at attackledger.com: landing page, docs and a read-only demo.
 - [ ] Make the repository public after a fresh full-history scan, then pin it on the

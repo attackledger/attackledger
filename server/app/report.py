@@ -23,6 +23,8 @@ def _receipt(rc) -> dict:
     if rc.signature:
         out["signature"] = {"algorithm": rc.algorithm, "public_key": rc.public_key,
                             "key_fingerprint": rc.key_fingerprint, "payload": rc.payload, "value": rc.signature}
+    if rc.timestamp_token:
+        out["timestamp"] = {"tsa": rc.timestamp_tsa, "time": _iso(rc.timestamp_time), "token": rc.timestamp_token}
     return out
 
 

@@ -40,6 +40,13 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **RFC 3161 timestamps** (D-034). With `ATTACKLEDGER_TSA_URL` set, each receipt's
+  manifest hash and signature are timestamped (only a hash is sent). If the authority
+  cannot be reached the close still succeeds and can be timestamped later. The verifier
+  checks the token, the authority's signature and its certificate chain to a root you
+  trust (`--tsa-root`). Migration `0012`.
+- `ATTACKLEDGER_COOKIE_SECURE` is now passed to the API by Docker Compose (it was
+  documented but not forwarded).
 - **A real Claude agent run in the demo.** With no API key yet, Claude Opus worked the
   Lab recon lane from Claude Code through `tools/agent_bridge.py`, which runs every call
   through the same gated tools inside the worker (D-031). 23 requests (22 reached the lab,

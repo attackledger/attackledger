@@ -753,7 +753,19 @@ function Folio({ laneId, me, onClose, onChanged }: {
                 {new Date(lane.receipt!.created_at).toLocaleString()}
                 {lane.receipt!.signed
                   ? <>, with key <code title={lane.receipt!.key_fingerprint ?? ""}>{(lane.receipt!.key_fingerprint ?? "").slice(0, 16)}</code> ({lane.receipt!.algorithm})</>
-                  : " (a name, not a cryptographic signature)"}
+                  : " (a name, not a cryptographic signature)"}.
+                {lane.receipt!.timestamp && (
+                  <> Timestamped {new Date(lane.receipt!.timestamp.time).toLocaleString()}
+                    {lane.receipt!.timestamp.tsa && <> by {tsaHost(lane.receipt!.timestamp.tsa)}</>}.</>
+                )}
+                {!lane.receipt!.timestamp && lane.receipt!.timestamp_error && (
+                  <> Not timestamped: {lane.receipt!.timestamp_error}.{" "}
+                    <button className="linklike" onClick={async () => {
+                      try { setLane(await api.timestampReceipt(laneId)); setError(null); onChanged(); }
+                      catch (e) { setError((e as Error).message); }
+                    }}>Timestamp now</button>
+                  </>
+                )}
               </p>
             ) : (
               <div className="sign">
@@ -783,6 +795,10 @@ function Folio({ laneId, me, onClose, onChanged }: {
       </aside>
     </>
   );
+}
+
+function tsaHost(url: string): string {
+  try { return new URL(url).host; } catch { return url; }
 }
 
 function StatusLine({ lane }: { lane: LaneDetail }) {

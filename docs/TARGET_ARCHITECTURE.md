@@ -140,7 +140,7 @@ How AttackLedger is offered is not decided. The architecture keeps every option 
    Built 2026-10-09 (D-032).
 2. **Signed and timestamped receipts.** Browser keys, timestamp client, chain and report
    format version 2, verifier update.
-   Signatures built 2026-10-09 (D-033); timestamps next.
+   Signatures built 2026-10-09 (D-033); timestamps built 2026-10-09 (D-034).
 3. **Import inbox and the Caido adapter.** Then Burp and nuclei.
 4. **Client and auditor views.** A client-facing report and a read-only viewer role.
 5. **Deployment decision** (D-030), with what the first four taught us.
