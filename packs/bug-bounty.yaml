@@ -1,41 +1,273 @@
+# Product-facing item texts, written from the methodology in checklists/ (which the
+# Claude Code workflow in this repository uses, with its own file names). Keep the two in
+# step when the methodology changes. Lanes opened earlier keep the texts they were opened with.
 id: bug-bounty
 name: Bug bounty
-version: "0.1"
-description: >
-  Role-based lanes for bug bounty programs. Recon and an application model come
-  first; access-control, auth, logic and input lanes open only on a receipted model.
+version: '0.2'
+description: Role-based lanes for bug bounty programs. Recon and an application model come first; access-control,
+  auth, logic and input lanes open only on a receipted model.
 recon_lane: recon
-engagement_types: [bug_bounty]
+engagement_types:
+- bug_bounty
 lanes:
-  - key: recon
-    name: Recon
-    items_from: checklists/CHECKLIST_recon.md
-    controls: [ISO-A.5.9, DORA-ART8, PCI-11.3.2]
-  - key: mapper
-    name: Model
-    items_from: checklists/CHECKLIST_mapper.md
-    controls: [ISO-A.5.9, PCI-11.4.1]
-  - key: authz
-    name: Access control
-    needs: [mapper]
-    items_from: checklists/CHECKLIST_authz.md
-    controls: [ISO-A.5.15, PCI-6.2.4, PCI-11.4.3]
-  - key: authflow
-    name: Auth & sessions
-    needs: [mapper]
-    items_from: checklists/CHECKLIST_authflow.md
-    controls: [ISO-A.8.5, PCI-6.2.4, PCI-11.4.3]
-  - key: logic
-    name: Business logic
-    needs: [mapper]
-    items_from: checklists/CHECKLIST_logic.md
-    controls: [ISO-A.8.28, PCI-6.2.4, PCI-11.4.3]
-  - key: injection
-    name: Input handling
-    needs: [mapper]
-    items_from: checklists/CHECKLIST_injection.md
-    controls: [ISO-A.8.28, PCI-6.2.4, PCI-6.4.1, PCI-11.4.3]
-  - key: mobile
-    name: Mobile
-    items_from: checklists/CHECKLIST_mobile.md
-    controls: [ISO-A.8.29, PCI-11.4.3]
+- key: recon
+  name: Recon
+  controls:
+  - ISO-A.5.9
+  - DORA-ART8
+  - PCI-11.3.2
+  items:
+  - id: BUG-BOUNTY-RECON-01
+    text: Scope, required research header and rate limit confirmed against the live program policy
+  - id: BUG-BOUNTY-RECON-02
+    text: 'Information gathering: search engines, metafiles, entry points and framework fingerprint'
+  - id: BUG-BOUNTY-RECON-03
+    text: 'Configuration: admin interfaces, HTTP methods, default and backup files, security headers'
+    controls:
+    - ISO-A.8.9
+  - id: BUG-BOUNTY-RECON-04
+    text: 'Transport security: TLS versions, certificates, HSTS, cookies sent over plain HTTP'
+    controls:
+    - ISO-A.8.24
+  - id: BUG-BOUNTY-RECON-05
+    text: 'Cryptography in use where exposed: weak algorithms, padding, randomness'
+    controls:
+    - ISO-A.8.24
+  - id: BUG-BOUNTY-RECON-06
+    text: 'Source and secret leaks: repositories, backups, sourcemaps, keys in client code (never used)'
+  - id: BUG-BOUNTY-RECON-07
+    text: Subdomains, including takeover candidates from dangling DNS records
+  - id: BUG-BOUNTY-RECON-08
+    text: 'Shadow and legacy APIs: old versions, undocumented paths, staging hosts'
+  - id: BUG-BOUNTY-RECON-09
+    text: 'Network surface: open ports and services beyond the web'
+  - id: BUG-BOUNTY-RECON-10
+    text: 'Cloud resources linked to the target: storage buckets, CDNs, cloud service settings'
+  - id: BUG-BOUNTY-RECON-11
+    text: gRPC and other non-HTTP APIs (or N/A, with the signal that was checked)
+  - id: BUG-BOUNTY-RECON-12
+    text: Technology fingerprint recorded, including the identity provider ("none found" is a result)
+  - id: BUG-BOUNTY-RECON-13
+    text: 'Decision on each secret candidate: report, time-box or skip, with the reason'
+  - id: BUG-BOUNTY-RECON-14
+    text: 'Handoff to the model lane: live endpoints and the authentication surface'
+  - id: BUG-BOUNTY-RECON-15
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-RECON-16
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-RECON-17
+    text: Every negative result backed by a positive control showing the test could have found the issue
+- key: mapper
+  name: Model
+  controls:
+  - ISO-A.5.9
+  - PCI-11.4.1
+  items:
+  - id: BUG-BOUNTY-MAPPER-01
+    text: JavaScript bundles and lazy-loaded chunks collected; API calls traced to their endpoints
+  - id: BUG-BOUNTY-MAPPER-02
+    text: GraphQL schema and operations inventoried (or N/A, with evidence that there is no GraphQL)
+  - id: BUG-BOUNTY-MAPPER-03
+    text: Calls the app makes before any identity-provider redirect recorded
+  - id: BUG-BOUNTY-MAPPER-04
+    text: 'Roles: every kind of user, and whether a test account exists for each'
+  - id: BUG-BOUNTY-MAPPER-05
+    text: 'Objects: identifier format, ownership field, and the endpoints that read and write them'
+  - id: BUG-BOUNTY-MAPPER-06
+    text: 'Flows: every step with its method, path and precondition'
+  - id: BUG-BOUNTY-MAPPER-07
+    text: 'State machine: states, allowed transitions and the endpoint that triggers each one'
+  - id: BUG-BOUNTY-MAPPER-08
+    text: Authentication required by every endpoint (anonymous, signed in, step-up) and the methods seen
+  - id: BUG-BOUNTY-MAPPER-09
+    text: Roles and objects that were not observed are marked unverified; nothing is assumed
+  - id: BUG-BOUNTY-MAPPER-10
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-MAPPER-11
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-MAPPER-12
+    text: Every negative result backed by a positive control showing the test could have found the issue
+- key: authz
+  name: Access control
+  needs:
+  - mapper
+  controls:
+  - ISO-A.5.15
+  - PCI-6.2.4
+  - PCI-11.4.3
+  items:
+  - id: BUG-BOUNTY-AUTHZ-01
+    text: Dead routes told apart from access-controlled ones (OPTIONS and a made-up path as controls)
+  - id: BUG-BOUNTY-AUTHZ-02
+    text: Second test account available for cross-account tests (or recorded as waiting for one)
+  - id: BUG-BOUNTY-AUTHZ-03
+    text: 'Authorization matrix: every object by every role, each cell backed by a real request'
+  - id: BUG-BOUNTY-AUTHZ-04
+    text: Hidden parameters that change access discovered
+  - id: BUG-BOUNTY-AUTHZ-05
+    text: Insecure direct object references tested across accounts
+  - id: BUG-BOUNTY-AUTHZ-06
+    text: GraphQL authorization per field and mutation (or N/A)
+  - id: BUG-BOUNTY-AUTHZ-07
+    text: Payment and balance operations checked for authorization (or N/A)
+  - id: BUG-BOUNTY-AUTHZ-08
+    text: Authorization compared between API versions
+  - id: BUG-BOUNTY-AUTHZ-09
+    text: Mass assignment and HTTP verb tampering
+  - id: BUG-BOUNTY-AUTHZ-10
+    text: WebSocket messages checked for authorization (or N/A)
+  - id: BUG-BOUNTY-AUTHZ-11
+    text: Every 401 and 403 re-tested with the same session and a control request
+  - id: BUG-BOUNTY-AUTHZ-12
+    text: For any finding, the same flaw checked on every other asset and endpoint (or N/A)
+  - id: BUG-BOUNTY-AUTHZ-13
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-AUTHZ-14
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-AUTHZ-15
+    text: Every negative result backed by a positive control showing the test could have found the issue
+- key: authflow
+  name: Auth & sessions
+  needs:
+  - mapper
+  controls:
+  - ISO-A.8.5
+  - PCI-6.2.4
+  - PCI-11.4.3
+  items:
+  - id: BUG-BOUNTY-AUTHFLOW-01
+    text: Identity-provider-specific tests chosen from the technology fingerprint (Okta, Entra ID, or N/A)
+  - id: BUG-BOUNTY-AUTHFLOW-02
+    text: 'Every authentication flow listed: sign-in, sign-up, forgotten password, reset, verification, MFA, email
+      and password change, invitations'
+  - id: BUG-BOUNTY-AUTHFLOW-03
+    text: Fields shown compared with the fields actually sent, flow by flow
+  - id: BUG-BOUNTY-AUTHFLOW-04
+    text: Hidden parameters in authentication flows discovered
+  - id: BUG-BOUNTY-AUTHFLOW-05
+    text: OAuth and OpenID Connect (or N/A)
+  - id: BUG-BOUNTY-AUTHFLOW-06
+    text: SAML (or N/A)
+  - id: BUG-BOUNTY-AUTHFLOW-07
+    text: 'Session management: fixation, expiry, logout and cookie attributes'
+  - id: BUG-BOUNTY-AUTHFLOW-08
+    text: JWT handling and token cryptography (or N/A)
+  - id: BUG-BOUNTY-AUTHFLOW-09
+    text: MFA bypass (or N/A)
+  - id: BUG-BOUNTY-AUTHFLOW-10
+    text: Account takeover paths
+  - id: BUG-BOUNTY-AUTHFLOW-11
+    text: Forgotten-password and reset flow
+  - id: BUG-BOUNTY-AUTHFLOW-12
+    text: Authentication bypass
+  - id: BUG-BOUNTY-AUTHFLOW-13
+    text: Open redirects
+  - id: BUG-BOUNTY-AUTHFLOW-14
+    text: Cross-site request forgery
+  - id: BUG-BOUNTY-AUTHFLOW-15
+    text: CORS configuration
+  - id: BUG-BOUNTY-AUTHFLOW-16
+    text: 'Chain note: how low-severity weaknesses could combine'
+  - id: BUG-BOUNTY-AUTHFLOW-17
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-AUTHFLOW-18
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-AUTHFLOW-19
+    text: Every negative result backed by a positive control showing the test could have found the issue
+- key: logic
+  name: Business logic
+  needs:
+  - mapper
+  controls:
+  - ISO-A.8.28
+  - PCI-6.2.4
+  - PCI-11.4.3
+  items:
+  - id: BUG-BOUNTY-LOGIC-01
+    text: Allowed transitions listed from the state machine
+  - id: BUG-BOUNTY-LOGIC-02
+    text: Candidates for skipped transitions (A to C without B), each with the precondition it skips
+  - id: BUG-BOUNTY-LOGIC-03
+    text: Each candidate tested with a single request, compared with the allowed flow and a positive control
+  - id: BUG-BOUNTY-LOGIC-04
+    text: Race-condition windows measured within the rate limit, never as a load test
+  - id: BUG-BOUNTY-LOGIC-05
+    text: Business logic flaws
+  - id: BUG-BOUNTY-LOGIC-06
+    text: Race conditions
+  - id: BUG-BOUNTY-LOGIC-07
+    text: Error and exceptional-condition handling
+  - id: BUG-BOUNTY-LOGIC-08
+    text: Brute-force protections, tested with single requests and no flooding
+  - id: BUG-BOUNTY-LOGIC-09
+    text: CAPTCHA bypass (or N/A)
+  - id: BUG-BOUNTY-LOGIC-10
+    text: Card payment flows (or N/A)
+  - id: BUG-BOUNTY-LOGIC-11
+    text: Transition matrix recorded
+  - id: BUG-BOUNTY-LOGIC-12
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-LOGIC-13
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-LOGIC-14
+    text: Every negative result backed by a positive control showing the test could have found the issue
+- key: injection
+  name: Input handling
+  needs:
+  - mapper
+  controls:
+  - ISO-A.8.28
+  - PCI-6.2.4
+  - PCI-6.4.1
+  - PCI-11.4.3
+  items:
+  - id: BUG-BOUNTY-INJECTION-01
+    text: Sink inventory built from the model's objects and parameters
+  - id: BUG-BOUNTY-INJECTION-02
+    text: Context identified for every sink
+  - id: BUG-BOUNTY-INJECTION-03
+    text: Reflection checked with a harmless marker; sinks that do not reflect are set aside
+  - id: BUG-BOUNTY-INJECTION-04
+    text: Escaping analysed for the context of each reflecting sink
+  - id: BUG-BOUNTY-INJECTION-05
+    text: Findings classified by what actually executes (HTML injection is not XSS)
+  - id: BUG-BOUNTY-INJECTION-06
+    text: Framework-specific tests chosen from the technology fingerprint (ASP.NET, Laravel and others)
+  - id: BUG-BOUNTY-INJECTION-07
+    text: Supply-chain and CI/CD exposure checked (or N/A)
+  - id: BUG-BOUNTY-INJECTION-08
+    text: Sink matrix recorded
+  - id: BUG-BOUNTY-INJECTION-09
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-INJECTION-10
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-INJECTION-11
+    text: Every negative result backed by a positive control showing the test could have found the issue
+- key: mobile
+  name: Mobile
+  controls:
+  - ISO-A.8.29
+  - PCI-11.4.3
+  items:
+  - id: BUG-BOUNTY-MOBILE-01
+    text: App confirmed eligible under the live program policy
+  - id: BUG-BOUNTY-MOBILE-02
+    text: App package acquired complete, with its size and hash recorded
+  - id: BUG-BOUNTY-MOBILE-03
+    text: App decompiled and the output kept
+  - id: BUG-BOUNTY-MOBILE-04
+    text: Endpoints and secrets extracted; secrets sorted into real, public by design and noise
+  - id: BUG-BOUNTY-MOBILE-05
+    text: Decision on real secret candidates (or N/A)
+  - id: BUG-BOUNTY-MOBILE-06
+    text: Endpoints found in the app that the web surface does not show
+  - id: BUG-BOUNTY-MOBILE-07
+    text: 'Components: exported, deep links, certificate pinning, debuggable builds'
+  - id: BUG-BOUNTY-MOBILE-08
+    text: Handoff to the access control, auth and input lanes
+  - id: BUG-BOUNTY-MOBILE-09
+    text: 'Unexpected behaviour recorded as leads for other lanes (or N/A: none seen)'
+  - id: BUG-BOUNTY-MOBILE-10
+    text: 'Every suspected finding re-verified independently before it is reported (or N/A: none)'
+  - id: BUG-BOUNTY-MOBILE-11
+    text: Every negative result backed by a positive control showing the test could have found the issue
