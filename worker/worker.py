@@ -46,6 +46,8 @@ from app.models import Asset, Endpoint, Engagement, Job, JobStatus, Lane, Lead, 
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
+# A running job older than the time limit plus this grace period has no live worker.
+STALE_GRACE = int(os.environ.get("WORKER_STALE_GRACE", "600"))
 # Targets run in batches so a stopped job knows exactly which targets were not run.
 CHUNK_SIZE = max(1, int(os.environ.get("WORKER_CHUNK_SIZE", "20")))
 TOOLS = os.environ.get("WORKER_TOOLS_DIR", "/opt/pd/bin")
@@ -820,14 +822,19 @@ def run_agent(session, job: Job, client=None) -> "Run":
     if lane.executor != "agent":
         raise RuntimeError("this lane's executor is no longer the Claude agent")
     limits = (job.result or {}).get("limits", {})
+    try:
+        model = agentloop.configured_model()
+    except ValueError as e:
+        raise RuntimeError(str(e))
     r = Run(session, job)
+    r.log(f"agent model: {model}")
 
     def should_stop() -> bool:
         session.refresh(job, ["status"])
         return job.status == JobStatus.cancelled or r.remaining_time() <= 0
 
     try:
-        res = agentloop.run(session, lane, job.id, client or anthropic_client(),
+        res = agentloop.run(session, lane, job.id, client or anthropic_client(), model=model,
                             max_turns=limits.get("max_turns", 40), max_requests=limits.get("max_requests", 200),
                             should_stop=should_stop, log=r.log)
     except agenttools.RunRefused as e:
@@ -849,6 +856,33 @@ def run_agent(session, job: Job, client=None) -> "Run":
     return r
 
 
+INTERRUPTED = ("interrupted: the worker stopped while this job was running. Results from finished "
+               "batches (and an agent's evidence up to its last turn) were kept; run it again for the rest.")
+
+
+def _aware(t: datetime | None) -> datetime | None:
+    return t.replace(tzinfo=timezone.utc) if t is not None and t.tzinfo is None else t
+
+
+def recover_interrupted(session, *, all_running: bool) -> list[int]:
+    """Jobs left "running" by a worker that is gone are marked failed, so a run never
+    looks active or complete when it is neither.
+
+    At startup every running job is stale: one worker serves a database (the rate limit
+    is enforced per worker process). Between jobs, a running job past the time limit
+    plus a grace period is stale too, whoever started it."""
+    cutoff = now().timestamp() - JOB_TIMEOUT - STALE_GRACE
+    recovered = []
+    for job in session.scalars(select(Job).where(Job.status == JobStatus.running)):
+        started = _aware(job.started_at)
+        if all_running or started is None or started.timestamp() < cutoff:
+            job.status, job.finished_at = JobStatus.failed, now()
+            job.log = (job.log + INTERRUPTED + "\n")[-20000:]
+            recovered.append(job.id)
+    session.commit()
+    return recovered
+
+
 def claim(session):
     stmt = select(Job).where(Job.status == JobStatus.queued).order_by(Job.id).limit(1)
     if engine.dialect.name == "postgresql":
@@ -863,9 +897,14 @@ def claim(session):
 def main():
     check_registry()
     migrate.wait_for_head()  # the API owns migrations
+    with SessionLocal() as session:
+        stale = recover_interrupted(session, all_running=True)
+    if stale:
+        print(f"marked {len(stale)} interrupted job(s) failed: {stale}", flush=True)
     print("worker ready", flush=True)
     while True:
         with SessionLocal() as session:
+            recover_interrupted(session, all_running=False)
             job = claim(session)
             if not job:
                 time.sleep(POLL_SECONDS)

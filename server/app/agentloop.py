@@ -15,6 +15,7 @@ Run outcomes (RunResult.status):
   refused     the model declined (stop_reason "refusal"); category in the log
 """
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, field
 
@@ -25,8 +26,27 @@ MAX_TOKENS = 16000
 EFFORT = "high"
 # Server-side fallback when a safety classifier declines: routed by refusal category.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-# Claude Opus 5.5 list prices, USD per million tokens. An estimate; the Console bill is authoritative.
-PRICE = {"input": 4.00, "output": 20.00, "cache_read": 0.20, "cache_write": 5.00}
+
+# Models an agent may run on (ATTACKLEDGER_AGENT_MODEL on the worker; default MODEL).
+# Prices are USD per million tokens, for the cost estimate only; the Console bill is
+# authoritative. Cache writes are taken as 1.25x input. Haiku's price is for prompts
+# up to 100K tokens. Haiku 5.5 has no server-side fallback, so none is requested.
+MODELS = {
+    "claude-opus-5-5": {"fallback": True,
+                        "price": {"input": 4.00, "output": 20.00, "cache_read": 0.20, "cache_write": 5.00}},
+    "claude-sonnet-5-5": {"fallback": True,
+                          "price": {"input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 2.50}},
+    "claude-haiku-5-5": {"fallback": False,
+                         "price": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125}},
+}
+
+
+def configured_model() -> str:
+    model = os.environ.get("ATTACKLEDGER_AGENT_MODEL", "").strip() or MODEL
+    if model not in MODELS:
+        raise ValueError(f"ATTACKLEDGER_AGENT_MODEL={model} is not supported; use one of: "
+                         + ", ".join(MODELS))
+    return model
 
 SYSTEM = """\
 You are working one checklist lane of an authorized security engagement in AttackLedger. \
@@ -57,6 +77,7 @@ what the response showed.
 @dataclass
 class RunResult:
     status: str
+    model: str = MODEL
     turns: int = 0
     requests: int = 0
     evidence_added: int = 0
@@ -68,7 +89,8 @@ class RunResult:
 
     @property
     def cost_usd(self) -> float:
-        return round(sum(self.usage[k] * PRICE[k] for k in PRICE) / 1_000_000, 4)
+        price = MODELS[self.model]["price"]
+        return round(sum(self.usage[k] * price[k] for k in price) / 1_000_000, 4)
 
     def as_dict(self) -> dict:
         return {**asdict(self), "cost_usd_estimate": self.cost_usd}
@@ -85,7 +107,7 @@ def first_message(ctx: dict) -> str:
 
 
 def request_params(model: str, messages: list) -> dict:
-    return {
+    params = {
         "model": model,
         "max_tokens": MAX_TOKENS,
         "system": SYSTEM,
@@ -94,9 +116,10 @@ def request_params(model: str, messages: list) -> dict:
         "thinking": {"type": "adaptive"},
         "output_config": {"effort": EFFORT},
         "cache_control": {"type": "ephemeral"},
-        "betas": [FALLBACK_BETA],
-        "fallbacks": "default",
     }
+    if MODELS[model]["fallback"]:
+        params |= {"betas": [FALLBACK_BETA], "fallbacks": "default"}
+    return params
 
 
 def _add_usage(result: RunResult, usage) -> None:
@@ -114,10 +137,12 @@ def run(session, lane, job_id: int, client, *, model: str = MODEL, max_turns: in
     """Work the lane until the agent finishes or a limit is reached. Commits after every
     turn, so evidence written before a failure is kept. Raises agenttools.RunRefused
     when the lane may not be worked by an agent at all."""
+    if model not in MODELS:
+        raise ValueError(f"unsupported agent model: {model}")
     tools = agenttools.Toolbox(session, lane, job_id, transport=transport, sleep=sleep,
                                max_requests=max_requests)
     messages = [{"role": "user", "content": first_message(executors.lane_context(session, lane))}]
-    result = RunResult(status="turn_limit")
+    result = RunResult(status="turn_limit", model=model)
 
     def sync():
         result.requests, result.evidence_added = tools.requests, tools.evidence_added

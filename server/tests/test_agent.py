@@ -560,3 +560,65 @@ def test_blobs_are_served_only_when_evidence_refers_to_them(api):
     missing = hashlib.sha256(b"never stored").hexdigest()
     api.post(f"/lanes/{lane}/evidence", json={"kind": "file", "sha256": missing, "summary": "s"})
     assert api.get(f"/blobs/{missing}").status_code == 404
+
+
+# ---- model choice ------------------------------------------------------------
+
+def test_model_is_configurable_and_unknown_models_are_refused(monkeypatch):
+    monkeypatch.delenv("ATTACKLEDGER_AGENT_MODEL", raising=False)
+    assert agentloop.configured_model() == "claude-opus-5-5"
+    monkeypatch.setenv("ATTACKLEDGER_AGENT_MODEL", "claude-haiku-5-5")
+    assert agentloop.configured_model() == "claude-haiku-5-5"
+    monkeypatch.setenv("ATTACKLEDGER_AGENT_MODEL", "claude-haiku-5-5-20260101")
+    with pytest.raises(ValueError, match="not supported"):
+        agentloop.configured_model()
+
+
+def test_haiku_requests_no_fallback_and_costs_are_per_model():
+    opus = agentloop.request_params("claude-opus-5-5", [])
+    sonnet = agentloop.request_params("claude-sonnet-5-5", [])
+    haiku = agentloop.request_params("claude-haiku-5-5", [])
+    assert opus["fallbacks"] == sonnet["fallbacks"] == "default"
+    assert "fallbacks" not in haiku and "betas" not in haiku
+    usage = {"input": 1_000_000, "output": 100_000, "cache_read": 0, "cache_write": 0}
+    cost = {m: agentloop.RunResult("finished", model=m, usage=dict(usage)).cost_usd for m in agentloop.MODELS}
+    assert cost == {"claude-opus-5-5": 6.0, "claude-sonnet-5-5": 3.0, "claude-haiku-5-5": 0.15}
+
+
+def test_worker_runs_the_configured_model_and_records_it(session, monkeypatch):
+    worker = load_worker()
+    monkeypatch.setenv("ATTACKLEDGER_AGENT_MODEL", "claude-sonnet-5-5")
+    lane, _ = make_lane(session)
+    job = agent_job(session, lane)
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
+    worker.run_agent(session, job, client=client)
+    assert client.requests[0]["model"] == "claude-sonnet-5-5" and job.result["model"] == "claude-sonnet-5-5"
+    monkeypatch.setenv("ATTACKLEDGER_AGENT_MODEL", "gpt-x")
+    job2 = agent_job(session, lane)
+    with pytest.raises(RuntimeError, match="not supported"):
+        worker.run_agent(session, job2, client=FakeClient([]))
+
+
+# ---- worker: interrupted jobs ------------------------------------------------
+
+def test_jobs_left_running_are_marked_failed(session):
+    worker = load_worker()
+    lane, _ = make_lane(session)
+    eng_id = lane.asset.engagement_id
+    now = datetime.now(timezone.utc)
+    from datetime import timedelta
+    fresh = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running, started_at=now)
+    old = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.running,
+              started_at=now - timedelta(seconds=worker.JOB_TIMEOUT + worker.STALE_GRACE + 60))
+    queued = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.queued)
+    done = Job(engagement_id=eng_id, kind="probe", targets=["a"], status=JobStatus.done, started_at=now)
+    session.add_all([fresh, old, queued, done])
+    session.commit()
+    # Between jobs: only a run past the time limit plus the grace period.
+    assert worker.recover_interrupted(session, all_running=False) == [old.id]
+    assert old.status == JobStatus.failed and "interrupted" in old.log and old.finished_at
+    assert fresh.status == JobStatus.running
+    # At startup: every running job belonged to a worker that is gone.
+    assert worker.recover_interrupted(session, all_running=True) == [fresh.id]
+    assert {j.status for j in (fresh, old)} == {JobStatus.failed}
+    assert queued.status == JobStatus.queued and done.status == JobStatus.done

@@ -133,6 +133,7 @@ function AgentRuns({ lane, onLaneChanged }: { lane: LaneDetail; onLaneChanged: (
                       {plural(r.evidence_added ?? 0, "evidence entry", "evidence entries")},{" "}
                       {plural(r.items_marked ?? 0, "item")} marked
                       {r.cost_usd_estimate !== undefined && `, about $${r.cost_usd_estimate.toFixed(2)}`}
+                      {r.model && ` on ${r.model}`}
                     </span>
                   )}
                   <span className="job-actions">

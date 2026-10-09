@@ -23,6 +23,14 @@ local lab.
   (sandboxed plain text, only for hashes that evidence cites).
 - **UI:** choose the lane's executor, start and follow agent runs, see why a run
   failed, and open the raw exchange behind each agent evidence entry.
+- **Agent model setting** `ATTACKLEDGER_AGENT_MODEL` on the worker: `claude-opus-5-5`
+  (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
+  models are refused. The cost estimate uses the chosen model's price; Haiku requests
+  no server-side fallback (it has none). The model is shown on each run.
+- **Interrupted jobs are recovered.** At startup the worker marks every job left
+  `running` as failed with a reason; between jobs it does the same for any run past the
+  time limit plus `WORKER_STALE_GRACE` (default 10 min). Results from finished batches
+  and an agent's evidence are kept. One worker per database is assumed.
 - Lab: `/go` redirects to an `.invalid` host, to check that tools never follow it.
 - 44 tests for the agent layer, including the gates, a scripted end-to-end run and
   the API. Positive controls: removing the host check, the pacing, the reserved

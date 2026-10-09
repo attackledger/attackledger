@@ -135,6 +135,7 @@ export interface Job {
 export interface AgentResult {
   limits?: { max_turns?: number; max_requests?: number };
   status?: "finished" | "ended" | "turn_limit" | "cancelled" | "refused" | "timed_out";
+  model?: string;
   turns?: number;
   requests?: number;
   evidence_added?: number;

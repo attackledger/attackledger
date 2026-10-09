@@ -190,6 +190,10 @@ from the lane. The agent:
   items done or N/A, and records leads;
 - **cannot close the lane.** You review the evidence and sign the receipt.
 
+`ATTACKLEDGER_AGENT_MODEL` picks the model: `claude-opus-5-5` (default),
+`claude-sonnet-5-5` (half the price) or `claude-haiku-5-5` (much cheaper, weaker for
+this work). Set a monthly spend limit in the Anthropic Console before the first run.
+
 Runs stop at a turn limit, a request budget and the worker time limit. The run shows a
 token cost estimate. The loop has not yet run against the live API: try it on the lab first.
 
