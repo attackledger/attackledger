@@ -1,6 +1,0 @@
-{"at":"2026-10-09T09:32:42.050936+00:00","request":{"headers":{"User-Agent":"AttackLedger/0.6 (lab-researcher)","X-Bug-Bounty":"lab-researcher"},"method":"GET","url":"http://shop.lab.test:8443/static/app.js"},"response":{"body_bytes":231,"headers":[["Server","nginx/1.27.5"],["Date","Fri, 09 Oct 2026 09:32:42 GMT"],["Content-Type","application/javascript"],["Content-Length","231"],["Connection","close"]],"status":200,"truncated":false}}
-
-fetch("/api/v1/items?page=1"); fetch("/api/v1/cart");
-const ORDERS = gql`query ListOrders { orders { id } }`;
-const cfg = { awsKeyId: "AKIALABTARGETKEY0001", stripe: "pk_live_51LabShopPublishable" };
-//# sourceMappingURL=app.js.map

@@ -1,1 +1,0 @@
-A port scan is needed and cannot be done with read-only HTTP. The recon pipeline output lists open ports 80 and 8443, and in this run a connection to 443 was refused. A person should accept or extend the pipeline scan.

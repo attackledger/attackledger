@@ -1,0 +1,5 @@
+{"at":"2026-10-09T20:03:22.322932+00:00","redaction":{"kinds":[],"not_redacted":[],"redacted":0},"request":{"headers":{"User-Agent":"AttackLedger/0.6 (lab-researcher)","X-Bug-Bounty":"lab-researcher"},"method":"OPTIONS","url":"http://shop.lab.test/"},"response":{"body_bytes":307,"headers":[["server","nginx/1.27.5"],["date","Fri, 09 Oct 2026 20:03:22 GMT"],["content-type","text/html"],["content-length","307"],["Connection","close"]],"status":200,"truncated":false}}
+
+<html><head><title>Lab shop</title><script src="/static/app.js"></script></head>
+<body><a href="/products?id=1">Products</a> <a href="/products?id=2">More</a>
+<a href="/about">About</a> <a href="/search.php?q=shoes">Search</a> <a href="/account/logout">Sign out</a> <a href="/admin/">Admin</a></body></html>

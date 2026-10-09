@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Seed a demo engagement so every ledger state is visible in the UI.
 
-Uses only fictional *.lab.test hosts. Usage: python3 tools/seed_demo.py [API_BASE]
+Uses only fictional *.lab.test and *.client.test hosts. Usage: python3 tools/seed_demo.py [API_BASE]
+Set ATTACKLEDGER_API_TOKEN when the API requires sign-in.
 """
 import hashlib
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -13,11 +15,14 @@ SIGN = {"closed_by": "demo reviewer", "reviewed": True}
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000").rstrip("/")
 
 
+TOKEN = os.environ.get("ATTACKLEDGER_API_TOKEN")
+
+
 def call(method, path, body=None):
     req = urllib.request.Request(
         BASE + path, method=method,
         data=json.dumps(body).encode() if body is not None else None,
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", **({"authorization": f"Bearer {TOKEN}"} if TOKEN else {})},
     )
     try:
         with urllib.request.urlopen(req) as r:
@@ -70,7 +75,10 @@ call("POST", f"/engagements/{lab['id']}/attest", {
     "operator": "lab-operator", "policy_url": "https://example.com/policy", "confirm": True})
 call("POST", f"/engagements/{lab['id']}/assets", {"host": "shop.lab.test"})
 
-# A WSTG pentest so the Controls view has something to show.
+# A WSTG pentest so the Controls view has something to show. Information gathering is
+# receipted on both hosts; Authentication is in progress next to it (lanes are worked in
+# parallel and signed only once their dependency is receipted, D-047). The import that
+# tools/demo_stack.py adds opens Session management and Input validation the same way.
 pt = call("POST", "/engagements", {"name": "Client web app", "pack_id": "web-pentest-wstg"})
 app_host = call("POST", f"/engagements/{pt['id']}/assets", {"host": "app.client.test"})
 api_host = call("POST", f"/engagements/{pt['id']}/assets", {"host": "api.client.test"})
@@ -78,11 +86,20 @@ for asset in (app_host, api_host):
     info = call("POST", "/lanes", {"asset_id": asset["id"], "role": "info"})
     resolve(info, na_every=5)
     call("POST", f"/lanes/{info['id']}/close", SIGN)
-for key in ("conf", "athz", "sess"):
+for key in ("conf", "athz"):
     lane = call("POST", "/lanes", {"asset_id": app_host["id"], "role": key})
     resolve(lane, na_every=5)
     call("POST", f"/lanes/{lane['id']}/close", SIGN)
 athn = call("POST", "/lanes", {"asset_id": app_host["id"], "role": "athn"})
 resolve(athn, leave_open=3, na_every=5)
+
+# A finished pentest from last year. tools/demo_retention.py deletes its content after the
+# lanes are signed, so the demo shows deleted content next to a report that still verifies.
+old = call("POST", "/engagements", {"name": "Client portal 2025", "pack_id": "web-pentest-wstg"})
+portal = call("POST", f"/engagements/{old['id']}/assets", {"host": "portal.client.test"})
+for key in ("info", "conf", "athn"):
+    lane = call("POST", "/lanes", {"asset_id": portal["id"], "role": key})
+    resolve(lane, na_every=5)
+    call("POST", f"/lanes/{lane['id']}/close", SIGN)
 
 print(f"seeded demo engagements: {BASE}")

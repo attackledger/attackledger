@@ -6,6 +6,7 @@
     {"name": "demo export: lab, with a void receipt", "file": "site/demo/reports/1.json", "expect": {"status": "verified"}},
     {"name": "demo export: lab recon, no receipts", "file": "site/demo/reports/2.json", "expect": {"status": "verified", "S": "SKIP", "T": "SKIP"}},
     {"name": "demo export: client web app", "file": "site/demo/reports/3.json", "expect": {"status": "verified"}},
+    {"name": "demo export: past pentest, content deleted", "file": "site/demo/reports/4.json", "expect": {"status": "verified"}},
     {"name": "demo export: lab, as HTML", "file": "site/demo/reports/1.html", "expect": {"status": "verified"}},
     {"name": "server test token (DigiCert) in a made-up receipt", "file": "tools/verifier_equivalence/fixtures/digicert-token.json", "expect": {"status": "failed", "R": "FAIL", "S": "FAIL", "T": "PASS"}},
 

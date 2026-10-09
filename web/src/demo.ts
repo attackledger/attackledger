@@ -14,6 +14,7 @@ interface Snapshot {
   get: Record<string, unknown>;
   endpoints: Record<string, Row[]>;
   leads: Record<string, Row[]>;
+  inbox?: Record<string, Row[]>;
 }
 
 let snapshot: Promise<Snapshot> | null = null;
@@ -54,6 +55,40 @@ export async function demoCall<T>(path: string, init?: RequestInit): Promise<T> 
       (!q.get("module") || r.module === q.get("module")) &&
       (!q.get("kind") || r.kind === q.get("kind"))) as T;
   }
+  const inbox = url.pathname.match(/^\/engagements\/(\d+)\/inbox$/);
+  if (inbox) {
+    // The same filters as GET /engagements/{id}/inbox, over every entry of the snapshot.
+    const all = data.inbox?.[inbox[1]] ?? [];
+    const text = (q.get("q") ?? "").trim();
+    const status = (q.get("status") ?? "").trim().toLowerCase();
+    const code = (r: Row) => (typeof r.status === "number" ? r.status : null);
+    const statusOk = (r: Row) => {
+      const c = code(r);
+      if (status === "none") return c === null;
+      if (/^[1-5]xx$/.test(status)) return c !== null && Math.floor(c / 100) === Number(status[0]);
+      return String(c) === status;
+    };
+    const rows = all.filter((r) =>
+      (!q.get("state") || r.state === q.get("state")) &&
+      (!q.get("host") || r.host === q.get("host")) &&
+      (!q.get("method") || r.method === q.get("method")?.toUpperCase()) &&
+      (!q.get("batch") || String(r.batch_id) === q.get("batch")) &&
+      (!status || statusOk(r)) &&
+      (!text || String(r.url).includes(text)));
+    const counts = { new: 0, mapped: 0, dismissed: 0 } as Record<string, number>;
+    for (const r of all) counts[String(r.state)] = (counts[String(r.state)] ?? 0) + 1;
+    const offset = Number(q.get("offset") ?? 0);
+    const limit = Number(q.get("limit") ?? 100);
+    return {
+      total: rows.length, offset, limit, counts, hosts: [...new Set(all.map((r) => String(r.host)))].sort(),
+      entries: rows.slice(offset, offset + limit),
+    } as T;
+  }
   if (url.pathname in data.get) return data.get[url.pathname] as T;
   throw new Error("That part of the app is not in the demo data.");
+}
+
+/** An imported entry's stored request, response or record: a file next to the demo. */
+export function demoInboxRaw(engId: number, entryId: number, part: string): string {
+  return demoUrl(`inbox/${engId}/${entryId}-${part}.txt`);
 }

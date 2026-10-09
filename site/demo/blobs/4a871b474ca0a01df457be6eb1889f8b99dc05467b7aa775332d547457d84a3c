@@ -1,0 +1,9 @@
+{"at":"2026-10-09T20:03:19.734263+00:00","redaction":{"kinds":[],"not_redacted":[],"redacted":0},"request":{"headers":{"User-Agent":"AttackLedger/0.6 (lab-researcher)","X-Bug-Bounty":"lab-researcher"},"method":"GET","url":"http://shop.lab.test/go"},"response":{"body_bytes":145,"headers":[["server","nginx/1.27.5"],["date","Fri, 09 Oct 2026 20:03:19 GMT"],["content-type","text/html"],["content-length","145"],["location","https://redirected.invalid/"],["Connection","close"]],"status":302,"truncated":false}}
+
+<html>
+<head><title>302 Found</title></head>
+<body>
+<center><h1>302 Found</h1></center>
+<hr><center>nginx/1.27.5</center>
+</body>
+</html>

@@ -1,0 +1,10 @@
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Date: Thu, 08 Oct 2026 09:13:21 GMT
+Content-Type: text/html
+Content-Length: 307
+Connection: keep-alive
+
+<html><head><title>Lab shop</title><script src="/static/app.js"></script></head>
+<body><a href="/products?id=1">Products</a> <a href="/products?id=2">More</a>
+<a href="/about">About</a> <a href="/search.php?q=shoes">Search</a> <a href="/account/logout">Sign out</a> <a href="/admin/">Admin</a></body></html>
