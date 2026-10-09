@@ -1,3 +1,5 @@
+import base64
+import binascii
 import hmac
 from contextlib import asynccontextmanager
 
@@ -90,6 +92,7 @@ def _lane_view(lane: Lane) -> dict:
     pack = _pack_of(lane.asset.engagement)
     return {
         "id": lane.id,
+        "engagement_id": lane.asset.engagement_id,
         "host": lane.asset.host,
         "role": lane.role,
         "role_name": pack.lane(lane.role).name if lane.role in pack.lane_index else lane.role,
@@ -222,6 +225,62 @@ def add_evidence(lane_id: int, body: EvidenceIn, session: Session = Depends(get_
                                 summary=body.summary, uri=body.uri, item_id=item_id)
     session.commit()
     return {"id": ev.id}
+
+
+MAX_ATTACH_BYTES = 5_000_000
+
+
+class AttachIn(BaseModel):
+    """Evidence a person attaches from the lane panel. The server hashes and keeps the bytes."""
+    item_idx: int
+    kind: str = Field(pattern="^(note|file|run)$")
+    text: str | None = Field(default=None, max_length=20_000)       # note
+    filename: str | None = Field(default=None, max_length=200)      # file
+    content_b64: str | None = Field(default=None, max_length=7_000_000)
+    job_id: int | None = None                                       # run
+    summary: str | None = Field(default=None, max_length=2_000)
+
+
+@app.post("/lanes/{lane_id}/attach", status_code=201)
+def attach_evidence(lane_id: int, body: AttachIn, session: Session = Depends(get_session)):
+    """Attach a note, a file or a recon run to one checklist item. Notes and files are
+    stored in the blob store, so the evidence hash can be opened and checked later."""
+    lane = _get(session, Lane, lane_id)
+    item = _item(lane, body.item_idx)
+    summary = (body.summary or "").strip()
+    if body.kind == "note":
+        text = (body.text or "").strip()
+        if not text:
+            raise HTTPException(422, "write the note first")
+        digest, uri, kind, summary = blobs.put(text.encode()), None, "note", summary or text[:2_000]
+    elif body.kind == "file":
+        name = (body.filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+        if not name or not body.content_b64:
+            raise HTTPException(422, "choose a file to attach")
+        try:
+            data = base64.b64decode(body.content_b64, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(422, "the file could not be read")
+        if len(data) > MAX_ATTACH_BYTES:
+            raise HTTPException(422, f"files are limited to {MAX_ATTACH_BYTES // 1_000_000} MB")
+        if not summary:
+            raise HTTPException(422, "say in a sentence what the file shows")
+        digest, uri, kind = blobs.put(data), f"file:{name}", "file"
+    else:
+        job = session.get(Job, body.job_id) if body.job_id else None
+        if job is None or job.engagement_id != lane.asset.engagement_id:
+            raise HTTPException(422, "choose a recon run from this engagement")
+        if job.status not in (JobStatus.done, JobStatus.partial) or not job.output_sha256:
+            raise HTTPException(422, "only a finished run with recorded output can be evidence")
+        m = modules.get(job.kind)
+        label = f"{m.title if m else job.kind} run, job {job.id}"
+        digest, uri, kind = job.output_sha256, f"job:{job.id}", "file"
+        summary = f"{label}: {summary}" if summary else label
+    ev = ledger.append_evidence(session, lane, kind=kind, sha256_hex=digest, summary=summary, uri=uri,
+                                item_id=item.id)
+    session.commit()
+    session.refresh(lane)
+    return {"id": ev.id, **_lane_view(lane)}
 
 
 @app.patch("/lanes/{lane_id}/items/{idx}")

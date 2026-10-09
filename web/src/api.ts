@@ -90,6 +90,7 @@ export interface EvidenceEntry {
 
 export interface LaneDetail {
   id: number;
+  engagement_id: number;
   host: string;
   role: string;
   role_name: string;
@@ -351,6 +352,12 @@ export const api = {
       method: "POST", body: JSON.stringify({ max_turns, max_requests, max_cost_usd }),
     }),
   report: <T,>(engId: number) => call<T>(`/engagements/${engId}/report`),
+  attach: (laneId: number, body: {
+    item_idx: number; kind: "note" | "file" | "run"; text?: string; filename?: string; content_b64?: string;
+    job_id?: number; summary?: string;
+  }) => call<LaneDetail>(`/lanes/${laneId}/attach`, { method: "POST", body: JSON.stringify(body) }),
+  updateItem: (laneId: number, idx: number, state: "open" | "done" | "na", na_reason?: string) =>
+    call<LaneDetail>(`/lanes/${laneId}/items/${idx}`, { method: "PATCH", body: JSON.stringify({ state, na_reason }) }),
   closeLane: (laneId: number, closed_by: string, reviewed: boolean) =>
     call<LaneDetail>(`/lanes/${laneId}/close`, { method: "POST", body: JSON.stringify({ closed_by, reviewed }) }),
 };

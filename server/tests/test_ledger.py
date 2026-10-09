@@ -397,3 +397,60 @@ def test_recon_summary_counts_only_in_scope_hosts(client):
     assert s["hosts"] == 2 and s["resolved"] == 0 and s["live"] == 0 and s["urls"] == 0
     assert client.get(f"/engagements/{e}/endpoints?module=crawl").json() == {"total": 0, "items": []}
     assert client.get(f"/engagements/{e}/leads?module=nuclei").json() == []
+
+
+def _lane(client):
+    e = client.post("/engagements", json={"name": "attach"}).json()["id"]
+    a = client.post(f"/engagements/{e}/assets", json={"host": "shop.lab.test"}).json()["id"]
+    return e, client.post("/lanes", json={"asset_id": a, "role": "recon"}).json()["id"]
+
+
+def test_attach_note_and_file_store_the_bytes_behind_the_hash(client, tmp_path, monkeypatch):
+    import base64
+    from app import blobs
+    monkeypatch.setenv("ATTACKLEDGER_BLOBS", str(tmp_path / "blobs"))
+    _, lane = _lane(client)
+    r = client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note", "text": "robots.txt lists /backup/"})
+    assert r.status_code == 201
+    ev = r.json()["evidence"][-1]
+    assert ev["kind"] == "note" and ev["item_idx"] == 1 and blobs.get(ev["sha256"]) == b"robots.txt lists /backup/"
+
+    data = b"\x89PNG fake screenshot"
+    r = client.post(f"/lanes/{lane}/attach", json={"item_idx": 2, "kind": "file", "filename": "C:\\shots\\a.png",
+                                                  "content_b64": base64.b64encode(data).decode(),
+                                                  "summary": "Admin panel answers 401."})
+    ev = r.json()["evidence"][-1]
+    assert ev["uri"] == "file:a.png" and ev["sha256"] == h_bytes(data) and blobs.get(ev["sha256"]) == data
+    assert client.get(f"/blobs/{ev['sha256']}").content == data
+    # A file without a summary, an empty note, bad base64 and a missing item are refused.
+    assert client.post(f"/lanes/{lane}/attach", json={"item_idx": 2, "kind": "file", "filename": "a.png",
+                                                     "content_b64": base64.b64encode(data).decode()}).status_code == 422
+    assert client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "note", "text": "  "}).status_code == 422
+    assert client.post(f"/lanes/{lane}/attach", json={"item_idx": 1, "kind": "file", "filename": "a",
+                                                     "content_b64": "%%%", "summary": "s"}).status_code == 422
+    assert client.post(f"/lanes/{lane}/attach", json={"item_idx": 99, "kind": "note", "text": "x"}).status_code == 404
+    # Evidence makes "done" possible, as with the plain evidence route.
+    assert client.patch(f"/lanes/{lane}/items/1", json={"state": "done"}).status_code == 200
+
+
+def test_attach_run_needs_a_finished_run_from_the_same_engagement(client):
+    from app import db
+    from app.models import Job, JobStatus
+    e, lane = _lane(client)
+    other = client.post("/engagements", json={"name": "other"}).json()["id"]
+    s = next(app.dependency_overrides[db.get_session]())
+    done = Job(engagement_id=e, kind="probe", targets=["shop.lab.test"], status=JobStatus.done, output_sha256="a" * 64)
+    running = Job(engagement_id=e, kind="probe", targets=["x"], status=JobStatus.running)
+    foreign = Job(engagement_id=other, kind="probe", targets=["x"], status=JobStatus.done, output_sha256="b" * 64)
+    s.add_all([done, running, foreign])
+    s.commit()
+    r = client.post(f"/lanes/{lane}/attach", json={"item_idx": 3, "kind": "run", "job_id": done.id, "summary": "2 live services"})
+    ev = r.json()["evidence"][-1]
+    assert r.status_code == 201 and ev["sha256"] == "a" * 64 and ev["uri"] == f"job:{done.id}"
+    assert ev["summary"] == f"Find live web servers run, job {done.id}: 2 live services"
+    for j in (running, foreign):
+        assert client.post(f"/lanes/{lane}/attach", json={"item_idx": 3, "kind": "run", "job_id": j.id}).status_code == 422
+
+
+def h_bytes(b: bytes) -> str:
+    return hashlib.sha256(b).hexdigest()

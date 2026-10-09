@@ -678,6 +678,18 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 
 .item-key { display: block; font-size: var(--step--2); color: var(--text-faint); letter-spacing: 0.03em; }
 .item-controls { grid-column: 3; margin-top: 0.3rem; }
+.item-work { grid-column: 3; margin-top: 0.4rem; display: grid; gap: 0.45rem; }
+.item-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.work-form { display: grid; gap: 0.6rem; padding: 0.75rem 0.85rem; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
+.work-form label { display: grid; gap: 0.25rem; font-size: var(--step--1); color: var(--text-soft); }
+.work-form textarea, .work-form input:not([type="radio"]):not([type="file"]), .work-form select { padding: 0.45rem 0.6rem; background: var(--bg); color: var(--text); border: 1px solid var(--rule); border-radius: var(--radius); font: var(--step--1) / 1.4 var(--body); width: 100%; }
+.work-form input[type="file"] { font-size: var(--step--1); }
+.work-source { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; }
+.work-source legend { padding: 0; margin-bottom: 0.3rem; font-weight: 700; font-size: var(--step--1); color: var(--text); }
+.work-source .check { display: inline-flex; grid-auto-flow: column; align-items: center; gap: 0.35rem; color: var(--text); }
+.work-form .hint { margin: 0; font-size: var(--step--2); color: var(--text-faint); }
+.work-buttons { display: flex; gap: 0.4rem; }
+.item-work > .hint { margin: 0; font-size: var(--step--2); color: var(--red); }
 
 .controls { display: grid; gap: 1.25rem; max-width: 72rem; }
 .controls-intro { margin: 0; max-width: 72ch; }

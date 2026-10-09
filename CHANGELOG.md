@@ -27,6 +27,11 @@ local lab.
   (default), `claude-sonnet-5-5` or `claude-haiku-5-5` for a cheaper first test. Unknown
   models are refused. The cost estimate uses the chosen model's price; Haiku requests
   no server-side fallback (it has none). The model is shown on each run.
+- **Work a lane from the lane panel.** On a manually worked lane, each item now has Add
+  evidence (a note, a file up to 5 MB, or a finished recon run), Mark done, Not applicable
+  (with a reason) and Reopen. `POST /lanes/{id}/attach` hashes notes and files on the
+  server and keeps the bytes in the blob store, so "View raw" opens them; a recon run
+  contributes its output hash. Changing a receipted lane warns that the receipt goes void.
 - **Read-only demo** (`site/demo/`): the real web app built with `VITE_DEMO=1`. Reads come
   from a snapshot exported by `tools/export_demo.py`, every change is refused with a
   message, and reports are static files. `tools/build_demo.sh` builds it from a demo stack

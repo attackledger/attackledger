@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Cell, Coverage, CoverageRow, EngagementSummary, LaneContext, LaneDetail, PackSummary } from "./api";
+import { api, Cell, Coverage, CoverageRow, EngagementSummary, Job, LaneContext, LaneDetail, PackSummary } from "./api";
 import { Executor } from "./Agent";
+import { ItemWork } from "./LaneWork";
 import { DEMO } from "./demo";
 import { Controls } from "./Controls";
 import { Recon } from "./Recon";
@@ -433,6 +434,11 @@ const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○" 
 function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => void; onChanged: () => void }) {
   const [lane, setLane] = useState<LaneDetail | null>(null);
   const [ctx, setCtx] = useState<LaneContext | null>(null);
+  const [runs, setRuns] = useState<Job[]>([]);
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    api.modules().then((ms) => setTitles(Object.fromEntries(ms.map((m) => [m.kind, m.title])))).catch(() => {});
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
@@ -442,6 +448,10 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
     setError(null);
     api.lane(laneId).then(setLane).catch((e) => setError(e.message));
     api.laneContext(laneId).then(setCtx).catch(() => {});
+    api.lane(laneId)
+      .then((l) => api.jobs(l.engagement_id))
+      .then((js) => setRuns(js.filter((j) => (j.status === "done" || j.status === "partial") && j.output_sha256)))
+      .catch(() => {});
   }, [laneId]);
 
   useEffect(() => {
@@ -530,6 +540,9 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
                         {i.controls.map((c) => <span key={c} className="tag">{c}</span>)}
                       </span>
                     )}
+                    {lane.executor === "manual" && (
+                      <ItemWork lane={lane} item={i} runs={runs} titles={titles} onChanged={(l) => { setLane(l); onChanged(); }} />
+                    )}
                   </li>
                 );
               })}
@@ -549,7 +562,7 @@ function Folio({ laneId, onClose, onChanged }: { laneId: number; onClose: () => 
                     </span>
                     <span className="ev-ref">
                       <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>
-                      {e.summary.startsWith("[agent] ") && (
+                      {!DEMO && (e.summary.startsWith("[agent] ") || e.uri?.startsWith("file:") || (e.kind === "note" && !e.uri)) && (
                         <a href={`/api/blobs/${e.sha256}`} target="_blank" rel="noopener noreferrer">View raw</a>
                       )}
                     </span>
