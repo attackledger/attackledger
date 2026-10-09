@@ -41,6 +41,15 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/packs"): ("signed_in", None),
     ("GET", "/executors"): ("signed_in", None),
     ("GET", "/imports/formats"): ("signed_in", None),
+    # The API's own documentation (main.py serves it as ordinary routes, so this table
+    # applies): whenever the API asks for sign-in, so does its map of every route.
+    ("GET", "/openapi.json"): ("signed_in", None),
+    ("GET", "/docs"): ("signed_in", None),
+    # The offline verifier and the timestamp roots it trusts, for the Report and Verify tabs.
+    ("GET", "/verifier"): ("signed_in", None),
+    ("GET", "/verifier/verify_report.py"): ("signed_in", None),
+    ("GET", "/verifier/tsa-roots/{name}"): ("signed_in", None),
+    ("GET", "/verifier/attackledger-verifier.zip"): ("signed_in", None),
 
     ("POST", "/engagements"): ("owner", None),
     ("PATCH", "/engagements/{eng_id}"): ("owner", ENG),
@@ -105,8 +114,6 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/lanes/{lane_id}/receipt/timestamp"): ("reviewer", LANE),
 }
 
-# FastAPI's own documentation routes.
-DOC_ROUTES = {"/docs", "/docs/oauth2-redirect", "/openapi.json", "/redoc"}
 
 
 def _engagements(session, kind: str, params: dict) -> set[int] | None:
@@ -132,8 +139,6 @@ def _engagements(session, kind: str, params: dict) -> set[int] | None:
 def authorize(request: Request, session=Depends(get_session)) -> None:
     route = request.scope.get("route")
     path = getattr(route, "path", request.url.path)
-    if path in DOC_ROUTES:
-        return
     rule = RULES.get((request.method, path))
     if rule and rule[0] == "public":
         return

@@ -15,10 +15,11 @@ export function AddHost({ engId, onAdded, id = "new-host", className = "inline-f
     const h = host.trim();
     if (!h) return;
     try {
-      await api.addAsset(engId, h, inScope);
+      const a = await api.addAsset(engId, h, inScope);
       setHost("");
       setError(null);
-      setAdded(`Added ${h}${inScope ? "" : " as out of scope"}.`);
+      // The scope rules decide: a host asked for in scope but outside them is stored out of scope, and the API says why.
+      setAdded(a.scope_note ? `Added ${a.host}, ${a.scope_note}.` : `Added ${a.host}${a.in_scope ? "" : " as out of scope"}.`);
       onAdded();
     } catch (e) {
       setAdded(null);

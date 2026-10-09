@@ -1,13 +1,14 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  api, type ImportBatch, type ImportFormats, type InboxEntry, type InboxEntryDetail, type InboxFilter, type InboxPage,
-  type RefusedRow,
+  api, ApiError, type AlreadyImported, type ImportBatch, type ImportFormats, type InboxEntry, type InboxEntryDetail,
+  type InboxFilter, type InboxPage, type MapTarget, type RefusedRow,
 } from "./api";
 import { plural } from "./words";
 
 // Evidence import (D-029). A tester uploads an export from Burp, Caido or a browser; its
 // in-scope entries wait here, redacted, until a person maps each one to checklist items.
-// Nothing reaches the ledger without that step. Viewers can read the inbox and the files.
+// Nothing reaches the ledger without that step. Reviewers and viewers can read the inbox and
+// the files, dismissed entries included, to judge whether coverage is complete.
 
 const STATES = [
   { key: "new", label: "To map" },
@@ -87,30 +88,35 @@ function Upload({ engId, formats, onDone }: {
   const [format, setFormat] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repeat, setRepeat] = useState<AlreadyImported | null>(null);   // the same file was imported before
   const limit = formats?.limits.file_bytes ?? 50_000_000;
 
-  async function submit(ev: FormEvent) {
-    ev.preventDefault();
+  async function send(form: HTMLFormElement, reimport: boolean) {
     if (!file) return setError("Choose a file to import.");
     if (file.size > limit) return setError(`Files are limited to ${size(limit)}. Export fewer items.`);
     setBusy(true);
     setError(null);
+    setRepeat(null);
     try {
-      onDone(await api.importFile(engId, file, format || null));
+      onDone(await api.importFile(engId, file, format || null, reimport));
       setFile(null);
-      (ev.target as HTMLFormElement).reset();
+      form.reset();
     } catch (e) {
-      setError((e as Error).message);
+      const d = e instanceof ApiError ? (e.detail as AlreadyImported | null) : null;
+      if (e instanceof ApiError && e.status === 409 && d?.error === "already_imported") setRepeat(d);
+      else setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <form className="work-form import-upload" onSubmit={submit} aria-describedby="import-help">
+    <form className="work-form import-upload" aria-describedby="import-help"
+          onSubmit={(ev) => { ev.preventDefault(); void send(ev.currentTarget, false); }}>
       <label>
         Export file
-        <input type="file" accept=".har,.json,.xml" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <input type="file" accept=".har,.json,.xml"
+               onChange={(e) => { setFile(e.target.files?.[0] ?? null); setRepeat(null); }} />
       </label>
       <label>
         Format
@@ -125,8 +131,24 @@ function Upload({ engId, formats, onDone }: {
         refused and not stored; cookies, tokens, keys and passwords are redacted before anything is stored.
       </p>
       {error && <p className="field-error" role="alert">{error}</p>}
+      {repeat && (
+        <div className="field-error" role="alert">
+          <p>
+            This file was already imported on {when(repeat.earlier.created_at)} by {repeat.earlier.created_by_name}
+            {repeat.earlier.filename ? ` (as ${repeat.earlier.filename})` : ""}. Importing it again adds nothing new:
+            its rows already in the inbox count as duplicates.
+          </p>
+          <div className="work-buttons">
+            <button type="button" className="btn ghost small" disabled={busy}
+                    onClick={(ev) => { const f = ev.currentTarget.form; if (f) void send(f, true); }}>
+              Import it again
+            </button>
+            <button type="button" className="btn ghost small" onClick={() => setRepeat(null)}>Keep the earlier import</button>
+          </div>
+        </div>
+      )}
       <div className="work-buttons">
-        <button type="submit" className="btn" disabled={busy || !file}>{busy ? "Importing…" : "Import"}</button>
+        <button type="submit" className="btn" disabled={busy || !file || !!repeat}>{busy ? "Importing…" : "Import"}</button>
       </div>
     </form>
   );
@@ -138,10 +160,13 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
 }) {
   const [e, setE] = useState<InboxEntryDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [chosen, setChosen] = useState<string[]>([]);       // "laneId:idx"
+  const [chosen, setChosen] = useState<string[]>([]);       // "role:idx": one lane per role on a host
   const [extra, setExtra] = useState("");
   const [note, setNote] = useState("");
   const [also, setAlso] = useState(false);
+  // Off by default: one imported exchange is often part of a test, and "done" says the test was
+  // performed. The lane counts items that have evidence and still wait to be marked done.
+  const [markDone, setMarkDone] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
@@ -150,19 +175,22 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
     api.inboxEntry(engId, id).then(setE).catch((x) => setError((x as Error).message));
   }, [engId, id]);
   useEffect(() => {
-    setE(null); setChosen([]); setNote(""); setDone(null); setError(null); setAlso(false);
+    setE(null); setChosen([]); setNote(""); setDone(null); setError(null); setAlso(false); setMarkDone(false);
     load();
   }, [load]);
 
   if (!e) return <section className="panel" aria-live="polite"><p className="muted">{error ?? "Loading the entry…"}</p></section>;
 
-  const items = e.targets.flatMap((t) => t.items.map((i) => ({ ...i, lane_id: t.lane_id, role: t.role })));
+  const usable = e.targets.filter((t) => t.opened || t.can_open);
+  const items = e.targets.flatMap((t) => t.items.map((i) => ({ ...i, role: t.role, opened: t.opened })));
+  const split = (k: string) => { const at = k.lastIndexOf(":"); return { role: k.slice(0, at), idx: Number(k.slice(at + 1)) }; };
   const name = (k: string) => {
-    const [lane, idx] = k.split(":").map(Number);
-    const i = items.find((x) => x.lane_id === lane && x.idx === idx);
-    return i ? `${i.key} ${i.text}` : k;
+    const { role, idx } = split(k);
+    const i = items.find((x) => x.role === role && x.idx === idx);
+    return i ? `${i.key} ${i.text}${i.opened ? "" : " (opens the lane)"}` : k;
   };
-  const mapped = new Set(e.mappings.map((m) => `${m.lane_id}:${m.item_idx}`));
+  const roleOf = (laneId: number) => e.targets.find((t) => t.lane_id === laneId)?.role ?? String(laneId);
+  const mapped = new Set(e.mappings.map((m) => `${roleOf(m.lane_id)}:${m.item_idx}`));
   const toggle = (k: string) => setChosen((c) => (c.includes(k) ? c.filter((x) => x !== k) : [...c, k]));
   const others = selectedSameHost.filter((x) => x !== e.id);
   const raw = (part: string) => `/api/engagements/${engId}/inbox/${e.id}/raw/${part}`;
@@ -183,14 +211,26 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
 
   const map = (ev: FormEvent) => {
     ev.preventDefault();
-    const targets = chosen.map((k) => { const [lane_id, item_idx] = k.split(":").map(Number); return { lane_id, item_idx }; });
+    const targets: MapTarget[] = chosen.map((k) => {
+      const { role, idx } = split(k);
+      const lane = e.targets.find((t) => t.role === role)?.lane_id;
+      return lane != null ? { lane_id: lane, item_idx: idx } : { role, item_idx: idx };   // by role: the lane opens
+    });
     void run(async () => {
-      const r = await api.mapEntries(engId, [e.id, ...(also ? others : [])], targets, note);
+      const r = await api.mapEntries(engId, [e.id, ...(also ? others : [])], targets, note, markDone);
       setChosen([]);
       setNote("");
-      return r.evidence_added.length
-        ? `Added ${plural(r.evidence_added.length, "evidence entry", "evidence entries")} to the ledger.`
-        : "Already mapped to these items; nothing was added.";
+      const lanes = r.opened.filter((x) => x.startsWith("lane ")).length;
+      const said = [
+        r.evidence_added.length
+          ? `Added ${plural(r.evidence_added.length, "evidence entry", "evidence entries")} to the ledger.`
+          : "Already mapped to these items; nothing was added.",
+        r.opened.some((x) => x.startsWith("host ")) ? `Added ${e.host} to the ledger.` : "",
+        lanes ? `Opened ${plural(lanes, "lane")}.` : "",
+        r.marked_done.length ? `Marked ${plural(r.marked_done.length, "item")} done.`
+          : markDone ? "" : "The items stay open until someone marks them done.",
+      ];
+      return said.filter(Boolean).join(" ");
     });
   };
 
@@ -252,8 +292,10 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
       )}
 
       {canWork && e.state !== "dismissed" && (
-        e.targets.length === 0 ? (
-          <p className="hint">No lane is open on {e.host} yet. Open one in the Ledger tab, then map this entry to its items.</p>
+        usable.length === 0 ? (
+          <p className="hint">
+            No lane can be opened on {e.host}{e.targets[0]?.why_not ? `: ${e.targets[0].why_not}` : ""}.
+          </p>
         ) : (
           <form className="work-form" onSubmit={map}>
             <fieldset className="import-pick">
@@ -261,14 +303,17 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
               {e.suggestions.length > 0 ? (
                 <ul className="import-suggestions">
                   {e.suggestions.map((s) => {
-                    const k = `${s.lane_id}:${s.item_idx}`;
+                    const k = `${s.role}:${s.item_idx}`;
                     const sid = `sug-${e.id}-${k.replace(":", "-")}`;
                     return (
                       <li key={k}>
                         <label className="check">
                           <input type="checkbox" checked={chosen.includes(k)} disabled={mapped.has(k)}
                                  onChange={() => toggle(k)} aria-describedby={sid} />
-                          <span><strong>{s.key}</strong> {s.text}{mapped.has(k) ? " (already mapped)" : ""}</span>
+                          <span>
+                            <strong>{s.key}</strong> {s.text}{mapped.has(k) ? " (already mapped)" : ""}
+                            {!s.opened && " (opens the lane)"}
+                          </span>
                         </label>
                         <span className="hint import-why" id={sid}>Suggested: {s.why.join("; ")}.</span>
                       </li>
@@ -285,24 +330,35 @@ function EntryPanel({ engId, id, canWork, selectedSameHost, rules, onChanged, on
                 }}>
                   <option value="">Choose an item on {e.host}…</option>
                   {e.targets.map((t) => (
-                    <optgroup key={t.lane_id} label={t.role}>
+                    <optgroup key={t.role} disabled={!t.opened && !t.can_open}
+                              label={t.opened ? t.name : t.can_open ? `${t.name} (opens the lane)` : `${t.name} (${t.why_not})`}>
                       {t.items.map((i) => {
-                        const k = `${t.lane_id}:${i.idx}`;
+                        const k = `${t.role}:${i.idx}`;
                         return <option key={k} value={k} disabled={mapped.has(k)}>{i.key} {i.text}</option>;
                       })}
                     </optgroup>
                   ))}
                 </select>
               </label>
-              {chosen.filter((k) => !e.suggestions.some((s) => `${s.lane_id}:${s.item_idx}` === k)).length > 0 && (
+              {chosen.filter((k) => !e.suggestions.some((s) => `${s.role}:${s.item_idx}` === k)).length > 0 && (
                 <ul className="import-chosen" aria-label="Other chosen items">
-                  {chosen.filter((k) => !e.suggestions.some((s) => `${s.lane_id}:${s.item_idx}` === k)).map((k) => (
+                  {chosen.filter((k) => !e.suggestions.some((s) => `${s.role}:${s.item_idx}` === k)).map((k) => (
                     <li key={k}>{name(k)} <button type="button" className="linklike" onClick={() => toggle(k)}>
                       Remove<span className="sr-only"> {name(k)}</span></button></li>
                   ))}
                 </ul>
               )}
+              {!e.asset && <p className="hint">{e.host} is in the scope rules but not in the ledger yet; mapping adds it.</p>}
             </fieldset>
+            <label className="check">
+              <input type="checkbox" checked={markDone} onChange={(ev) => setMarkDone(ev.target.checked)}
+                     aria-describedby={`done-help-${e.id}`} />
+              Mark these items done
+            </label>
+            <p className="hint" id={`done-help-${e.id}`}>
+              Done means the item's test was performed. Leave this off if this request is only part of it; the lane shows
+              the items that have evidence and are waiting to be marked done.
+            </p>
             <label>
               Note (optional, goes into the evidence summary)
               <textarea rows={2} maxLength={2000} value={note} onChange={(ev) => setNote(ev.target.value)} />
@@ -406,7 +462,10 @@ export function Import({ engId, canWork, onMapped }: { engId: number; canWork: b
           ? <Upload engId={engId} formats={formats} onDone={(b) => {
               setLast(b); loadBatches(); setOpenId(null); set({ state: "new", batch: b.id });
             }} />
-          : <p className="hint">Testers import files and map their entries. You can read the inbox and the imported files.</p>}
+          : <p className="hint">
+              Testers import files and map their entries. You can read every entry, including the ones not mapped yet
+              and the dismissed ones with their reasons, to judge whether coverage is complete.
+            </p>}
         {last && (
           <div className="import-result" role="status">
             <p className="status ok">Imported {last.filename ?? "the file"} ({last.format_title}): <BatchSummary b={last} /></p>
@@ -540,6 +599,7 @@ export function Import({ engId, canWork, onMapped }: { engId: number; canWork: b
                   <span>{b.format_title}{b.creator ? ` · ${b.creator}` : ""}</span>
                   <span className="job-time">{when(b.created_at)}</span>
                   <span>by {b.created_by_name}</span>
+                  {b.repeat_of != null && <span className="hint">same file as import {b.repeat_of}</span>}
                 </div>
                 <p className="job-note"><BatchSummary b={b} /> <span className="hint">File SHA-256 {b.file_sha256.slice(0, 16)}…, {size(b.file_bytes)}.</span></p>
                 <Refused rows={b.refused} total={b.out_of_scope + b.duplicates + b.unreadable} />

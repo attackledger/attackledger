@@ -448,6 +448,7 @@ export interface RefusedRow {
 
 export interface ImportBatch {
   id: number;
+  repeat_of: number | null;   // the first import of the same file (same SHA-256), if this one repeats it
   format: string;
   format_title: string;
   creator: string | null;
@@ -495,12 +496,43 @@ export interface InboxEntry {
 }
 
 export interface InboxSuggestion {
-  lane_id: number; role: string; item_idx: number; key: string; text: string; score: number; why: string[];
+  lane_id: number | null; role: string; opened: boolean; item_idx: number; key: string; text: string; score: number;
+  why: string[];
+}
+
+/** A lane of the pack on the entry's host: open (lane_id set), or one mapping can open (can_open). */
+export interface InboxTarget {
+  lane_id: number | null;
+  role: string;
+  name: string;
+  opened: boolean;
+  can_open: boolean;
+  why_not: string | null;
+  status: CellStatus;
+  items: { idx: number; key: string; text: string; state: string }[];
 }
 
 export interface InboxEntryDetail extends InboxEntry {
-  targets: { lane_id: number; role: string; items: { idx: number; key: string; text: string; state: string }[] }[];
+  targets: InboxTarget[];
   suggestions: InboxSuggestion[];
+  asset: { id: number; in_scope: boolean } | null;   // null: mapping adds the host to the ledger
+}
+
+/** An item to map to: on an open lane, or by role on the entries' host (the lane opens). */
+export type MapTarget = { lane_id: number; item_idx: number } | { role: string; item_idx: number };
+
+export interface MapResult {
+  evidence_added: number[];
+  marked_done: { lane_id: number; item_idx: number; key: string }[];
+  opened: string[];
+  entries: InboxEntry[];
+}
+
+/** The 409 detail when a file with the same SHA-256 was imported before. */
+export interface AlreadyImported {
+  error: "already_imported";
+  message: string;
+  earlier: ImportBatch;
 }
 
 export interface InboxPage {
@@ -583,7 +615,7 @@ export const api = {
   packs: () => call<PackSummary[]>("/packs"),
   controls: (engId: number) => call<ControlsReport>(`/engagements/${engId}/controls`),
   addAsset: (engId: number, host: string, in_scope: boolean) =>
-    call<{ id: number }>(`/engagements/${engId}/assets`, {
+    call<{ id: number; host: string; in_scope: boolean; scope_note: string | null }>(`/engagements/${engId}/assets`, {
       method: "POST",
       body: JSON.stringify({ host, in_scope }),
     }),
@@ -641,9 +673,10 @@ export const api = {
   importFormats: () => call<ImportFormats>("/imports/formats"),
   imports: (engId: number) => call<ImportBatch[]>(`/engagements/${engId}/imports`),
   /** The file goes as the request body, as it is: no base64, no JSON around it. */
-  importFile: (engId: number, file: File, format: string | null) => {
+  importFile: (engId: number, file: File, format: string | null, reimport = false) => {
     const p = new URLSearchParams({ filename: file.name });
     if (format) p.set("format", format);
+    if (reimport) p.set("reimport", "true");
     return call<ImportBatch>(`/engagements/${engId}/imports?${p}`, {
       method: "POST", body: file, headers: { "content-type": "application/octet-stream" },
     });
@@ -655,9 +688,9 @@ export const api = {
     return call<InboxPage>(`/engagements/${engId}/inbox?${p}`);
   },
   inboxEntry: (engId: number, id: number) => call<InboxEntryDetail>(`/engagements/${engId}/inbox/${id}`),
-  mapEntries: (engId: number, entry_ids: number[], targets: { lane_id: number; item_idx: number }[], note: string) =>
-    call<{ evidence_added: number[]; entries: InboxEntry[] }>(`/engagements/${engId}/inbox/map`, {
-      method: "POST", body: JSON.stringify({ entry_ids, targets, note: note || null }),
+  mapEntries: (engId: number, entry_ids: number[], targets: MapTarget[], note: string, mark_done = false) =>
+    call<MapResult>(`/engagements/${engId}/inbox/map`, {
+      method: "POST", body: JSON.stringify({ entry_ids, targets, note: note || null, mark_done }),
     }),
   dismissEntries: (engId: number, entry_ids: number[], reason: string) =>
     call<{ entries: InboxEntry[] }>(`/engagements/${engId}/inbox/dismiss`, {

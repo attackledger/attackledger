@@ -7,6 +7,8 @@ version: '0.2'
 description: Role-based lanes for bug bounty programs. Recon and an application model come first; access-control,
   auth, logic and input lanes open only on a receipted model.
 recon_lane: recon
+# The model lanes need is their input, so they do not open before it is receipted.
+needs_gate: open
 engagement_types:
 - bug_bounty
 lanes:

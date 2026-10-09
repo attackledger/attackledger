@@ -69,3 +69,26 @@ def test_unknown_values_fail_closed(env, monkeypatch, value, closed):   # noqa: 
     monkeypatch.setenv("ATTACKLEDGER_REQUIRE_SIGN_IN", value)
     assert c.get("/health").json()["mode"] == ("setup" if closed else "open")
     assert c.get("/engagements").status_code == (401 if closed else 200)
+
+
+def test_the_api_documentation_needs_sign_in_in_production(prod, monkeypatch):
+    """/docs and /openapi.json list every route and parameter; in production they answer only
+    to a signed-in caller, like the rest of the API."""
+    c, _ = prod
+    for path in ("/openapi.json", "/docs"):
+        r = c.get(path)
+        assert r.status_code == 401 and "python -m app.people create --owner" in r.json()["detail"]
+    assert c.get("/redoc").status_code == 404           # served nowhere any more
+    monkeypatch.setenv("ATTACKLEDGER_NEW_PASSWORD", PW)
+    assert people.main(["create", "--email", OWNER["email"], "--name", OWNER["name"], "--owner"]) == 0
+    assert c.get("/openapi.json").status_code == 401    # people exist: still sign in first
+    assert c.post("/auth/login", json={"email": OWNER["email"], "password": PW}).status_code == 200
+    spec = c.get("/openapi.json")
+    assert spec.status_code == 200 and "/engagements/{eng_id}/inbox/map" in spec.json()["paths"]
+    docs = c.get("/docs")
+    assert docs.status_code == 200 and "openapi.json" in docs.text
+
+
+def test_open_local_use_keeps_the_documentation_open(env):
+    c, _ = env
+    assert c.get("/openapi.json").status_code == 200 and c.get("/docs").status_code == 200

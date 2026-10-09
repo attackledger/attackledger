@@ -17,8 +17,10 @@
   to the record, so the chain reaches the raw bytes through it.
 - **Mapping.** Nothing reaches the ledger without a person: they map an entry to one or
   more checklist items on a lane of the entry's own host, and each mapping appends one
-  evidence entry with source "import:<tool>". Suggestions come from simple rules on the URL
-  and the pack's item texts, and each says why it was made.
+  evidence entry with source "import:<tool>". A lane that is not open yet is opened by the
+  mapping (lanes that need another are worked in parallel and gated only when signed).
+  Mapping does not mark items done unless the person asks. Suggestions come from simple
+  rules on the URL and the pack's item texts, and each says why it was made.
 """
 import hashlib
 import re
@@ -27,8 +29,8 @@ from urllib.parse import parse_qsl, urlsplit
 
 from sqlalchemy import select
 
-from . import auditlog, blobs, importers, ledger, redact, scope, vault
-from .models import Asset, Engagement, ImportBatch, InboxEntry, Lane, iso_utc
+from . import auditlog, blobs, gates, importers, ledger, packs, redact, scope, vault
+from .models import Asset, Engagement, ImportBatch, InboxEntry, ItemState, Lane, iso_utc
 
 RECORD_FORMAT = "attackledger-import/1"
 STATES = ("new", "mapped", "dismissed")
@@ -39,6 +41,16 @@ MAX_MAP_TARGETS = 20
 
 class InboxError(ValueError):
     """A request the inbox refuses; the message is shown to the person."""
+
+
+class AlreadyImported(Exception):
+    """The same file (same SHA-256) was imported into this engagement before. Importing it
+    again is allowed, but only when the person says so (reimport=True)."""
+
+    def __init__(self, earlier: ImportBatch):
+        self.earlier = earlier
+        when = earlier.created_at.strftime("%Y-%m-%d %H:%M UTC") if earlier.created_at else "an earlier date"
+        super().__init__(f"This file was already imported on {when} by {earlier.created_by_name or 'someone'}.")
 
 
 def _sha(data: bytes) -> str:
@@ -82,19 +94,27 @@ def _report_from(stored: dict | None) -> redact.Report:
 
 
 def import_file(session, eng: Engagement, data: bytes, *, fmt: str | None, filename: str | None,
-                actor: dict, user_id: int | None) -> ImportBatch:
+                actor: dict, user_id: int | None, reimport: bool = False) -> ImportBatch:
     """Run one file through the pipeline. Refusals of the whole file raise ImportRefused and
-    store nothing. Raises vault.ContentDeleted once the engagement's content was deleted. The
-    caller commits."""
+    store nothing. A file imported before raises AlreadyImported unless reimport is set; its
+    rows would only be duplicates, so the person must choose it. Raises vault.ContentDeleted
+    once the engagement's content was deleted. The caller commits."""
     vault.check_writable(eng)
     if not eng.scope_include:
         raise importers.ImportRefused("this engagement has no scope rules yet; set the scope before importing, "
                                       "so out-of-scope rows can be refused")
+    file_sha = _sha(data)
+    earlier = session.scalars(select(ImportBatch).where(ImportBatch.engagement_id == eng.id,
+                                                        ImportBatch.file_sha256 == file_sha)
+                              .order_by(ImportBatch.id).limit(1)).first()
+    if earlier is not None and not reimport:
+        raise AlreadyImported(earlier)
+    repeat_of = earlier.id if earlier is not None else None
     adapter, parsed = importers.parse(data, fmt)
     on = redact.enabled(eng)
     name = (filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1][:200] or None
     batch = ImportBatch(engagement_id=eng.id, tool=adapter.id, creator=parsed.creator, filename=name,
-                        file_sha256=_sha(data), file_bytes=len(data),
+                        file_sha256=file_sha, file_bytes=len(data),
                         rows=len(parsed.entries) + len(parsed.unreadable), accepted=0, out_of_scope=0,
                         duplicates=0, unreadable=len(parsed.unreadable), refused=[],
                         created_by=user_id, created_by_name=auditlog.actor_label(actor)[:300])
@@ -105,6 +125,7 @@ def import_file(session, eng: Engagement, data: bytes, *, fmt: str | None, filen
         _refused(refused, row, None, "unreadable", why)
 
     known = set(session.scalars(select(InboxEntry.content_sha256).where(InboxEntry.engagement_id == eng.id)))
+    refused_hosts: set[str] = set()
     for e in parsed.entries:
         host = urlsplit(e.url).hostname or ""
         try:
@@ -115,6 +136,7 @@ def import_file(session, eng: Engagement, data: bytes, *, fmt: str | None, filen
             continue
         if not scope.in_scope(host, eng.scope_include, eng.scope_exclude):
             batch.out_of_scope += 1                 # listed by row and host; nothing else is kept
+            refused_hosts.add(host)
             _refused(refused, e.row, host, "out_of_scope")
             continue
 
@@ -161,14 +183,18 @@ def import_file(session, eng: Engagement, data: bytes, *, fmt: str | None, filen
         batch.accepted += 1
     batch.refused = refused
     session.flush()
+    # The audit log can never change and goes into the client's report, so it gets counts
+    # only. The names of refused hosts (a browser HAR holds third-party and the testing
+    # firm's own internal hosts) and the file name stay in the batch row, which deleting the
+    # engagement's content clears (wipe below). Entries written before this keep theirs.
     auditlog.append(session, actor=actor, action="import.batch", engagement_id=eng.id,
                     change={"after": {"batch_id": batch.id, "format": adapter.id, "creator": batch.creator,
-                                      "filename": batch.filename, "file_sha256": batch.file_sha256,
+                                      "file_sha256": batch.file_sha256,
                                       "rows": batch.rows, "accepted": batch.accepted,
                                       "out_of_scope": batch.out_of_scope, "duplicates": batch.duplicates,
                                       "unreadable": batch.unreadable,
-                                      "out_of_scope_hosts": sorted({r["host"] for r in refused
-                                                                    if r["reason"] == "out_of_scope"})}})
+                                      "out_of_scope_host_count": len(refused_hosts),
+                                      **({"repeat_of": repeat_of} if repeat_of else {})}})
     return batch
 
 
@@ -259,8 +285,9 @@ def _context(entry: InboxEntry) -> tuple[dict, str]:
 PER_LANE = 3
 
 
-def suggest(entry: InboxEntry, lanes: list[Lane], limit: int = 6) -> list[dict]:
-    """Items on the entry's own host that the rules point at, best first, each with why."""
+def suggest(entry: InboxEntry, targets: list[dict], limit: int = 6) -> list[dict]:
+    """Items on the entry's own host that the rules point at, best first, each with why.
+    targets: target_lanes(), so lanes not opened yet are suggested too."""
     ctx, path = _context(entry)
     hits = []
     for rid, title, match, words in RULES:
@@ -269,9 +296,11 @@ def suggest(entry: InboxEntry, lanes: list[Lane], limit: int = 6) -> list[dict]:
             hits.append((rid, title, why, words))
     path_words = {w for w in _SEG.findall(path) if w not in _COMMON and len(w) >= 4}
     scored = {}
-    for lane in lanes:
-        for item in lane.items:
-            t = item.text.lower()
+    for order, lane in enumerate(targets):
+        if not (lane["opened"] or lane["can_open"]):
+            continue
+        for item in lane["items"]:
+            t = item["text"].lower()
             reasons, score = [], 0
             for rid, title, why, words in hits:
                 w = next((w for w in words if w in t), None)
@@ -283,21 +312,55 @@ def suggest(entry: InboxEntry, lanes: list[Lane], limit: int = 6) -> list[dict]:
                     score += 1
                     reasons.append(f"The path has the word “{w}”, which the item's text uses")
             if score:
-                scored[(lane.id, item.idx)] = {"lane_id": lane.id, "role": lane.role, "item_idx": item.idx,
-                                               "key": item.item_key, "text": item.text, "score": score,
-                                               "why": reasons}
+                scored[(lane["role"], item["idx"])] = {
+                    "lane_id": lane["lane_id"], "role": lane["role"], "opened": lane["opened"], "item_idx": item["idx"],
+                    "key": item["key"], "text": item["text"], "score": score, "why": reasons, "_order": order}
     # Best first, at most PER_LANE per lane, so one busy rule does not hide the others.
     out, per_lane = [], {}
-    for sug in sorted(scored.values(), key=lambda s: (-s["score"], s["lane_id"], s["item_idx"])):
-        if per_lane.get(sug["lane_id"], 0) < PER_LANE and len(out) < limit:
-            per_lane[sug["lane_id"]] = per_lane.get(sug["lane_id"], 0) + 1
-            out.append(sug)
+    for sug in sorted(scored.values(), key=lambda s: (-s["score"], s["_order"], s["item_idx"])):
+        if per_lane.get(sug["role"], 0) < PER_LANE and len(out) < limit:
+            per_lane[sug["role"]] = per_lane.get(sug["role"], 0) + 1
+            out.append({k: v for k, v in sug.items() if k != "_order"})
     return out
 
 
-def lanes_on(session, eng_id: int, host: str) -> list[Lane]:
-    asset = session.scalar(select(Asset).where(Asset.engagement_id == eng_id, Asset.host == host))
-    return sorted(asset.lanes, key=lambda l: l.id) if asset else []
+def asset_on(session, eng_id: int, host: str) -> Asset | None:
+    return session.scalar(select(Asset).where(Asset.engagement_id == eng_id, Asset.host == host))
+
+
+def target_lanes(session, eng: Engagement, host: str) -> list[dict]:
+    """Every lane of the pack on the entry's host, in pack order: the lanes already open with
+    their items' states, and the others with the items they would open with and whether
+    mapping can open them now (and the host, if it is not in the ledger yet)."""
+    pack = packs.get_pack(eng.pack_id)
+    asset = asset_on(session, eng.id, host)
+    by_role = {l.role: l for l in asset.lanes} if asset else {}
+    host_ok = (asset.in_scope if asset else True) and bool(eng.scope_include) \
+        and scope.in_scope(host, eng.scope_include, eng.scope_exclude)
+    out = []
+    for lane_def in pack.lanes:
+        lane = by_role.get(lane_def.key)
+        if lane is not None:
+            out.append({"lane_id": lane.id, "role": lane.role, "name": lane_def.name, "opened": True,
+                        "can_open": False, "why_not": None, "status": gates.lane_status(lane).value,
+                        "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value}
+                                  for i in lane.items]})
+            continue
+        why = None
+        if not host_ok:
+            why = f"{host} is out of scope"
+        elif pack.needs_gate == "open" and asset is not None:
+            try:
+                gates.check_can_open(asset, lane_def, pack)
+            except gates.GateError as e:
+                why = str(e)
+        elif pack.needs_gate == "open" and lane_def.needs:
+            why = f"{lane_def.name} needs a receipted {', '.join(pack.lane(n).name for n in lane_def.needs)} lane"
+        out.append({"lane_id": None, "role": lane_def.key, "name": lane_def.name, "opened": False,
+                    "can_open": why is None, "why_not": why, "status": "not_opened",
+                    "items": [{"idx": n, "key": it.id, "text": it.text, "state": "open"}
+                              for n, it in enumerate(lane_def.items, start=1)]})
+    return out
 
 
 # ---- mapping and dismissal -----------------------------------------------------------------
@@ -320,11 +383,38 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tuple[int, int]], *,
-                note: str | None, user_id: int | None, user_name: str) -> list[int]:
-    """Append one evidence entry per entry and item. Returns the new evidence ids. An entry
-    already mapped to an item is not mapped to it again. Raises vault.ContentDeleted once the
-    engagement's content was deleted. The caller commits."""
+def _open_for(session, eng: Engagement, host: str, role: str) -> tuple[Lane, list[str]]:
+    """The lane of this role on the host, opened now if it is not yet (and the host added to
+    the ledger if it is not there). Returns the lane and what was opened or added."""
+    pack = packs.get_pack(eng.pack_id)
+    did = []
+    asset = asset_on(session, eng.id, host)
+    if asset is None:
+        if not (eng.scope_include and scope.in_scope(host, eng.scope_include, eng.scope_exclude)):
+            raise InboxError(f"{host} is no longer in the scope rules; it cannot be added to the ledger")
+        asset = Asset(engagement_id=eng.id, host=host, in_scope=True)
+        session.add(asset)
+        session.flush()
+        did.append(f"host {host}")
+    lane = next((l for l in asset.lanes if l.role == role), None)
+    if lane is None:
+        try:
+            lane = gates.open_lane(session, asset, pack, role)
+        except gates.GateError as e:
+            raise InboxError(str(e)) from None
+        session.flush()
+        did.append(f"lane {lane.id}")
+    return lane, did
+
+
+def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tuple[int | None, str | None, int]],
+                *, note: str | None, user_id: int | None, user_name: str, mark_done: bool = False) -> dict:
+    """Append one evidence entry per entry and item. A target names a lane by id, or by its
+    role on the entries' host, which opens the lane (and adds the host) if needed. An entry
+    already mapped to an item is not mapped to it again. With mark_done, every chosen item
+    that is open is marked done, since it now has evidence. Returns the evidence ids added,
+    the items marked done and the lanes opened. Raises vault.ContentDeleted once the
+    engagement's content was deleted. The caller commits, or rolls back on InboxError."""
     vault.check_writable(eng)
     entries = _entries(session, eng.id, entry_ids)
     if not targets:
@@ -336,18 +426,27 @@ def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tu
     note = (note or "").strip()[:2_000]
     if note and on:
         note = redact.text(note, said)
-    resolved = []
-    for lane_id, idx in dict.fromkeys(targets):
-        lane = session.get(Lane, lane_id)
+    for e in entries:
+        if e.state == "dismissed":
+            raise InboxError(f"entry {e.id} was dismissed; restore it before mapping it")
+    resolved, opened = [], []
+    for lane_id, role, idx in dict.fromkeys(targets):
+        if lane_id is None:
+            hosts = sorted({e.host for e in entries})
+            if not role or len(hosts) != 1:
+                raise InboxError("to map to a lane that is not open yet, choose entries of one host")
+            lane, did = _open_for(session, eng, hosts[0], role)
+            opened += did
+        else:
+            lane = session.get(Lane, lane_id)
         if lane is None or lane.asset.engagement_id != eng.id:
             raise InboxError(f"no lane {lane_id} in this engagement")
         item = next((i for i in lane.items if i.idx == idx), None)
         if item is None:
             raise InboxError(f"lane {lane_id} has no item {idx}")
         resolved.append((lane, item))
+    resolved = list(dict.fromkeys(resolved))
     for e in entries:
-        if e.state == "dismissed":
-            raise InboxError(f"entry {e.id} was dismissed; restore it before mapping it")
         wrong = [lane for lane, _ in resolved if lane.asset.host != e.host]
         if wrong:
             raise InboxError(f"entry {e.id} is for {e.host}; map it to a lane on {e.host}, "
@@ -378,8 +477,14 @@ def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tu
         e.mappings = new_maps
         if new_maps:
             e.state = "mapped"
+    marked = []
+    if mark_done:
+        for lane, item in resolved:
+            if item.state == ItemState.open:
+                item.state, item.na_reason = ItemState.done, None
+                marked.append({"lane_id": lane.id, "item_idx": item.idx, "key": item.item_key})
     session.flush()
-    return added
+    return {"evidence_added": added, "marked_done": marked, "opened": opened}
 
 
 def dismiss(session, eng: Engagement, entry_ids: list[int], *, reason: str | None, actor: dict,
@@ -418,9 +523,11 @@ def restore(session, eng: Engagement, entry_ids: list[int], *, actor: dict) -> l
 
 # ---- views -------------------------------------------------------------------------------
 
-def batch_view(b: ImportBatch) -> dict:
+def batch_view(b: ImportBatch, repeat_of: int | None = None) -> dict:
+    """repeat_of: the first batch of the same file; null for that batch itself."""
     adapter = importers.registry().get(b.tool)
     return {"id": b.id, "format": b.tool, "format_title": adapter.title if adapter else b.tool,
+            "repeat_of": repeat_of if repeat_of is not None and repeat_of != b.id else None,
             "creator": b.creator, "filename": b.filename, "file_sha256": b.file_sha256, "file_bytes": b.file_bytes,
             "rows": b.rows, "accepted": b.accepted, "out_of_scope": b.out_of_scope, "duplicates": b.duplicates,
             "unreadable": b.unreadable, "refused": b.refused or [], "created_by": b.created_by,
@@ -438,13 +545,6 @@ def entry_view(e: InboxEntry) -> dict:
             "dismissed": ({"by": e.dismissed_by, "by_name": e.dismissed_by_name, "at": iso_utc(e.dismissed_at),
                            "reason": e.dismiss_reason} if e.state == "dismissed" else None),
             "created_at": iso_utc(e.created_at)}
-
-
-def item_targets(lanes: list[Lane]) -> list[dict]:
-    return [{"lane_id": l.id, "role": l.role, "items": [{"idx": i.idx, "key": i.item_key, "text": i.text,
-                                                         "state": i.state.value} for i in l.items]}
-            for l in lanes]
-
 
 
 def wipe(session, eng_id: int) -> dict:
