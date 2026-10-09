@@ -231,6 +231,34 @@ def test_control_coverage_counts_only_receipted_lanes(client):
     assert status("ISO-A.5.15")["status"] == "none"      # authz/idnt lanes not done
 
 
+def test_not_applicable_is_never_counted_as_evidence(client):
+    """N/A items are counted apart: all N/A is "not_applicable", a mix is "resolved"."""
+    def info_lane(name, with_evidence: bool):
+        eng = client.post("/engagements", json={"name": name, "pack_id": "web-pentest-wstg"}).json()["id"]
+        a = client.post(f"/engagements/{eng}/assets", json={"host": "app.example.com"}).json()
+        lane = client.post("/lanes", json={"asset_id": a["id"], "role": "info"}).json()
+        for n, it in enumerate(lane["items"]):
+            if with_evidence and n == 0:
+                client.post(f"/lanes/{lane['id']}/evidence", json={"item_idx": it["idx"], "kind": "note",
+                                                                   "sha256": h(it["text"]), "summary": "recorded"})
+                client.patch(f"/lanes/{lane['id']}/items/{it['idx']}", json={"state": "done"})
+            else:
+                client.patch(f"/lanes/{lane['id']}/items/{it['idx']}", json={"state": "na", "na_reason": "out of reach"})
+        assert client.post(f"/lanes/{lane['id']}/close", json=SIGN).status_code == 200
+        return eng, {r["id"]: r for r in client.get(f"/engagements/{eng}/controls").json()["controls"]}
+
+    # DORA-ART8 comes only from the information gathering lane.
+    _, rows = info_lane("na-only", with_evidence=False)
+    dora = rows["DORA-ART8"]
+    assert dora["evidenced"] == 0 and dora["not_applicable"] == dora["required"] and dora["status"] == "not_applicable"
+    eng, rows = info_lane("mixed", with_evidence=True)
+    dora = rows["DORA-ART8"]
+    assert 0 < dora["evidenced"] < dora["required"] and dora["status"] == "resolved"
+    assert not any(r["status"] == "evidenced" and r["not_applicable"] for r in rows.values())
+    page = client.get(f"/engagements/{eng}/report.html").text
+    assert "not applicable" in page and "Resolved, partly not applicable" in page
+
+
 def recon_ready(c, name, **extra):
     eng = c.post("/engagements", json={"name": name}).json()["id"]
     c.put(f"/engagements/{eng}/scope", json={"include": ["*.example.com"], **extra})

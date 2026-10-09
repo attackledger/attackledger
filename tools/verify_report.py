@@ -538,8 +538,11 @@ def load_roots(paths: list[str]) -> list[dict]:
     import base64
     roots = []
     for path in paths:
-        with open(path, encoding="ascii") as f:
-            text = f.read()
+        try:
+            with open(path, encoding="ascii") as f:
+                text = f.read()
+        except OSError as e:
+            raise SystemExit(f"cannot read the trusted root {path}: {e.strerror}")
         blocks = re.findall(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", text, re.S)
         if not blocks:
             raise SystemExit(f"no certificate found in {path}")

@@ -3,6 +3,8 @@ import { api, ControlRow, ControlsReport } from "./api";
 
 const STATUS_TEXT: Record<ControlRow["status"], string> = {
   evidenced: "Evidenced",
+  resolved: "Resolved, partly not applicable",
+  not_applicable: "Not applicable",
   partial: "Partial",
   none: "No evidence",
 };
@@ -32,7 +34,7 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
         Which controls the receipted tests in this engagement produce evidence for, using the{" "}
         <strong>{pack}</strong> methodology across {report.hosts_in_scope} in-scope{" "}
         {report.hosts_in_scope === 1 ? "host" : "hosts"}. {evidenced} of {report.controls.length} controls are
-        fully evidenced.
+        fully evidenced. Items marked not applicable are counted apart and never as evidence.
       </p>
       <p className="disclaimer">{report.disclaimer} Check each mapping against the current standard.</p>
 
@@ -55,6 +57,7 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
             <tbody>
               {rows.map((c) => {
                 const pct = c.required ? Math.round((c.evidenced / c.required) * 100) : 0;
+                const na = c.not_applicable ?? 0;
                 return (
                   <tr key={c.id}>
                     <th scope="row">
@@ -63,10 +66,11 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
                     </th>
                     <td className="ctl-lanes">{c.lanes.join(", ")}</td>
                     <td>
-                      <div className="bar" role="img" aria-label={`${c.evidenced} of ${c.required} receipted`}>
+                      <div className="bar" role="img"
+                           aria-label={`${c.evidenced} of ${c.required} with evidence${na ? `, ${na} not applicable` : ""}`}>
                         <span style={{ width: `${pct}%` }} />
                       </div>
-                      <span className="bar-label">{c.evidenced}/{c.required}</span>
+                      <span className="bar-label">{c.evidenced}/{c.required}{na > 0 && `, ${na} N/A`}</span>
                     </td>
                     <td><span className={`ctl-status ${c.status}`}>{STATUS_TEXT[c.status]}</span></td>
                   </tr>

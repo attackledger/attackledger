@@ -59,8 +59,9 @@ export interface ControlRow {
   framework_name: string;
   required: number;
   evidenced: number;
+  not_applicable?: number;   // resolved as not applicable, with a reason; never counted as evidence
   lanes: string[];
-  status: "evidenced" | "partial" | "none";
+  status: "evidenced" | "resolved" | "not_applicable" | "partial" | "none";
 }
 
 export interface ControlsReport {

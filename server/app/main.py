@@ -858,9 +858,12 @@ def list_packs():
 def control_coverage(eng_id: int, session: Session = Depends(get_session)):
     """For each control the pack maps to, how much of it is backed by receipted evidence.
 
-    A mapped item on an in-scope host counts as evidenced only when its lane is
-    receipted (closed) and the item is done or N/A with a reason. A control is
-    "evidenced" when every mapped item on every in-scope host is evidenced.
+    Only items in receipted (closed) lanes on in-scope hosts count. An item done with
+    evidence counts as evidenced; an item marked not applicable, with its reason, is
+    counted separately and never as evidence. Status: "evidenced" when every mapped
+    item has evidence, "resolved" when every item is resolved but some are not
+    applicable, "not_applicable" when all are, "partial" when some are resolved,
+    "none" otherwise.
     """
     eng = _get(session, Engagement, eng_id)
     pack = _pack_of(eng)
@@ -870,7 +873,8 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
     for lane_def in pack.lanes:
         for item in lane_def.items:
             for cid in item.controls:
-                c = out.setdefault(cid, {**cat[cid], "required": 0, "evidenced": 0, "lanes": set()})
+                c = out.setdefault(cid, {**cat[cid], "required": 0, "evidenced": 0, "not_applicable": 0,
+                                         "lanes": set()})
                 c["lanes"].add(lane_def.name)
                 for a in hosts:
                     c["required"] += 1
@@ -878,14 +882,19 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
                     if lane is None or gates.lane_status(lane) != gates.LaneStatus.closed:
                         continue
                     li = next((i for i in lane.items if i.item_key == item.id), None)
-                    if li is not None and li.state in (ItemState.done, ItemState.na):
+                    if li is not None and li.state == ItemState.done:
                         c["evidenced"] += 1
+                    elif li is not None and li.state == ItemState.na:
+                        c["not_applicable"] += 1
     rows = []
     for c in out.values():
         c["lanes"] = sorted(c["lanes"])
+        resolved = c["evidenced"] + c["not_applicable"]
         if c["required"] and c["evidenced"] == c["required"]:
             c["status"] = "evidenced"
-        elif c["evidenced"]:
+        elif c["required"] and resolved == c["required"]:
+            c["status"] = "resolved" if c["evidenced"] else "not_applicable"
+        elif resolved:
             c["status"] = "partial"
         else:
             c["status"] = "none"

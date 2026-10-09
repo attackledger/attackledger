@@ -10,7 +10,10 @@ const OUTCOME: Record<Outcome, { word: string; mark: string; cls: string }> = {
   unsupported: { word: "Not checked in this browser", mark: "?", cls: "plain" },
 };
 
-const COMMAND = "python3 verify_report.py report.json --tsa-root digicert-trusted-root-g4.pem";
+// Downloaded side by side (the demo and the site) the root is passed explicitly; in the repository
+// tools/verify_report.py loads tools/tsa-roots/ by itself.
+const COMMAND = DEMO ? "python3 verify_report.py report.json --tsa-root digicert-trusted-root-g4.pem"
+                     : "python3 tools/verify_report.py report.json";
 
 function tsaHost(url: string | null | undefined): string | null {
   if (!url) return null;
@@ -123,7 +126,8 @@ export function Verify({ engId }: { engId: number }) {
           DigiCert root in <code>tools/tsa-roots/</code></>}) needs only Python and no AttackLedger install. It rebuilds every receipt from
           its items and evidence, walks the evidence chain, recomputes the report body hash, checks each signature and
           checks each RFC 3161 timestamp token, including the timestamp authority's certificate chain up to the root
-          you pass. Save the report JSON as <code>report.json</code> next to the script and run:
+          you trust. {DEMO ? <>Save the report JSON as <code>report.json</code> next to the script and the root, and run:</>
+                           : <>Save the report JSON as <code>report.json</code> in the repository folder and run:</>}
         </p>
         <pre className="cmd">{COMMAND}</pre>
         <p className="muted">

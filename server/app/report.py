@@ -452,14 +452,20 @@ this is the report you were sent, compare the report body SHA-256 on the cover w
 </section>"""
 
 
+_CONTROL_STATUS = {"evidenced": "Evidenced", "resolved": "Resolved, partly not applicable",
+                   "not_applicable": "Not applicable", "partial": "Partial", "none": "No evidence"}
+
+
 def _controls(r: dict) -> str:
     c = r["controls"]
     rows = []
     for x in c.get("controls", []):
-        cls = {"evidenced": "ok", "partial": "", "none": "muted"}.get(x["status"], "")
+        cls = {"evidenced": "ok", "not_applicable": "muted", "none": "muted"}.get(x["status"], "")
+        na = x.get("not_applicable", 0)
+        counts = f"{_e(x['evidenced'])} of {_e(x['required'])} with evidence" + (f"<br>{_e(na)} not applicable" if na else "")
         rows.append(f"<tr><td><strong>{_e(x['id'])}</strong><br><span class='muted'>{_e(x['text'])}</span></td>"
-                    f"<td>{_e(x['framework_name'])}</td><td>{_e(x['evidenced'])}/{_e(x['required'])}</td>"
-                    f"<td class='{cls}'>{_e(str(x['status']).capitalize())}</td></tr>")
+                    f"<td>{_e(x['framework_name'])}</td><td>{counts}</td>"
+                    f"<td class='{cls}'>{_e(_CONTROL_STATUS.get(x['status'], x['status']))}</td></tr>")
     body = _table(["Control", "Framework", "Receipted items", "Status"], rows) if rows else \
         "<p class='muted'>This pack maps no items to controls.</p>"
     return f"""<section id="controls" class="pb"><h2>Control evidence</h2>
