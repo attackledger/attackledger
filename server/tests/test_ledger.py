@@ -311,7 +311,7 @@ def test_control_coverage_counts_only_receipted_lanes(client):
     assert status("PCI-11.4.3")["strength"] == "partial" and status("DORA-ART8")["strength"] == "supporting"
     assert "not a compliance determination" in report["disclaimer"]
     assert "not reviewed by a qualified assessor" in report["disclaimer"]
-    assert report["reviewed"]["date"] == "2026-10-10" and set(report["strengths"]) == {"full", "partial", "supporting"}
+    assert report["reviewed"]["date"] == "2026-10-09" and set(report["strengths"]) == {"full", "partial", "supporting"}
     assert "only when testing is from outside the network" in status("PCI-11.4.3")["note"]
     page = client.get(f"/engagements/{eng}/report.html").text
     assert "Evidence strength" in page and "not reviewed by a qualified assessor" in page

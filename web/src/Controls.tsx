@@ -2,12 +2,20 @@ import { useEffect, useState } from "react";
 import { api, ControlRow, ControlsReport } from "./api";
 import { plural } from "./words";
 
+// Same words as the report (report.py _CONTROL_STATUS). "Partial" is avoided here because
+// it is also an evidence strength.
 const STATUS_TEXT: Record<ControlRow["status"], string> = {
-  evidenced: "Evidenced",
+  evidenced: "All mapped items receipted",
   resolved: "Resolved, partly not applicable",
   not_applicable: "Not applicable",
-  partial: "Partial",
-  none: "No evidence",
+  partial: "Some mapped items receipted",
+  none: "No mapped item receipted",
+};
+
+const STRENGTH_TEXT: Record<ControlRow["strength"], string> = {
+  full: "Full evidence",
+  partial: "Partial evidence",
+  supporting: "Supporting evidence",
 };
 
 export function Controls({ engId, pack }: { engId: number; pack: string }) {
@@ -34,7 +42,7 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
       <p className="controls-intro">
         Which controls the receipted tests in this engagement produce evidence for, using the{" "}
         <strong>{pack}</strong> methodology across {plural(report.hosts_in_scope, "in-scope host")}.{" "}
-        {evidenced} of {plural(report.controls.length, "control")} {evidenced === 1 ? "is" : "are"} fully evidenced. Items marked not applicable are counted apart and never as evidence.
+        {evidenced} of {plural(report.controls.length, "control")} {evidenced === 1 ? "has" : "have"} every mapped item receipted. Each mapping says how strong the evidence is; a test result alone never shows that a control is met. Items marked not applicable are counted apart and never as evidence.
       </p>
       <p className="disclaimer">{report.disclaimer} Check each mapping against the current standard.</p>
 
@@ -65,6 +73,8 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
                     <th scope="row">
                       <span className="ctl-id">{c.id}</span>
                       <span className="ctl-text">{c.text}</span>
+                      {c.strength && <span className={`ctl-strength ${c.strength}`}>{STRENGTH_TEXT[c.strength]}</span>}
+                      {c.note && <span className="ctl-note">{c.note}</span>}
                     </th>
                     <td className="ctl-lanes">{c.lanes.join(", ")}</td>
                     <td>

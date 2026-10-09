@@ -118,7 +118,7 @@ options considered and who decided.
   Murat's personal profile names him as founder.
 - **Decided by:** Murat Kabak. He asked for a private repository with versioning
   and wanted it to be clear that the application is his.
-- **Changed 2026-10-10: the repository is public** (D-048).
+- **Changed 2026-10-09: the repository is public** (D-048).
 
 ### D-011 · AI assistance is disclosed (2026-10-08)
 - **Decision:** Commits written with Claude keep their `Co-Authored-By` trailer.
@@ -608,7 +608,7 @@ options considered and who decided.
 - **Why:** before this, an install with no people was open, so whoever reached it first
   over the network could make themselves owner. Creating the owner on the server also
   removes the need for a shared operator token to bootstrap.
-- **Made by:** Claude, for MVP item 6, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-10 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
+- **Made by:** Claude, for MVP item 6, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-09 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
 
 ### D-046 · The browser verifier is a port of verify_report.py (2026-10-09, made autonomously)
 - **Decision:** the browser verifier is a line-for-line port of `verify_report.py`, not a
@@ -623,9 +623,9 @@ options considered and who decided.
     differences.
 - **Why:** an auditor must get the same answer from the page as from the script; two
   independent implementations would drift.
-- **Made by:** Claude, for MVP item 5, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-10 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
+- **Made by:** Claude, for MVP item 5, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-09 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
 
-### D-047 · Lane dependencies gate the receipt, not the opening (2026-10-10, made autonomously)
+### D-047 · Lane dependencies gate the receipt, not the opening (2026-10-09, made autonomously)
 - **Decision:**
   - A lane that depends on another lane (every WSTG lane on *Information gathering*) can
     be opened, worked and mapped to at once.
@@ -636,9 +636,9 @@ options considered and who decided.
   map an `/admin/` request to Authentication because that lane was locked.
 - **Also:** the verifier downloads from the API are for signed-in people. The independent
   copy for clients is on attackledger.com.
-- **Made by:** Claude, from the MVP review, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-10 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
+- **Made by:** Claude, from the MVP review, under Murat's overnight permission. **Approved** by Murat Kabak on 2026-10-09 as part of a general approval of the overnight work ("bunları da hallet, iznim var"), not item by item.
 
-### D-048 · The repository is public (2026-10-10, decided by Murat)
+### D-048 · The repository is public (2026-10-09, decided by Murat)
 - **Decision:** github.com/attackledger/attackledger is public under the AGPL-3.0. It went
   public after a scan of the full history (152 commits) found nothing to remove:
   - **Both denylists:** no target names. The one hit is four random letters inside a
@@ -651,10 +651,10 @@ options considered and who decided.
   reporting, CodeQL default setup, Dependabot alerts and security updates.
 - **Why:** D-044 (everything open source) and the portfolio goal; the public verifier
   page and the reports point readers to the source.
-- **Decided by:** Murat Kabak (2026-10-10, "bunları da hallet, iznim var"). Scanned and
+- **Decided by:** Murat Kabak (2026-10-09, "bunları da hallet, iznim var"). Scanned and
   published by Claude.
 
-### D-049 · Recon reads what a host publishes about itself (2026-10-10, made autonomously)
+### D-049 · Recon reads what a host publishes about itself (2026-10-09, made autonomously)
 - **Decision:**
   - Recon reads robots.txt and security.txt by default. Fetching the directories robots.txt
     names counts as crawling, not brute force, so it is not opt-in. It is capped at 13 GETs
@@ -670,6 +670,24 @@ options considered and who decided.
   - requests went from 5,511 to 13,352;
   - every request was GET, HEAD or OPTIONS, with a peak of 20 at a limit of 20.
 - **Made by:** Claude, from the benchmark gaps, under Murat's overnight permission.
+
+### D-050 · Every control mapping states its strength (2026-10-09, made autonomously)
+- **Decision:**
+  - Every control mapping states its strength (full, partial or supporting), with one
+    strength per control per pack. A bare id means supporting.
+  - A mapping that overstates is removed, not kept with a caveat.
+  - The catalog records who reviewed it, when and against which sources. The Controls view
+    and the report show that statement.
+  - Until a QSA, ISO lead auditor or DORA TLPT authority reviews them, the packs say so.
+- **Why:** the readers are bank IT auditors and Big4 IT audit teams. The first review found
+  mappings that would not be accepted as evidence: an ASV scan, a superseded WAF
+  requirement, and TLPT.
+- **Considered:**
+  - Strength per control in the catalog. Rejected: the same control differs between a
+    pentest and a bug bounty.
+  - Strength per item, with mixed strengths in a row. Rejected: a row must state a single
+    claim.
+- **Made by:** Claude, under Murat's permission ("bunları da hallet").
 
 ## Adding entries
 

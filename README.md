@@ -139,10 +139,12 @@ Lanes and checklist items come from **packs** (`packs/*.yaml`), not code:
 | `bug-bounty` | recon, model, access control, auth & sessions, business logic, input handling, mobile | Bug bounty programs |
 | `web-pentest-wstg` | one per OWASP WSTG category (97 tests) | Scoped pentests, internal assessments |
 
-Each item maps to controls in `packs/controls.yaml` (PCI DSS v4.0, ISO/IEC
-27001:2022 Annex A, EU DORA). The **Controls** view shows, per control, how many
-mapped items on in-scope hosts are backed by receipted evidence. These mappings
-are indicative and do not amount to a compliance determination.
+Each item maps to controls in `packs/controls.yaml` (PCI DSS v4.0.1, ISO/IEC
+27001:2022 Annex A, EU DORA), and each mapping states its evidence strength (partial or
+supporting; none is full). The **Controls** view shows, per control, how many mapped
+items on in-scope hosts are backed by receipted evidence. The mappings were reviewed
+against public sources by Claude on 2026-10-09, not by a qualified assessor
+(docs/CONTROLS.md). They are indicative and do not amount to a compliance determination.
 
 Packs fail closed. A pack that references an unknown control, has a dependency
 cycle or contains a lane without items will not load, and the API will not start.

@@ -1,6 +1,6 @@
 # Control mappings
 
-Status: reviewed against public sources by Claude on 2026-10-10; not reviewed by a
+Status: reviewed against public sources by Claude on 2026-10-09; not reviewed by a
 qualified assessor (QSA, ISO lead auditor or DORA TLPT authority). The mappings are
 indicative and are not a compliance determination.
 

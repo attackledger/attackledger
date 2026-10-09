@@ -777,6 +777,9 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .ctl tbody th { font-weight: 400; }
 .ctl-id { display: block; font-weight: 700; }
 .ctl-text { display: block; color: var(--text-soft); max-width: 46ch; }
+.ctl-strength { display: inline-block; margin-top: 4px; font-size: 0.8rem; font-weight: 700; color: var(--text-soft); }
+.ctl-strength.full { color: var(--stamp); }
+.ctl-note { display: block; margin-top: 2px; color: var(--text-faint); font-size: 0.8rem; max-width: 46ch; }
 .ctl-lanes { color: var(--text-soft); max-width: 18rem; }
 .ctl-progress-col { width: 11rem; }
 

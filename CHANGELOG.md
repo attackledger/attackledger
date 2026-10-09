@@ -195,6 +195,16 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Changed
+- **Control mappings reviewed** (D-050, docs/CONTROLS.md). They were checked against PCI
+  DSS v4.0.1, ISO/IEC 27001:2022 Annex A and DORA, with the TLPT RTS (EU) 2025/1190.
+  - Each mapping states its evidence strength: partial or supporting; none is full. The
+    Controls view and the audit report show the strength and say a qualified assessor has
+    not reviewed the mappings.
+  - Removed mappings that overstated: PCI 11.3.2 (ASV scan), PCI 6.4.1 (superseded by
+    6.4.2) and DORA Article 26 (TLPT). A bug bounty is now only supporting evidence for
+    PCI 11.4.3.
+  - Added ISO A.8.8, A.8.3, A.5.17 and A.8.2, and DORA Articles 24, 25 and 9, where lanes
+    produce the evidence.
 - **Recon for single-page apps** (D-049). Juice Shop recall went from 5 to 15 of 32
   in-reach items through the gateway, with 0 writes and a peak of 20 at a limit of 20.
   - A new step, Read well-known files, records robots.txt, security.txt and directory
@@ -212,7 +222,7 @@ local lab.
   after a full-history scan. Secret scanning with push protection, private vulnerability
   reporting and CodeQL are on.
 
-### Changed (design-partner review, 2026-10-10)
+### Changed (design-partner review, 2026-10-09)
 - **Lanes are worked in parallel** (D-047): a lane opens at once, and it can be signed only
   after the lanes it needs are receipted (pack `needs_gate`; the bug bounty pack keeps
   gating the opening).

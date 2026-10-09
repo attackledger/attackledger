@@ -105,9 +105,9 @@ def test_catalog_controls_take_a_title_or_title_and_note():
 def test_shipped_catalog_carries_the_review_statement_and_sources():
     cat = packs.catalog()
     assert cat.reviewed["statement"] == (
-        "Reviewed against public sources by Claude on 2026-10-10; not reviewed by a qualified assessor "
+        "Reviewed against public sources by Claude on 2026-10-09; not reviewed by a qualified assessor "
         "(QSA, ISO lead auditor or DORA TLPT authority).")
-    assert cat.reviewed["date"] == "2026-10-10"
+    assert cat.reviewed["date"] == "2026-10-09"
     frameworks = {fw for c in cat.controls.values() for fw in [c["framework"]]}
     sourced = {s["framework"] for s in cat.reviewed["sources"]}
     assert frameworks <= sourced

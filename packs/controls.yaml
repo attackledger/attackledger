@@ -8,9 +8,9 @@
 # texts are copyrighted, so only numbers and short titles appear here.
 reviewed:
   by: Claude (AI assistant), for the AttackLedger project
-  date: "2026-10-10"
+  date: "2026-10-09"
   statement: >
-    Reviewed against public sources by Claude on 2026-10-10; not reviewed by a qualified
+    Reviewed against public sources by Claude on 2026-10-09; not reviewed by a qualified
     assessor (QSA, ISO lead auditor or DORA TLPT authority).
   sources:
     - framework: pci-dss-4.0.1

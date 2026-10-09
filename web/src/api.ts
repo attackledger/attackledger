@@ -83,6 +83,8 @@ export interface ControlRow {
   not_applicable?: number;   // resolved as not applicable, with a reason; never counted as evidence
   lanes: string[];
   status: "evidenced" | "resolved" | "not_applicable" | "partial" | "none";
+  strength: "full" | "partial" | "supporting";
+  note?: string;             // when the mapping holds, from the catalog
 }
 
 export interface ControlsReport {
@@ -91,6 +93,9 @@ export interface ControlsReport {
   hosts_in_scope: number;
   disclaimer: string;
   controls: ControlRow[];
+  reviewed?: { by: string; date: string; statement: string;
+               sources?: { framework: string; title: string; version?: string; url: string; checked?: string; note?: string }[] };
+  strengths?: Record<string, string>;
 }
 
 export interface LaneItem {
