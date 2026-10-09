@@ -10,7 +10,7 @@ from harness import WORKER_TOKEN, stack  # noqa: F401
 
 from app import blobs, ledger, modules, vault, workerapi
 from app.main import app
-from app.models import AgentExchange, Asset, Endpoint, Evidence, ItemState, Job, JobStatus, Lane, Lead, Observation
+from app.models import AgentExchange, Asset, Endpoint, Evidence, ItemState, JobStatus, Lane, Lead, Observation
 
 HOST = "shop.example.com"
 JOB_ROUTES = ["heartbeat", "log", "progress", "results", "finish", "agent/exchange", "agent/call"]

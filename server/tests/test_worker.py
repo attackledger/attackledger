@@ -439,3 +439,16 @@ def test_arjun_command_identifies_and_rate_limits():
     assert c[c.index("--headers") + 1] == "X-Bug-Bounty: r1\nUser-Agent: AL (r1)"
     with pytest.raises(RuntimeError, match="research header"):
         worker.arjun_cmd(eng(), "https://a.example.com/", "/tmp/o.json")
+
+
+def test_cancelling_stops_a_silent_tool_at_the_next_heartbeat(stack, monkeypatch):
+    monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0.1)
+    job = claim(stack, ["a.example.com"])
+    r = worker.Run(job)
+    assert stack.api.post(f"/jobs/{job.id}/cancel").status_code == 200
+    t0 = __import__("time").monotonic()
+    with r.heartbeats(), pytest.raises(worker.Cancelled, match="cancelled"):
+        list(r.tool_lines("sleep", ["sleep", "30"], []))
+    assert __import__("time").monotonic() - t0 < 5
+    out, j = job.finish(stopped="cancelled"), stack.job(job.id)
+    assert out == {"status": "cancelled"} and j.remaining_targets == ["a.example.com"]
