@@ -304,8 +304,17 @@ def test_control_coverage_counts_only_receipted_lanes(client):
     assert status("DORA-ART8")["status"] == "none"       # proven but not receipted
     client.post(f"/lanes/{info['id']}/close", json=SIGN)
     assert status("DORA-ART8")["status"] == "evidenced"  # info lane is the only DORA-ART8 source
-    assert status("PCI-11.4.1")["status"] == "evidenced"
+    assert status("ISO-A.5.9")["status"] == "evidenced"
+    assert status("PCI-11.4.1")["status"] == "partial"   # every WSTG lane evidences the method followed
     assert status("ISO-A.5.15")["status"] == "none"      # authz/idnt lanes not done
+    report = client.get(f"/engagements/{eng}/controls").json()
+    assert status("PCI-11.4.3")["strength"] == "partial" and status("DORA-ART8")["strength"] == "supporting"
+    assert "not a compliance determination" in report["disclaimer"]
+    assert "not reviewed by a qualified assessor" in report["disclaimer"]
+    assert report["reviewed"]["date"] == "2026-10-10" and set(report["strengths"]) == {"full", "partial", "supporting"}
+    assert "only when testing is from outside the network" in status("PCI-11.4.3")["note"]
+    page = client.get(f"/engagements/{eng}/report.html").text
+    assert "Evidence strength" in page and "not reviewed by a qualified assessor" in page
 
 
 def test_not_applicable_is_never_counted_as_evidence(client):

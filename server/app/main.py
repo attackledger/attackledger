@@ -1090,18 +1090,20 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
     counted separately and never as evidence. Status: "evidenced" when every mapped
     item has evidence, "resolved" when every item is resolved but some are not
     applicable, "not_applicable" when all are, "partial" when some are resolved,
-    "none" otherwise.
+    "none" otherwise. Each row also carries the strength the pack claims for the control
+    (full, partial or supporting) and the catalog's note on when the mapping holds.
     """
     eng = _get(session, Engagement, eng_id)
     pack = _pack_of(eng)
-    cat = packs.catalog().controls
+    catalog = packs.catalog()
+    cat = catalog.controls
     hosts = [a for a in eng.assets if a.in_scope]
     out: dict[str, dict] = {}
     for lane_def in pack.lanes:
         for item in lane_def.items:
             for cid in item.controls:
-                c = out.setdefault(cid, {**cat[cid], "required": 0, "evidenced": 0, "not_applicable": 0,
-                                         "lanes": set()})
+                c = out.setdefault(cid, {**cat[cid], "strength": pack.control_strengths[cid], "required": 0,
+                                         "evidenced": 0, "not_applicable": 0, "lanes": set()})
                 c["lanes"].add(lane_def.name)
                 for a in hosts:
                     c["required"] += 1
@@ -1127,8 +1129,11 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
             c["status"] = "none"
         rows.append(c)
     rows.sort(key=lambda c: (c["framework"], c["id"]))
+    # The review statement travels with every view of the mappings, the app and the report alike.
+    disclaimer = " ".join(filter(None, ["Indicative mapping of tests to controls; not a compliance determination.",
+                                        catalog.reviewed.get("statement", "")]))
     return {"engagement": eng.name, "pack": pack.id, "hosts_in_scope": len(hosts),
-            "disclaimer": "Indicative mapping of tests to controls; not a compliance determination.",
+            "disclaimer": disclaimer, "reviewed": catalog.reviewed, "strengths": catalog.strengths,
             "controls": rows}
 
 

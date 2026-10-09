@@ -1,7 +1,8 @@
 """Methodology packs: lanes, their items and the controls each item evidences.
 
 Packs are data (packs/*.yaml). Loading is strict and fails closed: an unknown
-control id, a dependency cycle or a lane without items stops the load.
+control id, an unknown evidence strength, a control mapped at two strengths in one
+pack, a dependency cycle or a lane without items stops the load.
 """
 import os
 import re
@@ -17,6 +18,10 @@ PACK_DIR = Path(os.environ.get("ATTACKLEDGER_PACKS", ITEMS_BASE / "packs"))
 _MD_ITEM = re.compile(r"^\s*- \[ \]\s+(.+?)\s*$")
 _KEY = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 NEEDS_GATES = ("close", "open")
+# How strongly an item's result evidences a control, strongest first (docs/CONTROLS.md).
+# A mapping written as a bare id is "supporting", so an unreviewed pack never overstates.
+STRENGTHS = ("full", "partial", "supporting")
+DEFAULT_STRENGTH = "supporting"
 
 
 class PackError(ValueError):
@@ -28,6 +33,8 @@ class Item:
     id: str
     text: str
     controls: tuple[str, ...]
+    # Control id -> strength, for every id in controls.
+    strengths: dict = field(default_factory=dict, compare=False, hash=False)
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,8 @@ class Pack:
     # depend on an earlier lane's output (the bug bounty pack's application model).
     needs_gate: str = "close"
     lane_index: dict = field(default_factory=dict, compare=False, hash=False)
+    # Control id -> the one strength this pack's items evidence it at.
+    control_strengths: dict = field(default_factory=dict, compare=False, hash=False)
 
     def lane(self, key: str) -> LaneDef:
         try:
@@ -64,7 +73,10 @@ class Pack:
 
 @dataclass(frozen=True)
 class Catalog:
-    controls: dict  # id -> {"text", "framework", "framework_name"}
+    controls: dict  # id -> {"id", "text", "note", "framework", "framework_name"}
+    # Who reviewed the mappings, when and against which sources; shown with every control view.
+    reviewed: dict = field(default_factory=dict)
+    strengths: dict = field(default_factory=dict)  # strength -> what it means
 
 
 def _load_yaml(path: Path) -> dict:
@@ -77,14 +89,49 @@ def _load_yaml(path: Path) -> dict:
 
 @lru_cache(maxsize=1)
 def catalog() -> Catalog:
-    data = _load_yaml(PACK_DIR / "controls.yaml")
+    return _parse_catalog(_load_yaml(PACK_DIR / "controls.yaml"))
+
+
+def _parse_catalog(data: dict) -> Catalog:
     controls = {}
     for fw_id, fw in data.get("frameworks", {}).items():
-        for cid, text in fw.get("controls", {}).items():
+        for cid, spec in fw.get("controls", {}).items():
             if cid in controls:
                 raise PackError(f"duplicate control id {cid}")
-            controls[cid] = {"id": cid, "text": text, "framework": fw_id, "framework_name": fw["name"]}
-    return Catalog(controls=controls)
+            # A control is a short title, or {title, note} when the mapping holds only under a condition.
+            if isinstance(spec, str):
+                text, note = spec, ""
+            elif isinstance(spec, dict) and isinstance(spec.get("title"), str) and set(spec) <= {"title", "note"}:
+                text, note = spec["title"], " ".join(str(spec.get("note", "")).split())
+            else:
+                raise PackError(f"control {cid}: expected a title or {{title, note}}")
+            controls[cid] = {"id": cid, "text": text, "note": note, "framework": fw_id, "framework_name": fw["name"]}
+    strengths = {k: " ".join(str(v).split()) for k, v in (data.get("strengths") or {}).items()}
+    if strengths and set(strengths) != set(STRENGTHS):
+        raise PackError(f"strengths must describe exactly {', '.join(STRENGTHS)}")
+    strengths = {k: strengths[k] for k in STRENGTHS if k in strengths}  # strongest first
+    reviewed = dict(data.get("reviewed") or {})
+    if "statement" in reviewed:
+        reviewed["statement"] = " ".join(str(reviewed["statement"]).split())
+    return Catalog(controls=controls, reviewed=reviewed, strengths=strengths)
+
+
+def _mappings(raw, where: str) -> dict[str, str]:
+    """Control mappings as {id: strength}. Each entry is an id or {id, strength}."""
+    out: dict[str, str] = {}
+    for m in raw or []:
+        if isinstance(m, str):
+            cid, strength = m, DEFAULT_STRENGTH
+        elif isinstance(m, dict) and isinstance(m.get("id"), str) and set(m) <= {"id", "strength"}:
+            cid, strength = m["id"], m.get("strength", DEFAULT_STRENGTH)
+        else:
+            raise PackError(f"{where}: a control mapping is an id or {{id, strength}}, not {m!r}")
+        if strength not in STRENGTHS:
+            raise PackError(f"{where}: strength of {cid} is one of {', '.join(STRENGTHS)}, not {strength!r}")
+        if cid in out:
+            raise PackError(f"{where}: control {cid} is mapped twice")
+        out[cid] = strength
+    return out
 
 
 def _items_from_md(rel: str, prefix: str) -> list[Item]:
@@ -102,24 +149,34 @@ def _parse_pack(data: dict, known_controls: dict) -> Pack:
     if not _KEY.match(pid):
         raise PackError(f"invalid pack id: {pid!r}")
     lanes = []
+    control_strengths: dict[str, str] = {}
     for raw in data.get("lanes", []):
         key = raw.get("key", "")
         if not _KEY.match(key):
             raise PackError(f"{pid}: invalid lane key {key!r}")
-        lane_controls = tuple(raw.get("controls", []))
+        lane_map = _mappings(raw.get("controls"), f"{pid}/{key}")
+        lane_controls = tuple(lane_map)
         if "items_from" in raw:
-            items = _items_from_md(raw["items_from"], f"{pid.upper()}-{key.upper()}")
+            items = [(i, {}) for i in _items_from_md(raw["items_from"], f"{pid.upper()}-{key.upper()}")]
         else:
-            items = [Item(id=str(i["id"]), text=str(i["text"]), controls=tuple(i.get("controls", [])))
+            items = [(Item(id=str(i["id"]), text=str(i["text"]), controls=()),
+                      _mappings(i.get("controls"), f"{pid}/{key}/{i.get('id')}"))
                      for i in raw.get("items", [])]
         if not items:
             raise PackError(f"{pid}/{key}: lane has no items")
         # An item evidences its lane's controls plus any of its own.
-        items = [Item(id=i.id, text=i.text, controls=tuple(dict.fromkeys(lane_controls + i.controls)))
-                 for i in items]
+        items = [Item(id=i.id, text=i.text, controls=tuple(dict.fromkeys(lane_controls + tuple(own))),
+                      strengths={**lane_map, **own})
+                 for i, own in items]
         for c in {c for i in items for c in i.controls}:
             if c not in known_controls:
                 raise PackError(f"{pid}/{key}: unknown control id {c}")
+        # One strength per control in a pack, so a control row states a single claim.
+        for i in items:
+            for c, strength in i.strengths.items():
+                if control_strengths.setdefault(c, strength) != strength:
+                    raise PackError(f"{pid}: control {c} is mapped as both {control_strengths[c]} and {strength}; "
+                                    "use one strength per control in a pack")
         if len({i.id for i in items}) != len(items):
             raise PackError(f"{pid}/{key}: duplicate item ids")
         lanes.append(LaneDef(key=key, name=raw.get("name", key), needs=tuple(raw.get("needs", [])),
@@ -142,7 +199,7 @@ def _parse_pack(data: dict, known_controls: dict) -> Pack:
     return Pack(recon_lane=recon_lane, needs_gate=needs_gate, id=pid, name=data.get("name", pid), version=str(data.get("version", "0")),
                 description=" ".join(str(data.get("description", "")).split()),
                 engagement_types=tuple(data.get("engagement_types", [])),
-                lanes=tuple(lanes), lane_index=index)
+                lanes=tuple(lanes), lane_index=index, control_strengths=control_strengths)
 
 
 def _check_acyclic(pid: str, index: dict) -> None:

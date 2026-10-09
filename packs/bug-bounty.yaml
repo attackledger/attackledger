@@ -3,7 +3,7 @@
 # step when the methodology changes. Lanes opened earlier keep the texts they were opened with.
 id: bug-bounty
 name: Bug bounty
-version: '0.2'
+version: '0.3'
 description: Role-based lanes for bug bounty programs. Recon and an application model come first; access-control,
   auth, logic and input lanes open only on a receipted model.
 recon_lane: recon
@@ -11,13 +11,28 @@ recon_lane: recon
 needs_gate: open
 engagement_types:
 - bug_bounty
+# Control mappings and their strengths are explained in docs/CONTROLS.md. A bug bounty is not
+# a penetration test under PCI DSS 11.4 and is not release acceptance testing (ISO A.8.29), so
+# its test lanes carry PCI-6.3.1, PCI-11.4.3, ISO-A.8.8, DORA-ART24 and DORA-ART25 at the
+# strengths below, and the model lane maps to no control.
 lanes:
 - key: recon
   name: Recon
   controls:
-  - ISO-A.5.9
-  - DORA-ART8
-  - PCI-11.3.2
+  - id: ISO-A.5.9
+    strength: supporting
+  - id: DORA-ART8
+    strength: supporting
+  - id: PCI-6.3.1
+    strength: supporting
+  - id: PCI-11.4.3
+    strength: supporting
+  - id: ISO-A.8.8
+    strength: partial
+  - id: DORA-ART24
+    strength: supporting
+  - id: DORA-ART25
+    strength: supporting
   items:
   - id: BUG-BOUNTY-RECON-01
     text: Scope, required research header and rate limit confirmed against the live program policy
@@ -26,15 +41,20 @@ lanes:
   - id: BUG-BOUNTY-RECON-03
     text: 'Configuration: admin interfaces, HTTP methods, default and backup files, security headers'
     controls:
-    - ISO-A.8.9
+    - id: ISO-A.8.9
+      strength: supporting
   - id: BUG-BOUNTY-RECON-04
     text: 'Transport security: TLS versions, certificates, HSTS, cookies sent over plain HTTP'
     controls:
-    - ISO-A.8.24
+    - id: ISO-A.8.24
+      strength: supporting
+    - id: PCI-4.2.1
+      strength: supporting
   - id: BUG-BOUNTY-RECON-05
     text: 'Cryptography in use where exposed: weak algorithms, padding, randomness'
     controls:
-    - ISO-A.8.24
+    - id: ISO-A.8.24
+      strength: supporting
   - id: BUG-BOUNTY-RECON-06
     text: 'Source and secret leaks: repositories, backups, sourcemaps, keys in client code (never used)'
   - id: BUG-BOUNTY-RECON-07
@@ -61,9 +81,6 @@ lanes:
     text: Every negative result backed by a positive control showing the test could have found the issue
 - key: mapper
   name: Model
-  controls:
-  - ISO-A.5.9
-  - PCI-11.4.1
   items:
   - id: BUG-BOUNTY-MAPPER-01
     text: JavaScript bundles and lazy-loaded chunks collected; API calls traced to their endpoints
@@ -94,9 +111,24 @@ lanes:
   needs:
   - mapper
   controls:
-  - ISO-A.5.15
-  - PCI-6.2.4
-  - PCI-11.4.3
+  - id: ISO-A.5.15
+    strength: supporting
+  - id: ISO-A.8.3
+    strength: partial
+  - id: DORA-ART9
+    strength: supporting
+  - id: PCI-6.2.4
+    strength: supporting
+  - id: PCI-6.3.1
+    strength: supporting
+  - id: PCI-11.4.3
+    strength: supporting
+  - id: ISO-A.8.8
+    strength: partial
+  - id: DORA-ART24
+    strength: supporting
+  - id: DORA-ART25
+    strength: supporting
   items:
   - id: BUG-BOUNTY-AUTHZ-01
     text: Dead routes told apart from access-controlled ones (OPTIONS and a made-up path as controls)
@@ -133,9 +165,22 @@ lanes:
   needs:
   - mapper
   controls:
-  - ISO-A.8.5
-  - PCI-6.2.4
-  - PCI-11.4.3
+  - id: ISO-A.8.5
+    strength: partial
+  - id: DORA-ART9
+    strength: supporting
+  - id: PCI-6.2.4
+    strength: supporting
+  - id: PCI-6.3.1
+    strength: supporting
+  - id: PCI-11.4.3
+    strength: supporting
+  - id: ISO-A.8.8
+    strength: partial
+  - id: DORA-ART24
+    strength: supporting
+  - id: DORA-ART25
+    strength: supporting
   items:
   - id: BUG-BOUNTY-AUTHFLOW-01
     text: Identity-provider-specific tests chosen from the technology fingerprint (Okta, Entra ID, or N/A)
@@ -154,12 +199,18 @@ lanes:
     text: 'Session management: fixation, expiry, logout and cookie attributes'
   - id: BUG-BOUNTY-AUTHFLOW-08
     text: JWT handling and token cryptography (or N/A)
+    controls:
+    - id: ISO-A.8.24
+      strength: supporting
   - id: BUG-BOUNTY-AUTHFLOW-09
     text: MFA bypass (or N/A)
   - id: BUG-BOUNTY-AUTHFLOW-10
     text: Account takeover paths
   - id: BUG-BOUNTY-AUTHFLOW-11
     text: Forgotten-password and reset flow
+    controls:
+    - id: ISO-A.5.17
+      strength: supporting
   - id: BUG-BOUNTY-AUTHFLOW-12
     text: Authentication bypass
   - id: BUG-BOUNTY-AUTHFLOW-13
@@ -181,9 +232,20 @@ lanes:
   needs:
   - mapper
   controls:
-  - ISO-A.8.28
-  - PCI-6.2.4
-  - PCI-11.4.3
+  - id: ISO-A.8.28
+    strength: supporting
+  - id: PCI-6.2.4
+    strength: supporting
+  - id: PCI-6.3.1
+    strength: supporting
+  - id: PCI-11.4.3
+    strength: supporting
+  - id: ISO-A.8.8
+    strength: partial
+  - id: DORA-ART24
+    strength: supporting
+  - id: DORA-ART25
+    strength: supporting
   items:
   - id: BUG-BOUNTY-LOGIC-01
     text: Allowed transitions listed from the state machine
@@ -218,10 +280,20 @@ lanes:
   needs:
   - mapper
   controls:
-  - ISO-A.8.28
-  - PCI-6.2.4
-  - PCI-6.4.1
-  - PCI-11.4.3
+  - id: ISO-A.8.28
+    strength: supporting
+  - id: PCI-6.2.4
+    strength: supporting
+  - id: PCI-6.3.1
+    strength: supporting
+  - id: PCI-11.4.3
+    strength: supporting
+  - id: ISO-A.8.8
+    strength: partial
+  - id: DORA-ART24
+    strength: supporting
+  - id: DORA-ART25
+    strength: supporting
   items:
   - id: BUG-BOUNTY-INJECTION-01
     text: Sink inventory built from the model's objects and parameters
@@ -248,8 +320,18 @@ lanes:
 - key: mobile
   name: Mobile
   controls:
-  - ISO-A.8.29
-  - PCI-11.4.3
+  - id: ISO-A.8.28
+    strength: supporting
+  - id: PCI-6.3.1
+    strength: supporting
+  - id: PCI-11.4.3
+    strength: supporting
+  - id: ISO-A.8.8
+    strength: partial
+  - id: DORA-ART24
+    strength: supporting
+  - id: DORA-ART25
+    strength: supporting
   items:
   - id: BUG-BOUNTY-MOBILE-01
     text: App confirmed eligible under the live program policy

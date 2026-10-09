@@ -559,8 +559,11 @@ this is the report you were sent, compare the report body SHA-256 on the cover w
 </section>"""
 
 
-_CONTROL_STATUS = {"evidenced": "Evidenced", "resolved": "Resolved, partly not applicable",
-                   "not_applicable": "Not applicable", "partial": "Partial", "none": "No evidence"}
+# Statuses count receipted items; they say nothing about the control as a whole, which the
+# strength column qualifies. "Partial" is avoided here because it is also a strength.
+_CONTROL_STATUS = {"evidenced": "All mapped items receipted", "resolved": "Resolved, partly not applicable",
+                   "not_applicable": "Not applicable", "partial": "Some mapped items receipted",
+                   "none": "No mapped item receipted"}
 
 
 def _controls(r: dict) -> str:
@@ -570,13 +573,18 @@ def _controls(r: dict) -> str:
         cls = {"evidenced": "ok", "not_applicable": "muted", "none": "muted"}.get(x["status"], "")
         na = x.get("not_applicable", 0)
         counts = f"{_e(x['evidenced'])} of {_e(x['required'])} with evidence" + (f"<br>{_e(na)} not applicable" if na else "")
-        rows.append(f"<tr><td><strong>{_e(x['id'])}</strong><br><span class='muted'>{_e(x['text'])}</span></td>"
-                    f"<td>{_e(x['framework_name'])}</td><td>{counts}</td>"
+        # Strength and note say how far the mapped tests go for this control (docs/CONTROLS.md).
+        note = f"<br><span class='muted'>{_e(x['note'])}</span>" if x.get("note") else ""
+        rows.append(f"<tr><td><strong>{_e(x['id'])}</strong><br><span class='muted'>{_e(x['text'])}</span>{note}</td>"
+                    f"<td>{_e(x['framework_name'])}</td><td>{_e(x.get('strength', 'supporting')).capitalize()}</td>"
+                    f"<td>{counts}</td>"
                     f"<td class='{cls}'>{_e(_CONTROL_STATUS.get(x['status'], x['status']))}</td></tr>")
-    body = _table(["Control", "Framework", "Receipted items", "Status"], rows) if rows else \
+    body = _table(["Control", "Framework", "Evidence strength", "Receipted items", "Status"], rows) if rows else \
         "<p class='muted'>This pack maps no items to controls.</p>"
+    scale = "".join(f"<li><strong>{_e(k.capitalize())}</strong>: {_e(v)}</li>" for k, v in (c.get("strengths") or {}).items())
+    scale = f"<p>Evidence strength:</p><ul>{scale}</ul>" if scale else ""
     return f"""<section id="controls" class="pb"><h2>Control evidence</h2>
-<p class="note">{_e(c.get('disclaimer', ''))}</p>{body}</section>"""
+<p class="note">{_e(c.get('disclaimer', ''))}</p>{scale}{body}</section>"""
 
 
 def _summary_html(e: dict, deleted: dict | None) -> str:
