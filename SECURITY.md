@@ -9,7 +9,7 @@ Please do not report security issues in public GitHub issues or pull requests.
 
 ## About this project
 
-AttackLedger is a small project run by one person, Murat Kabak. I read every report myself.
+AttackLedger is a small project led by Murat Kabak. I read every report myself.
 There is no bug bounty: I cannot pay for reports, but I will fix what you find, keep you
 informed, and credit you if you want to be credited.
 
