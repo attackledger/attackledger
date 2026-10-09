@@ -1,7 +1,8 @@
 // The signed-in person's own account (D-036): key changes since their previous sign-in,
 // their signing keys, and changing their password. Opens by itself when a key was
 // registered or revoked for them that this browser did not make, because only they can
-// tell whether it was them.
+// tell whether it was them, and once per sign-in while they still use a password someone
+// else set (a new account, or a reset on the server), asking them to choose their own.
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { api, type KeyNotice, type Me, type SigningKeyView } from "./api";
@@ -28,6 +29,11 @@ function seenKey(me: Me): string {
   return `attackledger-key-notice:${me.user_id}:${me.key_notice?.since ?? "first"}:${me.key_notice?.events.length ?? 0}`;
 }
 
+// The previous sign-in time changes with every sign-in, so a skipped prompt comes back at the next one.
+function skippedKey(me: Me): string {
+  return `attackledger-password-prompt:${me.user_id}:${me.key_notice?.since ?? "first"}`;
+}
+
 export function Account({ me }: { me: Me | null }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [mine, setMine] = useState<string | null>(null);       // the key held in this browser
@@ -39,6 +45,8 @@ export function Account({ me }: { me: Me | null }) {
   const [again, setAgain] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [prompted, setPrompted] = useState(false);   // opened to ask for a password of their own
+  const currentRef = useRef<HTMLInputElement>(null);
 
   const loadKeys = useCallback(() => api.keys().then(setKeys).catch((e) => setError(e.message)), []);
 
@@ -51,8 +59,15 @@ export function Account({ me }: { me: Me | null }) {
       const others = (me.key_notice?.events ?? []).filter((e) => e.key_fingerprint !== fp);
       setNotice(others.length ? { since: me.key_notice!.since, events: others } : null);
       let seen = false;
-      try { seen = sessionStorage.getItem(seenKey(me)) === "1"; } catch { /* storage blocked */ }
-      if (others.length && !seen) open();
+      let skipped = false;
+      try {
+        seen = sessionStorage.getItem(seenKey(me)) === "1";
+        skipped = sessionStorage.getItem(skippedKey(me)) === "1";
+      } catch { /* storage blocked */ }
+      const askPassword = me.password_chosen === false && !skipped;
+      setPrompted(askPassword);
+      if ((others.length && !seen) || askPassword) open();
+      if (askPassword) setTimeout(() => currentRef.current?.focus(), 0);
     });
   }, [me]);
 
@@ -64,7 +79,11 @@ export function Account({ me }: { me: Me | null }) {
   }
 
   function close() {
-    try { if (me) sessionStorage.setItem(seenKey(me), "1"); } catch { /* storage blocked */ }
+    try {
+      if (me) sessionStorage.setItem(seenKey(me), "1");
+      if (me && !chosen) sessionStorage.setItem(skippedKey(me), "1");   // closing is skipping, until the next sign-in
+    } catch { /* storage blocked */ }
+    setPrompted(false);
     dialog.current?.close();
   }
 
@@ -95,6 +114,33 @@ export function Account({ me }: { me: Me | null }) {
   }
 
   if (!me || me.kind !== "person") return null;
+  const password = (
+    <section aria-labelledby="password-title">
+      <h3 id="password-title">{!chosen ? "Choose your own password" : "Change your password"}</h3>
+      {!chosen && (
+        <p className="notice-inline">You still sign in with a password someone else set, when your account was made
+          or reset. Choose your own, so that only you can sign in as you. Until you do, keys you register are
+          recorded in the key log as registered on a password someone else set.</p>
+      )}
+      <form className="person-form" onSubmit={change}>
+        <label>Current password
+          <input ref={currentRef} type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+          {!chosen && <span className="hint">The one you were given.</span>}
+        </label>
+        <label>New password
+          <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+          <span className="hint">At least 12 characters. Changing it signs you out on every other device.</span>
+        </label>
+        <label>New password again
+          <input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} />
+        </label>
+        <div className="work-buttons">
+          <button className="btn" disabled={!current || !next || !again}>{!chosen ? "Save my password" : "Change password"}</button>
+          {prompted && !chosen && <button type="button" className="btn ghost" onClick={close}>Skip for now</button>}
+        </div>
+      </form>
+    </section>
+  );
   const active = (id: number | null) => id != null && keys.some((k) => k.id === id && !k.revoked);
 
   return (
@@ -105,6 +151,7 @@ export function Account({ me }: { me: Me | null }) {
           <h2 id="account-title" className="panel-title">Your account</h2>
           <button className="btn ghost small" onClick={close}>Close</button>
         </div>
+        {prompted && password}
 
         {notice && (
           <section className="key-notice" aria-labelledby="key-notice-title">
@@ -152,26 +199,7 @@ export function Account({ me }: { me: Me | null }) {
           )}
         </section>
 
-        <section aria-labelledby="password-title">
-          <h3 id="password-title">Change your password</h3>
-          {!chosen && (
-            <p className="notice-inline">You still sign in with a password someone else set, when your account was made
-              or reset. Choose your own, so that only you can sign in as you.</p>
-          )}
-          <form className="person-form" onSubmit={change}>
-            <label>Current password
-              <input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
-            </label>
-            <label>New password
-              <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
-              <span className="hint">At least 12 characters. Changing it signs you out on every other device.</span>
-            </label>
-            <label>New password again
-              <input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} />
-            </label>
-            <button className="btn" disabled={!current || !next || !again}>Change password</button>
-          </form>
-        </section>
+        {!prompted && password}
         {error && <p className="field-error" role="alert">{error}</p>}
         {saved && <p className="saved" role="status">{saved}</p>}
       </dialog>

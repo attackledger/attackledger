@@ -141,6 +141,9 @@ export interface LaneDetail {
   items: LaneItem[];
   evidence: EvidenceEntry[];
   content_deleted?: ContentDeleted | null;
+  // Open items that have evidence attached and only wait to be marked done. From the server when it
+  // sends it; otherwise the views count it from the lane's evidence.
+  waiting_done?: number;
   receipt: { sha256: string; closed_by: string | null; closed_by_email?: string | null; created_at: string; signed?: boolean;
              algorithm?: string | null; key_fingerprint?: string | null;
              timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null } | null;
@@ -387,7 +390,7 @@ export class ApiError extends Error {
 
 // Request fields as the forms name them, for validation messages.
 const FIELD_LABEL: Record<string, string> = {
-  policy_url: "Program policy URL", operator: "Your name or handle", host: "Host", include: "In scope",
+  policy_url: "Policy URL", operator: "Your name or handle", host: "Host", include: "In scope",
   exclude: "Out of scope", rate_limit_rps: "Requests per second", research_header: "Research header",
   research_user_agent: "Research user agent", crawl_depth: "Crawl depth", name: "Name", na_reason: "Reason",
   email: "Email", password: "Password", closed_by: "Your name", targets: "Targets", kind: "Step",
@@ -607,10 +610,10 @@ export const api = {
     call<ContentStatus>(`/engagements/${engId}/content/delete`, { method: "POST", body: JSON.stringify({ confirm_name }) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
-  createEngagement: (name: string, pack_id: string) =>
+  createEngagement: (name: string, pack_id: string, engagement_type?: string) =>
     call<{ id: number }>("/engagements", {
       method: "POST",
-      body: JSON.stringify({ name, pack_id }),
+      body: JSON.stringify({ name, pack_id, engagement_type }),
     }),
   packs: () => call<PackSummary[]>("/packs"),
   controls: (engId: number) => call<ControlsReport>(`/engagements/${engId}/controls`),

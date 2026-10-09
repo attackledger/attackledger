@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { DEMO, demoUrl } from "./demo";
 import { plural } from "./words";
+import { VERIFIER, VERIFY_PAGE } from "./verifier_links";
 
 interface ReportSummary {
   generated_at: string;
@@ -87,10 +88,17 @@ export function Report({ engId }: { engId: number }) {
           <div><dt>Void receipts</dt><dd>{s.lanes_stale}</dd></div>
         </dl>
         <p className="muted">
-          Anyone can check a downloaded report without AttackLedger installed. The verifier rebuilds every receipt
-          from its items and evidence, walks the evidence chain and recomputes the body hash:
+          Anyone can check a downloaded report without AttackLedger installed. The simplest way: drop it on{" "}
+          <a href={VERIFY_PAGE} target="_blank" rel="noopener noreferrer">attackledger.com/verify</a>, which checks it in
+          the browser and uploads nothing. The verifier rebuilds every receipt from its items and evidence, walks the
+          evidence chain and recomputes the body hash.
         </p>
-        <pre className="cmd" tabIndex={0} aria-label="Command">python3 tools/verify_report.py attackledger-report.html</pre>
+        <p className="muted">
+          The same check offline needs only Python: <a href={VERIFIER.script} download="verify_report.py">download
+          the verifier</a> and <a href={VERIFIER.roots} download={VERIFIER.rootsFile}>the timestamp roots it trusts</a>,
+          then run:
+        </p>
+        <pre className="cmd" tabIndex={0} aria-label="Command">{VERIFIER.command("attackledger-report.html")}</pre>
         <p className="muted">The hashes change every time the report is generated, because it includes the generation time.</p>
       </section>
     </div>

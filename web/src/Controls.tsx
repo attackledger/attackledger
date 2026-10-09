@@ -45,6 +45,8 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
       {[...groups.entries()].map(([fw, rows]) => (
         <section key={fw} className="panel" aria-labelledby={`fw-${rows[0].framework}`}>
           <h3 id={`fw-${rows[0].framework}`} className="panel-title">{fw}</h3>
+          {/* On a phone the table fits by wrapping; anything still wider scrolls here, never the page. */}
+          <div className="ctl-scroll" role="region" aria-label={`${fw}: controls table`} tabIndex={0}>
           <table className="ctl">
             <thead>
               <tr>
@@ -78,6 +80,7 @@ export function Controls({ engId, pack }: { engId: number; pack: string }) {
               })}
             </tbody>
           </table>
+          </div>
         </section>
       ))}
     </div>

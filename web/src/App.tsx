@@ -44,27 +44,34 @@ function homeOf(me: Me | null, engId: number): Home {
 const VIEWER_TABS: Tab[] = ["report", "verify", "history", "ledger", "controls", "recon", ...(DEMO ? [] : ["import" as const])];
 const WORK_TABS: Tab[] = ["recon", ...(DEMO ? [] : ["import" as const]), "ledger", "controls", "report", "verify", "history"];
 
+type LoginMode = "token" | "people" | "setup";
+
 export function App() {
-  const [needLogin, setNeedLogin] = useState(false);
+  // Null while signed in. Signing out sets it in place, without reloading the page: a reload left a
+  // moment in which what a person typed went to the page being replaced and was lost (and the form
+  // could first show the token field until the server said how it signs in).
+  const [login, setLogin] = useState<{ mode?: LoginMode; signedOut?: boolean } | null>(null);
   useEffect(() => {
-    const on = () => setNeedLogin(true);
+    // Every refused request sends this; only the first one changes anything, so the form never remounts.
+    const on = () => setLogin((l) => l ?? {});
     window.addEventListener("attackledger:auth-required", on);
     return () => window.removeEventListener("attackledger:auth-required", on);
   }, []);
-  if (needLogin) return <Login onDone={() => { setNeedLogin(false); window.location.reload(); }} />;
-  return <Workspace />;
+  if (login) return <Login known={login.mode} signedOut={login.signedOut} onDone={() => window.location.reload()} />;
+  return <Workspace onSignedOut={(mode) => setLogin({ mode, signedOut: true })} />;
 }
 
-function Login({ onDone }: { onDone: () => void }) {
+function Login({ known, signedOut, onDone }: { known?: LoginMode; signedOut?: boolean; onDone: () => void }) {
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"token" | "people" | "setup" | null>(null);
+  const [mode, setMode] = useState<LoginMode | null>(known ?? null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    if (known) return;   // just signed out: the server's mode is already known
     api.health().then((h) => setMode(h.mode === "people" || h.mode === "setup" ? h.mode : "token"))
       .catch(() => setMode("token"));
-  }, []);
+  }, [known]);
   async function submit(ev: FormEvent) {
     ev.preventDefault();
     try {
@@ -74,6 +81,17 @@ function Login({ onDone }: { onDone: () => void }) {
     } catch (e) {
       setError((e as Error).message);
     }
+  }
+  if (mode === null) {
+    // No fields until the form is known, so nothing typed lands in a form that is then replaced.
+    return (
+      <main className="login">
+        <div className="panel login-card">
+          <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
+          <p className="muted" role="status">Checking how this server signs people in…</p>
+        </div>
+      </main>
+    );
   }
   if (mode === "setup") {
     // Production installs refuse everyone until the first owner exists (ATTACKLEDGER_REQUIRE_SIGN_IN).
@@ -96,6 +114,7 @@ function Login({ onDone }: { onDone: () => void }) {
       <main className="login">
         <form className="panel login-card" onSubmit={submit}>
           <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
+          {signedOut && <p className="muted" role="status">You have signed out.</p>}
           <label className="sign-name">
             Email
             <input id="login-email" type="email" autoComplete="username" value={email}
@@ -116,6 +135,7 @@ function Login({ onDone }: { onDone: () => void }) {
     <main className="login">
       <form className="panel login-card" onSubmit={submit}>
         <div className="brand"><StampGlyph /><h1 className="wordmark">AttackLedger</h1></div>
+        {signedOut && <p className="muted" role="status">You have signed out.</p>}
         <p className="muted">This ledger requires the operator token.</p>
         <label className="sign-name">
           API token
@@ -128,7 +148,7 @@ function Login({ onDone }: { onDone: () => void }) {
   );
 }
 
-function Workspace() {
+function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) {
   const [engagements, setEngagements] = useState<EngagementSummary[] | null>(null);
   const [current, setCurrent] = useState<number | null>(null);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
@@ -193,11 +213,20 @@ function Workspace() {
   useEffect(() => {
     if (current == null || !setsUp || coverageFor !== current) return setSetup(null);
     let live = true;
-    Promise.all([api.scope(current), api.jobs(current)])
-      .then(([scope, jobs]) => { if (live) setSetup({ engId: current, scope, jobs }); })
+    // The team step is for owners when people sign in: only they can read who holds which role.
+    const team = me?.mode === "people" && can(me, current, "team")
+      ? Promise.all([api.people(), api.members(current)])
+          .then(([ps, ms]) => ({ others: ps.filter((p) => !p.disabled && !p.is_owner).length, members: ms }))
+          .catch(() => null)
+      : Promise.resolve(null);
+    const type = engagements?.find((e) => e.id === current)?.engagement_type;
+    Promise.all([api.scope(current), api.jobs(current), api.imports(current).catch(() => []), team])
+      .then(([scope, jobs, imports, t]) => {
+        if (live) setSetup({ engId: current, scope, jobs, imports: imports.length, team: t, engagementType: type });
+      })
       .catch(() => {});
     return () => { live = false; };
-  }, [current, coverage, coverageFor, setsUp]);
+  }, [current, coverage, coverageFor, setsUp, me, engagements]);
   const steps = useMemo(
     () => (setup && coverage && setup.engId === current && coverageFor === current ? setupSteps(setup, coverage) : null),
     [setup, coverage, current, coverageFor]);
@@ -226,6 +255,7 @@ function Workspace() {
   const home = current != null ? homeOf(me, current) : "unknown";
   const tabs: Tab[] = [...(home === "viewer" ? VIEWER_TABS : WORK_TABS), ...(owner ? ["team" as const] : [])];
   const currentName = engagements?.find((e) => e.id === current)?.name;
+  const currentType = engagements?.find((e) => e.id === current)?.engagement_type;
   // With nothing to pick yet, the list is the only thing to show.
   const menuShown = menuOpen || !engagements || engagements.length === 0;
 
@@ -289,7 +319,10 @@ function Workspace() {
           {me && me.mode !== "open" && (
             <div className="whoami">
               <span>Signed in as <strong>{me.name}</strong></span>
-              <button className="link-button" onClick={async () => { await api.logout(); window.location.reload(); }}>
+              <button className="link-button" onClick={async () => {
+                try { await api.logout(); } catch (e) { return setNotice((e as Error).message); }
+                onSignedOut(me.mode === "people" ? "people" : "token");
+              }}>
                 Sign out
               </button>
               <Account me={me} />
@@ -330,7 +363,7 @@ function Workspace() {
           <section className="empty">
             <h2>Start your first engagement</h2>
             <p>
-              Name it after the program you're testing, then add the hosts that are in scope.
+              Name it after the client or the program you're testing, then add the hosts that are in scope.
               Each host gets a row and each role a column. A cell closes only when every checklist
               item has evidence or a written reason.
             </p>
@@ -366,12 +399,12 @@ function Workspace() {
                 its coverage, evidence and reports, and verify its receipts. Changes are made by its testers, reviewers and owners.
               </p>
             )}
-            {steps && !setupComplete(steps) && (tab === "recon" || tab === "ledger") && (
+            {steps && !setupComplete(steps) && (tab === "recon" || tab === "ledger" || tab === "import" || tab === "team") && (
               <SetupGuide steps={steps} canDo={(who) => can(me, current, who)} onGo={goToStep} />
             )}
             <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
               {tab === "recon" && <Recon engId={current} onAssetsChanged={hostsChanged} canManage={can(me, current, "rules")}
-                                         canRun={can(me, current, "work")}
+                                         canRun={can(me, current, "work")} engagementType={currentType}
                                          hostsInScope={coverage.assets.filter((a) => a.in_scope).length} />}
               {tab === "ledger" && (
                 <Matrix coverage={coverage} engId={current} onOpen={openCell} onAdded={hostsChanged}
@@ -479,17 +512,29 @@ function DemoGuide({ engagements, go }: {
   );
 }
 
+/** The methodology a new engagement of this type starts with: the first pack written for the type. */
+function packFor(packs: PackSummary[], type: string): string {
+  return (packs.find((p) => p.engagement_types.includes(type)) ?? packs[0])?.id ?? "";
+}
+
 function NewEngagement({ onCreated }: { onCreated: (id: number) => void }) {
   const [name, setName] = useState("");
   const [packs, setPacks] = useState<PackSummary[]>([]);
-  const [packId, setPackId] = useState("bug-bounty");
+  const [type, setType] = useState("pentest");   // the first users are pentest and audit teams (D-028)
+  const [packId, setPackId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { api.packs().then(setPacks).catch(() => {}); }, []);
+  useEffect(() => {
+    api.packs().then((ps) => { setPacks(ps); setPackId((cur) => cur || packFor(ps, "pentest")); }).catch(() => {});
+  }, []);
+  function chooseType(t: string) {
+    setType(t);
+    setPackId(packFor(packs, t));
+  }
   async function submit(ev: FormEvent) {
     ev.preventDefault();
     if (!name.trim()) return;
     try {
-      const { id } = await api.createEngagement(name.trim(), packId);
+      const { id } = await api.createEngagement(name.trim(), packId || packFor(packs, type), type);
       setName("");
       setError(null);
       onCreated(id);
@@ -501,7 +546,14 @@ function NewEngagement({ onCreated }: { onCreated: (id: number) => void }) {
     <form className="inline-form" onSubmit={submit}>
       <label htmlFor="new-eng">New engagement</label>
       <div className="field-row">
-        <input id="new-eng" value={name} onChange={(e) => setName(e.target.value)} placeholder="Program or client name" />
+        <input id="new-eng" value={name} onChange={(e) => setName(e.target.value)}
+               placeholder={type === "bug_bounty" ? "Program name" : "Client or system name"} />
+      </div>
+      <label htmlFor="new-type" className="sub-label">Type</label>
+      <div className="field-row">
+        <select id="new-type" value={type} onChange={(e) => chooseType(e.target.value)}>
+          {Object.entries(TYPE_NAMES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
       </div>
       <label htmlFor="new-pack" className="sub-label">Methodology</label>
       <div className="field-row">
@@ -527,6 +579,9 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
   canWork: boolean;   // testers open lanes and add hosts
 }) {
   const [gapsOnly, setGapsOnly] = useState(false);
+  // Deleted content can never be reviewed again, so no lane here can get a new receipt.
+  const deleted = coverage.content_deleted ?? null;
+  const opens = canWork && !deleted;
 
   const rows = gapsOnly ? coverage.assets.filter(isGapRow) : coverage.assets;
 
@@ -560,8 +615,14 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
         </label>
       </header>
 
+      {deleted && (
+        <p className="notice-inline" role="note">
+          {deletedText(deleted)} {LOCKED_TEXT} New lanes cannot be opened.
+        </p>
+      )}
+
       {coverage.assets.length === 0 ? (
-        <p className="empty-row">{canWork ? "Add a host below to open its row in the ledger." : "No hosts in this engagement yet."}</p>
+        <p className="empty-row">{opens ? "Add a host below to open its row in the ledger." : "No hosts in this engagement yet."}</p>
       ) : (
         <div className="sheet" role="region" aria-label="Coverage table, hosts by lane" tabIndex={0}>
           <table style={{ minWidth: `${12 + coverage.roles.length * 7.5}rem` }}>
@@ -598,7 +659,7 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
                         disabled={!row.in_scope}
                         label={`${laneName(r)} on ${row.host}`}
                         lockedBy={blockers(row, r).map(laneName)}
-                        canOpen={canWork}
+                        canOpen={opens}
                         onClick={() => onOpen(row.asset_id, r, row.roles[r])}
                       />
                     </td>
@@ -622,7 +683,7 @@ function Matrix({ coverage, engId, onOpen, onAdded, canWork }: {
 
       <Legend />
 
-      {canWork && <AddHost engId={engId} onAdded={onAdded} />}
+      {opens && <AddHost engId={engId} onAdded={onAdded} />}
     </section>
   );
 }
@@ -686,16 +747,37 @@ function CellMark({ cell, label, lockedBy, disabled, canOpen, onClick }: {
   }
 }
 
+// Why nothing on a lane can change once its engagement's content is deleted (D-043).
+const LOCKED_TEXT = "Nobody can review evidence that can no longer be read, so its lanes can never be receipted again.";
+
 const ITEM_MARK: Record<string, string> = { done: "✓", na: "—", open: "○", evidence: "◐" };
 
 interface Problem { idx: number; why: string }
+
+const WAITING = "has evidence, not marked done";
+
+/** Open items whose evidence is attached and that only wait to be marked done: the server's count
+ *  when it sends one, otherwise counted from the lane. */
+function waitingDone(lane: LaneDetail): number {
+  if (typeof lane.waiting_done === "number") return lane.waiting_done;
+  const withEvidence = new Set(lane.evidence.map((e) => e.item_idx));
+  return lane.items.filter((i) => i.state === "open" && withEvidence.has(i.idx)).length;
+}
+
+/** "3 items still need evidence or a reason, and 2 have evidence waiting to be marked done." */
+function progressText(needs: number, waiting: number): string {
+  const need = needs > 0 ? `${plural(needs, "item")} still ${needs === 1 ? "needs" : "need"} evidence or a reason` : "";
+  const wait = waiting > 0 ? `${needs > 0 ? "" : `${plural(waiting, "item")} `}${waiting === 1 ? "has" : "have"} evidence waiting to be marked done` : "";
+  if (need && wait) return `${need}, and ${waiting} ${wait}.`;
+  return `${need || wait}.`;
+}
 
 /** What still keeps a lane from closing, worked out from the lane as it is now (the server's gate, mirrored). */
 function problemsOf(lane: LaneDetail): Problem[] {
   const withEvidence = new Set(lane.evidence.map((e) => e.item_idx).filter((x): x is number => x != null));
   const out: Problem[] = [];
   for (const i of lane.items) {
-    if (i.state === "open") out.push({ idx: i.idx, why: withEvidence.has(i.idx) ? "has evidence, not marked done" : "still open" });
+    if (i.state === "open") out.push({ idx: i.idx, why: withEvidence.has(i.idx) ? WAITING : "still open" });
     else if (i.state === "done" && !withEvidence.has(i.idx)) out.push({ idx: i.idx, why: "marked done without evidence" });
     else if (i.state === "na" && !(i.na_reason ?? "").trim()) out.push({ idx: i.idx, why: "not applicable without a reason" });
   }
@@ -763,7 +845,19 @@ function Folio({ laneId, me, onClose, onChanged }: {
   const [reviewed, setReviewed] = useState(false);
 
   const [key, setKey] = useState<LocalKey | null>(null);
-  useEffect(() => { if (me?.kind === "person" && me.user_id) localKey(me.user_id).then(setKey); }, [me]);
+  // Whether signing here uses a key already registered to this person, or creates and registers one.
+  const [keyReady, setKeyReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (me?.kind !== "person" || !me.user_id) return;
+    let live = true;
+    Promise.all([localKey(me.user_id), api.keys().catch(() => null)]).then(([k, registered]) => {
+      if (!live) return;
+      const usable = !!k && !!registered?.some((r) => r.fingerprint === k.fingerprint && !r.revoked);
+      setKey(usable ? k : null);
+      setKeyReady(registered ? usable : null);
+    });
+    return () => { live = false; };
+  }, [me]);
 
   async function close() {
     try {
@@ -771,6 +865,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
         // Sign in this browser: the private key never leaves it (D-027).
         const k = await ensureKey(me.user_id);
         setKey(k);
+        setKeyReady(true);
         const { payload } = await api.receiptPayload(laneId, k.fingerprint);
         setLane(await api.closeLaneSigned(laneId, payload, await sign(k, payload), k.fingerprint));
         setReviewed(false);
@@ -804,11 +899,14 @@ function Folio({ laneId, me, onClose, onChanged }: {
     onChanged();
   }, [onChanged]);
 
-  const canWork = !!lane && can(me, lane.engagement_id, "work");
+  const locked = lane?.content_deleted ?? null;   // deleted content: nothing here can be receipted again
+  const canWork = !!lane && can(me, lane.engagement_id, "work") && !locked;
   const canSign = !!lane && can(me, lane.engagement_id, "sign");
 
   const counts = lane && itemCounts(lane);
   const problems = lane ? problemsOf(lane) : [];
+  const waiting = lane ? waitingDone(lane) : 0;
+  const needs = Math.max(0, problems.length - problems.filter((p) => p.why === WAITING).length);
 
   return (
     <>
@@ -826,7 +924,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
           <p className="folio-body">{error ?? "Loading lane…"}</p>
         ) : (
           <div className="folio-body">
-            <StatusLine lane={lane} problems={problems.length} />
+            <StatusLine lane={lane} needs={needs} waiting={waiting} />
             <p className="worked-by">
               Worked <strong>{lane.executor === "agent" ? "by a Claude agent" : "manually"}</strong>
               {ctx && (
@@ -846,6 +944,11 @@ function Folio({ laneId, me, onClose, onChanged }: {
             )}
 
             <h3>Checklist</h3>
+            {locked && (
+              <p className="notice-inline" role="note">
+                {deletedText(locked)} {LOCKED_TEXT} Items cannot be changed, and the lane cannot be signed.
+              </p>
+            )}
             {lane.executor === "manual" && canWork && lane.status !== "closed" && (
               <BulkNotApplicable lane={lane} onChanged={laneChanged} />
             )}
@@ -943,8 +1046,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
             {refused && lane.status !== "closed" && (problems.length > 0 ? (
               <div className="refusal" role="alert">
                 <p>
-                  <strong>Not closed.</strong> {plural(problems.length, "item")} still{" "}
-                  {problems.length === 1 ? "needs" : "need"} evidence or a reason. The list follows your changes.
+                  <strong>Not closed.</strong> {progressText(needs, waiting)} The list follows your changes.
                 </p>
                 <ul className="refusal-items">
                   {problems.map((pr) => (
@@ -981,6 +1083,9 @@ function Folio({ laneId, me, onClose, onChanged }: {
                   </>
                 )}
               </p>
+            ) : locked ? (
+              <p className="muted">{lane.status === "stale" ? "The receipt is void. " : "Not receipted. "}
+                This lane cannot be signed: {LOCKED_TEXT.charAt(0).toLowerCase() + LOCKED_TEXT.slice(1)}</p>
             ) : !canSign ? (
               <p className="muted">
                 {lane.status === "stale" ? "The receipt is void. " : "Not receipted yet. "}
@@ -989,11 +1094,20 @@ function Folio({ laneId, me, onClose, onChanged }: {
             ) : (
               <div className="sign">
                 {me?.kind === "person" ? (
-                  <p className="muted">
-                    You sign as <strong>{me.name}</strong>
-                    {key ? <> with your key <code title={key.fingerprint}>{key.fingerprint.slice(0, 16)}</code> ({key.algorithm})</>
-                         : ". A signing key is created in this browser the first time you sign; it never leaves it"}.
-                  </p>
+                  <>
+                    <p className="muted">
+                      You sign as <strong>{me.name}</strong>
+                      {key ? <> with your key <code title={key.fingerprint}>{key.fingerprint.slice(0, 16)}</code> ({key.algorithm})</>
+                           : keyReady === false ? " with a new key made in this browser; it never leaves it"
+                           : ". A signing key is created in this browser the first time you sign; it never leaves it"}.
+                    </p>
+                    {keyReady === false && (
+                      <p className="notice-inline" id={`new-key-${lane.id}`}>
+                        This browser has no signing key for you yet. Signing will create one and register it; it will be
+                        listed in the key log, and you'll see a notice at your next sign-in.
+                      </p>
+                    )}
+                  </>
                 ) : (
                   <label className="sign-name">
                     Your name, as it appears on the receipt
@@ -1004,8 +1118,9 @@ function Folio({ laneId, me, onClose, onChanged }: {
                   <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
                   I reviewed this lane's evidence. Only a person closes a lane.
                 </label>
-                <button className="btn primary" disabled={(me?.kind !== "person" && !signer.trim()) || !reviewed} onClick={close}>
-                  Sign and close lane
+                <button className="btn primary" disabled={(me?.kind !== "person" && !signer.trim()) || !reviewed} onClick={close}
+                        aria-describedby={keyReady === false ? `new-key-${lane.id}` : undefined}>
+                  {keyReady === false ? "Create a key, sign and close lane" : "Sign and close lane"}
                 </button>
               </div>
             )}
@@ -1020,7 +1135,7 @@ function tsaHost(url: string): string {
   try { return new URL(url).host; } catch { return url; }
 }
 
-function StatusLine({ lane, problems }: { lane: LaneDetail; problems: number }) {
+function StatusLine({ lane, needs, waiting }: { lane: LaneDetail; needs: number; waiting: number }) {
   if (lane.status === "closed" && lane.receipt)
     return (
       <p className="status ok">
@@ -1029,12 +1144,7 @@ function StatusLine({ lane, problems }: { lane: LaneDetail; problems: number }) 
     );
   if (lane.status === "stale")
     return <p className="status bad">The ledger changed after the receipt was issued. Review the new entries and close again.</p>;
-  if (problems === 0)
+  if (needs === 0 && waiting === 0)
     return <p className="status ready">In progress. Every item has evidence or a reason; a reviewer can sign and close the lane.</p>;
-  return (
-    <p className="status bad">
-      In progress. {problems} of {plural(lane.items.length, "item")} still {problems === 1 ? "needs" : "need"} evidence
-      or a reason.
-    </p>
-  );
+  return <p className="status bad">In progress. {progressText(needs, waiting)}</p>;
 }

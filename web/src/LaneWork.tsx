@@ -29,10 +29,19 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A change waiting for the person to accept that it voids the lane's receipt.
+  const [pending, setPending] = useState<{ what: string; run: () => Promise<unknown> } | null>(null);
 
   const evidence = lane.evidence.filter((e) => e.item_idx === item.idx).length;
   const receipted = lane.status === "closed";
   const id = `item-${lane.id}-${item.idx}`;
+
+  /** On a receipted lane any change voids the receipt the client sees, so it is asked first. */
+  function guarded(what: string, run: () => Promise<unknown>) {
+    setError(null);
+    if (receipted) setPending({ what, run });
+    else void run();
+  }
 
   async function act(fn: () => Promise<LaneDetail>) {
     setBusy(true);
@@ -48,8 +57,12 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
     }
   }
 
-  async function attach(ev: FormEvent) {
+  function attach(ev: FormEvent) {
     ev.preventDefault();
+    guarded("Attach evidence", doAttach);
+  }
+
+  async function doAttach() {
     const ok = await act(async () => {
       if (source === "note") return api.attach(lane.id, { item_idx: item.idx, kind: "note", text });
       if (source === "file") {
@@ -66,8 +79,12 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
     }
   }
 
-  async function markNa(ev: FormEvent) {
+  function markNa(ev: FormEvent) {
     ev.preventDefault();
+    guarded("Mark not applicable", doMarkNa);
+  }
+
+  async function doMarkNa() {
     if (await act(() => api.updateItem(lane.id, item.idx, "na", reason.trim()))) {
       setReason(""); setMode(null);
     }
@@ -81,7 +98,7 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
         {item.state !== "done" && (
           <button type="button" className="btn ghost small" disabled={busy || evidence === 0}
                   title={evidence === 0 ? "Attach evidence to this item first" : undefined}
-                  onClick={() => act(() => api.updateItem(lane.id, item.idx, "done"))}>Mark done</button>
+                  onClick={() => guarded("Mark done", () => act(() => api.updateItem(lane.id, item.idx, "done")))}>Mark done</button>
         )}
         {item.state !== "na" && (
           <button type="button" className="btn ghost small" aria-expanded={mode === "na"}
@@ -89,11 +106,26 @@ export function ItemWork({ lane, item, runs, titles, onChanged }: {
         )}
         {item.state !== "open" && (
           <button type="button" className="btn ghost small" disabled={busy}
-                  onClick={() => act(() => api.updateItem(lane.id, item.idx, "open"))}>Reopen</button>
+                  onClick={() => guarded("Reopen", () => act(() => api.updateItem(lane.id, item.idx, "open")))}>Reopen</button>
         )}
       </div>
-      {receipted && mode && (
-        <p className="hint">This lane has a receipt. Any change makes the receipt void until the lane is signed again.</p>
+      {receipted && mode && !pending && (
+        <p className="hint">This lane has a receipt. Any change voids it, so you will be asked before anything is saved.</p>
+      )}
+      {pending && (
+        <div className="confirm void-confirm" role="group" aria-labelledby={`${id}-void`}>
+          <p id={`${id}-void`}>
+            <strong>This lane has a {lane.receipt?.signed ? "signed receipt" : "receipt"}.</strong> Changing an item voids
+            it, and the client will see the receipt as void until a reviewer signs again.
+          </p>
+          <div className="work-buttons">
+            <button type="button" className="btn small" disabled={busy} autoFocus
+                    onClick={() => { const p = pending; setPending(null); void p.run(); }}>
+              {pending.what} and void the receipt
+            </button>
+            <button type="button" className="btn ghost small" onClick={() => setPending(null)}>Keep the receipt</button>
+          </div>
+        </div>
       )}
 
       {mode === "evidence" && (
