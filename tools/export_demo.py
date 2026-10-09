@@ -11,6 +11,7 @@ everything exported is published with the demo.
 Usage: python3 tools/export_demo.py API_BASE OUT_DIR ENGAGEMENT_ID [ENGAGEMENT_ID ...]
 """
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -48,7 +49,10 @@ def main(base: str, out: Path, eng_ids: list[int]) -> None:
                     "/controls", "/report"):
             put(e + sub, get(e + sub))
         for job in snap["get"][e + "/jobs"]:
-            put(f"/jobs/{job['id']}", get(f"/jobs/{job['id']}"))
+            j = get(f"/jobs/{job['id']}")
+            # Tool warnings name the worker container's home directory; show it as ~.
+            j["log"] = re.sub(r"/home/\w+", "~", j.get("log") or "")
+            put(f"/jobs/{job['id']}", j)
         for asset in snap["get"][e + "/coverage"]["assets"]:
             for cell in asset["roles"].values():
                 if cell.get("lane_id"):
