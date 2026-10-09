@@ -11,11 +11,15 @@ Permissions
   tester     the tester role on the engagement: recon, lanes, evidence, agent runs
   reviewer   the reviewer role on the engagement: sign receipts
   handler    the handler checks, because the engagement is in the request body
+  gateway    the traffic gateway only, with the gateway token (gatewayapi.py, D-039);
+             no person or operator token can use these routes
 """
+import hmac
+
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 
-from . import auth
+from . import auth, gateway
 from .db import get_session
 from .models import Evidence, Job, Lane
 
@@ -90,6 +94,12 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/engagements/{eng_id}/inbox/dismiss"): ("tester", ENG),
     ("POST", "/engagements/{eng_id}/inbox/restore"): ("tester", ENG),
 
+    ("GET", "/engagements/{eng_id}/gateway-log"): ("read", ENG),
+
+    ("POST", "/gateway/session"): ("gateway", None),
+    ("GET", "/gateway/dns-scopes"): ("gateway", None),
+    ("POST", "/gateway/log"): ("gateway", None),
+
     ("POST", "/lanes/{lane_id}/close"): ("reviewer", LANE),
     ("GET", "/lanes/{lane_id}/receipt-payload"): ("reviewer", LANE),
     ("POST", "/lanes/{lane_id}/receipt/timestamp"): ("reviewer", LANE),
@@ -127,6 +137,9 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
     rule = RULES.get((request.method, path))
     if rule and rule[0] == "public":
         return
+    if rule and rule[0] == "gateway":
+        _gateway_caller(request)
+        return
     who = auth.principal(session, request)
     if who is None:
         raise HTTPException(401, auth.SETUP_HINT if auth.mode(session) == "setup" else "sign in first")
@@ -155,6 +168,17 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
         if any(who.can_read(e) for e in engs):
             raise HTTPException(403, f"this needs the {perm} role on the engagement")
         raise HTTPException(404, "not found")
+
+
+def _gateway_caller(request: Request) -> None:
+    """The gateway's token, and nothing else, opens the gateway routes. Without a configured
+    token they are closed (fail closed: the gateway then refuses all traffic)."""
+    tok = gateway.gateway_token()
+    if not tok:
+        raise HTTPException(503, "no gateway token is configured")
+    header = request.headers.get("authorization", "")
+    if not (header.lower().startswith("bearer ") and hmac.compare_digest(header[7:].strip(), tok)):
+        raise HTTPException(401, "the gateway token is required")
 
 
 def current(request: Request) -> auth.Principal:

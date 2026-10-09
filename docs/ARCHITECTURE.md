@@ -125,6 +125,18 @@ enabled from `ATTACKLEDGER_AGENTS_ENABLED`, which compose derives from the key.
 - The report embeds everything needed to rebuild every receipt and walk the chain
   offline, using only the Python standard library.
 
+### Traffic gateway (D-039)
+
+The worker has no route to the internet: it is on an internal network with the database,
+the API and the gateway only. Every request a recon tool or an agent sends leaves through
+the gateway (`gateway.py`), which enforces the engagement's scope, read-only methods, rate
+ceiling (one limiter per engagement for every tool and worker) and identification, answers
+DNS only for in-scope names, makes the port probes, and logs every request, allowed or
+refused (`gateway_requests`, `GET /engagements/{id}/gateway-log`). Each job authenticates
+with its own credential, valid while it runs; the gateway gets the rules from the API and
+holds no database credentials. The tools' own flags stay as the first layer. Design,
+decisions and threat model: `GATEWAY.md`.
+
 ### Computed modules
 
 `paramclass` (M6) and `dorks` (M10) have traffic class `passive` and send no request at
@@ -145,7 +157,7 @@ every route has one. See D-032.
 - Unknown is out of scope. Exclusions win. A wildcard does not cover its apex.
 - No tool runs on an engagement without recorded authorization.
 - No HTTP leaves the worker without the research identification, and redirects are
-  not followed.
+  not followed. Nothing leaves the worker except through the gateway.
 - The rate limit is a ceiling for every traffic-sending step.
 - A failure that produced nothing is `failed`. A run cut short, by the time limit or
   by a module's `max_targets`, is `partial` and lists what it did not reach. Neither

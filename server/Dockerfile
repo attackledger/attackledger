@@ -5,6 +5,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # The blob store is shared with the worker, and both run as uid 10001: each must read the
 # engagement keys and write into the engagement folders the other created (D-043).
 RUN useradd --create-home --uid 10001 api && mkdir -p /data/blobs && chown 10001 /data/blobs
+# The gateway (same image, uid 10002, D-039) writes its CA and token there. A new named volume
+# takes these owners, so the gateway can write it whichever container mounts it first.
+RUN mkdir -p /data/gateway /data/gateway-public /data/gateway-control \
+ && chown 10002:10002 /data/gateway /data/gateway-public /data/gateway-control && chmod 700 /data/gateway
 COPY server/app ./app
 COPY server/alembic.ini ./alembic.ini
 COPY server/migrations ./migrations

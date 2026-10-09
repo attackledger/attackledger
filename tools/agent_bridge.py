@@ -7,7 +7,8 @@ agenttools.Toolbox: lane host and scope only, read-only methods, research identi
 no redirects, rate limit, request budget, no tool that closes a lane. State between calls
 (exchange ids, request count, pacing) is kept in a state file.
 
-Run inside the worker container (it has the database and the lab network):
+Run inside the worker container (it has the database; its requests go through the gateway,
+the only route to the lab):
 
   docker exec -i <worker> python - start LANE_ID "DRIVER" [MAX_REQUESTS] < tools/agent_bridge.py
   docker exec -i <worker> python - context            < tools/agent_bridge.py
@@ -17,12 +18,13 @@ Run inside the worker container (it has the database and the lab network):
 DRIVER names who made the decisions, and is recorded on the run.
 """
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, "/srv")
-from app import agenttools, executors  # noqa: E402
+from app import agenttools, egress, executors  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.models import Job, JobStatus, Lane  # noqa: E402
 
@@ -35,7 +37,8 @@ def load() -> dict:
 
 
 def save(state: dict) -> None:
-    with open(STATE, "w") as f:
+    # It holds the run's gateway credential: readable by the worker user only.
+    with os.fdopen(os.open(STATE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(state, f)
 
 
@@ -45,8 +48,11 @@ def log(session, job: Job, line: str) -> None:
 
 
 def toolbox(session, lane: Lane, state: dict) -> agenttools.Toolbox:
+    # Through the traffic gateway with the run's own credential, like the worker's agent runs.
+    gw = egress.Egress(state["job_id"], state["secret"]).check()
     tb = agenttools.Toolbox(session, lane, state["job_id"], clock=time.time,
-                            max_requests=state["limits"]["max_requests"])
+                            max_requests=state["limits"]["max_requests"],
+                            transport=agenttools.urllib_transport(gw))
     tb.exchanges = state["exchanges"]
     tb.requests = state["requests"]
     tb.body_shown = state["body_shown"]
@@ -73,8 +79,10 @@ def main(argv: list[str]) -> None:
                       started_at=datetime.now(timezone.utc), result={"limits": limits})
             s.add(job)
             s.commit()
+            secret = egress.issue(job)          # only the hash is stored; the secret stays in the state file
+            s.commit()
             log(s, job, f"agent run driven by {driver} through the agent tools (no Messages API call)")
-            save({"job_id": job.id, "lane_id": lane.id, "driver": driver, "limits": limits, "exchanges": {},
+            save({"job_id": job.id, "secret": secret, "lane_id": lane.id, "driver": driver, "limits": limits, "exchanges": {},
                   "requests": 0, "body_shown": 0, "last_sent": None, "calls": 0,
                   "evidence_added": 0, "items_marked": 0, "leads_added": 0, "summary": None})
             print(json.dumps({"job_id": job.id}))

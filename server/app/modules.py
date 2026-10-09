@@ -16,6 +16,8 @@ Fields
              "target"  sends requests to the target (needs research identification)
   http       sends HTTP requests, so it must carry the research identification
              (a port scan is target traffic but has no headers to carry)
+  computed   sends nothing at all (works on stored data); its jobs get no egress through
+             the gateway (D-039)
   opt_in     must be enabled per engagement because many programs forbid it
   after      kinds whose output this module normally consumes (ordering hint for the UI)
   produces   which tables it writes: observations, endpoints, leads
@@ -49,10 +51,12 @@ class Module:
     max_targets: int | None = None
     tools: tuple[str, ...] = ()
     min_rps: int = 1      # lowest engagement rate limit the module can keep to
+    computed: bool = False
 
     def __post_init__(self):
         assert self.input in INPUTS, self.kind
         assert self.traffic in TRAFFIC, self.kind
+        assert not self.computed or self.traffic == "passive", self.kind
         assert not self.http or self.traffic == "target", self.kind
 
     @property
@@ -70,10 +74,11 @@ MODULES: tuple[Module, ...] = (
            input="hosts", traffic="dns", after=("subdomains",), produces=("observations",), pipeline="M1",
            tools=("dnsx",)),
     Module("ports", "Scan ports",
-           "Top 100 TCP ports per host (connect scan, port 25 skipped), within the engagement rate limit.",
+           "Top 100 TCP ports per host (TCP connect probes through the gateway, port 25 skipped), within the "
+           "engagement rate limit.",
            input="hosts", traffic="target", opt_in=True, after=("resolve",), produces=("observations",),
            pipeline="M2", caution="Many programs forbid port scanning. Enable only if the policy allows it.",
-           tools=("naabu",)),
+           tools=("gateway port probe",)),
     Module("probe", "Find live web servers",
            "One request per host and open port, with your research identification; records status, title, "
            "stack and CDN, and scores each host.",
@@ -112,7 +117,7 @@ MODULES: tuple[Module, ...] = (
            "Sorts every known parameter (from URLs and hidden-parameter discovery) into gf-style classes, "
            "ssrf, redirect, idor, sqli, lfi, xss and rce, and points each at the lane that tests it. Nothing is sent.",
            input="urls", traffic="passive", after=("crawl", "archive", "params"), produces=("leads",),
-           pipeline="M6", tools=("gf-style patterns",)),
+           pipeline="M6", tools=("gf-style patterns",), computed=True),
     Module("nuclei", "Scan for known issues",
            "nuclei over live web services: takeover checks on every host; exposures, misconfigurations and "
            "templates matching the detected stack on one host per cluster; panels, vulnerabilities and CVEs "
@@ -127,7 +132,7 @@ MODULES: tuple[Module, ...] = (
            "Writes click-ready Google dorks for each wildcard root as manual checks. Dorks cannot be "
            "automated, so nothing is sent.",
            input="roots", traffic="passive", produces=("leads",), pipeline="M10",
-           tools=("Google dorks, manual",)),
+           tools=("Google dorks, manual",), computed=True),
 )
 
 BY_KIND: dict[str, Module] = {m.kind: m for m in MODULES}
@@ -200,7 +205,7 @@ def as_dict(m: Module) -> dict:
             "traffic": m.traffic, "http": m.http, "opt_in": m.opt_in, "after": list(m.after),
             "produces": list(m.produces), "pipeline": m.pipeline, "caution": m.caution,
             "needs_identification": m.needs_identification, "max_targets": m.max_targets,
-            "tools": list(m.tools), "phase": PHASE_OF[m.kind], "min_rps": m.min_rps}
+            "tools": list(m.tools), "phase": PHASE_OF[m.kind], "min_rps": m.min_rps, "computed": m.computed}
 
 
 def phase_dict(p: Phase) -> dict:

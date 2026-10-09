@@ -210,7 +210,32 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
+    # SHA-256 of the secret the worker made when it claimed the job. The job's tools present
+    # the secret to the gateway (D-039), which asks the API; it is valid while the job runs.
+    gateway_secret_sha256: Mapped[str | None] = mapped_column(String(64))
     engagement: Mapped[Engagement] = relationship(back_populates="jobs")
+
+
+class GatewayRequest(Base):
+    """One request, port probe or DNS question that reached the gateway (D-039), allowed or
+    refused, with the reason. Written by the gateway through the API; never updated."""
+    __tablename__ = "gateway_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime]
+    engagement_id: Mapped[int | None] = mapped_column(ForeignKey("engagements.id"), index=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), index=True)
+    tool: Mapped[str] = mapped_column(String(32))        # as the job's credential names it
+    kind: Mapped[str] = mapped_column(String(16))        # target, passive, service, dns
+    method: Mapped[str] = mapped_column(String(16))      # GET, ..., PROBE (port probe), DNS
+    url: Mapped[str] = mapped_column(Text)               # redacted unless the engagement turned it off
+    host: Mapped[str] = mapped_column(String(255), default="")
+    port: Mapped[int | None]
+    status: Mapped[int | None]                           # the target's, or the gateway's refusal
+    verdict: Mapped[str] = mapped_column(String(8))      # allowed, refused, failed (upstream error)
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    bytes_sent: Mapped[int] = mapped_column(default=0)
+    bytes_received: Mapped[int] = mapped_column(default=0)
+    duration_ms: Mapped[int | None]
 
 
 class Observation(Base):

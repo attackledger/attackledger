@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "tools" / "benchmark"
 BASE = "http://127.0.0.1:8099"
 COMPOSE = ["docker", "compose", "-f", str(ROOT / "docker-compose.yml"), "-f", str(HERE / "compose.override.yml")]
-SERVICES = ["db", "api", "worker", "juice", "juice-proxy"]
+SERVICES = ["db", "api", "gateway", "worker", "juice", "juice-proxy"]
 HOST = "juice.lab.test"
 JUICE_IMAGE = ("bkimminich/juice-shop:v20.2.0@sha256:"
                "8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b")
@@ -64,9 +64,10 @@ def compose(*args, capture=False) -> str:
     return out.stdout if capture else ""
 
 
-def in_net(code: str) -> str:
-    """Run Python in the worker container (inside the lab network), never through the relay."""
-    return compose("exec", "-T", "worker", "python", "-c", code, capture=True)
+def in_net(code: str, service: str = "worker") -> str:
+    """Run Python in a bench container: the worker (tool versions) or juice-proxy, which is on
+    the lab network with Juice Shop (the worker reaches it only through the gateway)."""
+    return compose("exec", "-T", service, "python", "-c", code, capture=True)
 
 
 def ts(s: str | None) -> float | None:
@@ -166,6 +167,15 @@ def traffic_by_job(jobs: list[dict], log: list[dict]) -> tuple[dict, dict]:
     return out, totals
 
 
+def gateway_log(eng_id: int) -> dict:
+    """The gateway's own count (D-039), to compare with juice-proxy's independent one."""
+    log = call("GET", f"/engagements/{eng_id}/gateway-log?limit=1")
+    refused = call("GET", f"/engagements/{eng_id}/gateway-log?verdict=refused&limit=1000")["rows"]
+    return {"total": log["total"], "by_verdict": log["by_verdict"], "by_kind": log["by_kind"],
+            "by_method": log["by_method"],
+            "refused": dict(Counter(f"{r['tool']} {r['method']}: {r['reason']}" for r in refused))}
+
+
 def recon_items(eng_id: int) -> tuple[list[str], list[dict]]:
     urls, off = [], 0
     while True:
@@ -196,7 +206,7 @@ def challenge_state() -> list[dict]:
     code = ("import json,urllib.request;d=json.load(urllib.request.urlopen('http://juice:3000/api/Challenges'))"
             "['data'];print(json.dumps([{k:c[k] for k in ('key','name','category','difficulty','solved',"
             "'disabledEnv')} for c in d]))")
-    return json.loads(in_net(code))
+    return json.loads(in_net(code, "juice-proxy"))
 
 
 # ---- recon -------------------------------------------------------------------------
@@ -238,6 +248,7 @@ def recon() -> None:
         print(f"  {j['kind']:<11} {j['status']:<8} {j['result_count']:>5} results "
               f"{rows[-1]['seconds']}s {rows[-1]['requests']} req peak {rows[-1]['peak_rps_1s']}/s", flush=True)
     urls, leads = recon_items(eng)
+    gateway = gateway_log(eng)
     results = {
         "date": DATE, "benchmark": "AttackLedger vs OWASP Juice Shop",
         "versions": versions(),
@@ -250,6 +261,7 @@ def recon() -> None:
                   "nuclei_leads": [{"title": l["title"], "severity": l["severity"], "url": l["source_url"],
                                     "template": (l["detail"] or {}).get("template")}
                                    for l in leads if l["kind"] == "nuclei"],
+                  "gateway": gateway,
                   "endpoints": sorted(urls),
                   "leads": [{"kind": l["kind"], "title": l["title"], "url": l["source_url"]} for l in leads]},
         "challenges_after_recon": [c["key"] for c in challenge_state() if c["solved"]],

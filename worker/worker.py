@@ -4,7 +4,7 @@ Job kinds mirror the original pipeline's modules:
 
   subdomains  M1  passive sources (subfinder -all, assetfinder, crt.sh), then DNS
   resolve         A/AAAA/CNAME for in-scope hosts
-  ports       M2  top-100 TCP ports (connect scan), only if the engagement allows it
+  ports       M2  top-100 TCP ports (connect probes through the gateway), only if the engagement allows it
   probe       M2  HTTP(S) fingerprint per host and open port
   crawl       M4  katana over golden hosts, same-host only, destructive paths skipped
   archive     M4  gau + waybackurls (passive archives)
@@ -20,6 +20,11 @@ Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
 before storing it. Nothing outside the engagement's scope rules is recorded.
 
+The worker has no route to the internet (D-039, docs/GATEWAY.md). Each job gets a gateway
+credential when it starts; every tool is pointed at the gateway (GATEWAY_FLAGS plus the proxy
+environment, app.egress) and the gateway enforces scope, methods, rate and identification
+again, in one place. The tools' own flags below stay as the first layer.
+
 Recon output that carries URLs or response data (endpoints, leads, observations) is
 redacted before it is stored (app.redact, D-038): a token in an archived URL is kept
 as a marker, so it is neither stored nor sent again by a later step.
@@ -29,7 +34,6 @@ import json
 import math
 import os
 import re
-import ssl
 import subprocess
 import sys
 import threading
@@ -43,7 +47,7 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select  # noqa: E402
 
-from app import jobgates, jsanalysis, ledger, migrate, modules, packs, redact, scope, urls  # noqa: E402
+from app import egress, jobgates, jsanalysis, ledger, migrate, modules, packs, redact, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
 from app import agentloop, agenttools, nucleisafe, passive, triage, vault  # noqa: E402
 from app.text import plural  # noqa: E402
@@ -57,8 +61,6 @@ STALE_GRACE = int(os.environ.get("WORKER_STALE_GRACE", "600"))
 # Targets run in batches so a stopped job knows exactly which targets were not run.
 CHUNK_SIZE = max(1, int(os.environ.get("WORKER_CHUNK_SIZE", "20")))
 TOOLS = os.environ.get("WORKER_TOOLS_DIR", "/opt/pd/bin")
-# Optional DNS resolvers for dnsx/naabu (comma-separated). Unset: the tools' defaults.
-RESOLVERS = os.environ.get("WORKER_RESOLVERS", "").strip()
 
 # Never follow these during a crawl: they can log out, delete or change state.
 CRAWL_OUT_OF_SCOPE = (r"logout|log-out|signout|sign-out|/delete|/destroy|/remove|/revoke|/deactivate|"
@@ -104,26 +106,41 @@ def require_identification(eng) -> list[str]:
     return flags
 
 
+def gateway_flags(cmd: list[str], gw: "egress.Egress", r: "Run | None" = None) -> list[str]:
+    """The flags that point a tool at the gateway: its proxy and, for tools that resolve
+    names themselves, the gateway's resolver. Tools without a proxy flag (assetfinder,
+    waybackurls, Arjun) use the proxy environment. The worker has no other route, so a tool
+    that ignored both would fail, never bypass the gateway."""
+    tool = os.path.basename(cmd[0])
+    url = gw.proxy_url(tool)
+    if tool == "subfinder":
+        return ["-proxy", url]
+    if tool == "dnsx":
+        return ["-r", gw.resolver()]
+    if tool in ("httpx", "katana"):
+        return ["-proxy", url, "-r", gw.resolver()]
+    if tool == "gau":
+        return ["--proxy", url]
+    if tool == "feroxbuster":
+        return ["--proxy", url]
+    if tool == "nuclei":
+        # -pi: nuclei's own internal requests too. Its resolver flag takes a file.
+        return ["-p", url, "-pi", "-r", r.resolver_file() if r else gw.resolver()]
+    return []
+
+
 def commands(kind: str, eng) -> list[tuple[str, list[str]]]:
-    """The tool invocations for a job kind, in order. Targets are fed on stdin."""
+    """The tool invocations for a job kind, in order. Targets are fed on stdin. The gateway's
+    flags are added when they run (gateway_flags)."""
     rps = str(eng.rate_limit_rps)
-    resolvers = ["-r", RESOLVERS] if RESOLVERS else []
     if kind == "subdomains":
         return [("subfinder", [tool("subfinder"), "-silent", "-all", "-timeout", "25"]),
                 ("assetfinder", [tool("assetfinder"), "--subs-only"])]
     if kind == "resolve":
         # Two passes: with some resolvers, asking for CNAME together with A/AAAA makes dnsx
         # drop hosts that have no CNAME record at all.
-        return [("dnsx", [tool("dnsx"), "-silent", "-json", "-a", "-aaaa", *resolvers, "-rl", rps]),
-                ("dnsx-cname", [tool("dnsx"), "-silent", "-json", "-cname", *resolvers, "-rl", rps])]
-    if kind == "ports":
-        if "ports" not in (eng.enabled_modules or []):
-            raise RuntimeError("port scanning is not allowed for this engagement")
-        # Connect scan (no raw sockets), port 25 excluded. The engagement's requests-per-second
-        # limit is a hard ceiling for every step, port scanning included: no multiplier.
-        return [("naabu", [tool("naabu"), "-silent", "-json", "-top-ports", "100", "-exclude-ports", "25",
-                           "-scan-type", "c", "-rate", rps, "-c", str(min(25, eng.rate_limit_rps)),
-                           *resolvers])]
+        return [("dnsx", [tool("dnsx"), "-silent", "-json", "-a", "-aaaa", "-rl", rps]),
+                ("dnsx-cname", [tool("dnsx"), "-silent", "-json", "-cname", "-rl", rps])]
     if kind == "probe":
         flags = require_identification(eng)
         # No redirect following: a redirect could lead outside scope.
@@ -150,12 +167,13 @@ def parse_probe(rec: dict) -> tuple[str | None, dict]:
                   "location": rec.get("location"), "live": True}
 
 
-def crtsh_names(root: str) -> list[str]:
-    """Certificate transparency names for a root domain (a third-party source, not the target)."""
+def crtsh_names(root: str, gw: "egress.Egress") -> list[str]:
+    """Certificate transparency names for a root domain (a third-party source, not the target),
+    through the gateway, which checks crt.sh's real certificate."""
     url = f"https://crt.sh/?q=%25.{root}&output=json"
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "AttackLedger"}),
-                                    timeout=60) as r:
+        with gw.opener("crtsh", verify=True).open(urllib.request.Request(url, headers={"User-Agent": "AttackLedger"}),
+                                                  timeout=60) as r:
             rows = json.loads(r.read().decode(errors="replace") or "[]")
     except Exception:
         return []
@@ -169,8 +187,10 @@ def crtsh_names(root: str) -> list[str]:
 class Run:
     """One job execution: runs tools, tracks output hash, log and cancellation."""
 
-    def __init__(self, session, job: Job):
+    def __init__(self, session, job: Job, gw: "egress.Egress | None" = None):
         self.session, self.job, self.eng = session, job, job.engagement
+        self.gw = gw or egress.Egress(job.id, "")
+        self._resolver_file: str | None = None
         self.inc, self.exc = self.eng.scope_include, self.eng.scope_exclude
         self.digest = hashlib.sha256()
         self.started = time.monotonic()
@@ -196,10 +216,23 @@ class Run:
         if self.remaining_time() <= 0:
             raise Cancelled("timed out")
 
+    def resolver_file(self) -> str:
+        """A file naming the gateway's resolver, for tools whose resolver flag takes a file."""
+        if self._resolver_file is None:
+            import tempfile
+            fd, path = tempfile.mkstemp(prefix="al-resolvers-", suffix=".txt")
+            with os.fdopen(fd, "w") as f:
+                f.write(self.gw.resolver() + "\n")
+            self._resolver_file = path
+        return self._resolver_file
+
     def tool_lines(self, name: str, cmd: list[str], stdin_lines: list[str]):
-        self.log(f"$ {' '.join(cmd)}  ({plural(len(stdin_lines), 'input line')})")
+        cmd = [*cmd, *gateway_flags(cmd, self.gw, self)]
+        self.log(self.gw.mask(f"$ {' '.join(cmd)}  ({plural(len(stdin_lines), 'input line')})"))
+        # Only what the tool needs: the proxy, the gateway's CA, PATH and HOME. Not the
+        # worker's database URL or API key.
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True)
+                                stderr=subprocess.PIPE, text=True, env=self.gw.env(name))
         proc.stdin.write("\n".join(stdin_lines) + "\n")
         proc.stdin.close()
         # Enforce the time limit even when a tool prints nothing for a long time.
@@ -228,7 +261,7 @@ class Run:
             raise Cancelled("timed out")
         err = proc.stderr.read().strip()
         if err:
-            self.log(err[-2000:])
+            self.log(self.gw.mask(err[-2000:]))
         if proc.returncode not in (0, None):
             self.failed_tools.append(name)
             self.log(f"{name} exited with code {proc.returncode}")
@@ -257,7 +290,7 @@ def run_subdomains(r: Run, roots: list[str]) -> int:
         for line in r.tool_lines(name, cmd, roots):
             found[line.lower().lstrip("*.")].add(name)
     for root in roots:
-        names = crtsh_names(root)
+        names = crtsh_names(root, r.gw)
         r.digest.update(("crtsh\t" + "\n".join(names)).encode())
         r.log(f"crt.sh {root}: {plural(len(names), 'name')}")
         for n in names:
@@ -305,16 +338,40 @@ def run_resolve(r: Run, hosts: list[str]) -> int:
     return len(records)
 
 
+PROBE_PORTS = [p for p in egress.TOP_100_PORTS if p != 25]
+
+
 def run_ports(r: Run, hosts: list[str]) -> int:
+    """Top 100 TCP ports per host, as TCP connect probes made by the gateway (D-039): it checks
+    the host name against the scope, takes a rate token per probe and relays no byte. naabu
+    is not used: it resolves names itself and connects to addresses, which host-name scope
+    cannot check."""
+    from concurrent.futures import ThreadPoolExecutor
+    if "ports" not in (r.eng.enabled_modules or []):
+        raise RuntimeError("port scanning is not allowed for this engagement")
+    hosts = [h for h in hosts if r.in_scope(h)]
+    pairs = [(h, p) for h in hosts for p in PROBE_PORTS]
     ports: dict[str, set] = defaultdict(set)
-    name, cmd = commands("ports", r.eng)[0]
-    for line in r.tool_lines(name, cmd, hosts):
+    refused: dict[str, int] = defaultdict(int)
+    r.log(f"probing {plural(len(PROBE_PORTS), 'port')} on {plural(len(hosts), 'host')} through the gateway")
+
+    def one(pair):
         try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if r.in_scope(rec.get("host")) and rec.get("port"):
-            ports[rec["host"]].add(int(rec["port"]))
+            return pair, r.gw.probe(*pair)
+        except OSError as e:
+            return pair, (503, f"gateway unreachable: {e}")
+    with ThreadPoolExecutor(max_workers=max(1, min(25, r.eng.rate_limit_rps))) as pool:
+        for n, ((host, port), (status, reason)) in enumerate(pool.map(one, pairs), start=1):
+            r.digest.update(f"probe\t{host}:{port}\t{status}\n".encode())
+            if status == 200:
+                ports[host].add(port)
+            elif status != 502:                  # 502: closed or timed out; anything else: refused
+                refused[reason[:120]] += 1
+            if n % 100 == 0:
+                r.check_stop()
+    if refused:
+        r.fetch_failures += sum(refused.values())
+        r.log("refused by the gateway: " + ", ".join(f"{k} ×{v}" for k, v in sorted(refused.items())))
     for host, ps in ports.items():
         r.observe(host, {"open_ports": sorted(ps)})
     return len(ports)
@@ -390,16 +447,17 @@ def run_archive(r: Run, roots: list[str]) -> int:
     return store_endpoints(r, seen)
 
 
-def fetcher(eng):
-    """A GET function that sends the research identification and follows no redirects."""
+def fetcher(eng, gw: "egress.Egress | None" = None, tool_name: str = "fetch"):
+    """A GET function that sends the research identification and follows no redirects,
+    through the gateway (which sets the identification again and refuses everything else)."""
     flags = require_identification(eng)
+    if gw is None:
+        raise egress.NoGateway("no gateway credential for this fetch; nothing is sent")
     headers = {flags[i + 1].split(":", 1)[0].strip(): flags[i + 1].split(":", 1)[1].strip()
                for i in range(0, len(flags), 2)}
     headers.setdefault("User-Agent", "AttackLedger")
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False          # targets often have odd certificates; we only read public files
-    ctx.verify_mode = ssl.CERT_NONE
-    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+    # Targets often have odd certificates; we only read public files (the gateway does not verify them either).
+    opener = gw.opener(tool_name)
     delay = 1.0 / max(eng.rate_limit_rps, 1)
 
     def get(url: str) -> tuple[bytes | None, str]:
@@ -411,6 +469,8 @@ def fetcher(eng):
                     return None, f"HTTP {resp.status}"
                 return resp.read(JS_MAX_BYTES), ""
         except urllib.error.HTTPError as e:
+            if egress.refusal(e.headers.items()):
+                return None, "refused by the gateway: " + e.read(300).decode("utf-8", "replace").strip()
             return None, f"HTTP {e.code}" + (" (redirect not followed)" if 300 <= e.code < 400 else "")
         except Exception as e:
             reason = getattr(e, "reason", e)
@@ -431,7 +491,7 @@ def add_lead(r: Run, host: str, source_url: str, kind: str, title: str, bucket: 
 
 
 def run_jsanalyze(r: Run, js_urls: list[str]) -> int:
-    get = fetcher(r.eng)
+    get = fetcher(r.eng, r.gw, "jsanalyze")
     r.lead_fps = set(r.session.scalars(select(Lead.fingerprint).where(Lead.engagement_id == r.eng.id)))
     js_urls = [u for u in js_urls if r.in_scope(urls.host_of(u))]   # the per-run cap lives in the registry
     endpoints: dict[str, set] = defaultdict(set)
@@ -677,7 +737,7 @@ def baseline_status(get_status, url: str) -> tuple[str, str]:
 
 
 def run_content(r: Run, urls_: list[str]) -> int:
-    get = fetcher(r.eng)
+    get = fetcher(r.eng, r.gw, "content")
 
     def status(u: str) -> str:
         body, why = get(u)
@@ -798,7 +858,14 @@ def check_registry() -> None:
                          f"runner without module {sorted(extra)}")
 
 
-def run(session, job: Job) -> "Run":
+def credential(session, job: Job) -> "egress.Egress":
+    """A new gateway credential for a job that is about to run (only its hash is stored)."""
+    secret = egress.issue(job)
+    session.commit()
+    return egress.Egress(job.id, secret)
+
+
+def run(session, job: Job, gw: "egress.Egress | None" = None) -> "Run":
     eng: Engagement = job.engagement
     try:  # the engagement may have changed since the job was queued
         m = jobgates.check_engagement(eng, job.kind)
@@ -826,7 +893,10 @@ def run(session, job: Job) -> "Run":
     if not targets:
         raise RuntimeError("no in-scope targets")
 
-    r = Run(session, job)
+    gw = gw or credential(session, job)
+    if not m.computed:
+        gw.check()                       # fail closed: no gateway, nothing is sent
+    r = Run(session, job, gw)
     kept, done, stopped = 0, [], None
     chunks = [targets[i:i + CHUNK_SIZE] for i in range(0, len(targets), CHUNK_SIZE)]
     for chunk in chunks:
@@ -881,14 +951,19 @@ def run(session, job: Job) -> "Run":
 AGENT_PARTIAL = {"ended", "turn_limit", "cost_limit", "cancelled"}
 
 
-def anthropic_client():
+def anthropic_client(gw: "egress.Egress | None" = None):
+    """The Messages API client, through the gateway (it reaches api.anthropic.com for agent
+    runs only, and checks its real certificate)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError("ANTHROPIC_API_KEY is not set for the worker")
+    if gw is None:
+        raise egress.NoGateway("no gateway credential for the Claude API; nothing is sent")
     import anthropic
-    return anthropic.Anthropic()
+    return anthropic.Anthropic(http_client=anthropic.DefaultHttpxClient(
+        proxy=gw.proxy_url("claude"), verify=gw.ssl_context(verify=True), trust_env=False))
 
 
-def run_agent(session, job: Job, client=None) -> "Run":
+def run_agent(session, job: Job, client=None, transport=None) -> "Run":
     """An agent run on one lane. Gates are checked again here (agenttools.check_lane):
     the engagement may have changed since the run was queued."""
     lane = session.get(Lane, job.lane_id) if job.lane_id else None
@@ -901,7 +976,8 @@ def run_agent(session, job: Job, client=None) -> "Run":
         model = agentloop.configured_model()
     except ValueError as e:
         raise RuntimeError(str(e))
-    r = Run(session, job)
+    gw = credential(session, job).check()     # fail closed: no gateway, nothing is sent
+    r = Run(session, job, gw)
     r.log(f"agent model: {model}")
 
     def should_stop() -> bool:
@@ -909,7 +985,8 @@ def run_agent(session, job: Job, client=None) -> "Run":
         return job.status == JobStatus.cancelled or r.remaining_time() <= 0
 
     try:
-        res = agentloop.run(session, lane, job.id, client or anthropic_client(), model=model,
+        res = agentloop.run(session, lane, job.id, client or anthropic_client(gw), model=model,
+                            transport=transport or agenttools.urllib_transport(gw),
                             **{k: limits.get(k, v) for k, v in agentloop.DEFAULT_LIMITS.items()},
                             should_stop=should_stop, log=r.log)
     except agenttools.RunRefused as e:

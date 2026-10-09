@@ -1,7 +1,8 @@
 # Isolated demo stack: its own project, database and lab, API on 127.0.0.1:8098.
 #   docker compose -p attackledger-demo -f docker-compose.yml -f tools/demo/compose.override.yml \
-#     up -d --no-build db api worker lab
-# Uses the images built for the main stack. The lab answers as shop.lab.test and api.lab.test.
+#     up -d --no-build db api gateway worker lab
+# Uses the images built for the main stack (the gateway runs the API image). The lab answers as
+# shop.lab.test and api.lab.test, on the lab network that only the gateway joins (D-039).
 services:
   api:
     image: attackledger-api:latest
@@ -9,12 +10,16 @@ services:
     ports: !override ["127.0.0.1:8098:8000"]
     environment:
       ATTACKLEDGER_DEV_KEY: "1"     # fictional data only: the public development key (docs/ENCRYPTION.md)
+  gateway:
+    image: attackledger-api:latest
+    build: !reset null
+    pull_policy: never
   worker:
     image: attackledger-worker:latest
     pull_policy: never
     environment:
       ATTACKLEDGER_DEV_KEY: "1"
   lab:
-    networks:
-      default:
-        aliases: !override [shop.lab.test, api.lab.test]
+    networks: !override
+      lab:
+        aliases: [shop.lab.test, api.lab.test]

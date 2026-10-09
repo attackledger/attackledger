@@ -42,7 +42,7 @@ gateway is the second (it makes trying useless). The nuclei template classifier 
 | CA | `/data/gateway` (private volume), `/data/gateway-public/ca.pem` | Created on first start (EC P-256, 5 years). Leaf certificates per host, in memory and in a private temporary folder. Only the worker mounts the public certificate |
 | DNS | same process, UDP 53 | Answers A, AAAA and CNAME questions for names in scope of an engagement that has a running job; refuses everything else |
 | Rules | `GET`/`POST /gateway/*` on the API | The gateway asks the API who a job credential belongs to and what that engagement's rules are; it holds no database credentials |
-| Request log | table `gateway_requests` (migration `0017`) | One row per request, probe and DNS question, allowed or refused, with the reason. Read with `GET /engagements/{id}/gateway-log` |
+| Request log | table `gateway_requests` (migration `0019`) | One row per request, probe and DNS question, allowed or refused, with the reason. Read with `GET /engagements/{id}/gateway-log` |
 | Worker client | `server/app/egress.py` | Builds each job's credential, the proxy URL and environment per tool, the urllib opener, the resolver address and the port prober |
 
 ## Decisions

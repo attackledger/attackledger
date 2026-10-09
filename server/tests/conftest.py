@@ -15,3 +15,17 @@ def _master_key(monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_MASTER_KEY_FILE", raising=False)
     monkeypatch.delenv("ATTACKLEDGER_MASTER_KEY", raising=False)
     monkeypatch.setenv("ATTACKLEDGER_DEV_KEY", "1")
+
+
+@pytest.fixture(autouse=True)
+def _gateway_settings(tmp_path, monkeypatch):
+    """Tests run as the worker does in the compose stack: a gateway address and its CA are
+    configured (nothing listens there; tests that send traffic use fakes). Tests of the
+    fail-closed paths remove them."""
+    ca = tmp_path / "gateway-ca.pem"
+    ca.write_text("test CA\n")
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY", "gateway.invalid:8080")
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_DNS", "gateway.invalid:53")
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_CA", str(ca))
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN_FILE", str(tmp_path / "gateway-token"))
+    monkeypatch.delenv("ATTACKLEDGER_GATEWAY_TOKEN", raising=False)

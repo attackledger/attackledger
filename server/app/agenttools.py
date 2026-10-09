@@ -9,7 +9,9 @@ never do more than a person working through the API:
                 - read-only methods only (GET, HEAD, OPTIONS) in this version (D-024);
                 - the research identification is always sent and cannot be overridden;
                 - redirects are never followed: a 3xx comes back as it is;
-                - requests are spaced to the engagement's rate limit and capped per run.
+                - requests are spaced to the engagement's rate limit and capped per run;
+                - every request goes through the traffic gateway (D-039), which enforces
+                  scope, methods, rate and identification again.
                 Every exchange is kept in the blob store; its sha256 is what evidence
                 commits to. Credentials and some personal data are redacted first
                 (redact.py), and the model sees the redacted exchange too: it can
@@ -25,7 +27,6 @@ Everything an agent writes is marked "[agent]" inside the hash-chained record.
 """
 import hashlib
 import json
-import ssl
 import time
 import urllib.error
 import urllib.request
@@ -35,7 +36,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
-from . import blobs, gates, ledger, redact, scope
+from . import blobs, egress, gates, ledger, redact, scope
 from .models import Evidence, ItemState, Job, Lane, Lead
 
 READ_ONLY_METHODS = ("GET", "HEAD", "OPTIONS")
@@ -65,16 +66,11 @@ class RunRefused(Exception):
     """The agent may not run on this lane at all."""
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
-        return None
-
-
-def urllib_transport() -> Transport:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False      # targets often have odd certificates; we record, not trust
-    ctx.verify_mode = ssl.CERT_NONE
-    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=ctx))
+def urllib_transport(gw) -> Transport:
+    """Requests through the traffic gateway (D-039), the worker's only route out. `gw` is the
+    run's app.egress.Egress. Targets often have odd certificates; we record, not trust, so the
+    tunnel to the gateway is not verified either (the gateway does not verify targets)."""
+    opener = gw.opener("agent")
 
     def send(method, url, headers, timeout):
         req = urllib.request.Request(url, method=method, headers=headers)
@@ -82,7 +78,11 @@ def urllib_transport() -> Transport:
             with opener.open(req, timeout=timeout) as resp:
                 return resp.status, list(resp.headers.items()), resp.read(MAX_READ_BYTES)
         except urllib.error.HTTPError as e:     # 3xx (not followed), 4xx and 5xx are results too
-            return e.code, list(e.headers.items()), e.read(MAX_READ_BYTES)
+            items = list(e.headers.items())
+            if egress.refusal(items):            # the gateway's answer, not the target's
+                raise ToolError("refused by the gateway: "
+                                + e.read(500).decode("utf-8", "replace").strip().removeprefix("AttackLedger gateway: "))
+            return e.code, items, e.read(MAX_READ_BYTES)
         except Exception as e:
             reason = getattr(e, "reason", e)
             raise ToolError(f"request failed: {str(reason)[:200] or type(reason).__name__}")
@@ -225,7 +225,9 @@ class Toolbox:
         self.host = lane.asset.host
         self.ident = identification(self.eng)
         self.redact = redact.enabled(self.eng)
-        self.transport = transport or urllib_transport()
+        if transport is None:   # the worker passes urllib_transport(gw): through the gateway only
+            raise RunRefused("no route for this run's requests: they go through the gateway only")
+        self.transport = transport
         self.sleep, self.clock = sleep, clock
         self.interval = 1.0 / max(self.eng.rate_limit_rps, 1)
         self.max_requests = max_requests
