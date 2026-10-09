@@ -1490,7 +1490,8 @@ def delete_content(eng_id: int, body: DeleteContentIn, request: Request, session
         raise HTTPException(422, "type the engagement's name exactly to confirm; nothing was deleted")
     res = vault.delete_content(session, eng, actor=auditlog.actor(authz.current(request)), reason="owner")
     return {**_content_status(session, eng), "removed": {k: res.get(k, 0) for k in (
-        "summaries_removed", "observations", "endpoints", "leads", "blobs_removed", "plaintext_blobs_removed")}}
+        "summaries_removed", "observations", "endpoints", "leads", "inbox_entries", "import_batches",
+        "blobs_removed", "plaintext_blobs_removed")}}
 
 
 # ---- scope import ----------------------------------------------------------
@@ -1588,6 +1589,9 @@ def import_file(eng_id: int, request: Request, format: str | None = None, filena
     try:
         batch = inbox.import_file(session, eng, data, fmt=format or None, filename=filename,
                                   actor=auditlog.actor(who), user_id=who.user_id)
+    except vault.ContentDeleted as e:
+        session.rollback()
+        raise HTTPException(409, f"{e} It takes no new imports.")
     except importers.ImportRefused as e:
         session.rollback()
         raise HTTPException(422, str(e))
@@ -1667,9 +1671,12 @@ def get_inbox_raw(eng_id: int, entry_id: int, part: str, session: Session = Depe
         raise HTTPException(404, "part is request, response or record")
     if not digest:
         raise HTTPException(404, f"the export had no raw {part} for this entry")
+    eng = _get(session, Engagement, eng_id)
+    if eng.content_deleted_at is not None:
+        raise HTTPException(410, vault.deleted_sentence(vault.deleted_info(eng)))
     data = blobs.get(digest, engagement_id=eng_id)
     if data is None:
-        raise HTTPException(404, "the bytes for this hash are not in the blob store")
+        raise HTTPException(404, "the bytes for this hash are not in the blob store, or do not match it")
     return Response(data, media_type="text/plain; charset=utf-8",
                     headers={"Content-Security-Policy": "default-src 'none'; sandbox",
                              "X-Content-Type-Options": "nosniff"})
@@ -1700,6 +1707,9 @@ def map_inbox(eng_id: int, body: MapIn, request: Request, session: Session = Dep
         added = inbox.map_entries(session, eng, body.entry_ids, [(t.lane_id, t.item_idx) for t in body.targets],
                                   note=body.note, user_id=who.user_id, user_name=auditlog.actor_label(
                                       auditlog.actor(who)))
+    except vault.ContentDeleted as e:
+        session.rollback()
+        raise HTTPException(409, f"{e} It takes no new evidence.")
     except inbox.InboxError as e:
         session.rollback()
         raise HTTPException(422, str(e))

@@ -1,8 +1,8 @@
 """evidence import: import batches and the inbox (D-029)
 
 Revision ID: 0019
-Revises: 0016 on this branch; 0018 once the gateway (0017) and encryption (0018) branches
-are merged before it
+Revises: 0017 (encryption); becomes 0018 when the gateway branch, which adds 0018, is merged
+first
 Create Date: 2026-10-09 23:00:00
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = '0019'
-down_revision = '0016'
+down_revision = '0017'
 branch_labels = None
 depends_on = None
 

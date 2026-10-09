@@ -343,6 +343,8 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     counts = {}
     for model, name in ((Observation, "observations"), (Endpoint, "endpoints"), (Lead, "leads")):
         counts[name] = session.execute(sa_delete(model).where(model.engagement_id == eng.id)).rowcount or 0
+    from . import inbox                 # imported entries: URLs and labels go too (D-029)
+    counts.update(inbox.wipe(session, eng.id))
     now = datetime.now(timezone.utc)
     by = "the retention policy" if reason == "retention" else auditlog.actor_label(actor)
     note = f"Log deleted with the engagement's content on {now.date().isoformat()}.\n"

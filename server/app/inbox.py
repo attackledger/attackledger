@@ -12,8 +12,8 @@
   its hash, so the tester can show which file was imported.
 - **Dedupe.** An entry whose content (method, URL, status and the hashes of its redacted
   bytes) is already in the inbox, or earlier in the same file, is counted as a duplicate.
-- **Storage.** The redacted request and response go into the blob store, and so does a
-  small record naming them (RECORD_FORMAT). Mapping an entry appends evidence that commits
+- **Storage.** The redacted request and response go into the blob store, encrypted with the
+  engagement's key (D-043), and so does a small record naming them (RECORD_FORMAT). Mapping an entry appends evidence that commits
   to the record, so the chain reaches the raw bytes through it.
 - **Mapping.** Nothing reaches the ledger without a person: they map an entry to one or
   more checklist items on a lane of the entry's own host, and each mapping appends one
@@ -27,7 +27,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from sqlalchemy import select
 
-from . import auditlog, blobs, importers, ledger, redact, scope
+from . import auditlog, blobs, importers, ledger, redact, scope, vault
 from .models import Asset, Engagement, ImportBatch, InboxEntry, Lane, iso_utc
 
 RECORD_FORMAT = "attackledger-import/1"
@@ -84,7 +84,9 @@ def _report_from(stored: dict | None) -> redact.Report:
 def import_file(session, eng: Engagement, data: bytes, *, fmt: str | None, filename: str | None,
                 actor: dict, user_id: int | None) -> ImportBatch:
     """Run one file through the pipeline. Refusals of the whole file raise ImportRefused and
-    store nothing. The caller commits."""
+    store nothing. Raises vault.ContentDeleted once the engagement's content was deleted. The
+    caller commits."""
+    vault.check_writable(eng)
     if not eng.scope_include:
         raise importers.ImportRefused("this engagement has no scope rules yet; set the scope before importing, "
                                       "so out-of-scope rows can be refused")
@@ -321,7 +323,9 @@ def _now() -> datetime:
 def map_entries(session, eng: Engagement, entry_ids: list[int], targets: list[tuple[int, int]], *,
                 note: str | None, user_id: int | None, user_name: str) -> list[int]:
     """Append one evidence entry per entry and item. Returns the new evidence ids. An entry
-    already mapped to an item is not mapped to it again. The caller commits."""
+    already mapped to an item is not mapped to it again. Raises vault.ContentDeleted once the
+    engagement's content was deleted. The caller commits."""
+    vault.check_writable(eng)
     entries = _entries(session, eng.id, entry_ids)
     if not targets:
         raise InboxError("choose at least one checklist item")
@@ -441,3 +445,15 @@ def item_targets(lanes: list[Lane]) -> list[dict]:
                                                          "state": i.state.value} for i in l.items]}
             for l in lanes]
 
+
+
+def wipe(session, eng_id: int) -> dict:
+    """When an engagement's content is deleted (vault.delete_content), its inbox keeps only
+    what the counts and hashes need: URLs, labels, tool ids and times, dismissal reasons, file
+    names and the refused rows' hosts go. The raw bytes go with the engagement's key."""
+    from sqlalchemy import update
+    n = session.execute(update(InboxEntry).where(InboxEntry.engagement_id == eng_id).values(
+        url="", label=None, tool_id=None, tool_time=None, facts={}, dismiss_reason=None)).rowcount or 0
+    b = session.execute(update(ImportBatch).where(ImportBatch.engagement_id == eng_id).values(
+        filename=None, creator=None, refused=[])).rowcount or 0
+    return {"inbox_entries": n, "import_batches": b}

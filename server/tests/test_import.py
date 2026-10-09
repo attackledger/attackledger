@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from app import auditlog, blobs, importers, inbox, ledger, redact
+from app import auditlog, blobs, importers, inbox, ledger, redact, vault
 from app.importers import burp, caido, har
 from app.models import Asset, AuditEntry, Evidence, ImportBatch, InboxEntry
 from test_people import client, person, sign_in  # noqa: F401  (fixture and helpers)
@@ -288,9 +288,13 @@ def db(c):
 
 
 def stored_bytes(c) -> bytes:
-    """Everything the import could have written: every blob, every inbox and batch row."""
+    """Everything the import could have written: every file in the blob store as it is on disk,
+    every blob an inbox entry names, decrypted, and every inbox, batch and evidence row."""
     out = b"".join(p.read_bytes() for p in blobs.root().rglob("*") if p.is_file())
     s = db(c)
+    for x in s.scalars(select(InboxEntry)):
+        for d in (x.request_sha256, x.response_sha256, x.record_sha256):
+            out += (blobs.get(d, engagement_id=x.engagement_id) or b"") if d else b""
     for model in (InboxEntry, ImportBatch, Evidence):
         for row in s.scalars(select(model)):
             out += json.dumps({k: str(v) for k, v in vars(row).items() if not k.startswith("_")}).encode()
@@ -420,12 +424,12 @@ def test_nothing_reaches_the_ledger_until_a_person_maps_it(client, tmp_path, mon
     assert [(ev.lane_id, ev.kind, ev.sha256, ev.created_by) for ev in evs] == [
         (athn["id"], "response", login["record_sha256"], ids["tess"]),
         (sess["id"], "response", login["record_sha256"], ids["tess"])]
-    assert evs[0].summary.startswith("Imported from HAR 1.2, row 1: POST https://shop.example.com/rest/user/login "
-                                     "-> 200 (sign-in). lockout tested with password=[redacted:sha256:")
-    assert "lab-note-secret" not in evs[0].summary and "values redacted" in evs[0].summary
+    summary = vault.summary_of(evs[0])                       # stored encrypted (D-043)
+    assert summary.startswith("Imported from HAR 1.2, row 1: POST https://shop.example.com/rest/user/login "
+                              "-> 200 (sign-in). lockout tested with password=[redacted:sha256:")
+    assert "lab-note-secret" not in summary and "values redacted" in summary
     assert sources == ["import:har", "import:har"]
-    if hasattr(Evidence, "source"):                          # the column comes with chain record v2
-        assert {ev.source for ev in evs} == {"import:har"}
+    assert {ev.source for ev in evs} == {"import:har"} and {ev.record_version for ev in evs} == {2}
     # Mapping again adds nothing; the chain still verifies, offline, from the report.
     again = client.post(f"/engagements/{e}/inbox/map", json={
         "entry_ids": [login["id"]], "targets": [{"lane_id": athn["id"], "item_idx": 3}]})
@@ -438,10 +442,9 @@ def test_nothing_reaches_the_ledger_until_a_person_maps_it(client, tmp_path, mon
     path = tmp_path / "r.json"
     path.write_text(json.dumps(report))
     assert verify.main(["v", str(path)]) == 0
-    roles = {athn["id"]: "athn", sess["id"]: "sess"}
-    assert ledger.verify_chain([
-        {**ledger.evidence_record(ev, "shop.example.com", roles[ev.lane_id]), "prev_hash": ev.prev_hash,
-         "chain_hash": ev.chain_hash} for ev in evs]) == []
+    assert [(e["v"], e["source"], e["sha256"]) for e in report["evidence"]] == [
+        (2, "import:har", login["record_sha256"])] * 2
+    assert report["evidence"][0]["summary"].startswith("Imported from HAR 1.2, row 1")
 
 
 def test_mapping_refusals(client):
@@ -562,3 +565,33 @@ def test_suggestions_come_with_reasons(client):
     version, _ = keys("/application-version")
     assert "WSTG-ERRH-01" in version
     assert client.get("/imports/formats").json()["suggestion_rules"][0]["id"] == "sign-in"
+
+
+def test_raw_bytes_are_encrypted_at_rest(client):
+    _, e, _ = team(client)
+    upload(client, e, CAIDO)
+    on_disk = b"".join(p.read_bytes() for p in blobs.root().rglob("*") if p.is_file())
+    assert b"Apple Juice" not in on_disk and b"/rest/products/search" not in on_disk
+    entry = by_url(client, e, "/rest/products/search?q=apple&session_token=" + redact.marker("lab-caido-token-7"))
+    assert "Apple Juice" in client.get(f"/engagements/{e}/inbox/{entry['id']}/raw/response").text
+
+
+def test_after_the_content_is_deleted_nothing_is_imported_or_mapped(client):
+    _, e, a = team(client)
+    athn = lane(client, a, "athn")
+    upload(client, e, HAR)
+    entry = by_url(client, e, "/rest/user/login")
+    r = client.post(f"/engagements/{e}/content/delete", json={"confirm_name": "Import"})
+    assert r.status_code == 200, r.text
+    assert r.json()["removed"]["inbox_entries"] == 3 and r.json()["removed"]["import_batches"] == 1
+    r = upload(client, e, BURP)
+    assert r.status_code == 409 and "was deleted" in r.json()["detail"] and "no new imports" in r.json()["detail"]
+    r = client.post(f"/engagements/{e}/inbox/map", json={"entry_ids": [entry["id"]],
+                                                         "targets": [{"lane_id": athn["id"], "item_idx": 1}]})
+    assert r.status_code == 409 and "no new evidence" in r.json()["detail"]
+    assert client.get(f"/engagements/{e}/inbox/{entry['id']}/raw/request").status_code == 410
+    left = client.get(f"/engagements/{e}/inbox").json()["entries"]
+    assert len(left) == 3 and {x["url"] for x in left} == {""} and {x["label"] for x in left} == {None}
+    batch = client.get(f"/engagements/{e}/imports").json()[0]
+    assert batch["filename"] is None and batch["refused"] == [] and batch["accepted"] == 3
+    assert db(client).scalars(select(Evidence)).all() == [] and len(db(client).scalars(select(ImportBatch)).all()) == 1
