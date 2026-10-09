@@ -4,6 +4,7 @@
   docker compose exec -it api python -m app.people set-password --email someone@example.com
   docker compose exec -it api python -m app.people revoke-key --email someone@example.com --fingerprint 6d50ab12
   docker compose exec -it api python -m app.people key-log
+  docker compose exec -it api python -m app.people audit-log
 
 The password is read from the terminal (not echoed) or, for scripts, from the
 ATTACKLEDGER_NEW_PASSWORD environment variable. It is never taken as an argument,
@@ -12,7 +13,9 @@ so it does not end up in shell history or process lists.
 A reset is for a forgotten password, and only here: through the API, nobody sets another
 person's password. It signs the person out everywhere. Whoever runs the server can do
 more than this (it is the root of trust); what they cannot do is forge a signature, and a
-key they register for someone shows in the key log, to that person and in reports.
+key they register for someone shows in the key log, to that person and in reports. Adding a
+person and resetting a password here are entries in the audit log, made by "the operator on
+the server"; the password itself is never recorded.
 """
 import argparse
 import getpass
@@ -22,9 +25,9 @@ import sys
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from . import auth, keylog
+from . import auditlog, auth, keylog
 from .db import SessionLocal
-from .models import KeyLogEntry, SigningKey, User, utcnow
+from .models import AuditEntry, KeyLogEntry, SigningKey, User, utcnow
 
 
 def _password() -> str | None:
@@ -55,13 +58,18 @@ def create(s, args) -> int:
     password = _password()
     if password is None:
         return 2
-    s.add(User(email=args.email.strip().lower(), name=args.name.strip(),
-               password_hash=auth.hash_password(password), is_owner=args.owner))
+    user = User(email=args.email.strip().lower(), name=args.name.strip(),
+                password_hash=auth.hash_password(password), is_owner=args.owner)
+    s.add(user)
     try:
-        s.commit()
+        s.flush()
     except IntegrityError:
         print("someone with that email already exists", file=sys.stderr)
         return 1
+    auditlog.append(s, actor=auditlog.CLI, action="person.created", subject_id=user.id,
+                    change={"person": auditlog.person_ref(user), "after": auditlog.person_snapshot(user),
+                            "password": "assigned"})
+    s.commit()
     print(f"created {args.email}{' (owner)' if args.owner else ''}")
     return 0
 
@@ -76,6 +84,8 @@ def set_password(s, args) -> int:
     # You know this password too, so it is not the person's own until they change it.
     user.password_hash, user.password_chosen = auth.hash_password(password), False
     auth.end_sessions(s, user.id)
+    auditlog.append(s, actor=auditlog.CLI, action="person.password_reset", subject_id=user.id,
+                    change={"person": auditlog.person_ref(user), "password": "assigned", "sessions_ended": True})
     s.commit()
     print(f"password reset for {user.email}; they are signed out everywhere. "
           "Ask them to choose their own password after signing in.")
@@ -115,6 +125,18 @@ def key_log(s, _args) -> int:
     return 1 if problems else 0
 
 
+def audit_log(s, _args) -> int:
+    for e in s.scalars(select(AuditEntry).order_by(AuditEntry.seq)):
+        rec = auditlog.record(e)
+        where = f"engagement {e.engagement_id}  " if e.engagement_id is not None else ""
+        print(f"{e.seq:>5}  {e.at}  {e.action:<24} {where}{auditlog.actor_label(rec['actor'])}: {auditlog.describe(rec)}")
+    problems = auditlog.verify(s)
+    for p in problems:
+        print(f"FAIL  {p}", file=sys.stderr)
+    print("audit log chain: " + ("broken" if problems else "intact"))
+    return 1 if problems else 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.people")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -128,8 +150,10 @@ def main(argv: list[str]) -> int:
     r.add_argument("--email", required=True)
     r.add_argument("--fingerprint", required=True, help="the fingerprint or its first 8+ characters")
     sub.add_parser("key-log", help="list every key registration and revocation and check the chain")
+    sub.add_parser("audit-log", help="list every administrative change and check the chain")
     args = ap.parse_args(argv)
-    run = {"create": create, "set-password": set_password, "revoke-key": revoke_key, "key-log": key_log}[args.cmd]
+    run = {"create": create, "set-password": set_password, "revoke-key": revoke_key, "key-log": key_log,
+           "audit-log": audit_log}[args.cmd]
     with SessionLocal() as s:
         return run(s, args)
 

@@ -111,9 +111,27 @@ export interface LaneDetail {
   unresolved: string[];
   items: LaneItem[];
   evidence: EvidenceEntry[];
-  receipt: { sha256: string; closed_by: string | null; created_at: string; signed?: boolean;
+  receipt: { sha256: string; closed_by: string | null; closed_by_email?: string | null; created_at: string; signed?: boolean;
              algorithm?: string | null; key_fingerprint?: string | null;
              timestamp?: { time: string; tsa: string | null } | null; timestamp_error?: string | null } | null;
+}
+
+/** One administrative change from the server's audit log, with the server's own wording. */
+export interface AuditEntry {
+  seq: number;
+  at: string;
+  actor: { kind: "person" | "token" | "cli" | "open" | "backfill"; user_id: number | null; name: string; email: string | null };
+  actor_label: string;
+  action: string;
+  engagement_id: number | null;
+  subject_id: number | null;
+  change: Record<string, unknown>;
+  text: string;
+}
+
+export interface AuditLog {
+  chain: { intact: boolean; problems: string[]; head: { seq: number; entry_hash: string } };
+  entries: AuditEntry[];
 }
 
 export interface Scope {
@@ -497,6 +515,7 @@ export const api = {
       method: "POST", body: JSON.stringify({ max_turns, max_requests, max_cost_usd }),
     }),
   report: <T,>(engId: number) => call<T>(`/engagements/${engId}/report`),
+  audit: (engId: number) => call<AuditLog>(`/engagements/${engId}/audit`),
   attach: (laneId: number, body: {
     item_idx: number; kind: "note" | "file" | "run"; text?: string; filename?: string; content_b64?: string;
     job_id?: number; summary?: string;

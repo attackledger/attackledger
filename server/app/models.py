@@ -140,6 +140,7 @@ class Receipt(Base):
     # The person who reviewed the lane and closed it. Executors never issue receipts (D-018).
     closed_by: Mapped[str | None] = mapped_column(String(200))
     closed_by_user: Mapped[int | None] = mapped_column(ForeignKey("users.id"))   # set when people sign in
+    closed_by_email: Mapped[str | None] = mapped_column(String(254))             # the account's email at the time
     # Signed receipts: the exact signed text, the signature and the key, copied so that a
     # report stays verifiable even if the key is later revoked.
     payload: Mapped[str | None] = mapped_column(Text)
@@ -311,6 +312,27 @@ class KeyLogEntry(Base):
     event: Mapped[str] = mapped_column(String(16))                       # registered, revoked
     at: Mapped[str] = mapped_column(String(40))     # ISO 8601 UTC with microseconds, hashed as stored
     via: Mapped[str] = mapped_column(String(24))    # see keylog.VIA
+    record_sha256: Mapped[str] = mapped_column(String(64))
+    prev_hash: Mapped[str] = mapped_column(String(64))
+    entry_hash: Mapped[str] = mapped_column(String(64))
+
+
+class AuditEntry(Base):
+    """Append-only, hash-chained record of administrative changes (auditlog.py): scope and
+    rules, authorization, engagement settings, roles, and people. Nothing updates or deletes
+    a row. Reports carry the entries of their engagement and of its people."""
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    seq: Mapped[int] = mapped_column(unique=True)
+    at: Mapped[str] = mapped_column(String(40))     # ISO 8601 UTC with microseconds, hashed as stored
+    actor_kind: Mapped[str] = mapped_column(String(16))      # see auditlog.ACTORS
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    actor_name: Mapped[str] = mapped_column(String(200))     # the name and email at the time
+    actor_email: Mapped[str | None] = mapped_column(String(254))
+    action: Mapped[str] = mapped_column(String(40))          # see auditlog.ACTIONS
+    engagement_id: Mapped[int | None] = mapped_column(ForeignKey("engagements.id"), index=True)
+    subject_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)   # the person a person.* entry is about
+    change: Mapped[str] = mapped_column(Text)       # canonical JSON: before and after values, never secrets
     record_sha256: Mapped[str] = mapped_column(String(64))
     prev_hash: Mapped[str] = mapped_column(String(64))
     entry_hash: Mapped[str] = mapped_column(String(64))

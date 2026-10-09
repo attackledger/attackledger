@@ -6,7 +6,7 @@ everyone but owners, so a new route is closed until someone decides who may use 
 Permissions
   public     no sign-in (health, sign-in, sign-out)
   signed_in  any signed-in caller (lists that are filtered, or reference data)
-  owner      owners only: engagements, rules, authorization, people, roles
+  owner      owners only: engagements, rules, authorization, people, roles, the whole audit log
   read       any role on the engagement (viewer, tester, reviewer)
   tester     the tester role on the engagement: recon, lanes, evidence, agent runs
   reviewer   the reviewer role on the engagement: sign receipts
@@ -47,6 +47,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/people"): ("owner", None),
     ("POST", "/people"): ("owner", None),
     ("PATCH", "/people/{user_id}"): ("owner", USER),
+    ("GET", "/audit"): ("owner", None),                       # every engagement's history and every person's
 
     ("GET", "/engagements/{eng_id}/coverage"): ("read", ENG),
     ("GET", "/engagements/{eng_id}/scope"): ("read", ENG),
@@ -59,6 +60,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("GET", "/engagements/{eng_id}/triage"): ("read", ENG),
     ("GET", "/engagements/{eng_id}/endpoints"): ("read", ENG),
     ("GET", "/engagements/{eng_id}/leads"): ("read", ENG),
+    ("GET", "/engagements/{eng_id}/audit"): ("read", ENG),    # its history, and its people's
     ("GET", "/lanes/{lane_id}"): ("read", LANE),
     ("GET", "/lanes/{lane_id}/context"): ("read", LANE),
     ("GET", "/lanes/{lane_id}/agent-runs"): ("read", LANE),

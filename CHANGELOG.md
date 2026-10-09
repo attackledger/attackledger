@@ -40,6 +40,15 @@ local lab.
   Report format `attackledger-report/2` carries payload, signature and public key;
   `verify_report.py` checks them offline with the standard library and still reads
   format 1. An engagement can require signatures. Migration `0011`.
+- **Audit log** (D-037). Scope and rules, authorization, settings, roles and people changes
+  are recorded in a hash-chained audit log, shown in a History tab and a "Change history"
+  report section and checked by `verify_report.py` (who held the reviewer role and which
+  scope was in force when each receipt was issued). `GET /engagements/{id}/audit`,
+  `GET /audit`, `python -m app.people audit-log`. Receipt payload v3 names the signer's
+  email. Migration `0016`.
+- **Evidence redaction** (D-038). Cookies, Authorization headers, tokens, keys, JWTs, emails
+  and card numbers are replaced by a hash marker before evidence is stored; each entry says
+  what was redacted. Per-engagement setting, on by default. Migration `0015`.
 - **Key trust** (D-036). Owners can no longer set other people's passwords; people change
   their own (`POST /auth/password`) and an operator resets on the server
   (`python -m app.people set-password`, `revoke-key`, `key-log`). Key registrations and

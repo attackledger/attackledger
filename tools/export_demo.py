@@ -52,7 +52,7 @@ def main(base: str, out: Path, eng_ids: list[int]) -> None:
     for eid in eng_ids:
         e = f"/engagements/{eid}"
         for sub in ("/coverage", "/scope", "/jobs", "/triage", "/recon/summary", "/observations",
-                    "/controls", "/report"):
+                    "/controls", "/report", "/audit"):
             put(e + sub, get(e + sub))
         for job in snap["get"][e + "/jobs"]:
             j = get(f"/jobs/{job['id']}")

@@ -131,8 +131,8 @@ export function Verify({ engId }: { engId: number }) {
         </p>
         <pre className="cmd">{COMMAND}</pre>
         <p className="muted">
-          Timestamp tokens are not checked in the browser. A signature proves the key holder signed; to tie a key to a
-          person, compare its fingerprint with the one the signer gives you.
+          Timestamp tokens, the key log and the change history are not checked in the browser. A signature proves the
+          key holder signed; to tie a key to a person, compare its fingerprint with the one the signer gives you.
         </p>
       </section>
     </div>
@@ -156,7 +156,14 @@ function ReceiptRow({ c }: { c: ReceiptCheck }) {
         </span>
       </div>
       <dl className="facts verify-facts">
-        <div><dt>Signer</dt><dd>{c.signer ?? rc.closed_by ?? "Unknown"}{!sig && " (a name, not a cryptographic signature)"}</dd></div>
+        <div>
+          <dt>Signer</dt>
+          <dd>
+            {c.signer ?? rc.closed_by ?? "Unknown"}
+            {(c.signerEmail ?? rc.closed_by_email) && <> ({c.signerEmail ?? rc.closed_by_email})</>}
+            {!sig && " (a name, not a cryptographic signature)"}
+          </dd>
+        </div>
         {sig && <div><dt>Algorithm</dt><dd>{sig.algorithm}</dd></div>}
         {fp && <div><dt>Key fingerprint</dt><dd><code>{fp}</code></dd></div>}
         <div><dt>Manifest</dt><dd><code>{rc.manifest_sha256}</code></dd></div>

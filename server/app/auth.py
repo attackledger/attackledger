@@ -46,6 +46,7 @@ class Principal:
     user_id: int | None = None
     name: str = ""
     is_owner: bool = False
+    email: str = ""
     roles: dict = field(default_factory=dict, compare=False, hash=False)  # engagement id -> roles
 
     def has(self, eng_id: int | None, role: str) -> bool:
@@ -187,4 +188,5 @@ def principal(session, request: Request) -> Principal | None:
         return None
     roles = {mb.engagement_id: tuple(mb.roles or ())
              for mb in session.scalars(select(Membership).where(Membership.user_id == user.id))}
-    return Principal(kind="person", user_id=user.id, name=user.name, is_owner=user.is_owner, roles=roles)
+    return Principal(kind="person", user_id=user.id, name=user.name, is_owner=user.is_owner, email=user.email,
+                     roles=roles)

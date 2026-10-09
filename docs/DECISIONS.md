@@ -450,6 +450,35 @@ options considered and who decided.
   someone else, and checking the key log in the browser's Verify tab.
 - **Proposed and built by:** Claude, at Murat's request (from a product critique).
 
+### D-037 · Audit log of administrative changes; receipts name the signer's email (2026-10-09)
+- **Problem:** an owner could rename an account to look like a reviewer and sign with their
+  own key; scope, roles and settings changes left no tamper-evident record, so an auditor
+  could not see the scope in force or who held the reviewer role when a receipt was issued.
+- **Decision:** a hash-chained, append-only audit log (migration `0016`, backfilled) records
+  scope and rules, authorization, settings (including evidence redaction), roles and people
+  events, never passwords, in the same transaction as each change. Reports carry the
+  engagement's entries and its people's; the verifier fails a receipt whose signer lacked
+  the reviewer role (and was not an owner) or had another name or email, and notes the
+  scope in force. Receipt payload `attackledger-receipt-v3` adds the signer's email; v2
+  receipts verify as before. A History tab shows the log in plain language.
+- **Boundary:** whoever has database access is still the root of trust; rewriting the log
+  breaks the head that reports already carry. Not yet: the role check uses the close time,
+  and a report could omit an entry unnoticed.
+- **Proposed and built by:** Claude, at Murat's request (from the product critique).
+
+### D-038 · Raw evidence is redacted before it is stored (2026-10-09)
+- **Problem:** captured traffic holds live credentials and personal data, and the ledger can
+  never delete what it stored.
+- **Decision:** cookies, Authorization headers, tokens, keys, JWTs, private keys, email
+  addresses and Luhn-valid card numbers are replaced by `[redacted:sha256:<12 hex>]` before
+  anything enters the blob store or the recon tables; the agent sees the redacted exchange
+  too. Each evidence entry records how many values of which kinds were redacted. On by
+  default; an owner may turn it off for a lab, which the audit log records (migration
+  `0015`).
+- **Boundary:** pattern- and name-based, not general personal-data detection; binary and
+  compressed bodies are stored as is and noted; evidence stored before this change is untouched.
+- **Proposed and built by:** Claude, at Murat's request.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

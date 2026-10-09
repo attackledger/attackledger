@@ -7,7 +7,9 @@ The JSON bundle carries everything needed to re-check it offline:
   - (format 2) signed receipts carry their payload, signature and public key, and
     timestamped receipts their RFC 3161 token,
   - (format 2) the key log history of every key that signed a receipt (keylog.py), with
-    the chain links from its first entry to the head.
+    the chain links from its first entry to the head,
+  - (format 2) the audit log entries of the engagement and the person events of its
+    signers and members (auditlog.py), with the chain links from the first to the head.
 tools/verify_report.py checks all of it with the Python standard library only.
 """
 import html
@@ -17,7 +19,7 @@ from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
-from . import gates, keylog, ledger, modules, packs
+from . import auditlog, gates, keylog, ledger, modules, packs
 from .models import Engagement, Evidence, iso_utc
 from .text import plural
 
@@ -26,6 +28,8 @@ REPORT_FORMAT = "attackledger-report/2"   # 2: receipts may carry a signature
 
 def _receipt(rc) -> dict:
     out = {"manifest_sha256": rc.manifest_sha256, "closed_by": rc.closed_by, "issued_at": _iso(rc.created_at)}
+    if rc.closed_by_user is not None:
+        out["closed_by_user"], out["closed_by_email"] = rc.closed_by_user, rc.closed_by_email
     if rc.signature:
         out["signature"] = {"algorithm": rc.algorithm, "public_key": rc.public_key,
                             "key_fingerprint": rc.key_fingerprint, "payload": rc.payload, "value": rc.signature}
@@ -115,6 +119,10 @@ def build(session, eng: Engagement, controls: dict) -> dict:
     history = keylog.for_report(session, signing_keys)
     if history is not None:
         body["key_log"] = history
+    signers = {rc.closed_by_user for a in eng.assets for l in a.lanes for rc in l.receipts if rc.closed_by_user}
+    changes = auditlog.for_report(session, eng.id, auditlog.people_of(session, eng.id, signers))
+    if changes is not None:
+        body["audit_log"] = changes
     return {**body, "integrity": {"algorithm": "sha256", "body_sha256": ledger.sha256(ledger.canonical(body)),
                                   "chain_genesis": ledger.GENESIS}}
 
@@ -238,7 +246,7 @@ table{font-size:8.5pt}code{font-size:8pt}pre{font-size:8.5pt}a{color:inherit;tex
 """
 
 _SECTIONS = [("summary", "Summary"), ("scope", "Scope and authorization"), ("coverage", "Coverage matrix"),
-             ("receipts", "Receipts"), ("verify", "How to verify"), ("controls", "Control evidence"),
+             ("receipts", "Receipts"), ("history", "Change history"), ("verify", "How to verify"), ("controls", "Control evidence"),
              ("items", "Item detail"), ("recon", "Recon runs"), ("integrity", "Integrity")]
 
 
@@ -246,7 +254,7 @@ def render_html(r: dict) -> str:
     eng, s = r["engagement"], r["summary"]
     in_scope = [h["host"] for h in r["hosts"] if h["in_scope"]]
     lanes = [l for l in r["lanes"] if l["host"] in in_scope]
-    sections = [x for x in _SECTIONS if x[0] != "recon" or r["jobs"]]
+    sections = [x for x in _SECTIONS if (x[0] != "recon" or r["jobs"]) and (x[0] != "history" or "audit_log" in r)]
     parts = [f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Coverage report: {_e(eng['name'])}</title><link rel="icon" href="{_FAVICON}"><style>{_CSS}</style></head><body><main>
@@ -264,7 +272,7 @@ def render_html(r: dict) -> str:
 </ol></nav>
 </header>
 """]
-    parts += [_summary(r, lanes), _scope(r), _coverage(r, in_scope), _receipts(r), _verify(r),
+    parts += [_summary(r, lanes), _scope(r), _coverage(r, in_scope), _receipts(r), _history(r), _verify(r),
               _controls(r), _items(r)]
     if r["jobs"]:
         parts.append(_recon(r))
@@ -404,7 +412,9 @@ authority shows it existed at that time.</p>"""]
         lane = f"<strong>{_e(l['name'])}</strong><br><code>{_e(l['host'])}</code><br>{_status(l['status'])}"
         if l["status"] == "stale":
             lane += "<br><span class='small'>The ledger changed after this receipt was issued.</span>"
-        signer = _e(rc.get("closed_by") or "") + ("<br>Signed with a key" if sig
+        email = rc.get("closed_by_email") or _payload_email(sig)
+        signer = _e(rc.get("closed_by") or "") + (f"<br><span class='small'>{_e(email)}</span>" if email else "") + (
+            "<br>Signed with a key" if sig
                                                   else "<br><span class='muted'>Name only, not signed</span>")
         stamp = (f"Timestamped <span class='nw'>{_e(_when(ts.get('time')))}</span> by {_e(_host_of(ts.get('tsa')))}" if ts
                  else "<span class='muted'>Not timestamped; the issue time is the server’s clock</span>")
@@ -429,6 +439,35 @@ authority shows it existed at that time.</p>"""]
     return "".join(out)
 
 
+def _payload_email(sig: dict | None) -> str | None:
+    """The signer's email inside a v3 payload."""
+    try:
+        return (json.loads(sig["payload"]).get("signer") or {}).get("email") if sig else None
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def _history(r: dict) -> str:
+    log = r.get("audit_log")
+    if log is None:
+        return ""
+    rows = []
+    for e in log.get("entries", []):
+        rows.append(f"<tr><td class='nw'>{_e(_when(e['at']))}</td><td>{_e(auditlog.actor_label(e['actor']))}</td>"
+                    f"<td>{_e(auditlog.describe(e))}</td></tr>")
+    people = sum(1 for e in log.get("entries", []) if str(e.get("action", "")).startswith("person."))
+    return f"""<section id="history" class="pb"><h2>Change history</h2>
+<p>Every change to this engagement’s scope and rules, settings, roles and authorization, and to the accounts of the people
+who work on it or signed its receipts, from the server’s audit log. Each entry is hash-chained to the one before it, like the
+evidence; the verifier checks the links and uses them to say, for each receipt, which scope was in force and whether its
+signer held the reviewer role when it was issued.</p>
+{_table(["Time", "By", "Change"], rows, "history") if rows else "<p class='muted'>No changes were recorded.</p>"}
+<p class="note">{plural(len(rows) - people, 'engagement entry', 'engagement entries')} and
+{plural(people, 'person entry', 'person entries')}. Entries made by “recorded when the audit log was added” are the state
+at that time; who set it before then is not known. Passwords are never recorded, only that one was set.</p>
+</section>"""
+
+
 def _verify(r: dict) -> str:
     tsas = sorted({_host_of(l["receipt"]["timestamp"].get("tsa")) for l in r["lanes"]
                    if l["receipt"] and l["receipt"].get("timestamp")})
@@ -449,6 +488,10 @@ def _verify(r: dict) -> str:
         ("Signing key history", "Each signing key’s entries in the key log hash correctly and link into the log in order, "
                                 "and the key was registered to the signer before the receipt was issued and not revoked "
                                 "before it. Shown only when the report has signed receipts."),
+        ("Change history", "The audit log entries in the report hash correctly and link into the log in order. For each "
+                           "receipt, the signer held the reviewer role on this engagement (or was an owner) and had the "
+                           "name in the receipt when it was issued; NOTE lines give the scope in force then. Shown only "
+                           "when the report carries the audit log."),
         ("Receipt timestamps", "Each timestamp token covers this receipt’s manifest hash and signature, the authority’s "
                                "signature verifies, and its certificate chain reaches a root you trust. SKIP when no receipt "
                                "is timestamped."),

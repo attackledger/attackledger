@@ -276,6 +276,12 @@ Every signing key registered or revoked is recorded in a hash-chained key log
 (`python -m app.people key-log` lists and checks it), and the person sees new keys the
 next time they sign in.
 
+Every administrative change (scope, authorization, roles, people, settings) is recorded in a
+hash-chained audit log that reports carry and the verifier checks: who held the reviewer
+role, and which scope was in force, when each receipt was issued. Captured evidence is
+redacted before it reaches the append-only ledger, so a client's live credentials are never
+stored; an owner can turn this off for a lab, and the audit log records it.
+
 From then on everyone signs in with email and password. Owners add people and give them
 roles per engagement on its Team tab: **viewer** (reads coverage, evidence and reports),
 **tester** (runs recon, works lanes, attaches evidence) and **reviewer** (signs receipts).

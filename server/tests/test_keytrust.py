@@ -253,7 +253,7 @@ def test_report_carries_the_signing_keys_history(env, tmp_path):
     assert verifier.check_body(report) == []
     problems, notes = verifier.check_key_log(report)
     assert problems == []
-    assert any(n.startswith(f"Rita Reviewer signed with key {k.fingerprint[:16]}, registered ")
+    assert any(n.startswith(f"Rita Reviewer (rita@lab.test) signed with key {k.fingerprint[:16]}, registered ")
                and "from their own session" in n and "revoked" in n for n in notes), notes
     path = tmp_path / "r.json"
     path.write_text(json.dumps(report))
