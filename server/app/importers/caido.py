@@ -1,7 +1,7 @@
 """Caido HTTP history, exported as JSON (Exports page, or the export task of Caido's API).
 
-The layout was taken from Caido's public documentation and schema, not from a real export;
-see docs/IMPORT.md for what should be checked against one. Assumed field mapping:
+The layout follows the sample in Caido's documentation ("Exporting Request Data"), not an
+export from a running Caido; docs/IMPORT.md lists what to check against one. Field mapping:
   url              "https" if is_tls else "http", "://", host, ":" port when it is not the
                    default for the scheme, path, then "?" query when query is not empty
   method           method
@@ -10,7 +10,8 @@ see docs/IMPORT.md for what should be checked against one. Assumed field mapping
   response bytes   response.raw, base64-decoded
   time             created_at: epoch milliseconds (an ISO 8601 string is kept as it is)
   tool id          id
-  label            none: the export has no comment field that we know of
+  label            source (intercept, replay, automate, ...), with "edited" when edited is true
+                   and the alteration when it is not "none"
 
 Raw bytes are present only when the export included them. A row without them is still
 imported with its URL, method and status, and says that the raw bytes were not exported.
@@ -69,8 +70,14 @@ def _entry(row: int, r) -> Entry:
         raise RowError("the response is not an object")
     code = status(resp.get("status_code")) if resp else None
     response = b64(resp["raw"], "response", truncated) if resp and resp.get("raw") else None
+    label = [text(r.get("source"), 40)] if isinstance(r.get("source"), str) else []
+    if r.get("edited") is True:
+        label.append("edited")
+    if isinstance(r.get("alteration"), str) and r["alteration"] not in ("", "none"):
+        label.append(f"alteration {r['alteration'][:40]}")
     return Entry(row=row, url=url, method=verb, status=code, request=request, response=response,
-                 tool_id=text(r.get("id"), 100), time=_time(r.get("created_at")), truncated=tuple(truncated))
+                 tool_id=text(r.get("id"), 100), time=_time(r.get("created_at")),
+                 label=", ".join(x for x in label if x) or None, truncated=tuple(truncated))
 
 
 def parse(data: bytes) -> Parsed:

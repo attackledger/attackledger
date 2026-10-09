@@ -428,6 +428,94 @@ export function readableDetail(detail: unknown, status: number): string {
   return `Request failed (${status})`;
 }
 
+// ---- evidence import (D-029) ------------------------------------------------------------
+
+export interface ImportFormat { id: string; title: string; summary: string; extensions: string[] }
+
+export interface ImportFormats {
+  formats: ImportFormat[];
+  limits: { file_bytes: number; entries: number; part_bytes: number };
+  suggestion_rules: { id: string; title: string; words: string[] }[];
+}
+
+/** A row of an uploaded file that did not become an inbox entry, by row number and host only. */
+export interface RefusedRow {
+  row: number;
+  host: string | null;
+  reason: "out_of_scope" | "duplicate" | "unreadable";
+  detail: string | null;
+}
+
+export interface ImportBatch {
+  id: number;
+  format: string;
+  format_title: string;
+  creator: string | null;
+  filename: string | null;
+  file_sha256: string;
+  file_bytes: number;
+  rows: number;
+  accepted: number;
+  out_of_scope: number;
+  duplicates: number;
+  unreadable: number;
+  refused: RefusedRow[];
+  created_by_name: string;
+  created_at: string;
+}
+
+export interface InboxMapping {
+  evidence_id: number; lane_id: number; item_idx: number; item_key: string; by_name: string; at: string;
+}
+
+export interface InboxEntry {
+  id: number;
+  batch_id: number;
+  row: number;
+  format: string;
+  tool_id: string | null;
+  tool_time: string | null;
+  host: string;
+  method: string;
+  url: string;
+  status: number | null;
+  label: string | null;
+  request_sha256: string | null;
+  response_sha256: string | null;
+  record_sha256: string;
+  request_bytes: number;
+  response_bytes: number;
+  notes: string[];
+  content_type: string | null;
+  redaction: Redaction | null;
+  state: "new" | "mapped" | "dismissed";
+  mappings: InboxMapping[];
+  dismissed: { by_name: string | null; at: string; reason: string | null } | null;
+  created_at: string;
+}
+
+export interface InboxSuggestion {
+  lane_id: number; role: string; item_idx: number; key: string; text: string; score: number; why: string[];
+}
+
+export interface InboxEntryDetail extends InboxEntry {
+  targets: { lane_id: number; role: string; items: { idx: number; key: string; text: string; state: string }[] }[];
+  suggestions: InboxSuggestion[];
+}
+
+export interface InboxPage {
+  total: number;
+  offset: number;
+  limit: number;
+  counts: Record<"new" | "mapped" | "dismissed", number>;
+  hosts: string[];
+  entries: InboxEntry[];
+}
+
+export interface InboxFilter {
+  state?: string; host?: string; method?: string; status?: string; batch?: number; q?: string; offset?: number;
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (DEMO) return demoCall<T>(path, init);
   let res: Response;
@@ -550,6 +638,35 @@ export const api = {
     }),
   report: <T,>(engId: number) => call<T>(`/engagements/${engId}/report`),
   audit: (engId: number) => call<AuditLog>(`/engagements/${engId}/audit`),
+  importFormats: () => call<ImportFormats>("/imports/formats"),
+  imports: (engId: number) => call<ImportBatch[]>(`/engagements/${engId}/imports`),
+  /** The file goes as the request body, as it is: no base64, no JSON around it. */
+  importFile: (engId: number, file: File, format: string | null) => {
+    const p = new URLSearchParams({ filename: file.name });
+    if (format) p.set("format", format);
+    return call<ImportBatch>(`/engagements/${engId}/imports?${p}`, {
+      method: "POST", body: file, headers: { "content-type": "application/octet-stream" },
+    });
+  },
+  inbox: (engId: number, f: InboxFilter = {}) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== "") p.set(k, String(v));
+    p.set("limit", "50");
+    return call<InboxPage>(`/engagements/${engId}/inbox?${p}`);
+  },
+  inboxEntry: (engId: number, id: number) => call<InboxEntryDetail>(`/engagements/${engId}/inbox/${id}`),
+  mapEntries: (engId: number, entry_ids: number[], targets: { lane_id: number; item_idx: number }[], note: string) =>
+    call<{ evidence_added: number[]; entries: InboxEntry[] }>(`/engagements/${engId}/inbox/map`, {
+      method: "POST", body: JSON.stringify({ entry_ids, targets, note: note || null }),
+    }),
+  dismissEntries: (engId: number, entry_ids: number[], reason: string) =>
+    call<{ entries: InboxEntry[] }>(`/engagements/${engId}/inbox/dismiss`, {
+      method: "POST", body: JSON.stringify({ entry_ids, reason: reason || null }),
+    }),
+  restoreEntries: (engId: number, entry_ids: number[]) =>
+    call<{ entries: InboxEntry[] }>(`/engagements/${engId}/inbox/restore`, {
+      method: "POST", body: JSON.stringify({ entry_ids }),
+    }),
   attach: (laneId: number, body: {
     item_idx: number; kind: "note" | "file" | "run"; text?: string; filename?: string; content_b64?: string;
     job_id?: number; summary?: string;

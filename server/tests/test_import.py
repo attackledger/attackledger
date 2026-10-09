@@ -67,7 +67,7 @@ def test_har_entries_are_rebuilt_from_its_fields():
     assert login.request.endswith(b'\r\n\r\n{"email":"tess@example.com","password":"lab-password-1"}')
     assert login.response.startswith(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nSet-Cookie: token=")
     users = p.entries[1]
-    assert users.request.startswith(b"GET /api/Users/7?access_token=lab-query-token-2&fields=name HTTP/2\r\n"
+    assert users.request.startswith(b"GET /api/accounts/7?access_token=lab-query-token-2&fields=name HTTP/2\r\n"
                                     b":authority: shop.example.com\r\n")
     assert users.status == 403 and users.response.startswith(b"HTTP/2 403 Forbidden")
     robots = p.entries[3]
@@ -108,6 +108,7 @@ def test_caido_rows_with_and_without_raw_bytes():
     search = p.entries[0]
     assert search.url == "https://shop.example.com/rest/products/search?q=apple&session_token=lab-caido-token-7"
     assert (search.tool_id, search.time, search.status) == ("101", "2026-10-09T10:00:00.000+00:00", 200)
+    assert search.label == "replay, edited" and p.entries[1].label == "intercept"
     assert search.request.startswith(b"GET /rest/products/search?q=apple") and b"Apple Juice" in search.response
     bare = p.entries[1]                                      # accepted with what it has
     assert (bare.request, bare.response, bare.status) == (None, None, 500)
@@ -243,6 +244,8 @@ def test_large_parts_are_cut_and_say_so(monkeypatch):
     started = time.monotonic()
     out = importers.b64(huge, "response", cut := [])
     assert len(out) == 40 and cut == ["response"] and time.monotonic() - started < 1
+    login = importers.parse(HAR)[1].entries[0]               # text bodies (HAR) are cut too
+    assert "request" in login.truncated and len(login.request.split(b"\r\n\r\n", 1)[1]) == 40
     big = json.dumps([{"host": "shop.example.com", "is_tls": True, "method": "GET", "path": "/",
                        "raw": huge, "response": {"status_code": 200, "raw": huge}}]).encode()
     e = importers.parse(big)[1].entries[0]
@@ -338,8 +341,8 @@ def test_secrets_are_redacted_in_everything_stored(client):
     entries = client.get(f"/engagements/{e}/inbox").json()["entries"]
     login = next(x for x in entries if x["url"].endswith("/rest/user/login"))
     assert set(login["redaction"]["kinds"]) >= {"Cookie", "Set-Cookie", "password", "email address"}
-    users = next(x for x in entries if "/api/Users/7" in x["url"])
-    assert users["url"] == f"https://shop.example.com/api/Users/7?access_token={redact.marker('lab-query-token-2')}" \
+    users = next(x for x in entries if "/api/accounts/7" in x["url"])
+    assert users["url"] == f"https://shop.example.com/api/accounts/7?access_token={redact.marker('lab-query-token-2')}" \
                            "&fields=name"
     req = client.get(f"/engagements/{e}/inbox/{users['id']}/raw/request").text
     assert f"Authorization: Bearer {redact.marker(JWT)}" in req and f"X-Api-Key: {redact.marker('lab-api-key-3')}" in req
@@ -394,7 +397,13 @@ def by_url(c, e, end):
     return next(x for x in c.get(f"/engagements/{e}/inbox").json()["entries"] if x["url"].endswith(end))
 
 
-def test_nothing_reaches_the_ledger_until_a_person_maps_it(client, tmp_path):
+def test_nothing_reaches_the_ledger_until_a_person_maps_it(client, tmp_path, monkeypatch):
+    sources, append = [], ledger.append_evidence
+
+    def spy(*a, **k):
+        sources.append(k.get("source"))
+        return append(*a, **k)
+    monkeypatch.setattr(ledger, "append_evidence", spy)
     ids, e, a = team(client)
     athn, sess = lane(client, a, "athn"), lane(client, a, "sess")
     sign_in(client, "tess@lab.test")
@@ -414,6 +423,7 @@ def test_nothing_reaches_the_ledger_until_a_person_maps_it(client, tmp_path):
     assert evs[0].summary.startswith("Imported from HAR 1.2, row 1: POST https://shop.example.com/rest/user/login "
                                      "-> 200 (sign-in). lockout tested with password=[redacted:sha256:")
     assert "lab-note-secret" not in evs[0].summary and "values redacted" in evs[0].summary
+    assert sources == ["import:har", "import:har"]
     if hasattr(Evidence, "source"):                          # the column comes with chain record v2
         assert {ev.source for ev in evs} == {"import:har"}
     # Mapping again adds nothing; the chain still verifies, offline, from the report.

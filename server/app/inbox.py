@@ -196,7 +196,7 @@ def _path_has(*words):
 
 RULES = (
     ("sign-in", "Sign-in pages", _path_has("login", "signin", "sign-in", "logon", "auth", "oauth", "sso", "saml"),
-     ("authentication", "credentials", "lockout", "auth")),
+     ("authentication", "credentials", "lockout")),
     ("password", "Password pages", _path_has("password", "passwd", "reset", "forgot", "recover"),
      ("password",)),
     ("registration", "Sign-up pages", _path_has("register", "registration", "signup", "sign-up", "join"),

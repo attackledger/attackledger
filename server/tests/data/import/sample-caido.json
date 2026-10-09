@@ -1,6 +1,6 @@
 [
   {
-    "id": "101",
+    "id": 101,
     "host": "shop.example.com",
     "port": 443,
     "is_tls": true,
@@ -10,13 +10,24 @@
     "created_at": 1791540000000,
     "raw": "R0VUIC9yZXN0L3Byb2R1Y3RzL3NlYXJjaD9xPWFwcGxlJnNlc3Npb25fdG9rZW49bGFiLWNhaWRvLXRva2VuLTcgSFRUUC8xLjENCkhvc3Q6IHNob3AuZXhhbXBsZS5jb20NCkF1dGhvcml6YXRpb246IEJhc2ljIGJHRmlPbXhoWWkxallXbGtieTF3WVhOeg0KDQo=",
     "response": {
-      "id": "201",
+      "id": 201,
       "status_code": 200,
-      "raw": "SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkFjY2Vzcy1Db250cm9sLUFsbG93LU9yaWdpbjogKg0KDQp7ImRhdGEiOlt7Im5hbWUiOiJBcHBsZSBKdWljZSJ9XX0="
-    }
+      "raw": "SFRUUC8xLjEgMjAwIE9LDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL2pzb24NCkFjY2Vzcy1Db250cm9sLUFsbG93LU9yaWdpbjogKg0KDQp7ImRhdGEiOlt7Im5hbWUiOiJBcHBsZSBKdWljZSJ9XX0=",
+      "length": 0,
+      "alteration": "none",
+      "edited": false,
+      "parent_id": null,
+      "created_at": 1791540000120
+    },
+    "length": 0,
+    "file_extension": null,
+    "source": "replay",
+    "alteration": "none",
+    "edited": true,
+    "parent_id": null
   },
   {
-    "id": "102",
+    "id": 102,
     "host": "shop.example.com",
     "port": 443,
     "is_tls": true,
@@ -25,12 +36,23 @@
     "query": "",
     "created_at": 1791540001000,
     "response": {
-      "id": "202",
-      "status_code": 500
-    }
+      "id": 202,
+      "status_code": 500,
+      "length": 0,
+      "alteration": "none",
+      "edited": false,
+      "parent_id": null,
+      "created_at": 1791540001120
+    },
+    "length": 0,
+    "file_extension": null,
+    "source": "intercept",
+    "alteration": "none",
+    "edited": false,
+    "parent_id": null
   },
   {
-    "id": "103",
+    "id": 103,
     "host": "cdn.example.org",
     "port": 443,
     "is_tls": true,
@@ -39,15 +61,27 @@
     "query": "",
     "created_at": 1791540002000,
     "raw": "R0VUIC9saWIuanMgSFRUUC8xLjENCkhvc3Q6IGNkbi5leGFtcGxlLm9yZw0KDQo=",
-    "response": null
+    "response": null,
+    "length": 0,
+    "file_extension": null,
+    "source": "intercept",
+    "alteration": "none",
+    "edited": false,
+    "parent_id": null
   },
   {
-    "id": "104",
+    "id": 104,
     "host": "shop.example.com",
     "port": "x",
     "is_tls": true,
     "method": "GET",
     "path": "/",
-    "query": ""
+    "query": "",
+    "length": 0,
+    "file_extension": null,
+    "source": "intercept",
+    "alteration": "none",
+    "edited": false,
+    "parent_id": null
   }
 ]

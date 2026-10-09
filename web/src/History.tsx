@@ -6,7 +6,7 @@ import { plural } from "./words";
 // rules, authorization, settings, roles, and changes to the accounts of its people. Every
 // role can read it. The wording comes from the server, the same as in the report.
 
-type Group = "all" | "scope" | "roles" | "settings" | "authorization" | "people";
+type Group = "all" | "scope" | "roles" | "settings" | "authorization" | "imports" | "people";
 
 const GROUPS: { key: Group; label: string }[] = [
   { key: "all", label: "Everything" },
@@ -14,6 +14,7 @@ const GROUPS: { key: Group; label: string }[] = [
   { key: "roles", label: "Roles" },
   { key: "settings", label: "Settings" },
   { key: "authorization", label: "Authorization" },
+  { key: "imports", label: "Imports" },
   { key: "people", label: "People" },
 ];
 
@@ -23,6 +24,7 @@ function groupOf(action: string): Group {
   if (action === "engagement.settings" || action === "engagement.created" || action === "engagement.retention"
       || action === "engagement.content_deleted") return "settings";
   if (action === "engagement.authorized") return "authorization";
+  if (action.startsWith("import.")) return "imports";
   return "people";
 }
 
@@ -57,7 +59,8 @@ export function History({ engId }: { engId: number }) {
       <section className="panel" aria-labelledby="history-title">
         <h3 id="history-title" className="panel-title">Change history</h3>
         <p className="report-lede">
-          Every change to this engagement's scope and rules, authorization, settings and roles, and to the accounts of
+          Every change to this engagement's scope and rules, authorization, settings and roles, every imported file and
+          dismissed inbox entry, and changes to the accounts of
           the people who work on it, with who made it and when. Each entry is chained by hash to the one before it, and
           reports carry these entries so a reader can check them offline.
         </p>

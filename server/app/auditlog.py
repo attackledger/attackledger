@@ -305,7 +305,7 @@ def describe(rec: dict) -> str:
         name = f"“{after.get('filename')}”" if after.get("filename") else "a file"
         out = (f"Imported {name} ({after.get('format')}{', ' + after['creator'] if after.get('creator') else ''}): "
                f"{_n(after.get('accepted'), 'entry', 'entries')} to the inbox, "
-               f"{after.get('out_of_scope', 0)} refused as out of scope, {after.get('duplicates', 0)} duplicate, "
+               f"{after.get('out_of_scope', 0)} refused as out of scope, {_n(after.get('duplicates', 0), 'duplicate', 'duplicates')}, "
                f"{after.get('unreadable', 0)} unreadable")
         if after.get("out_of_scope_hosts"):
             out += f"; refused hosts {', '.join(after['out_of_scope_hosts'][:20])}"
