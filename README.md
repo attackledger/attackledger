@@ -97,8 +97,10 @@ open http://localhost:8080
 ```
 
 1. **Add the first owner** on the People page (or with the command in
-   [People and roles](#people-and-roles)). Until then the API is open to anyone on
-   localhost, unless you set a token (below).
+   [People and roles](#people-and-roles)). Until then this local trial is open to anyone
+   on localhost, unless you set a token (below). A production install
+   ([docs/INSTALL.md](docs/INSTALL.md)) never runs open: it refuses everything until the
+   first owner is created on the server (`ATTACKLEDGER_REQUIRE_SIGN_IN=1`, D-045).
 2. Create an engagement and save its scope: `shop.lab.test` for the bundled lab, with a
    research header such as `X-Bug-Bounty: your-handle` for the steps that send traffic.
    Record the authorization with a policy URL (`https://example.com/policy` for the lab).

@@ -584,6 +584,16 @@ options considered and who decided.
 - **Details:** docs/BUSINESS.md.
 - **Proposed by:** Claude, from Murat's answers. **Decided by:** Murat Kabak.
 
+### D-045 · Production installs never run open (2026-10-09, made autonomously)
+- **Decision:** with `ATTACKLEDGER_REQUIRE_SIGN_IN=1`, which `deploy/compose.prod.yml`
+  sets, an install with no people and no token refuses everything until the first owner
+  is created on the server (`python -m app.people create --owner`). Unknown values count
+  as on.
+- **Why:** before this, an install with no people was open, so whoever reached it first
+  over the network could make themselves owner. Creating the owner on the server also
+  removes the need for a shared operator token to bootstrap.
+- **Made by:** Claude, for MVP item 6, under Murat's overnight permission. To be reviewed.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

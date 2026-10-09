@@ -10,6 +10,14 @@ against the live API (no key was available); tested with a scripted model and th
 local lab.
 
 ### Added
+- **Install and operations**:
+  - `docs/INSTALL.md`, tested end to end from the document.
+  - A production override with Caddy HTTPS (`deploy/`).
+  - `tools/backup.sh` and `tools/restore.sh`. The backup has a checksummed manifest.
+    Restore refuses a damaged backup, an unknown migration, the wrong master key, or a
+    non-empty install without `--force`.
+- **Setup mode** (D-045): `ATTACKLEDGER_REQUIRE_SIGN_IN=1` closes the API until the
+  first owner is created on the server.
 - **Evidence import** (D-029): HAR 1.2, Burp Suite XML and Caido JSON files become inbox
   entries on a new Import tab.
   - Out-of-scope rows are refused and listed by row and host.
@@ -169,6 +177,8 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Fixed
+- **Evidence imports over 1 MB were refused** by the web container's nginx (default body
+  limit). It is now 60 MB in nginx and Caddy.
 - **nuclei could send writes and burst over the limit** (measured by the Juice Shop
   benchmark: 24 POST, 1 DELETE, 1 DEBUG; 40 requests in one second at a limit of 20).
   nuclei now runs only templates that provably send GET, HEAD or OPTIONS requests
