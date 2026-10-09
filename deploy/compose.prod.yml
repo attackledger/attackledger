@@ -9,7 +9,7 @@
 #   - the API is closed until the first owner is created on the server
 #     (ATTACKLEDGER_REQUIRE_SIGN_IN=1) and session cookies are sent only over HTTPS;
 #   - restart policies, healthchecks, memory and CPU limits, and rotated logs for every service;
-#   - the practice target (lab) does not start;
+#   - the practice target (lab) and its browser proxy start only with --profile lab;
 #   - the encryption master key comes from a root-only file on the host, mounted read-only
 #     into the API and the worker (never from .env, and never the public development key).
 #
@@ -140,9 +140,25 @@ services:
           cpus: "0.5"
           memory: 256m
 
-  # The local practice target is for development only.
+  # The local practice target does not start unless asked for (docs/INSTALL.md, "Practise
+  # against the lab"): docker compose --profile lab up -d lab lab-proxy
   lab:
     profiles: ["lab"]
+
+  # A browser's way to the practice target, for capturing a HAR (or Burp or Caido traffic) to
+  # import. An HTTP proxy on the server's loopback only, reached over an SSH tunnel. It forwards
+  # to shop.lab.test and nothing else: every other host is refused, so it is not a way out.
+  lab-proxy:
+    profiles: ["lab"]
+    image: nginx:1.27-alpine
+    configs:
+      - source: lab-proxy
+        target: /etc/nginx/conf.d/default.conf
+    networks: [lab, default]
+    ports:
+      - "127.0.0.1:${ATTACKLEDGER_LAB_PROXY_PORT:-3128}:3128"
+    depends_on: [lab]
+    logging: *logging
 
   # HTTPS in front of the web app (which forwards /api/ to the API). See deploy/Caddyfile.
   caddy:
@@ -173,6 +189,22 @@ services:
         limits:
           cpus: "0.5"
           memory: 256m
+
+configs:
+  lab-proxy:
+    content: |
+      server {
+        listen 3128;
+        # Docker's resolver, asked at request time, so a restarted lab is found again.
+        resolver 127.0.0.11 valid=10s;
+        set $$lab shop.lab.test;
+        if ($$host != "shop.lab.test") { return 403 "This proxy reaches shop.lab.test only.\n"; }
+        location / {
+          proxy_pass http://$$lab;
+          proxy_set_header Host shop.lab.test;
+          proxy_http_version 1.1;
+        }
+      }
 
 volumes:
   # Explicit names, so `docker volume ls` says what each one holds. The project name
