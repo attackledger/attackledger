@@ -5,6 +5,8 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-10
+
 Fixes from the second design-partner review of 0.7.0.
 
 ### Changed
