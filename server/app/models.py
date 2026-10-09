@@ -69,6 +69,9 @@ class Engagement(Base):
     content_deleted_at: Mapped[datetime | None]
     content_deleted_by: Mapped[str | None] = mapped_column(String(460))
     content_deleted_reason: Mapped[str | None] = mapped_column(String(16))
+    # When on, agents may propose POST, PUT, PATCH and DELETE requests; each waits for a
+    # person's approval before the gateway sends it (D-041, approvals.py). Off by default.
+    allow_writes: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     assets: Mapped[list["Asset"]] = relationship(back_populates="engagement")
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
@@ -240,6 +243,65 @@ class AgentExchange(Base):
     url: Mapped[str] = mapped_column(Text)
     status: Mapped[int]
     redaction: Mapped[dict | None] = mapped_column(JSON)
+    # The test account the gateway sent it as (D-040), and the approval it carried (D-041).
+    account: Mapped[str | None] = mapped_column(String(16))
+    approval_id: Mapped[int | None]
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class TestAccount(Base):
+    """A test account a person signed in to on the target (D-040, testaccounts.py). Its session
+    material (a cookie header, a bearer token or a set of headers) is sealed with the
+    engagement's key and is never returned by the API; the gateway adds it to requests sent "as"
+    the label, for the hosts named here only."""
+    __tablename__ = "test_accounts"
+    __test__ = False                    # not a pytest test class
+    __table_args__ = (UniqueConstraint("engagement_id", "label"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"), index=True)
+    label: Mapped[str] = mapped_column(String(16))           # A, B, ...
+    role: Mapped[str] = mapped_column(String(100))           # the role in the target application
+    hosts: Mapped[list] = mapped_column(JSON, default=list)  # in-scope hosts it is used for
+    kind: Mapped[str] = mapped_column(String(16))            # cookie, bearer, headers
+    header_names: Mapped[list] = mapped_column(JSON, default=list)   # which headers it sets, never their values
+    material_enc: Mapped[str] = mapped_column(Text)          # sealed with the engagement's key (vault.seal_secret)
+    fingerprint: Mapped[str] = mapped_column(String(64))     # SHA-256 of the material: the binding, shown shortened
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    replaced_at: Mapped[datetime | None]
+    last_used_at: Mapped[datetime | None]
+
+
+class WriteProposal(Base):
+    """A state-changing request an agent proposed (D-041, approvals.py). Nothing is sent until a
+    person approves it; the approval is for this exact request (request_sha256), expires, and
+    the gateway uses it once. The request itself is sealed with the engagement's key."""
+    __tablename__ = "write_proposals"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"), index=True)
+    lane_id: Mapped[int] = mapped_column(ForeignKey("lanes.id"))
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id"), index=True)
+    item_idx: Mapped[int | None]
+    method: Mapped[str] = mapped_column(String(8))
+    url: Mapped[str] = mapped_column(Text)                   # redacted, for lists; the exact one is sealed
+    host: Mapped[str] = mapped_column(String(255))
+    account: Mapped[str | None] = mapped_column(String(16))  # test account label, or none
+    reason: Mapped[str] = mapped_column(Text)                # the agent's stated reason (redacted)
+    request_enc: Mapped[str | None] = mapped_column(Text)    # sealed canonical request; null once content is deleted
+    request_sha256: Mapped[str] = mapped_column(String(64))
+    body_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="pending")   # see approvals.STATUSES
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    decided_by_name: Mapped[str | None] = mapped_column(String(460))
+    decided_at: Mapped[datetime | None]
+    decision_note: Mapped[str | None] = mapped_column(Text)
+    approved_sha256: Mapped[str | None] = mapped_column(String(64))
+    delete_confirmed_at: Mapped[datetime | None]
+    expires_at: Mapped[datetime | None]
+    sent_at: Mapped[datetime | None]
+    response_status: Mapped[int | None]
+    exchange_id: Mapped[str | None] = mapped_column(String(16))
+    evidence_id: Mapped[int | None] = mapped_column(ForeignKey("evidence.id"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -263,6 +325,8 @@ class GatewayRequest(Base):
     bytes_sent: Mapped[int] = mapped_column(default=0)
     bytes_received: Mapped[int] = mapped_column(default=0)
     duration_ms: Mapped[int | None]
+    account: Mapped[str | None] = mapped_column(String(16))     # test account label it was sent as (D-040)
+    approval_id: Mapped[int | None]                              # the approved write it sent (D-041)
 
 
 class Observation(Base):

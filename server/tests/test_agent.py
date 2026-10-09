@@ -61,8 +61,8 @@ class FakeTransport:
         self.calls = []
         self.status, self.body, self.headers = status, body, list(headers)
 
-    def __call__(self, method, url, headers, timeout):
-        self.calls.append({"method": method, "url": url, "headers": dict(headers)})
+    def __call__(self, method, url, headers, timeout, body=None):
+        self.calls.append({"method": method, "url": url, "headers": dict(headers), "body": body})
         return self.status, self.headers, self.body
 
 

@@ -6,7 +6,9 @@ sends leaves through this process, which enforces the engagement's rules in one 
   scope      the host must be in the engagement's scope (exclusions win), or an allowlisted
              passive source (passive modules) or the Claude API (agent runs);
   methods    GET, HEAD and OPTIONS only, with no body, no method override, no Upgrade.
-             Every write is refused until a person can approve it (D-041);
+             A write (POST, PUT, PATCH, DELETE) is sent only for an agent run, only with a
+             person's approval of that exact request, and only once (D-041): the gateway asks
+             the API to use the approval and sends the approved request, not the tool's;
   rate       one limiter per engagement, shared by every tool and worker: no window of
              WINDOW seconds holds more than the engagement's requests per second;
   identity   the research header and user agent are always set from the rules; whatever the
@@ -29,6 +31,12 @@ How a tool reaches it:
 
 Credentials are HTTP Basic: user "job-<id>.<tool>", password the job's secret. The tool name
 is self-declared and only used for the log.
+
+Test accounts (D-040): an agent run asks for a request "as" a test account with the header
+X-AttackLedger-As: <label>. The gateway removes it, asks the API for that account's headers
+(POST /gateway/account: only for agent jobs, only for the hosts named for the account, in scope)
+and adds them. The worker never holds them; the response is scrubbed of them (and of new
+cookies and tokens) before it goes back, so the worker never sees them either.
 
 The Claude API key (ANTHROPIC_API_KEY) is held here, not in the worker: the gateway adds it to
 an agent job's Claude API calls, after removing any key the client sent (D-042,
@@ -79,6 +87,11 @@ PROBE_HEADER = b"x-attackledger-probe"
 # target cannot be reached. Other tools get what an unreachable target gives them, a closed
 # connection, so a scanner never records the gateway's 502 as the target's answer.
 ERRORS_HEADER = b"x-attackledger-errors"
+# An agent run's request "as" a test account (D-040), and the approved write it sends (D-041).
+# Both are read and removed here, never forwarded.
+AS_HEADER = b"x-attackledger-as"
+APPROVAL_HEADER = b"x-attackledger-approval"
+WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 REFUSED_HEADER = "X-AttackLedger-Gateway"
 REALM = 'Basic realm="AttackLedger gateway"'
 USER_RE = re.compile(r"^job-(\d{1,12})(?:\.([a-z0-9][a-z0-9-]{0,31}))?$")
@@ -97,6 +110,10 @@ READ_TIMEOUT = 60.0      # between two reads from either side
 HANDSHAKE_TIMEOUT = 10.0
 MAX_HEAD = 64 * 1024
 MAX_SERVICE_BODY = 20 * 1024 * 1024
+MAX_WRITE_BODY = 1_000_000       # an approved write's body (approvals.MAX_BODY)
+MAX_SCRUBBED_BODY = 20 * 1024 * 1024   # a response sent as a test account is read whole, then scrubbed
+ACCOUNT_TTL = 2.0                # a replaced or deleted test account takes effect within this
+MIN_SCRUB = 6                    # shorter values are not searched for in responses
 SMTP_PORT = 25
 
 # Hosts compiled into subfinder, assetfinder, gau and waybackurls that answer without a key
@@ -364,6 +381,16 @@ class Api:
     async def dns_scopes(self):
         return await asyncio.to_thread(self._call, "GET", "/gateway/dns-scopes")
 
+    async def account(self, job_id: int, secret: str, label: str, host: str):
+        return await asyncio.to_thread(self._call, "POST", "/gateway/account",
+                                       {"job_id": job_id, "secret": secret, "label": label, "host": host})
+
+    async def approval(self, job_id: int, secret: str, approval_id: int, method: str, url: str, body_sha256: str,
+                       account: str | None):
+        return await asyncio.to_thread(self._call, "POST", "/gateway/approval", {
+            "job_id": job_id, "secret": secret, "approval_id": approval_id, "method": method, "url": url,
+            "body_sha256": body_sha256, "account": account})
+
     async def post_log(self, rows: list[dict]):
         return await asyncio.to_thread(self._call, "POST", "/gateway/log", {"rows": rows})
 
@@ -394,6 +421,23 @@ def gateway_token(create: bool = False) -> str | None:
 
 # ---- policy -------------------------------------------------------------------------
 
+def credential(auth: str | None) -> tuple[int, str, str]:
+    """(job id, tool, secret) from a Proxy-Authorization value. Raises Refused (407)."""
+    if not auth:
+        raise Refused(407, "a job credential is required (proxy user job-<id>.<tool>)")
+    scheme, _, value = auth.partition(" ")
+    if scheme.lower() != "basic":
+        raise Refused(407, "use Basic proxy authentication with the job credential")
+    try:
+        user, sep, secret = base64.b64decode(value.strip(), validate=True).decode().partition(":")
+    except (binascii.Error, UnicodeDecodeError):
+        raise Refused(407, "the job credential is malformed")
+    m = USER_RE.match(user)
+    if not sep or not m or not secret:
+        raise Refused(407, "the job credential is malformed (user job-<id>.<tool>)")
+    return int(m.group(1)), m.group(2) or "unknown", secret
+
+
 def _header(headers, name: bytes) -> str | None:
     for k, v in headers:
         if k == name:
@@ -421,7 +465,8 @@ def split_authority(authority: str, default_port: int | None = None) -> tuple[st
 
 
 class Policy:
-    """What may be sent. One place, so the hooks for D-040 and D-041 have one home too."""
+    """What may be sent: one place for the rules, the test accounts' headers (D-040) and the
+    approved writes' (D-041)."""
 
     def __init__(self, passive_hosts=PASSIVE_HOSTS, service_hosts=SERVICE_HOSTS, service_key: str | None = None):
         self.passive_hosts, self.service_hosts = frozenset(passive_hosts), frozenset(service_hosts)
@@ -447,8 +492,9 @@ class Policy:
             return "service"
         raise Refused(403, f"{host} is not in scope")
 
-    def check(self, rules: Rules, kind: str, method: str, path: str, headers) -> None:
-        """Method, body and header rules for one request."""
+    def check(self, rules: Rules, kind: str, method: str, path: str, headers, *, write: bool = False) -> None:
+        """Method, body and header rules for one request. write: it carries an approval (D-041),
+        which the gateway checks with the API before anything is sent."""
         if kind == "service":
             if not any(method == m and (path == p or path.startswith(p + "?")) for m, p in SERVICE_ROUTES):
                 raise Refused(403, f"{method} {path.split('?')[0][:100]} is not a Claude API call an agent run makes")
@@ -456,15 +502,20 @@ class Policy:
                 raise Refused(503, "no Claude API key is configured at the gateway (ANTHROPIC_API_KEY)")
             return
         if method not in READ_ONLY:
-            if self.approved_write(rules, method, path, None) is None:
-                raise Refused(403, f"{method[:20]} is refused: only GET, HEAD and OPTIONS are sent; writes need a "
-                                   f"person's approval (D-041), which is not built yet")
+            if not write:
+                raise Refused(403, f"{method[:20]} is refused: only GET, HEAD and OPTIONS are sent; a write needs a "
+                                   f"person's approval of that exact request (D-041)")
+            if method not in WRITE_METHODS or kind != "target" or rules.traffic != "agent":
+                raise Refused(403, f"{method[:20]} is refused: approved writes are POST, PUT, PATCH or DELETE from "
+                                   f"agent runs to targets only")
+        elif write:
+            raise Refused(400, "an approval is for a write, not a read-only request")
         if path.startswith("*"):
             raise Refused(403, "asterisk-form requests are not sent")
         names = {k for k, _ in headers}
         if b"upgrade" in names:
             raise Refused(403, "protocol upgrades (WebSocket, h2c) are not sent")
-        if b"transfer-encoding" in names or int(_header(headers, b"content-length") or 0) > 0:
+        if not write and (b"transfer-encoding" in names or int(_header(headers, b"content-length") or 0) > 0):
             raise Refused(403, "read-only requests are sent without a body")
         for k, v in headers:
             if k.decode("latin-1") in OVERRIDE_HEADERS and v.decode("latin-1").strip().upper() not in READ_ONLY:
@@ -475,15 +526,19 @@ class Policy:
         query = urlsplit(path).query
         for k, v in parse_qsl(query, keep_blank_values=True):
             m = v.strip().upper()
-            if k.lower() == "_method" and m.isalpha() and m not in READ_ONLY:
+            if k.lower() == "_method" and m.isalpha() and m not in READ_ONLY and m != method:
                 raise Refused(403, f"_method={v[:20]} is refused")
         if kind == "target" and not rules.identification():
             raise Refused(403, "the engagement has no research header or user agent; nothing is sent to targets")
 
-    def headers(self, rules: Rules, kind: str, headers, host_header: str) -> list[tuple[bytes, bytes]]:
-        """The headers sent upstream: the tool's (as received), minus hop-by-hop and
-        identification names, then Host, the identification (targets) and Connection: close."""
-        drop = set(HOP_BY_HOP) | {ERRORS_HEADER.decode()}
+    def headers(self, rules: Rules, kind: str, headers, host_header: str, *, account: dict | None = None,
+                approved: list | None = None) -> list[tuple[bytes, bytes]]:
+        """The headers sent upstream: the tool's (as received), or for an approved write the
+        approved ones, minus hop-by-hop and identification names, then Host, the identification
+        (targets), the test account's headers and Connection: close."""
+        if approved is not None:
+            headers = [(str(k).lower().encode("latin-1"), str(v).encode("latin-1")) for k, v in approved]
+        drop = set(HOP_BY_HOP) | {ERRORS_HEADER.decode(), AS_HEADER.decode(), APPROVAL_HEADER.decode()}
         conn = _header(headers, b"connection") or ""
         drop |= {t.strip().lower() for t in conn.split(",") if t.strip()}
         ident = [(n.encode(), v.encode()) for n, v in rules.identification()] if kind == "target" else []
@@ -494,21 +549,57 @@ class Policy:
         out = [(b"Host", host_header.encode("idna" if not host_header.isascii() else "ascii"))]
         out += [(k, v) for k, v in headers if k.decode("latin-1") not in drop]
         out += ident
-        out = self.inject_credentials(rules, kind, out)
+        out = self.inject_credentials(rules, kind, out, account)
         out.append((b"Connection", b"close"))
         return out
 
     # ---- hooks for later decisions -------------------------------------------------
 
-    def inject_credentials(self, rules: Rules, kind: str, headers: list) -> list:
-        """D-040: a test account's session (cookie or token) will be added here, to allowed
-        target requests that ask for it. The log never holds header values. Not built yet."""
-        return headers
+    def inject_credentials(self, rules: Rules, kind: str, headers: list, account: dict | None) -> list:
+        """D-040: a test account's headers replace any of the same names the tool sent. The
+        response is then read whole, uncompressed, so it can be scrubbed (scrub_response). The log
+        never holds header values."""
+        if not account or kind != "target":
+            return headers
+        names = {str(n).lower() for n, _ in account["headers"]} | {"accept-encoding"}
+        out = [(k, v) for k, v in headers if k.decode("latin-1").lower() not in names]
+        out += [(str(n).encode("latin-1"), str(v).encode("latin-1")) for n, v in account["headers"]]
+        out.append((b"Accept-Encoding", b"identity"))
+        return out
 
-    def approved_write(self, rules: Rules, method: str, path: str, body_sha256: str | None):
-        """D-041: the person's approval for exactly this write, sent once. The approval queue
-        is not built yet, so there is none and every write is refused."""
-        return None
+
+def account_values(account: dict) -> list[str]:
+    """The secret values an account's headers carry: each header value, each cookie's value and a
+    bearer token on its own, longest first, so a response that echoes them can be scrubbed."""
+    out = set()
+    for name, value in account.get("headers") or []:
+        value = str(value)
+        out.add(value)
+        if str(name).lower() == "cookie":
+            for part in value.split(";"):
+                out.add(part.partition("=")[2].strip())
+        scheme, _, rest = value.partition(" ")
+        if rest and scheme.isalpha():
+            out.add(rest.strip())
+    return sorted((v for v in out if len(v) >= MIN_SCRUB), key=len, reverse=True)
+
+
+def scrub_response(account: dict, headers: list, body: bytes) -> tuple[list, bytes]:
+    """A response to a request sent as a test account, before it goes back to the worker: the
+    account's own values become redaction markers wherever they appear, and so do cookies,
+    tokens and other credentials (redact.py), so the worker never holds a session of the account."""
+    rep = redact.Report()
+    values = account_values(account)
+    out = []
+    for k, v in headers:
+        name, value = k.decode("latin-1"), v.decode("latin-1")
+        for s in values:
+            value = value.replace(s, redact.marker(s))
+        value = redact.header_value(name, value, rep)
+        out.append((k, value.encode("latin-1", "replace")))
+    for s in values:
+        body = body.replace(s.encode(), redact.marker(s).encode())
+    return out, redact.data(body, rep)
 
 
 # ---- the gateway --------------------------------------------------------------------
@@ -533,6 +624,7 @@ class Gateway:
         self.passive_limiters: dict[str, Limiter] = {}
         self._rules: dict[tuple, tuple[float, Rules | Refused]] = {}
         self._rules_locks: dict[tuple, asyncio.Lock] = {}
+        self._accounts: dict[tuple, tuple[float, dict | Refused]] = {}
         self._dns_scopes: tuple[float, list] = (0.0, [])
         self._denied: tuple[float, set] = (0.0, set())
         self.log_rows: list[dict] = []
@@ -543,20 +635,54 @@ class Gateway:
     # ---- identity and rules -----------------------------------------------------
 
     async def identify(self, auth: str | None) -> tuple[Rules, str]:
-        if not auth:
-            raise Refused(407, "a job credential is required (proxy user job-<id>.<tool>)")
-        scheme, _, value = auth.partition(" ")
-        if scheme.lower() != "basic":
-            raise Refused(407, "use Basic proxy authentication with the job credential")
-        try:
-            user, sep, secret = base64.b64decode(value.strip(), validate=True).decode().partition(":")
-        except (binascii.Error, UnicodeDecodeError):
-            raise Refused(407, "the job credential is malformed")
-        m = USER_RE.match(user)
-        if not sep or not m or not secret:
-            raise Refused(407, "the job credential is malformed (user job-<id>.<tool>)")
-        rules = await self.rules_for(int(m.group(1)), secret)
-        return rules, m.group(2) or "unknown"
+        job_id, tool, secret = credential(auth)
+        rules = await self.rules_for(job_id, secret)
+        return rules, tool
+
+    # ---- test accounts and approved writes (D-040, D-041) ----------------------------
+
+    async def account_for(self, rules: Rules, auth: str, label: str, host: str) -> dict:
+        """The test account's headers for this request, from the API (cached ACCOUNT_TTL)."""
+        if rules.traffic != "agent":
+            raise Refused(403, f"a {rules.kind} job does not send requests as a test account")
+        if not rules.redact:
+            raise Refused(403, "test accounts are used only while evidence redaction is on (D-038)")
+        if not label or len(label) > 16 or any(c in label for c in "\r\n\0 "):
+            raise Refused(400, "X-AttackLedger-As names a test account label")
+        job_id, _, secret = credential(auth)
+        key = (job_id, hashlib.sha256(secret.encode()).hexdigest(), label, host)
+        hit = self._accounts.get(key)
+        if hit is None or hit[0] <= self.clock():
+            status, data = await self.api.account(job_id, secret, label, host)
+            detail = data.get("detail") if isinstance(data, dict) else None
+            if status == 200 and isinstance(data, dict) and isinstance(data.get("headers"), list):
+                hit = (self.clock() + ACCOUNT_TTL, {"label": str(data.get("label") or label), "headers": data["headers"]})
+            elif status in (403, 404):
+                hit = (self.clock() + ACCOUNT_TTL, Refused(403, f"not sent as test account {label}: "
+                                                                f"{detail or 'refused by the API'}"))
+            else:
+                raise Refused(503, f"cannot get test account {label}: {detail or f'API answered {status}'}")
+            self._accounts[key] = hit
+            if len(self._accounts) > 4096:
+                self._accounts.clear()
+        if isinstance(hit[1], Refused):
+            raise hit[1]
+        return hit[1]
+
+    async def use_approval(self, rules: Rules, auth: str, approval_id: int, method: str, url: str, body: bytes,
+                           account: str | None) -> dict:
+        """Use a person's approval (D-041). The API checks that it is this job's, approved, not
+        expired and not used, and that method, URL, body and account are the approved ones, and
+        marks it used: it is never asked again. The answer is the request to send."""
+        job_id, _, secret = credential(auth)
+        status, data = await self.api.approval(job_id, secret, approval_id, method, url,
+                                               hashlib.sha256(body).hexdigest(), account)
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if status == 200 and isinstance(data, dict) and isinstance(data.get("headers"), list):
+            return data
+        if status in (403, 404, 409, 422):
+            raise Refused(403, f"write not sent: {detail or 'the approval was refused'}")
+        raise Refused(503, f"cannot check the approval: {detail or f'API answered {status}'}")
 
     async def rules_for(self, job_id: int, secret: str) -> Rules:
         key = (job_id, hashlib.sha256(secret.encode()).hexdigest())
@@ -645,7 +771,7 @@ class Gateway:
     def record(self, *, rules: Rules | None, tool: str, kind: str, method: str, url: str, host: str = "",
                port: int | None = None, status: int | None = None, verdict: str, reason: str = "",
                sent: int = 0, received: int = 0, started: float | None = None, engagement_id: int | None = None,
-               job_id: int | None = None) -> None:
+               job_id: int | None = None, account: str | None = None, approval_id: int | None = None) -> None:
         if rules is None or rules.redact:
             url = redact.text(url, redact.Report())
         row = {"at": datetime.now(timezone.utc).isoformat(),
@@ -653,7 +779,8 @@ class Gateway:
                "job_id": rules.job_id if rules else job_id, "tool": tool[:32], "kind": kind, "method": method[:16],
                "url": url[:2000], "host": host[:255], "port": port, "status": status, "verdict": verdict,
                "reason": reason[:300], "bytes_sent": sent, "bytes_received": received,
-               "duration_ms": int((self.clock() - started) * 1000) if started is not None else None}
+               "duration_ms": int((self.clock() - started) * 1000) if started is not None else None,
+               "account": account, "approval_id": approval_id}
         if len(self.log_rows) >= 2 * LOG_BACKLOG:
             self.dropped += 1         # only refusals get here: nothing is sent while the log is full
             return
@@ -784,6 +911,10 @@ class Gateway:
         method = ev.method.decode("latin-1")
         target = ev.target.decode("latin-1")
         rules, tool, kind, url, host, port = None, "unknown", "target", target[:2000], "", None
+        label = (_header(ev.headers, AS_HEADER) or "").strip() or None
+        approval_text = (_header(ev.headers, APPROVAL_HEADER) or "").strip() or None
+        approval_id = None
+        account = None
         try:
             if self.log_full():
                 raise Refused(503, "the request log is not being written; nothing is sent until it is")
@@ -807,29 +938,52 @@ class Gateway:
             url = f"{scheme}://{host}{'' if port == default else f':{port}'}{path}"
             rules, tool = await self.identify(auth)
             kind = self.policy.classify(rules, host, port, scheme)
-            self.policy.check(rules, kind, method, path, ev.headers)
+            if (label or approval_text) and kind != "target":
+                raise Refused(403, "test accounts and approved writes are for target requests only")
+            if approval_text is not None:
+                if not approval_text.isdigit() or len(approval_text) > 12:
+                    raise Refused(400, "X-AttackLedger-Approval names an approval by its number")
+                approval_id = int(approval_text)
+            self.policy.check(rules, kind, method, path, ev.headers, write=approval_id is not None)
             body = b""
             if kind == "service":
                 body = await _read_body(conn, reader, MAX_SERVICE_BODY)
+            elif approval_id is not None:
+                body = await _read_body(conn, reader, MAX_WRITE_BODY)
             else:
                 end = await _next(conn, reader)
                 if not isinstance(end, h11.EndOfMessage):
                     raise Refused(403, "read-only requests are sent without a body")
-            out = self.policy.headers(rules, kind, ev.headers, host if port == default else f"{host}:{port}")
+            if label:
+                account = await self.account_for(rules, auth, label, host)
+            approved = None
+            if approval_id is not None:
+                # Last, after every other check: from here on the approval is used, sent or not.
+                approved = await self.use_approval(rules, auth, approval_id, method, url, body,
+                                                   account["label"] if account else None)
+                self.policy.check(rules, kind, method, path,
+                                  [(str(k).lower().encode("latin-1"), str(v).encode("latin-1"))
+                                   for k, v in approved["headers"]], write=True)
+            out = self.policy.headers(rules, kind, ev.headers, host if port == default else f"{host}:{port}",
+                                      account=account, approved=approved["headers"] if approved else None)
             if body:
                 out.append((b"Content-Length", str(len(body)).encode()))
         except Refused as e:
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
-                        status=e.status, verdict="refused", reason=e.reason, started=started)
+                        status=e.status, verdict="refused", reason=e.reason, started=started,
+                        account=account["label"] if account else label, approval_id=approval_id)
             await self._refuse(conn, writer, ev.method, e)
             return False
         return await self._forward(conn, writer, rules, tool, kind, method, scheme, host, port, path, out, body,
-                                   url, started, wants_errors=_header(ev.headers, ERRORS_HEADER) is not None)
+                                   url, started, wants_errors=_header(ev.headers, ERRORS_HEADER) is not None,
+                                   account=account, approval_id=approval_id)
 
     async def _forward(self, conn, writer, rules, tool, kind, method, scheme, host, port, path, headers, body,
-                       url, started, wants_errors: bool = True) -> bool:
+                       url, started, wants_errors: bool = True, account: dict | None = None,
+                       approval_id: int | None = None) -> bool:
         status, received, reason = None, 0, ""
         upw = None
+        label = account["label"] if account else None
         try:
             try:
                 ip = await self.resolve(host)
@@ -873,39 +1027,75 @@ class Gateway:
                 upw.close()
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
                         status=e.status, verdict="refused" if e.status in (403, 429) else "failed",
-                        reason=e.reason, sent=0, started=started)
+                        reason=e.reason, sent=0, started=started, account=label, approval_id=approval_id)
             if e.status != 502 or wants_errors:
                 await self._refuse(conn, writer, method.encode(), e)
             return False
         status = resp.status_code
         keep = True
         try:
-            # h11 frames the body for the client again; a chunked upstream body has no valid length.
-            drop = HOP_BY_HOP if any(k == b"transfer-encoding" for k, _ in resp.headers) \
-                else HOP_BY_HOP - {"content-length"}
-            out = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in drop]
-            writer.write(conn.send(h11.Response(status_code=status, headers=out, reason=resp.reason)))
-            while True:
-                ev = await _next(upc, upr)
-                if isinstance(ev, h11.Data):
-                    received += len(ev.data)
-                    writer.write(conn.send(h11.Data(data=ev.data)))
-                    await writer.drain()
-                elif isinstance(ev, h11.EndOfMessage):
-                    writer.write(conn.send(h11.EndOfMessage()))
-                    await writer.drain()
-                    break
-                else:
-                    reason, keep = "the response ended early", False
-                    break
+            if account is not None:
+                # Read whole, then scrubbed (D-040): what goes back never holds the account's session.
+                keep, reason, received = await self._scrubbed(conn, writer, upc, upr, resp, account, method)
+            else:
+                # h11 frames the body for the client again; a chunked upstream body has no valid length.
+                drop = HOP_BY_HOP if any(k == b"transfer-encoding" for k, _ in resp.headers) \
+                    else HOP_BY_HOP - {"content-length"}
+                out = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in drop]
+                writer.write(conn.send(h11.Response(status_code=status, headers=out, reason=resp.reason)))
+                while True:
+                    ev = await _next(upc, upr)
+                    if isinstance(ev, h11.Data):
+                        received += len(ev.data)
+                        writer.write(conn.send(h11.Data(data=ev.data)))
+                        await writer.drain()
+                    elif isinstance(ev, h11.EndOfMessage):
+                        writer.write(conn.send(h11.EndOfMessage()))
+                        await writer.drain()
+                        break
+                    else:
+                        reason, keep = "the response ended early", False
+                        break
         except (h11.ProtocolError, OSError, asyncio.TimeoutError) as e:
             reason, keep = f"the response was cut off: {str(e)[:120] or type(e).__name__}", False
         finally:
             upw.close()
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
                         status=status, verdict="allowed", reason=reason, sent=len(body), received=received,
-                        started=started)
+                        started=started, account=label, approval_id=approval_id)
         return keep
+
+    async def _scrubbed(self, conn, writer, upc, upr, resp, account: dict, method: str) -> tuple[bool, str, int]:
+        """A response to a request sent as a test account: read whole, scrubbed, then sent on with
+        its new length. (keep the client connection, reason, bytes received)."""
+        chunks, size, reason = [], 0, ""
+        while True:
+            ev = await _next(upc, upr)
+            if isinstance(ev, h11.Data):
+                size += len(ev.data)
+                if size > MAX_SCRUBBED_BODY:
+                    reason = f"the response is larger than {MAX_SCRUBBED_BODY} bytes; it was cut off"
+                    break
+                chunks.append(ev.data)
+            elif isinstance(ev, h11.EndOfMessage):
+                break
+            else:
+                reason = "the response ended early"
+                break
+        head = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in HOP_BY_HOP]
+        head, body = scrub_response(account, head, b"".join(chunks))
+        if method == "HEAD":
+            length = _header(resp.headers, b"content-length")
+            head += [(b"Content-Length", length.encode())] if length else []
+            body = b""
+        else:
+            head.append((b"Content-Length", str(len(body)).encode()))
+        writer.write(conn.send(h11.Response(status_code=resp.status_code, headers=head, reason=resp.reason)))
+        if body:
+            writer.write(conn.send(h11.Data(data=body)))
+        writer.write(conn.send(h11.EndOfMessage()))
+        await writer.drain()
+        return not reason, reason, size
 
     # ---- the worker's channel (D-042) ------------------------------------------------------
 

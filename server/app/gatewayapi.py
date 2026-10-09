@@ -9,6 +9,10 @@ stay in the customer's network and talk to a hosted API the same way.
   POST /gateway/session        a job credential -> the job's engagement, traffic class and rules
   GET  /gateway/dns-scopes     scope rules of every engagement that has a running job
   POST /gateway/log            a batch of request-log rows
+  POST /gateway/account        a job credential, a test account label and a host -> the headers to
+                               add (D-040). The material leaves the API only here, to the gateway
+  POST /gateway/approval       a job credential and an approved write -> the request to send, once
+                               (D-041); the approval is used by this call
 
 And for people:
 
@@ -23,7 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import modules
+from . import approvals, modules, testaccounts
 from .db import get_session
 from .models import Engagement, GatewayRequest, Job, JobStatus, iso_utc
 
@@ -46,12 +50,12 @@ def traffic_of(kind: str) -> str | None:
     return "none" if m.computed else m.traffic
 
 
-@router.post("/gateway/session")
-def gateway_session(body: SessionIn, session: Session = Depends(get_session)):
-    job = session.get(Job, body.job_id)
+def _running_job(session, job_id: int, secret: str) -> Job:
+    """The job a credential belongs to, while it runs on an authorized engagement with scope."""
+    job = session.get(Job, job_id)
     if job is None or not job.gateway_secret_sha256:
-        raise HTTPException(404, f"job {body.job_id} has no gateway credential")
-    if not hmac.compare_digest(hashlib.sha256(body.secret.encode()).hexdigest(), job.gateway_secret_sha256):
+        raise HTTPException(404, f"job {job_id} has no gateway credential")
+    if not hmac.compare_digest(hashlib.sha256(secret.encode()).hexdigest(), job.gateway_secret_sha256):
         raise HTTPException(403, f"wrong secret for job {job.id}")
     if job.status != JobStatus.running:
         raise HTTPException(403, f"job {job.id} is {job.status.value}, not running")
@@ -60,6 +64,13 @@ def gateway_session(body: SessionIn, session: Session = Depends(get_session)):
         raise HTTPException(403, "no authorization is recorded for this engagement")
     if not eng.scope_include:
         raise HTTPException(403, "the engagement has no scope rules")
+    return job
+
+
+@router.post("/gateway/session")
+def gateway_session(body: SessionIn, session: Session = Depends(get_session)):
+    job = _running_job(session, body.job_id, body.secret)
+    eng: Engagement = job.engagement
     traffic = traffic_of(job.kind)
     if traffic is None:
         raise HTTPException(403, f"unknown job kind {job.kind}")
@@ -67,6 +78,56 @@ def gateway_session(body: SessionIn, session: Session = Depends(get_session)):
             "include": list(eng.scope_include), "exclude": list(eng.scope_exclude or []),
             "rate_limit_rps": eng.rate_limit_rps, "research_header": eng.research_header,
             "research_user_agent": eng.research_user_agent, "redact": bool(eng.redact_evidence)}
+
+
+class AccountIn(SessionIn):
+    label: str = Field(min_length=1, max_length=16)
+    host: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/gateway/account")
+def gateway_account(body: AccountIn, session: Session = Depends(get_session)):
+    """A test account's headers for one request of an agent job to one of its hosts (D-040).
+    Only agent runs may send as a test account; recon tools stay unauthenticated."""
+    job = _running_job(session, body.job_id, body.secret)
+    if job.kind != "agent":
+        raise HTTPException(403, f"a {job.kind} job does not send requests as a test account")
+    eng = job.engagement
+    if eng.content_deleted_at is not None:
+        raise HTTPException(403, "this engagement's content was deleted, its test accounts with it")
+    try:
+        a = testaccounts.usable(session, eng, body.label, body.host.lower().rstrip("."))
+    except ValueError as e:
+        raise HTTPException(403, str(e))
+    pairs = testaccounts.open_material(a)
+    if pairs is None:
+        raise HTTPException(503, f"the material of test account {a.label} cannot be opened")
+    a.last_used_at = datetime.now(timezone.utc)
+    session.commit()
+    return {"label": a.label, "headers": pairs}
+
+
+class ApprovalIn(SessionIn):
+    approval_id: int
+    method: str = Field(max_length=16)
+    url: str = Field(max_length=4000)
+    body_sha256: str = Field(pattern="^[0-9a-f]{64}$")
+    account: str | None = Field(default=None, max_length=16)
+
+
+@router.post("/gateway/approval")
+def gateway_approval(body: ApprovalIn, session: Session = Depends(get_session)):
+    """Use an approval (D-041): the gateway sends the request this answers with, once."""
+    job = _running_job(session, body.job_id, body.secret)
+    if job.kind != "agent":
+        raise HTTPException(403, f"a {job.kind} job sends no writes")
+    if not job.engagement.allow_writes:
+        raise HTTPException(403, "this engagement does not allow writes")
+    try:
+        return approvals.consume(session, job=job, proposal_id=body.approval_id, method=body.method, url=body.url,
+                                 body_sha256=body.body_sha256, account=body.account)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
 
 
 @router.get("/gateway/dns-scopes")
@@ -96,6 +157,8 @@ class LogRow(BaseModel):
     bytes_sent: int = Field(default=0, ge=0)
     bytes_received: int = Field(default=0, ge=0)
     duration_ms: int | None = None
+    account: str | None = Field(default=None, max_length=16)
+    approval_id: int | None = None
 
 
 class LogIn(BaseModel):
@@ -115,7 +178,10 @@ def gateway_log(body: LogIn, session: Session = Depends(get_session)):
             engagement_id=r.engagement_id if r.engagement_id in known_engs else None,
             job_id=r.job_id if r.job_id in known_jobs else None, tool=r.tool, kind=r.kind, method=r.method,
             url=r.url, host=r.host, port=r.port, status=r.status, verdict=r.verdict, reason=r.reason,
-            bytes_sent=r.bytes_sent, bytes_received=r.bytes_received, duration_ms=r.duration_ms))
+            bytes_sent=r.bytes_sent, bytes_received=r.bytes_received, duration_ms=r.duration_ms,
+            account=r.account, approval_id=r.approval_id))
+        if r.approval_id is not None:
+            approvals.gateway_outcome(session, r.approval_id, r.verdict, r.status, r.reason)
     session.commit()
     return {"written": len(body.rows)}
 
@@ -123,7 +189,8 @@ def gateway_log(body: LogIn, session: Session = Depends(get_session)):
 def _row_view(g: GatewayRequest) -> dict:
     return {"id": g.id, "at": iso_utc(g.at), "job_id": g.job_id, "tool": g.tool, "kind": g.kind,
             "method": g.method, "url": g.url, "status": g.status, "verdict": g.verdict, "reason": g.reason,
-            "bytes_sent": g.bytes_sent, "bytes_received": g.bytes_received, "duration_ms": g.duration_ms}
+            "bytes_sent": g.bytes_sent, "bytes_received": g.bytes_received, "duration_ms": g.duration_ms,
+            "account": g.account, "approval_id": g.approval_id}
 
 
 @router.get("/engagements/{eng_id}/gateway-log")
