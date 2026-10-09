@@ -84,6 +84,12 @@ MODULES: tuple[Module, ...] = (
            "stack and CDN, and scores each host.",
            input="hosts", traffic="target", http=True, after=("ports", "resolve"), produces=("observations",),
            pipeline="M2", tools=("httpx",)),
+    Module("wellknown", "Read well-known files",
+           "robots.txt and security.txt for each live web service, and a directory-listing check of the "
+           "directories robots.txt names (at most 13 GET requests per service): their paths become "
+           "endpoints; robots rules, security contacts and directory listings become leads.",
+           input="urls", traffic="target", http=True, after=("probe",), produces=("endpoints", "leads"),
+           pipeline="M3", max_targets=50, tools=("AttackLedger well-known reader",)),
     Module("crawl", "Crawl golden hosts",
            "Crawls the highest-scoring hosts on the same host only, parsing JavaScript; logout, delete and "
            "similar paths are never followed.",
@@ -94,9 +100,12 @@ MODULES: tuple[Module, ...] = (
            input="roots", traffic="passive", produces=("endpoints",), pipeline="M4",
            tools=("gau", "waybackurls")),
     Module("content", "Discover content",
-           "feroxbuster over golden hosts (up to 10 per run), one at a time, common.txt wordlist, no recursion. Skips hosts that "
-           "answer every path the same way, never follows redirects or extracted links, never requests "
-           "logout, delete or similar paths, and stays within the rate limit in total.",
+           "feroxbuster over golden hosts (up to 10 per run), one at a time, common.txt wordlist, no recursion. "
+           "On a host that answers every path with the same page (a single-page app), that page is filtered "
+           "out by its size, word or line count; a host that answers every path with the same error or "
+           "redirect is skipped. Directories it finds are checked for a listing. Never follows redirects or "
+           "extracted links, never requests logout, delete or similar paths, and stays within the rate "
+           "limit in total.",
            input="urls", traffic="target", http=True, opt_in=True, after=("probe",), produces=("endpoints",),
            pipeline="M3", max_targets=10, min_rps=3,
            caution="Brute-forces paths: thousands of requests per host. Enable only if the program allows "
@@ -164,11 +173,13 @@ PHASES: tuple[Phase, ...] = (
           ("resolve", "ports", "probe")),
     Phase("urls", "Collect URLs",
           "Build the list of known URLs for the golden hosts.",
-          "Crawling follows links on the same host and parses JavaScript for paths; logout and delete paths are "
-          "skipped. Public archives add URLs that are no longer linked. Content discovery, if allowed, guesses "
-          "common paths. URLs are cleaned: static files and URLs that differ only in parameter values are "
-          "dropped.",
-          ("crawl", "archive", "content")),
+          "robots.txt and security.txt are read first: the paths they name, and directory listings among "
+          "them, are recorded. Crawling follows links on the same host and parses JavaScript for paths; "
+          "logout and delete paths are skipped. Public archives add URLs that are no longer linked. Content "
+          "discovery, if allowed, guesses common paths, also on single-page apps that answer every path. "
+          "URLs are cleaned: images, fonts and stylesheets (unless under a path such as uploads or backup) "
+          "and URLs that differ only in parameter values are dropped.",
+          ("wellknown", "crawl", "archive", "content")),
     Phase("js", "JavaScript and parameters",
           "Read JavaScript and parameters for endpoints, secrets and inputs worth testing.",
           "JavaScript files often name API endpoints, GraphQL operations and sourcemaps, and sometimes leak keys; "

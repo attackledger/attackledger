@@ -1,0 +1,645 @@
+{
+ "date": "2026-10-09",
+ "what": "recon and agent context for single-page apps (branch feat/recon-agent), before and after, Juice Shop through the gateway",
+ "runs": {
+  "before": {
+   "results_file": "tools/benchmark/results-2026-10-09-recon-before.json",
+   "commit": "d856413841af525cdb3b869661a70b1305e79a08",
+   "endpoints": 134,
+   "leads": 23,
+   "leads_by_kind": {
+    "nuclei": 1,
+    "param-class": 13,
+    "parameter": 8,
+    "secret": 1
+   },
+   "recon_recall_automated": {
+    "found": 5,
+    "of": 32,
+    "recall": 0.156
+   },
+   "in_reach_items_matched": [
+    "web3SandboxChallenge",
+    "scoreBoardChallenge",
+    "exposedMetricsChallenge",
+    "S04",
+    "S05"
+   ],
+   "solved_by_recon_traffic": [
+    "errorHandlingChallenge",
+    "exposedMetricsChallenge"
+   ],
+   "wall_seconds": 375.2,
+   "requests": 5511,
+   "methods": {
+    "GET": 5511
+   },
+   "non_read_only": [],
+   "peak_sliding_1s": 20,
+   "peak_calendar_second": 18,
+   "rate_limit": 20,
+   "missing_identification": 0,
+   "gateway": {
+    "total": 5626,
+    "by_verdict": {
+     "refused": 5,
+     "failed": 1,
+     "allowed": 5620
+    },
+    "by_kind": {
+     "dns": 10,
+     "target": 5616
+    },
+    "by_method": {
+     "GET": 5513,
+     "PROBE": 99,
+     "CONNECT": 4,
+     "DNS": 10
+    },
+    "refused": {
+     "katana GET: burpsuite is not in scope": 1,
+     "katana CONNECT: api.pdtm.sh is not in scope": 1,
+     "httpx CONNECT: api.pdtm.sh is not in scope": 1,
+     "dnsx-cname CONNECT: api.pdtm.sh is not in scope": 1,
+     "dnsx CONNECT: api.pdtm.sh is not in scope": 1
+    }
+   },
+   "steps": [
+    {
+     "kind": "resolve",
+     "status": "done",
+     "result_count": 1,
+     "requests": 0,
+     "peak_rps_1s": 0,
+     "peak_per_calendar_second": null,
+     "seconds": 0.1,
+     "methods": null
+    },
+    {
+     "kind": "ports",
+     "status": "done",
+     "result_count": 1,
+     "requests": 0,
+     "peak_rps_1s": 0,
+     "peak_per_calendar_second": 0,
+     "seconds": 4.3,
+     "methods": {}
+    },
+    {
+     "kind": "probe",
+     "status": "done",
+     "result_count": 1,
+     "requests": 1,
+     "peak_rps_1s": 1,
+     "peak_per_calendar_second": 1,
+     "seconds": 0.2,
+     "methods": {
+      "GET": 1
+     }
+    },
+    {
+     "kind": "crawl",
+     "status": "done",
+     "result_count": 27,
+     "requests": 29,
+     "peak_rps_1s": 20,
+     "peak_per_calendar_second": 12,
+     "seconds": 13.2,
+     "methods": {
+      "GET": 29
+     }
+    },
+    {
+     "kind": "content",
+     "status": "done",
+     "result_count": 0,
+     "requests": 2,
+     "peak_rps_1s": 2,
+     "peak_per_calendar_second": 2,
+     "seconds": 0.1,
+     "methods": {
+      "GET": 2
+     }
+    },
+    {
+     "kind": "jsanalyze",
+     "status": "done",
+     "result_count": 20,
+     "requests": 20,
+     "peak_rps_1s": 13,
+     "peak_per_calendar_second": 12,
+     "seconds": 1.6,
+     "methods": {
+      "GET": 20
+     }
+    },
+    {
+     "kind": "params",
+     "status": "done",
+     "result_count": 8,
+     "requests": 3210,
+     "peak_rps_1s": 19,
+     "peak_per_calendar_second": 18,
+     "seconds": 218.7,
+     "methods": {
+      "GET": 3210
+     }
+    },
+    {
+     "kind": "paramclass",
+     "status": "done",
+     "result_count": 13,
+     "requests": 0,
+     "peak_rps_1s": 0,
+     "peak_per_calendar_second": null,
+     "seconds": 0.0,
+     "methods": null
+    },
+    {
+     "kind": "nuclei",
+     "status": "done",
+     "result_count": 1,
+     "requests": 2249,
+     "peak_rps_1s": 19,
+     "peak_per_calendar_second": 18,
+     "seconds": 134.3,
+     "methods": {
+      "GET": 2249
+     }
+    }
+   ],
+   "recon_recall_after_review": {
+    "found": 4,
+    "of": 32,
+    "rejected": [
+     "S05"
+    ]
+   }
+  },
+  "after": {
+   "results_file": "tools/benchmark/results-2026-10-09-recon-after.json",
+   "commit": "3ffe03907df168dbc4af20c0c8cf839ef574c931",
+   "endpoints": 198,
+   "leads": 28,
+   "leads_by_kind": {
+    "listing": 1,
+    "nuclei": 1,
+    "param-class": 14,
+    "parameter": 9,
+    "robots": 1,
+    "security-txt": 1,
+    "secret": 1
+   },
+   "recon_recall_automated": {
+    "found": 15,
+    "of": 32,
+    "recall": 0.469
+   },
+   "in_reach_items_matched": [
+    "web3SandboxChallenge",
+    "privacyPolicyChallenge",
+    "scoreBoardChallenge",
+    "exposedMetricsChallenge",
+    "directoryListingChallenge",
+    "adminSectionChallenge",
+    "securityPolicyChallenge",
+    "easterEggLevelOneChallenge",
+    "misplacedSignatureFileChallenge",
+    "forgottenDevBackupChallenge",
+    "forgottenBackupChallenge",
+    "redirectChallenge",
+    "S01",
+    "S04",
+    "S05"
+   ],
+   "solved_by_recon_traffic": [
+    "errorHandlingChallenge",
+    "exposedMetricsChallenge",
+    "securityPolicyChallenge"
+   ],
+   "wall_seconds": 840.5,
+   "requests": 13352,
+   "methods": {
+    "GET": 13349,
+    "OPTIONS": 2,
+    "HEAD": 1
+   },
+   "non_read_only": [],
+   "peak_sliding_1s": 20,
+   "peak_calendar_second": 20,
+   "rate_limit": 20,
+   "missing_identification": 0,
+   "gateway": {
+    "total": 13471,
+    "by_verdict": {
+     "refused": 5,
+     "failed": 1,
+     "allowed": 13465
+    },
+    "by_kind": {
+     "dns": 14,
+     "target": 13457
+    },
+    "by_method": {
+     "HEAD": 1,
+     "OPTIONS": 2,
+     "GET": 13351,
+     "PROBE": 99,
+     "CONNECT": 4,
+     "DNS": 14
+    },
+    "refused": {
+     "katana GET: burpsuite is not in scope": 1,
+     "katana CONNECT: api.pdtm.sh is not in scope": 1,
+     "httpx CONNECT: api.pdtm.sh is not in scope": 1,
+     "dnsx-cname CONNECT: api.pdtm.sh is not in scope": 1,
+     "dnsx CONNECT: api.pdtm.sh is not in scope": 1
+    }
+   },
+   "steps": [
+    {
+     "kind": "resolve",
+     "status": "done",
+     "result_count": 1,
+     "requests": 0,
+     "peak_rps_1s": 0,
+     "peak_per_calendar_second": null,
+     "seconds": 0.1,
+     "methods": null
+    },
+    {
+     "kind": "ports",
+     "status": "done",
+     "result_count": 1,
+     "requests": 0,
+     "peak_rps_1s": 0,
+     "peak_per_calendar_second": 0,
+     "seconds": 4.2,
+     "methods": {}
+    },
+    {
+     "kind": "probe",
+     "status": "done",
+     "result_count": 1,
+     "requests": 1,
+     "peak_rps_1s": 1,
+     "peak_per_calendar_second": 1,
+     "seconds": 0.3,
+     "methods": {
+      "GET": 1
+     }
+    },
+    {
+     "kind": "wellknown",
+     "status": "done",
+     "result_count": 19,
+     "requests": 3,
+     "peak_rps_1s": 3,
+     "peak_per_calendar_second": 3,
+     "seconds": 0.9,
+     "methods": {
+      "GET": 3
+     }
+    },
+    {
+     "kind": "crawl",
+     "status": "done",
+     "result_count": 27,
+     "requests": 29,
+     "peak_rps_1s": 20,
+     "peak_per_calendar_second": 20,
+     "seconds": 13.2,
+     "methods": {
+      "GET": 29
+     }
+    },
+    {
+     "kind": "content",
+     "status": "done",
+     "result_count": 6,
+     "requests": 4750,
+     "peak_rps_1s": 20,
+     "peak_per_calendar_second": 20,
+     "seconds": 268.0,
+     "methods": {
+      "GET": 4750
+     }
+    },
+    {
+     "kind": "jsanalyze",
+     "status": "done",
+     "result_count": 20,
+     "requests": 20,
+     "peak_rps_1s": 12,
+     "peak_per_calendar_second": 10,
+     "seconds": 1.8,
+     "methods": {
+      "GET": 20
+     }
+    },
+    {
+     "kind": "params",
+     "status": "partial",
+     "result_count": 9,
+     "requests": 3230,
+     "peak_rps_1s": 19,
+     "peak_per_calendar_second": 18,
+     "seconds": 235.8,
+     "methods": {
+      "GET": 3230
+     }
+    },
+    {
+     "kind": "paramclass",
+     "status": "done",
+     "result_count": 14,
+     "requests": 0,
+     "peak_rps_1s": 0,
+     "peak_per_calendar_second": null,
+     "seconds": 0.0,
+     "methods": null
+    },
+    {
+     "kind": "nuclei",
+     "status": "done",
+     "result_count": 1,
+     "requests": 5319,
+     "peak_rps_1s": 19,
+     "peak_per_calendar_second": 18,
+     "seconds": 313.7,
+     "methods": {
+      "GET": 5316,
+      "OPTIONS": 2,
+      "HEAD": 1
+     }
+    }
+   ],
+   "recon_recall_after_review": {
+    "found": 14,
+    "of": 32,
+    "rejected": [
+     "S05"
+    ],
+    "note": "easterEggLevelOne, misplacedSignatureFile, forgottenDevBackup and forgottenBackup are surfaced by name in the /ftp listing; reading those files needs the %2500 null-byte bypass, which recon does not try"
+   }
+  }
+ },
+ "agent_context": {
+  "lane": "recon lane of juice.lab.test, GET /lanes/{id}/context; the agent's first message gets 50 endpoints (agentloop.CONTEXT_LIMIT)",
+  "before": {
+   "endpoints": [
+    "",
+    "/",
+    "/%5C/index%5C.html",
+    "/%60+_%28i%5B11%5D%7C%7Cf%5Bg.toLowerCase%28%29%5D%29+%60",
+    "/%60+_%28i%5B8%5D%29+%60",
+    "/%7B%7Bhref%7D%7D",
+    "/0/0",
+    "/10",
+    "/16",
+    "/160",
+    "/20",
+    "/2fa/enter",
+    "/40",
+    "/60",
+    "/Zone.js",
+    "/about",
+    "/about.component-CZcG2819.js",
+    "/accounting",
+    "/address/create",
+    "/address/edit/",
+    "/address/saved",
+    "/address/select",
+    "/api/Addresss",
+    "/api/BasketItems",
+    "/api/Cards",
+    "/api/Challenges",
+    "/api/Challenges/",
+    "/api/Challenges/?key=[redacted:sha256:9d999f694192]",
+    "/api/Complaints",
+    "/api/Deliverys",
+    "/api/Feedbacks",
+    "/api/Hints",
+    "/api/Products",
+    "/api/Quantitys",
+    "/api/Recycles",
+    "/api/SecurityAnswers",
+    "/api/SecurityQuestions",
+    "/api/Users",
+    "/application-configuration",
+    "/application-version",
+    "/application/vnd.ms-word.do",
+    "/application/vnd.openxmlformats-officedocument.wordprocessingml.do",
+    "/assets/i18n/",
+    "/bQ",
+    "/basket",
+    "/chatbot",
+    "/chatbot/conversation",
+    "/chunk-BJ5LcrCb.js",
+    "/chunk-DAJ4olp_.js",
+    "/chunk-DBPdFzgj.js"
+   ],
+   "leads": 23
+  },
+  "after": {
+   "endpoints": [
+    "/rest/user/security-question?email=",
+    "/.well-known/security.txt",
+    "/api/Feedbacks",
+    "/robots.txt",
+    "/rest/admin",
+    "/rest/admin/application-configuration",
+    "/api/Challenges",
+    "/redirect?to=http://leanpub.com/juice-shop",
+    "/rest/user/whoami",
+    "/api/Hints",
+    "/api/Products",
+    "/api/Quantitys",
+    "/api/SecurityQuestions",
+    "/ftp",
+    "/rest/user/change-password?current=",
+    "/security.txt",
+    "/ftp/acquisitions.md",
+    "/rest/wallet/balance",
+    "/ftp/announcement_encrypted.md",
+    "/rest/captcha",
+    "/ftp/coupons_2013.md.bak",
+    "/rest/chat",
+    "/ftp/eastere.gg",
+    "/rest/image-captcha/",
+    "/rest/user/authentication-details/",
+    "/ftp/encrypt.pyc",
+    "/rest/memories",
+    "/rest/user/login",
+    "/rest/continue-code-findIt/apply/",
+    "/rest/continue-code-fixIt/apply/",
+    "/rest/continue-code/apply/",
+    "/ws/v3/",
+    "/ftp/incident-support.kdbx",
+    "/rest/order-history",
+    "/rest/user/reset-password",
+    "/api/BasketItems",
+    "/ftp/legal.md",
+    "/rest/saveLoginIp",
+    "/api/Challenges/?key=[redacted:sha256:9d999f694192]",
+    "/ftp/package-lock.json.bak",
+    "/rest/track-order",
+    "/api/Complaints",
+    "/ftp/package.json.bak",
+    "/rest/user",
+    "/v3/",
+    "/api/Users",
+    "/ftp/suspicious_errors.yml",
+    "/rest/continue-code",
+    "/data-export",
+    "/api/Addresss"
+   ],
+   "spa_routes": [
+    "/#/administration",
+    "/#/privacy-security/data-export",
+    "/#/accounting",
+    "/#/basket",
+    "/#/chatbot",
+    "/#/chatbot/conversation/:id",
+    "/#/complain",
+    "/#/forgot-password",
+    "/#/login",
+    "/#/order-completion/:id",
+    "/#/order-history",
+    "/#/order-summary",
+    "/#/payment/:entity",
+    "/#/privacy-security/change-password",
+    "/#/privacy-security/last-login-ip",
+    "/#/register",
+    "/#/saved-payment-methods",
+    "/#/search",
+    "/#/wallet",
+    "/#/wallet-web3",
+    "/#/2fa/enter",
+    "/#/403",
+    "/#/about",
+    "/#/address/create",
+    "/#/address/edit/:addressId",
+    "/#/address/saved",
+    "/#/address/select",
+    "/#/bee-haven",
+    "/#/coding-challenge/:challengeKey",
+    "/#/contact",
+    "/#/delivery-method",
+    "/#/deluxe-membership",
+    "/#/hacking-instructor",
+    "/#/jobs",
+    "/#/juicy-nft",
+    "/#/photo-wall",
+    "/#/privacy-security",
+    "/#/privacy-security/privacy-policy",
+    "/#/privacy-security/two-factor-authentication",
+    "/#/recycle",
+    "/#/score-board",
+    "/#/track-result",
+    "/#/track-result/new",
+    "/#/web3-sandbox"
+   ],
+   "endpoint_summary": {
+    "recorded": 198,
+    "distinct_shapes": 137,
+    "junk_dropped": 16,
+    "not_shown": 87,
+    "spa_routes": 44,
+    "ranked_on_first": null,
+    "order": "by signal: API paths, lead targets, sensitive names, status, files; junk dropped"
+   },
+   "triage": {
+    "score": 5,
+    "signals": [
+     "ODDPORT",
+     "KEYWORD",
+     "200",
+     "API"
+    ],
+    "golden": true
+   },
+   "leads": 28
+  },
+  "visible_in_context": {
+   "before": {
+    "endpoints_shown": 50,
+    "leads_shown": 23,
+    "visible": {
+     "exposedMetricsChallenge": "Prometheus",
+     "S04": "application-configuration",
+     "S05": "application-version"
+    },
+    "visible_count": 3,
+    "of": 32
+   },
+   "after": {
+    "endpoints_shown": 94,
+    "leads_shown": 28,
+    "visible": {
+     "web3SandboxChallenge": "web3-sandbox",
+     "privacyPolicyChallenge": "privacy-policy",
+     "scoreBoardChallenge": "score-board",
+     "exposedMetricsChallenge": "Prometheus",
+     "directoryListingChallenge": "/ftp/acquisitions.md",
+     "adminSectionChallenge": "/administration",
+     "securityPolicyChallenge": "security.txt",
+     "easterEggLevelOneChallenge": "eastere.gg",
+     "misplacedSignatureFileChallenge": "suspicious_errors",
+     "forgottenDevBackupChallenge": "package.json.bak",
+     "forgottenBackupChallenge": "coupons_2013",
+     "redirectChallenge": "redirect-prone parameter: to http://juice.lab.test:3000/redirect {\"class\": \"redirect\", \"param\": \"to\", \"lane\": \"authflow\", \"urls\": [\"http://juice.lab.test:3000/redirect\", \"http://juice.lab.test:3000/redirect",
+     "S01": "robots.txt",
+     "S04": "application-configuration"
+    },
+    "visible_count": 14,
+    "of": 32
+   }
+  },
+  "visible_with_first_responses": {
+   "responses": [
+    "/ftp",
+    "/main.js",
+    "/"
+   ],
+   "how": "bodies fetched from an isolated Juice Shop v20.2.0 copy (no network), shown as the agent is shown them: before, the first 4,000 characters; after, pagetext.view",
+   "before": {
+    "endpoints_shown": 50,
+    "leads_shown": 23,
+    "visible": {
+     "exposedMetricsChallenge": "Prometheus",
+     "errorHandlingChallenge": "stacktrace",
+     "S04": "application-configuration",
+     "S05": "application-version"
+    },
+    "visible_count": 4,
+    "of": 32
+   },
+   "after": {
+    "endpoints_shown": 94,
+    "leads_shown": 28,
+    "visible": {
+     "web3SandboxChallenge": "web3-sandbox",
+     "privacyPolicyChallenge": "privacy-policy",
+     "scoreBoardChallenge": "score-board",
+     "exposedMetricsChallenge": "Prometheus",
+     "directoryListingChallenge": "/ftp/acquisitions.md",
+     "redirectCryptoCurrencyChallenge": "redirect?to=https://blockchain.info",
+     "adminSectionChallenge": "/administration",
+     "securityPolicyChallenge": "security.txt",
+     "easterEggLevelOneChallenge": "eastere.gg",
+     "misplacedSignatureFileChallenge": "suspicious_errors",
+     "forgottenDevBackupChallenge": "package.json.bak",
+     "forgottenBackupChallenge": "coupons_2013",
+     "redirectChallenge": "redirect-prone parameter: to http://juice.lab.test:3000/redirect {\"class\": \"redirect\", \"param\": \"to\", \"lane\": \"authflow\", \"urls\": [\"http://juice.lab.test:3000/redirect\", \"http://juice.lab.test:3000/redirect",
+     "S01": "robots.txt",
+     "S04": "application-configuration",
+     "S05": "application-version"
+    },
+    "visible_count": 16,
+    "of": 32
+   },
+   "note": "before: errorHandlingChallenge matches the CSS selector #stacktrace in the /ftp page's inline style, not a stack trace; a false hit"
+  }
+ }
+}

@@ -654,3 +654,64 @@ def test_run_stops_at_the_cost_limit(session):
 def test_defaults_are_small():
     assert agentloop.DEFAULT_LIMITS == {"max_turns": 15, "max_requests": 30, "max_cost_usd": 0.5}
     assert agentloop.CONTEXT_LIMIT <= 50 and agenttools.MAX_BODY_CHARS <= 4_000
+
+
+# ---- what the model is shown (reading views) ------------------------------------
+
+LISTING_PAGE = (b"<html><head><title>listing directory /ftp</title><style>" + b"ul li { margin: 0 }\n" * 600
+                + b"</style></head><body><a href='ftp/acquisitions.md'>acquisitions.md</a>"
+                  b"<a href='ftp/package.json.bak'>package.json.bak</a></body></html>")
+
+
+def test_html_is_shown_as_text_and_links_and_evidence_keeps_the_raw_page(session):
+    lane, job = make_lane(session)
+    tb = toolbox(session, lane, job, transport=FakeTransport(body=LISTING_PAGE))
+    res, err = get(tb, f"https://{HOST}/ftp")
+    assert not err and res["body_view"].startswith("html-text")
+    assert "acquisitions.md" in res["body"] and "package.json.bak" in res["body"] and "margin" not in res["body"]
+    assert res["body_bytes"] == len(LISTING_PAGE) and res["body_shown_chars"] == len(res["body"]) < 1000
+    assert blobs.get(tb.exchanges["x1"]["sha256"], engagement_id=tb.eng.id).endswith(LISTING_PAGE)
+    raw, err = tb.call("http_request", {"method": "GET", "url": f"https://{HOST}/ftp", "headers": [], "view": "raw"})
+    raw = json.loads(raw)
+    assert "body_view" not in raw and raw["body"].startswith("<html><head><title>listing directory")
+    assert "acquisitions.md" not in raw["body"]                     # the 4,000-character cut, as before
+
+
+def test_a_large_bundle_is_summarised_for_the_model(session):
+    lane, job = make_lane(session)
+    bundle = (b"var r=[{path:`score-board`,component:A}];RouterModule.forRoot(r,{useHash:!0});"
+              b"fetch('/rest/user/whoami');" + b"x=1;" * 5000)
+    tb = toolbox(session, lane, job, transport=FakeTransport(body=bundle,
+                                                             headers=[("Content-Type", "application/javascript")]))
+    res, err = get(tb, f"https://{HOST}/main.js")
+    assert not err and res["body_view"].startswith("js-summary")
+    assert "/score-board" in res["body"] and "/rest/user/whoami" in res["body"]
+
+
+def test_view_is_checked_and_the_reading_view_shows_only_the_redacted_body(session):
+    lane, job = make_lane(session)
+    page = b"<html><head><style>" + b"a{}" * 2000 + b"</style></head><body>key AKIAABCDEFGHIJKLMNOP</body></html>"
+    tb = toolbox(session, lane, job, transport=FakeTransport(body=page))
+    text, err = tb.call("http_request", {"method": "GET", "url": f"https://{HOST}/", "headers": [], "view": "all"})
+    assert err and "view must be" in text
+    res, err = get(tb, f"https://{HOST}/")
+    assert not err and "AKIAABCDEFGHIJKLMNOP" not in res["body"] and "[redacted" in res["body"]
+
+
+def test_lane_context_ranks_endpoints_and_lists_routes(session):
+    from app import executors
+    from app.models import Endpoint
+    lane, job = make_lane(session)
+    base = f"https://{HOST}"
+    paths = ["/%60x%60", "/10", "/16", "/about", "/accounting", "/api/Users", "/metrics", "/#/score-board"]
+    for i, p in enumerate(paths):
+        session.add(Endpoint(engagement_id=lane.asset.engagement_id, job_id=job.id, host=HOST, url=base + p,
+                             url_sha256=f"{i:064d}", source="katana"))
+    session.add(Lead(engagement_id=lane.asset.engagement_id, job_id=job.id, host=HOST, source_url=base + "/metrics",
+                     kind="nuclei", title="Prometheus Metrics", severity="medium", detail={}, fingerprint="f" * 64))
+    session.commit()
+    ctx = executors.lane_context(session, lane, limit=3)["recon"]
+    assert [e["url"] for e in ctx["endpoints"]] == [base + "/metrics", base + "/api/Users", base + "/accounting"]
+    assert ctx["spa_routes"] == [base + "/#/score-board"]
+    assert ctx["endpoint_summary"]["junk_dropped"] == 3 and ctx["endpoint_summary"]["not_shown"] == 1
+    assert ctx["leads"][0]["kind"] == "nuclei" and ctx["leads_total"] == 1

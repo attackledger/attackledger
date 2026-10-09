@@ -6,9 +6,9 @@ runs and the steps before it have finished.
 """
 from collections.abc import Callable
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
-from . import jobgates, modules, scope, triage, urls
+from . import jobgates, modules, scope, surface, triage, urls
 from .models import Endpoint, Engagement, Observation
 
 # Hints when a module has nothing to run on, keyed by kind.
@@ -24,6 +24,7 @@ SKIP_REASON = {
     "hosts": "no in-scope hosts: add an exact scope entry or a host, or a wildcard for 'Find subdomains'",
     "urls": "earlier steps found no URLs to work on",
     "crawl": "no live web servers from 'Find live web servers'",
+    "wellknown": "no live web servers from 'Find live web servers'",
     "content": "no live web servers from 'Find live web servers'",
     "nuclei": "no live web servers from 'Find live web servers'",
     "jsanalyze": "no JavaScript files from the crawl or the archived URLs",
@@ -61,10 +62,25 @@ def probes_by_host(session, eng_id: int) -> dict[str, list[dict]]:
     return out
 
 
+def api_shapes_by_host(session, eng: Engagement, hosts) -> dict[str, int]:
+    """How many distinct API-like path shapes recon recorded per host (triage's API signal).
+    Only URLs that look like an API are read, so a large archive costs one filtered query."""
+    if not hosts:
+        return {}
+    like = or_(*(Endpoint.url.like(f"%/{p}/%") for p in ("api", "rest", "graphql", "gql", "rpc", "odata"))
+               , Endpoint.url.like("%/v_/%"), Endpoint.url.like("%/v__/%"))
+    rows = session.execute(select(Endpoint.host, Endpoint.url).where(
+        Endpoint.engagement_id == eng.id, Endpoint.host.in_(list(hosts)), Endpoint.is_js.is_(False), like)).all()
+    by_host: dict[str, list[str]] = {}
+    for h, u in rows:
+        by_host.setdefault(h, []).append(u)
+    return {h: len(surface.api_shapes(us)) for h, us in by_host.items()}
+
+
 def ranked(session, eng: Engagement) -> list[dict]:
     probes = {h: p for h, p in probes_by_host(session, eng.id).items()
               if scope.in_scope(h, eng.scope_include, eng.scope_exclude)}
-    rows = triage.rank(probes)
+    rows = triage.rank(probes, api_shapes=api_shapes_by_host(session, eng, probes))
     for r in rows:
         r["urls"] = sorted({p["url"] for p in probes[r["host"]] if p.get("url")})
     return rows
@@ -115,6 +131,8 @@ def dynamic_endpoints(session, eng: Engagement) -> list[str]:
     picked: dict[str, str] = {}
     for u in in_scope_endpoints(session, eng, js=False):
         base = u.split("?", 1)[0]
+        if "#" in u or urls.extension(urls.urlsplit(u).path) in urls.STATIC:
+            continue      # a client-side route or a recorded file: nothing a server takes input on
         if "?" in u or urls.extension(urls.urlsplit(u).path) in DYNAMIC_EXT or "/api/" in base:
             picked.setdefault(base, base)
     return by_host_score(session, eng, sorted(picked.values()))
@@ -124,6 +142,7 @@ SELECTORS: dict[str, Callable] = {
     "crawl": golden_urls,
     "jsanalyze": _jsanalyze,
     "nuclei": live_urls,
+    "wellknown": live_urls,
     "content": golden_urls,
     "params": dynamic_endpoints,
     "paramclass": lambda session, eng: sorted({u for u in in_scope_endpoints(session, eng, js=False) if "?" in u}

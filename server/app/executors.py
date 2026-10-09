@@ -7,7 +7,9 @@ person working through the API.
 Read side (lane_context):
   the lane's checklist items, the engagement's scope rules, rate limit and
   research identification, plus the recon output for the lane's host:
-  observations, endpoints and leads.
+  observations, endpoints and leads. Endpoints are ranked by signal (surface.py), not
+  listed alphabetically: junk is dropped, identifiers are collapsed, and a single-page
+  app's client routes are listed on their own. Leads come first by kind and severity.
 
 Write side (what an executor may do):
   - append evidence to the lane (ledger.append_evidence; hash-chained),
@@ -27,8 +29,21 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from . import gates, packs
+from . import gates, packs, surface, targets
 from .models import Endpoint, Lane, Lead, Observation
+
+# Endpoints read per host to rank; a host with more (a large archive) is ranked on the
+# first ones by id and the context says so.
+RANK_SCAN = 20_000
+_SEVERITY = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "": 5}
+# Leads a tester reads first: what recon saw on the target before what it inferred.
+_LEAD_KIND = {"secret": 0, "nuclei": 0, "listing": 1, "robots": 1, "security-txt": 1, "sourcemap": 1,
+              "graphql": 2, "agent": 2, "parameter": 3, "param-class": 4, "dork": 5}
+
+
+def _lead_order(l: Lead, role: str) -> tuple:
+    routed = (l.detail or {}).get("lane") == role
+    return (_LEAD_KIND.get(l.kind, 3) - (2 if routed else 0), _SEVERITY.get(l.severity or "", 5), l.id)
 
 
 @dataclass(frozen=True)
@@ -71,8 +86,14 @@ def lane_context(session, lane: Lane, limit: int = 200) -> dict:
                                                     Observation.host == host)
                           .order_by(Observation.id.desc()).limit(limit)).all()
     eps = session.scalars(select(Endpoint).where(Endpoint.engagement_id == eng.id, Endpoint.host == host)
-                          .order_by(Endpoint.url).limit(limit)).all()
-    lds = session.scalars(select(Lead).where(Lead.engagement_id == eng.id, Lead.host == host)).all()
+                          .order_by(Endpoint.id).limit(RANK_SCAN)).all()
+    lds = sorted(session.scalars(select(Lead).where(Lead.engagement_id == eng.id, Lead.host == host)).all(),
+                 key=lambda l: _lead_order(l, lane.role))
+    lead_rows = [{"kind": l.kind, "title": l.title, "bucket": l.bucket, "severity": l.severity,
+                  "source_url": l.source_url, "detail": l.detail} for l in lds]
+    ranked = surface.rank_endpoints([{"url": e.url, "source": e.source, "js": e.is_js} for e in eps],
+                                    lead_rows, lane.role, limit=limit)
+    triage_row = next((r for r in targets.ranked(session, eng) if r["host"] == host), None)
     return {
         "lane": {"id": lane.id, "role": lane.role, "name": lane_def.name if lane_def else lane.role,
                  "status": gates.lane_status(lane).value, "executor": lane.executor},
@@ -84,9 +105,17 @@ def lane_context(session, lane: Lane, limit: int = 200) -> dict:
         "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,
                    "controls": i.controls} for i in lane.items],
         "recon": {
+            "triage": ({k: triage_row[k] for k in ("score", "signals", "golden")} if triage_row else None),
             "observations": [o.data for o in obs],
-            "endpoints": [{"url": e.url, "source": e.source, "js": e.is_js} for e in eps],
-            "leads": [{"kind": l.kind, "title": l.title, "bucket": l.bucket, "severity": l.severity,
-                       "source_url": l.source_url, "detail": l.detail} for l in lds],
+            "endpoints": [{"url": e["url"], "source": e["source"], "js": e["js"], "shape": e["shape"],
+                           "count": e["count"], "signals": e["signals"]} for e in ranked["endpoints"]],
+            "spa_routes": ranked["routes"],
+            "endpoint_summary": {
+                "recorded": ranked["total"], "distinct_shapes": ranked["shapes"],
+                "junk_dropped": ranked["junk_dropped"], "not_shown": ranked["omitted"],
+                "spa_routes": ranked["routes_total"], "ranked_on_first": RANK_SCAN if len(eps) >= RANK_SCAN else None,
+                "order": "by signal: API paths, lead targets, sensitive names, status, files; junk dropped"},
+            "leads": lead_rows[:max(limit, 50)],
+            "leads_total": len(lead_rows),
         },
     }

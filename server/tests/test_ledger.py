@@ -437,7 +437,8 @@ def test_executors_and_lane_context(client, monkeypatch):
     assert ctx["host"] == "app.example.com" and ctx["lane"]["role"] == "recon"
     assert ctx["rules"]["research_header"] == "X-Bug-Bounty: r1" and ctx["rules"]["authorized"]
     assert len(ctx["items"]) == len(lane["items"])
-    assert set(ctx["recon"]) == {"observations", "endpoints", "leads"}
+    assert set(ctx["recon"]) == {"observations", "endpoints", "leads", "leads_total", "spa_routes", "triage",
+                                 "endpoint_summary"}
 
 
 def test_receipt_needs_a_signer_and_review(client):

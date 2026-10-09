@@ -1,5 +1,5 @@
-"""JavaScript analysis (pipeline module 8): endpoints, GraphQL operations,
-sourcemaps and secret candidates from JS files.
+"""JavaScript analysis (pipeline module 8): endpoints, single-page app routes, GraphQL
+operations, sourcemaps and secret candidates from JS files.
 
 Ported from the original js_analyze.py and secret_triage.py. Secret candidates
 are sorted into three buckets, REAL / PUBLIC (by design) / NOISE, with REAL
@@ -25,6 +25,18 @@ ENDPOINT_RE = re.compile(r"""
   )
   (?:"|'|`)
 """, re.VERBOSE)
+
+# A path relative to the page ("./redirect?to=..."), as Angular templates write links.
+RELATIVE_RE = re.compile(r"""(?:"|'|`)(\./[A-Za-z0-9_\-][^"'`<>\s]{1,300})(?:"|'|`)""")
+
+# Client-side routes in a router table: {path:"score-board",component:X}. The key that
+# follows tells a route from any other object with a "path" field.
+ROUTE_RE = re.compile(r"""\bpath\s*:\s*(["'`])([A-Za-z0-9_\-/:.]*)\1""")
+ROUTE_KEYS = re.compile(r"\b(component|loadChildren|loadComponent|children|redirectTo|canActivate|canLoad|"
+                        r"canMatch|element|lazy|resolve|pathMatch|title)\s*:")
+CHILDREN_RE = re.compile(r"\bchildren\s*:\s*\[")
+HASH_ROUTING_RE = re.compile(r"useHash\s*:\s*(?:!0|true)|\bcreateHashRouter\b|\bHashRouter\b|"
+                             r"\bcreateWebHashHistory\b|\bmode\s*:\s*[\"'`]hash[\"'`]")
 
 GQL_OP_RE = re.compile(r"\b(query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[\(\{]")
 GQL_TAG_RE = re.compile(r"(?:gql|graphql)\s*`([^`]{0,4000})`", re.DOTALL)
@@ -109,12 +121,15 @@ def scan_secrets(text: str) -> list[dict]:
     return out
 
 
-def extract_endpoints(text: str, js_url: str) -> list[str]:
-    """Absolute URLs for endpoints referenced in a JS file, on the file's own host."""
+def extract_endpoints(text: str, js_url: str, routes: bool = True) -> list[str]:
+    """Absolute URLs for endpoints referenced in a JS file, on the file's own host, and (with
+    routes) the single-page app's client routes: /#/score-board with hash routing, else
+    /score-board. Routes are recorded, never fetched as server paths by a later step."""
     base = urlsplit(js_url)
     found = set()
-    for m in ENDPOINT_RE.finditer(text):
-        e = m.group(1).strip()
+    refs = [m.group(1).strip() for m in ENDPOINT_RE.finditer(text)]
+    refs += [m.group(1).strip() for m in RELATIVE_RE.finditer(text)]
+    for e in refs:
         if not e or len(e) > 400:
             continue
         if e.startswith(("http://", "https://")):
@@ -123,6 +138,8 @@ def extract_endpoints(text: str, js_url: str) -> list[str]:
             continue  # protocol-relative: another host more often than not
         elif e.startswith("/"):
             url = f"{base.scheme}://{base.netloc}{e}"
+        elif e.startswith("./"):
+            url = urljoin(js_url, e)
         elif "/" in e and not e.startswith("."):
             url = urljoin(js_url, e)
         else:
@@ -130,7 +147,69 @@ def extract_endpoints(text: str, js_url: str) -> list[str]:
         # Whatever the form, keep only what resolves to the file's own host.
         if urlsplit(url).hostname == base.hostname:
             found.add(url)
+    if routes:
+        prefix = "/#/" if uses_hash_routing(text) else "/"
+        found |= {f"{base.scheme}://{base.netloc}{prefix}{r.lstrip('/')}" for r in spa_routes(text)}
     return sorted(found)
+
+
+def uses_hash_routing(text: str) -> bool:
+    return bool(HASH_ROUTING_RE.search(text))
+
+
+def _close_bracket(text: str, i: int, limit: int = 400_000) -> int:
+    """Index of the bracket closing the one at text[i], skipping string literals; -1 if not found."""
+    depth, j, end = 0, i, min(len(text), i + limit)
+    while j < end:
+        c = text[j]
+        if c in "\"'`":
+            j += 1
+            while j < end and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+        elif c in "[{(":
+            depth += 1
+        elif c in "]})":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return -1
+
+
+def spa_routes(text: str) -> list[str]:
+    """Client-side routes from Angular, React Router or Vue Router tables in a bundle, nested
+    children joined to their parent (privacy-security/privacy-policy). Wildcards and the
+    empty root route are left out; route parameters stay as written (:id)."""
+    matches = []
+    hits = list(ROUTE_RE.finditer(text))
+    for n, m in enumerate(hits):
+        stop = hits[n + 1].start() if n + 1 < len(hits) else len(text)
+        window = text[m.end(): min(stop, m.end() + 300)]
+        before = text[max(0, m.start() - 300): m.start()]
+        if ROUTE_KEYS.search(window) or ROUTE_KEYS.search(before[before.rfind("{") + 1:] if "{" in before else ""):
+            matches.append(m)
+    if not matches:
+        return []
+    # Children spans: each belongs to the nearest route before it in the same object.
+    spans = []
+    for c in CHILDREN_RE.finditer(text):
+        parent = next((m for m in reversed(matches) if m.start() < c.start()), None)
+        if parent is None or c.start() - parent.end() > 400:
+            continue
+        end = _close_bracket(text, c.end() - 1)
+        if end > 0:
+            spans.append((c.end(), end, parent))
+    out = set()
+    for m in matches:
+        segs = [p.group(2).strip("/") for s, e, p in sorted(spans, key=lambda x: x[0])
+                if s <= m.start() <= e]
+        own = m.group(2).strip("/")
+        if own in ("**", "*") or (not own and not segs):
+            continue
+        full = "/".join(x for x in [*segs, own] if x)
+        if full and "**" not in full and len(full) <= 200:
+            out.add("/" + full)
+    return sorted(out)
 
 
 def graphql_operations(text: str) -> list[str]:

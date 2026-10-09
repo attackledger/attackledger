@@ -94,9 +94,10 @@ Checked against every tool the modules run:
 | resolve, subdomains | dnsx | `-r <gateway>:53` (DNS, below) |
 | ports | was naabu | gateway port probes (decision 6) |
 | probe | httpx | `-http-proxy`, `-r <gateway>:53` for its address lookups |
+| wellknown | AttackLedger fetcher (urllib) | explicit proxy handler |
 | crawl | katana | `-proxy`, `-r` |
 | archive | gau, waybackurls | `--proxy` / environment; passive allowlist |
-| content | feroxbuster | `--proxy` (and the baseline check through urllib) |
+| content | feroxbuster | `--proxy` (and the baseline and listing checks through urllib) |
 | jsanalyze | AttackLedger fetcher (urllib) | explicit proxy handler |
 | params | Arjun (requests) | `HTTP(S)_PROXY` environment |
 | nuclei | nuclei | `-p`, `-pi` (its internal requests too), `-r <file>` |

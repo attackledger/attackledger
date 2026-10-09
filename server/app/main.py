@@ -1246,9 +1246,10 @@ def patch_lane(lane_id: int, body: LanePatch, session: Session = Depends(get_ses
 
 
 @app.get("/lanes/{lane_id}/context")
-def lane_context(lane_id: int, session: Session = Depends(get_session)):
-    """What an executor working this lane may read: its items, the rules, and recon for its host only."""
-    return executors.lane_context(session, _get(session, Lane, lane_id))
+def lane_context(lane_id: int, limit: int = 200, session: Session = Depends(get_session)):
+    """What an executor working this lane may read: its items, the rules, and recon for its host
+    only. `limit` caps the ranked endpoints (an agent run gets agentloop.CONTEXT_LIMIT)."""
+    return executors.lane_context(session, _get(session, Lane, lane_id), limit=max(1, min(limit, 200)))
 
 
 class AgentRunIn(BaseModel):
