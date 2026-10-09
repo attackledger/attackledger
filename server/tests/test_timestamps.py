@@ -230,7 +230,7 @@ def test_signed_close_is_timestamped_end_to_end(client, tsa, monkeypatch, tmp_pa
     assert verifier.main(["verify", str(path), "--tsa-root", tsa.root]) == 0
     assert verifier.main(["verify", str(path)]) == 1                 # the test root is not trusted
     page = client.get(f"/engagements/{e}/report.html").text
-    assert "Ed25519 key" in page and "timestamped" in page and "UTC by tsa.test" in page
+    assert "Ed25519 key" in page and "Timestamped" in page and "UTC</span> by tsa.test" in page
 
 
 def test_unreachable_tsa_keeps_the_receipt_and_can_retry(client, tsa, monkeypatch):

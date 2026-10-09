@@ -176,6 +176,17 @@ def test_signed_receipt_end_to_end_and_offline(client, alg):
     assert any("different manifest" in p for p in verifier.check_signatures(bad)[0])
 
 
+def test_html_report_shows_the_signature(client):
+    e, lane, _ = setup(client)
+    sign_in(client, "rita@lab.test")
+    k = register(client)
+    assert signed_close(client, lane, k).status_code == 200
+    page = client.get(f"/engagements/{e}/report.html").text
+    receipts = page[page.index('id="receipts"'):page.index('id="verify"')]
+    assert f"Ed25519 key <code>{k.fingerprint}</code>" in receipts and "Rita" in receipts
+    assert "1 of 1" in page and "Receipts signed with a key; 0 timestamped" in page
+
+
 def test_signed_close_refusals(client):
     e, lane, ids = setup(client)
     sign_in(client, "ray@lab.test")
