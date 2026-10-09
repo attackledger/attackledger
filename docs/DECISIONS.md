@@ -616,6 +616,26 @@ options considered and who decided.
   - **Benchmark:** unchanged through the channel: 13,344 GET, peak 20 at 20, the same
     endpoints, leads and recall.
   - **Made by:** Claude, autonomously, under Murat's overnight permission.
+- **Organization id on every record, built 2026-10-10** (docs/ORGANIZATIONS.md,
+  migration 0022).
+  - **Scoping:** one session-level filter (`orgscope.py`) scopes every query. New rows
+    take their parents' organization, and rows that would span organizations are refused.
+    17 tables carry the column and 5 are owned through a parent. Another organization's
+    ids answer 404, exactly like ids never used.
+  - **Logs:** the key log and the audit log are one chain per organization, with
+    unchanged records. The default organization keeps the deployment's chain, so earlier
+    reports verify.
+  - **Tokens:** worker and gateway tokens are per organization; job tokens are unchanged.
+  - **Encryption:** engagement keys are unchanged. A per-organization key-encryption key
+    is designed, not built.
+  - **Not built:** a UI for organizations and a role above owner. Organizations are made
+    on the server (`python -m app.orgs`).
+  - **Verified:**
+    - a walk of every route in `authz.RULES` as another organization: every answer is a
+      404 identical to a never-used id, nothing changes, and a positive control shows the
+      ids are real;
+    - migration tests with API-filled data on SQLite and Postgres.
+  - **Made by:** Claude.
 
 ### D-043 · Evidence and test accounts encrypted, with retention by key deletion (2026-10-09, decided by Murat)
 - **Decision:** raw evidence and test-account credentials are encrypted with a key per

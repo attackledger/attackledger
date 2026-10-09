@@ -6,6 +6,18 @@ before 1.0, minor versions may change the data model.
 ## [Unreleased]
 
 ### Added
+- **Organizations** (D-042, migration 0022). Every record belongs to one. The migration
+  makes a default organization and moves every existing row into it; a self-hosted
+  install is unchanged.
+  - **Scoping:** every API query is scoped to the caller's organization in one place
+    (`orgscope.py`). Another organization's ids answer 404, like ids never used.
+  - **Logs:** the key log and the audit log are one chain per organization. The default
+    organization's chain is the old one, so existing reports still verify.
+  - **Tokens:** worker and gateway tokens belong to an organization.
+  - **Commands:** `python -m app.orgs` (list, create, tokens) and
+    `python -m app.people … --org`.
+  - **Behaviour change:** non-owners get 404, not 403, on owner routes for what they
+    cannot see.
 - **Test accounts** (D-040, migration 0021). Testers add sessions they signed in to
   themselves: a cookie, a bearer token or headers.
   - They are stored encrypted and never shown again.

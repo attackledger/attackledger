@@ -28,7 +28,8 @@ inside the gateway's limits, but the MVP does not depend on them.
   writes (D-040, D-041). Built after the MVP, on 2026-10-10.
 - Recon improvements from the benchmark (SPA routes, authenticated recon, agent context).
 - A live agent run on the Messages API; it needs an API key on the operator's side.
-- Organization id on every record and the worker talking to the API (D-042, SaaS later).
+- Organization id on every record and the worker talking to the API (D-042). Built after the
+  MVP, on 2026-10-09/10.
 - Caido's local API (token-based pull). File import covers the MVP.
 
 ## Release

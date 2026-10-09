@@ -204,6 +204,7 @@ keeps this possible:
 8. **Public verifier page** (D-042) on attackledger.com.
 9. **Keep SaaS possible** (D-042): an organization id on every record; the worker reaches
    the API over an authenticated channel, not the database.
+   Both built 2026-10-09/10 (docs/WORKER_API.md, docs/ORGANIZATIONS.md).
 
 Later (D-035): the import inbox and adapters for Caido, Burp and nuclei. Each is an
 optional integration that an operator turns on at setup with their own credentials.
