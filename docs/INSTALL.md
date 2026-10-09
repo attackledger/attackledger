@@ -459,6 +459,13 @@ Owners manage people. Everyone else sees only the engagements they have a role o
 4. **Someone leaves:** **People**, **Disable**. Their sessions end at once. People are
    never deleted, because receipts and the audit log name them.
 
+**The first engagement.** An owner creates it (**New engagement**), sets its scope and
+rules, and gives the team their roles. Testers who work in Burp, Caido or a browser bring
+their traffic in as an export file (HAR, Burp XML or Caido JSON, up to 50 MB each): it
+waits in the engagement's inbox, redacted and checked against the scope, until a person
+maps each entry to checklist items. `docs/IMPORT.md` describes the formats and the inbox
+for testers.
+
 On the server, for the cases the app deliberately does not cover:
 
 ```sh

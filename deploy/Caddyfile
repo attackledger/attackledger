@@ -34,9 +34,10 @@
 		-Server
 	}
 
-	# Attached files are limited to 5 MB by the API; base64 and JSON make that about 7 MB.
+	# The largest upload is an evidence import, 50 MB per file (docs/IMPORT.md); attached
+	# files are 5 MB, about 7 MB as base64. The API enforces its own limits below this.
 	request_body {
-		max_size 16MB
+		max_size 60MB
 	}
 
 	reverse_proxy web:80
