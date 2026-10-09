@@ -9,7 +9,7 @@
    "bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b": "sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b"
   },
   "juice_shop": "v20.2.0",
-  "nuclei": "[\u001b[34mINF\u001b[0m] PDCP Directory: /home/worker/.pdcp",
+  "nuclei": "[\u001b[34mINF\u001b[0m] PDCP Directory: ~/.pdcp",
   "nuclei_templates": "v10.4.9 (worker/Dockerfile)"
  },
  "settings": {
