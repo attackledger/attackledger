@@ -9,7 +9,7 @@ OUT=${1:-dist/pages}
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp site/index.html site/404.html site/sample-report.html site/sample-report.json site/verify_report.py \
-   site/digicert-trusted-root-g4.pem "$OUT"/
+   site/digicert-trusted-root-g4.pem site/favicon.svg site/favicon-32.png site/apple-touch-icon.png "$OUT"/
 cp -R site/demo "$OUT"/demo
 python3 -I - "$OUT" <<'PY'
 import base64, hashlib, pathlib, re, sys

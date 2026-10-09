@@ -11,7 +11,7 @@ tools/verify_report.py checks all of it with the Python standard library only.
 import html
 import json
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
@@ -128,6 +128,12 @@ _ITEM = {"done": "Evidence recorded", "na": "Not applicable", "open": "Open"}
 _DIGICERT_ROOT = ("digicert-trusted-root-g4.pem", "DigiCert Trusted Root G4",
                   "552F7BDCF1A7AF9E6CE672017F4F12ABF77240C78E761AC203D1D9D20AC89988")
 _MATRIX_HOSTS = 4   # host columns per coverage table, so it fits an A4 page
+# The AttackLedger mark (site/favicon.svg), inline so the report stays one self-contained file.
+_FAVICON = "data:image/svg+xml," + quote(' '.join("""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect x="1" y="1" width="30" height="30" rx="6" fill="#14221a"/>
+  <rect x="3.75" y="3.75" width="24.5" height="24.5" rx="4" fill="none" stroke="#86d3a2" stroke-width="1.5"/>
+  <path d="M9.5 16.5l4.4 4.4 8.6-9.2" fill="none" stroke="#86d3a2" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>""".split()))
 
 
 def _n(count: int, one: str, many: str) -> str:
@@ -229,7 +235,7 @@ def render_html(r: dict) -> str:
     sections = [x for x in _SECTIONS if x[0] != "recon" or r["jobs"]]
     parts = [f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Coverage report: {_e(eng['name'])}</title><style>{_CSS}</style></head><body><main>
+<title>Coverage report: {_e(eng['name'])}</title><link rel="icon" href="{_FAVICON}"><style>{_CSS}</style></head><body><main>
 <header class="cover">
 <p class="kicker">AttackLedger coverage report</p>
 <h1>{_e(eng['name'])}</h1>
