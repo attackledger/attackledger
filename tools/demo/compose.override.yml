@@ -1,0 +1,16 @@
+# Isolated demo stack: its own project, database and lab, API on 127.0.0.1:8098.
+#   docker compose -p attackledger-demo -f docker-compose.yml -f tools/demo/compose.override.yml \
+#     up -d --no-build db api worker lab
+# Uses the images built for the main stack. The lab answers as shop.lab.test and api.lab.test.
+services:
+  api:
+    image: attackledger-api:latest
+    pull_policy: never
+    ports: !override ["127.0.0.1:8098:8000"]
+  worker:
+    image: attackledger-worker:latest
+    pull_policy: never
+  lab:
+    networks:
+      default:
+        aliases: !override [shop.lab.test, api.lab.test]

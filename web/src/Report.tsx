@@ -58,7 +58,7 @@ export function Report({ engId }: { engId: number }) {
           )}
         </div>
         <div className="report-actions">
-          <a className="btn" href={links.html} target="_blank" rel="noopener">Open printable report</a>
+          <a className="btn" href={links.html} {...(DEMO ? {} : { target: "_blank", rel: "noopener" })}>Open printable report</a>
           <a className="btn ghost" href={links.htmlDl} download>Download HTML</a>
           <a className="btn ghost" href={links.json} download>Download JSON</a>
         </div>
