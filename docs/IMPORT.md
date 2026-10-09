@@ -81,7 +81,9 @@ Notes:
   The uploaded file itself is never stored, only its SHA-256.
 - **Dedupe.** By content: method, redacted URL, status and the hashes of the redacted
   request and response. Without raw bytes, the tool's id counts too, so two different
-  requests are not merged because the export lacked their bytes.
+  requests are not merged because the export lacked their bytes. Only byte-identical
+  exchanges are duplicates: the same page loaded twice is usually two entries, because a
+  response header such as `Date` (it changes every second) changes the response's hash.
 - **Storage.** Request, response and a small record (`attackledger-import/1`: tool, file
   hash, row, tool id and time, method, URL, status, label, the two blob hashes, notes,
   redaction) go through `blobs.put(..., engagement_id=...)`. Mapped evidence commits to
@@ -121,6 +123,26 @@ the request body); `GET /engagements/{id}/imports`; `GET /engagements/{id}/inbox
 `GET /engagements/{id}/inbox/{entry}`, `.../raw/{request|response|record}`;
 `POST /engagements/{id}/inbox/map` (with `mark_done`), `/dismiss`, `/restore`.
 
+**Uploading from a script.** `POST /engagements/{id}/imports` takes the file itself as the
+raw request body, not a multipart form. The file name goes in the `filename` query
+parameter, and `format` (`har`, `burp` or `caido`) can be left out to detect it from the
+file. Through the web front end the API is under `/api`. With the operator token:
+
+```sh
+curl -fsS -X POST \
+  -H "Authorization: Bearer $ATTACKLEDGER_TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @shop.har \
+  "https://attackledger.example.com/api/engagements/12/imports?format=har&filename=shop.har"
+```
+
+It answers 201 with the batch: `rows`, `accepted`, `out_of_scope`, `duplicates`,
+`unreadable` and `refused` (row, host and reason for each row not imported). Use
+`--data-binary`, which sends the bytes as they are; `-d` strips line ends. A multipart
+upload (`-F file=@shop.har`) is refused with 422, "this file is not in a format AttackLedger
+can import", because the form's own wrapping is read as the file. A file already imported
+answers 409 (`already_imported`); add `&reimport=true` to import it anyway.
+
 ## Pull from Caido (`tools/caido_pull.py`)
 
 Added 2026-10-09 (D-035). A command-line tool the tester runs on their own machine, next to
@@ -149,10 +171,13 @@ Caido ◄── GraphQL, Bearer <Caido token> ── caido_pull.py ── file �
    file is written with owner-only permissions and is never overwritten without
    `--overwrite`. It stops at one import's worth (5,000 rows or 50 MB) and prints the
    `--since` value to continue from.
-4. With `--upload <AttackLedger address> --engagement <name or number>` it sends the file
-   to the import API (a name is looked up in `GET /engagements`, among those the tester can
-   read): signed in with `--al-email` (the password is asked for at the prompt; the session
-   is ended afterwards) or with the operator token (`ATTACKLEDGER_TOKEN` or
+4. With `--upload <AttackLedger API address> --engagement <name or number>` it sends the
+   file to the import API (a name is looked up in `GET /engagements`, among those the tester
+   can read). The address is the API's: through the web front end that is the address
+   people open with `/api` added, such as `https://attackledger.example.com/api`; without
+   `/api` the tool reaches the web app instead and stops with "AttackLedger's list of
+   engagements has an unexpected shape". It signs in with `--al-email` (the password is
+   asked for at the prompt; the session is ended afterwards) or sends the operator token (`ATTACKLEDGER_TOKEN` or
    `--al-token-file`). The tester needs the tester role on the engagement. A file already
    imported is refused unless `--reimport` is given.
 

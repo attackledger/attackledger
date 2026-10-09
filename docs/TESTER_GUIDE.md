@@ -47,8 +47,9 @@ through the app; a forgotten password is reset by the administrator on the serve
    - **Authorization**: who recorded the authorization, and when. Until it is recorded,
      nothing runs.
 
-Only owners change the rules. Read the program's policy too; AttackLedger enforces its
-own copy of the rules on its own traffic, not on yours.
+Only owners change the rules. Read the statement of work and rules of engagement (or, for
+a bug bounty, the program's policy) too; AttackLedger enforces its own copy of the rules on
+its own traffic, not on yours.
 
 What AttackLedger itself sends (recon and the Claude agent) goes through its gateway, which
 allows in-scope hosts only, read-only methods only (GET, HEAD, OPTIONS), and the rate limit.
@@ -88,6 +89,19 @@ table.
 Evidence can never be removed from the ledger, so check what you attach. Credentials,
 tokens and keys are redacted before anything is stored (the entry says what was redacted);
 other personal data and binary files are not.
+
+**When the engagement's content is deleted** (an owner does it at the end of the
+retention period), the raw bytes, notes, files, evidence summaries, recon results and
+imported entries become unreadable or are removed. What stays, readable, for good:
+- every evidence entry's **URL, with its host, path and query string** (after redaction),
+  or an attached file's name, with its kind and hash;
+- the items' not-applicable reasons;
+- the receipts, their signatures and timestamps;
+- the change history, the key log and the gateway's log of every request AttackLedger
+  sent.
+
+The URLs you test, the names of files you attach and the reasons you write outlive the
+content, so keep confidential details out of file names and reasons.
 
 ### Manual: notes and files
 
@@ -172,9 +186,11 @@ the repository if you do not have a checkout.
    other secrets before the file is written, so they never land on your disk;
    AttackLedger redacts them again when it imports the file.
 4. Upload it, or add `--upload` to the same command to send it straight away:
-   `--upload https://attackledger.example.com --engagement "<engagement name>" --al-email you@example.com`.
-   The engagement is the name in the **Engagements** list (or its number). The tool asks for your AttackLedger password, signs in as you, uploads the file and
-   signs out. It then prints the same counts as the Import tab.
+   `--upload https://attackledger.example.com/api --engagement "<engagement name>" --al-email you@example.com`.
+   The address is the one you open in the browser with `/api` added. The engagement is the
+   name in the **Engagements** list (or its number). The tool asks for your AttackLedger
+   password, signs in as you, uploads the file and signs out. It then prints the same
+   counts as the Import tab.
 
 What it sends where: the Caido token goes only to your Caido, never to AttackLedger, and
 never appears in the file or in what the tool prints. The file goes only to the
@@ -200,8 +216,12 @@ updated. The details are in [`IMPORT.md`](IMPORT.md), "Pull from Caido".
 2. **Import**. The result says how many entries reached the inbox, how many were refused as
    out of scope, how many were duplicates and how many were unreadable.
 3. **Rows not imported** lists the others by row number. Out-of-scope rows are listed by
-   host only, and only in the batch (the change history records just a count). Rows
-   already in the inbox count as duplicates and are not added again.
+   host only, and only in the batch (the change history records just a count). A row is a
+   duplicate, and is not added again, only when it is an exact copy of an entry already in
+   the inbox (or earlier in the same file): the same method, URL and status, and the same
+   request and response bytes after redaction. A page you loaded twice usually makes two
+   entries, because the server's answer differs, if only in its `Date` header, which
+   changes every second.
 4. If you upload a file you already imported, AttackLedger stops and says "This file was
    already imported on <date> by <who>". Choose **Import it again** only if you mean to.
 
@@ -281,7 +301,9 @@ They open the engagement on the **Report** tab:
 
 - **Open printable report**, **Download HTML** and **Download JSON**: the same report,
   with every receipt, the evidence chain and the hashes needed to check them. Lanes not
-  opened count as untested.
+  opened count as untested. The downloads are named after the engagement and its number,
+  `attackledger-<engagement>-<n>.html` or `.json`, with the name in lower case and a hyphen
+  for each space or other sign: for example `attackledger-lab-practice-1.html`.
 - The **Verify** tab checks the report in the browser.
 
 Anyone can check a downloaded report without AttackLedger and without an account:
@@ -294,8 +316,27 @@ Anyone can check a downloaded report without AttackLedger and without an account
    check failed") means nothing was changed after the report was made. **Failed** names
    each check that failed.
 
-The same check works offline with Python 3: `python3 tools/verify_report.py report.json`
-(the script is in the AttackLedger repository, or downloaded with **Download
-verify_report.py** on the **Verify** tab). For high assurance,
-the client compares each signer's key fingerprint in the report with the one the signer gives
-them directly.
+The same check works offline with Python 3 and nothing else. **The same check, offline**,
+on the **Verify** tab (and at the bottom of the **Report** tab) says how:
+
+1. Get `verify_report.py` and the timestamp root it trusts,
+   `digicert-trusted-root-g4.pem`, from attackledger.com: the page links to both.
+2. Save the report next to them and run the command the page shows, with your file's
+   name:
+
+   ```bash
+   python3 -I verify_report.py attackledger-lab-practice-1.html --tsa-root digicert-trusted-root-g4.pem
+   ```
+
+   (The page's command names the file `report.json`, or `attackledger-report.html` on the
+   Report tab; the download is called `attackledger-<engagement>-<n>.html` or `.json`.)
+   It ends with `Verified.` or names each check that failed.
+3. Or use this server's copy: **download attackledger-verifier.zip** under the command. It
+   holds the script with a `tsa-roots/` folder beside it; unzip it, put the report in the
+   `attackledger-verifier` folder and run the command there without `--tsa-root`. A copy
+   from the tester's own server proves less than the independent one, so the page shows its
+   SHA-256: compare it with the copy from attackledger.com (`shasum -a 256 verify_report.py`
+   on each) before relying on it.
+
+For high assurance, the client compares each signer's key fingerprint in the report with
+the one the signer gives them directly.
