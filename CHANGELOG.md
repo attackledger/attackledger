@@ -195,6 +195,19 @@ local lab.
   headers or the identification precedence each makes a test fail.
 
 ### Changed
+- **Recon for single-page apps** (D-049). Juice Shop recall went from 5 to 15 of 32
+  in-reach items through the gateway, with 0 writes and a peak of 20 at a limit of 20.
+  - A new step, Read well-known files, records robots.txt, security.txt and directory
+    listings.
+  - Content discovery filters a catch-all page by its fingerprint instead of skipping the
+    host.
+  - JavaScript analysis records single-page app routes and relative links.
+  - Triage counts an API surface (+2).
+  - Static files under paths such as uploads or backup, plus archives and sourcemaps, are
+    kept as endpoints and never fetched.
+- **Agents get a ranked lane context** and a reading view of responses: text and links
+  for HTML, routes and endpoints for large JS files. `view: "raw"` gives the body as
+  received.
 - **The repository is public** (D-048) at https://github.com/attackledger/attackledger,
   after a full-history scan. Secret scanning with push protection, private vulnerability
   reporting and CodeQL are on.

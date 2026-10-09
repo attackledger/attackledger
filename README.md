@@ -193,9 +193,10 @@ container. Steps:
 | Find live web servers | httpx: status, title, stack, CDN, per open port | target |
 | Golden targets | scoring: AUTH +4, TITLE +4, APPTECH +2, ODDPORT/KEYWORD/200 +1 | computed |
 | Crawl golden hosts | katana: same host only, JS parsing, logout/delete paths never followed | target |
+| Read well-known files | robots.txt, security.txt, and directory listings of the paths robots.txt names (at most 13 GETs per service) | target |
 | Collect archived URLs | gau, waybackurls | passive |
 | Analyse JavaScript | endpoints, GraphQL operations, sourcemaps, secret candidates (REAL / PUBLIC / NOISE) | target |
-| Discover content | feroxbuster on golden hosts, one scan at a time, baseline check, no recursion | target, **opt-in** |
+| Discover content | feroxbuster on golden hosts, one scan at a time, catch-all pages filtered by fingerprint, no recursion | target, **opt-in** |
 | Discover hidden parameters | Arjun on dynamic endpoints, one thread, fixed delay | target, **opt-in** |
 | Route parameters | gf-style classes → the hunt lane that tests them | none (computed) |
 | Dork checklist | click-ready Google dorks per root (manual) | none (computed) |

@@ -35,7 +35,7 @@ type ResultTab = "golden" | "hosts" | "urls" | "leads" | "runs";
 const RESULT_TAB: Record<string, ResultTab> = {
   subdomains: "hosts", resolve: "hosts", ports: "hosts", probe: "hosts",
   crawl: "urls", archive: "urls", content: "urls",
-  jsanalyze: "leads", params: "leads", paramclass: "leads", nuclei: "leads", dorks: "leads",
+  jsanalyze: "leads", wellknown: "leads", params: "leads", paramclass: "leads", nuclei: "leads", dorks: "leads",
 };
 
 function ago(iso: string | null) {

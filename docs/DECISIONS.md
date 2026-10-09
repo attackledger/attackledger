@@ -654,6 +654,23 @@ options considered and who decided.
 - **Decided by:** Murat Kabak (2026-10-10, "bunları da hallet, iznim var"). Scanned and
   published by Claude.
 
+### D-049 · Recon reads what a host publishes about itself (2026-10-10, made autonomously)
+- **Decision:**
+  - Recon reads robots.txt and security.txt by default. Fetching the directories robots.txt
+    names counts as crawling, not brute force, so it is not opt-in. It is capped at 13 GETs
+    per service.
+  - Content discovery stays opt-in. It still skips hosts that answer every path with the
+    same error or redirect.
+  - What an agent is shown of a response is a derived reading view. Evidence always stores
+    the full redacted exchange, and the view never shows more than that.
+  - Triage scores only observed signals. An API surface counts as application evidence,
+    like the existing technology signal.
+- **Evidence:** the Juice Shop benchmark through the gateway, before and after:
+  - in-reach recall went from 5 to 15 of 32;
+  - requests went from 5,511 to 13,352;
+  - every request was GET, HEAD or OPTIONS, with a peak of 20 at a limit of 20.
+- **Made by:** Claude, from the benchmark gaps, under Murat's overnight permission.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or
