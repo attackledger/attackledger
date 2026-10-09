@@ -277,8 +277,9 @@ def versions() -> dict:
     for name in ("attackledger-bench-api:latest", "attackledger-bench-worker:latest", JUICE_IMAGE):
         ids[name] = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}}", name], text=True,
                                    stdout=subprocess.PIPE).stdout.strip()
-    tools = in_net("import subprocess as s;print(s.run(['/opt/pd/bin/nuclei','-version'],capture_output=True,"
-                   "text=True).stderr.strip().splitlines()[-1])").strip()
+    tools = in_net("import subprocess as s;print([l for l in s.run(['/opt/pd/bin/nuclei','-version'],"
+                   "capture_output=True,text=True).stderr.splitlines() if 'Engine Version' in l][-1]"
+                   ".split('Version:')[-1].strip())").strip()
     return {"attackledger_commit": commit, "images": ids, "juice_shop": "v20.2.0", "nuclei": tools,
             "nuclei_templates": "v10.4.9 (worker/Dockerfile)"}
 
