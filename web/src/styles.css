@@ -948,3 +948,7 @@ a.btn.ghost { color: var(--text); }
 .team .btn { justify-self: start; }
 
 .notice-inline { margin: 0.75rem 0 0; padding: 0.6rem 0.8rem; border: 1px dashed var(--ink); border-radius: var(--radius); font-size: var(--step--1); }
+
+/* What was redacted from an evidence entry before it was stored (D-038). */
+.ev-redaction { display: block; color: var(--text-faint); font-size: var(--step--2); }
+.ev-redaction.warn { color: var(--red); }

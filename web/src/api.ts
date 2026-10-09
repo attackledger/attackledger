@@ -88,7 +88,16 @@ export interface EvidenceEntry {
   sha256: string;
   uri: string | null;
   summary: string;
+  // What was redacted from the stored bytes (D-038): counts and kinds, never values. Null for
+  // entries with nothing stored by AttackLedger (a recon run, a hash given through the API).
+  redaction?: Redaction | null;
   created_at: string;
+}
+
+export interface Redaction {
+  redacted: number;
+  kinds: string[];
+  not_redacted: string[];
 }
 
 export interface LaneDetail {
@@ -119,6 +128,7 @@ export interface Scope {
   authorized_by: string | null;
   authorized_at: string | null;
   separation_of_duties?: boolean;
+  redact_evidence?: boolean;   // off only for a lab: raw evidence is then stored as captured
   hosts_added?: string[];   // returned by a save: exact scope entries that became hosts
 }
 
@@ -420,8 +430,9 @@ export const api = {
     }),
   timestampReceipt: (laneId: number) =>
     call<LaneDetail>(`/lanes/${laneId}/receipt/timestamp`, { method: "POST", body: "{}" }),
-  updateEngagement: (engId: number, body: { separation_of_duties?: boolean; require_signatures?: boolean }) =>
-    call<{ id: number; separation_of_duties: boolean; require_signatures: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  updateEngagement: (engId: number, body: { separation_of_duties?: boolean; require_signatures?: boolean;
+                                            redact_evidence?: boolean }) =>
+    call<{ id: number; separation_of_duties: boolean; require_signatures: boolean; redact_evidence: boolean }>(`/engagements/${engId}`, { method: "PATCH", body: JSON.stringify(body) }),
   logout: () => call<{ ok: boolean }>("/auth/logout", { method: "POST", body: "{}" }),
   engagements: () => call<EngagementSummary[]>("/engagements"),
   createEngagement: (name: string, pack_id: string) =>

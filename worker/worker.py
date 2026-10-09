@@ -19,6 +19,10 @@ Job kinds mirror the original pipeline's modules:
 Defense in depth: the API validates targets when a job is created; the worker
 re-checks every target before running and every host or URL a tool reports
 before storing it. Nothing outside the engagement's scope rules is recorded.
+
+Recon output that carries URLs or response data (endpoints, leads, observations) is
+redacted before it is stored (app.redact, D-038): a token in an archived URL is kept
+as a marker, so it is neither stored nor sent again by a later step.
 """
 import hashlib
 import json
@@ -38,7 +42,7 @@ sys.path.insert(0, "/srv")  # server package (app.*) is copied next to the worke
 
 from sqlalchemy import select  # noqa: E402
 
-from app import jobgates, jsanalysis, ledger, migrate, modules, packs, scope, urls  # noqa: E402
+from app import jobgates, jsanalysis, ledger, migrate, modules, packs, redact, scope, urls  # noqa: E402
 from app import targets as targeting  # noqa: E402
 from app import agentloop, agenttools, passive, triage  # noqa: E402
 from app.text import plural  # noqa: E402
@@ -174,6 +178,8 @@ class Run:
         self.stopped: str | None = None
         self.fetch_failures = 0
         self.skipped = False
+        self.redact = redact.enabled(self.eng)
+        self.redacted = redact.Report()
 
     def log(self, line: str) -> None:
         self.job.log = (self.job.log + line + "\n")[-20000:]
@@ -229,9 +235,14 @@ class Run:
     def in_scope(self, host: str | None) -> bool:
         return bool(host) and scope.in_scope(host, self.inc, self.exc)
 
+    def clean(self, value):
+        """A URL, a string or JSON-like data as it may be stored: redacted unless turned off."""
+        return redact.walk(value, self.redacted) if self.redact else value
+
     def observe(self, host: str, data: dict, create_asset: bool = True) -> None:
         host = scope.normalize_host(host)
-        self.session.add(Observation(job_id=self.job.id, engagement_id=self.eng.id, host=host, data=data))
+        self.session.add(Observation(job_id=self.job.id, engagement_id=self.eng.id, host=host,
+                                     data=self.clean(data)))
         if create_asset and host not in self.known:
             self.known[host] = Asset(engagement_id=self.eng.id, host=host, in_scope=True)
             self.session.add(self.known[host])
@@ -342,6 +353,7 @@ def store_endpoints(r: Run, raw_urls: dict[str, set]) -> int:
     cleaned = urls.clean(raw_urls.keys(), r.inc, r.exc)
     added = 0
     for host, url, is_js in cleaned:
+        url = r.clean(url)
         h = hashlib.sha256(url.encode()).hexdigest()
         if h in existing:
             continue
@@ -411,9 +423,9 @@ def add_lead(r: Run, host: str, source_url: str, kind: str, title: str, bucket: 
     if fp in r.lead_fps:
         return False
     r.lead_fps.add(fp)
-    r.session.add(Lead(engagement_id=r.eng.id, job_id=r.job.id, host=host, source_url=source_url,
-                       kind=kind, title=title[:300], bucket=bucket, severity=severity,
-                       detail=detail or {}, fingerprint=fp))
+    r.session.add(Lead(engagement_id=r.eng.id, job_id=r.job.id, host=host, source_url=r.clean(source_url),
+                       kind=kind, title=r.clean(title)[:300], bucket=bucket, severity=severity,
+                       detail=r.clean(detail or {}), fingerprint=fp))
     return True
 
 
@@ -792,6 +804,9 @@ def run(session, job: Job) -> "Run":
     job.output_sha256 = r.digest.hexdigest()
     job.result_count = kept
     session.commit()
+    if r.redacted.count:
+        r.log(f"{plural(r.redacted.count, 'sensitive value')} redacted before storage: "
+              + ", ".join(list(r.redacted.kinds)[:10]))
     if stopped:
         r.log(f"stopped ({stopped}) after {len(done)} of {plural(len(targets), 'target')}; "
               f"{len(remaining)} not run")

@@ -6,7 +6,7 @@ import { plural } from "./words";
 import { People, Team } from "./People";
 import { Account } from "./Account";
 import { Executor } from "./Agent";
-import { BulkNotApplicable, ItemWork } from "./LaneWork";
+import { BulkNotApplicable, ItemWork, RedactionNote } from "./LaneWork";
 import { DEMO, demoUrl } from "./demo";
 import { ensureKey, localKey, sign, type LocalKey } from "./signing";
 import { Controls } from "./Controls";
@@ -774,6 +774,7 @@ function Folio({ laneId, me, onClose, onChanged }: {
                     <span className="ev-summary">
                       {e.summary}
                       {e.item_idx != null && <span className="ev-item">Item {e.item_idx}</span>}
+                      <RedactionNote r={e.redaction} />
                     </span>
                     <span className="ev-ref">
                       <code className="ev-hash" title={e.sha256}>{e.sha256.slice(0, 10)}</code>

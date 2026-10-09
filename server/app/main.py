@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import keylog
+from . import keylog, redact
 from . import targets as targeting
 from .db import get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ItemState, Job, JobStatus,
@@ -113,7 +113,7 @@ def _lane_view(lane: Lane) -> dict:
         "evidence": [
             {"id": e.id, "item_idx": next((i.idx for i in lane.items if i.id == e.item_id), None),
              "kind": e.kind, "sha256": e.sha256, "uri": e.uri, "summary": e.summary,
-             "created_at": iso_utc(e.created_at), "created_by": e.created_by}
+             "redaction": e.redaction, "created_at": iso_utc(e.created_at), "created_by": e.created_by}
             for e in lane.evidence
         ],
         "receipt": (
@@ -382,9 +382,15 @@ def get_lane(lane_id: int, session: Session = Depends(get_session)):
 def add_evidence(lane_id: int, body: EvidenceIn, request: Request, session: Session = Depends(get_session)):
     lane = _get(session, Lane, lane_id)
     item_id = _item(lane, body.item_idx).id if body.item_idx is not None else None
+    # The bytes behind the hash are the caller's; the summary and URI are stored here, so a
+    # credential in them is redacted. Nothing is noted when nothing was found.
+    summary, uri, rep = body.summary, body.uri, redact.Report()
+    if redact.enabled(lane.asset.engagement):
+        summary, uri = redact.text(summary, rep), redact.text(uri, rep) if uri else uri
     ev = ledger.append_evidence(session, lane, kind=body.kind, sha256_hex=body.sha256,
-                                summary=body.summary, uri=body.uri, item_id=item_id,
-                                created_by=authz.current(request).user_id)
+                                summary=summary + rep.suffix(), uri=uri, item_id=item_id,
+                                created_by=authz.current(request).user_id,
+                                redaction=rep.as_dict() if rep.count else None)
     session.commit()
     return {"id": ev.id}
 
@@ -410,11 +416,19 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
     lane = _get(session, Lane, lane_id)
     item = _item(lane, body.item_idx)
     summary = (body.summary or "").strip()
+    # Notes and files are redacted before they are stored (D-038); the summary says what was.
+    on = redact.enabled(lane.asset.engagement)
+    rep, redaction = redact.Report(off=not on), None
+    if on and summary:
+        summary = redact.text(summary, rep)
     if body.kind == "note":
         text = (body.text or "").strip()
         if not text:
             raise HTTPException(422, "write the note first")
+        if on:
+            text = redact.text(text, rep)
         digest, uri, kind, summary = blobs.put(text.encode()), None, "note", summary or text[:2_000]
+        redaction = rep.as_dict()
     elif body.kind == "file":
         name = (body.filename or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
         if not name or not body.content_b64:
@@ -427,7 +441,10 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
             raise HTTPException(422, f"files are limited to {MAX_ATTACH_BYTES // 1_000_000} MB")
         if not summary:
             raise HTTPException(422, "say in a sentence what the file shows")
+        if on:      # text formats are redacted; binary files are kept as they are, and the summary says so
+            data = redact.data(data, rep, personal=True, filename=name)
         digest, uri, kind = blobs.put(data), f"file:{name}", "file"
+        redaction = rep.as_dict()
     else:
         job = session.get(Job, body.job_id) if body.job_id else None
         if job is None or job.engagement_id != lane.asset.engagement_id:
@@ -438,8 +455,13 @@ def attach_evidence(lane_id: int, body: AttachIn, request: Request, session: Ses
         label = f"{m.title if m else job.kind} run, job {job.id}"
         digest, uri, kind = job.output_sha256, f"job:{job.id}", "file"
         summary = f"{label}: {summary}" if summary else label
+        if rep.count:
+            redaction = rep.as_dict()
+    if redaction is not None:
+        summary += rep.suffix()
     ev = ledger.append_evidence(session, lane, kind=kind, sha256_hex=digest, summary=summary, uri=uri,
-                                item_id=item.id, created_by=authz.current(request).user_id)
+                                item_id=item.id, created_by=authz.current(request).user_id,
+                                redaction=redaction)
     session.commit()
     session.refresh(lane)
     return {"id": ev.id, **_lane_view(lane)}
@@ -713,6 +735,7 @@ def _scope_view(eng: Engagement) -> dict:
         "authorized_by": eng.authorized_by,
         "authorized_at": iso_utc(eng.authorized_at),
         "separation_of_duties": eng.separation_of_duties,
+        "redact_evidence": eng.redact_evidence,
     }
 
 
@@ -1290,6 +1313,7 @@ def set_members(eng_id: int, body: MembersIn, session: Session = Depends(get_ses
 class EngagementPatch(BaseModel):
     separation_of_duties: bool | None = None
     require_signatures: bool | None = None
+    redact_evidence: bool | None = None         # off only for a lab: raw evidence is then stored as captured
 
 
 @app.patch("/engagements/{eng_id}")
@@ -1299,9 +1323,11 @@ def update_engagement(eng_id: int, body: EngagementPatch, session: Session = Dep
         eng.separation_of_duties = body.separation_of_duties
     if body.require_signatures is not None:
         eng.require_signatures = body.require_signatures
+    if body.redact_evidence is not None:
+        eng.redact_evidence = body.redact_evidence
     session.commit()
     return {"id": eng.id, "separation_of_duties": eng.separation_of_duties,
-            "require_signatures": eng.require_signatures}
+            "require_signatures": eng.require_signatures, "redact_evidence": eng.redact_evidence}
 
 
 # ---- scope import ----------------------------------------------------------

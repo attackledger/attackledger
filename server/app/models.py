@@ -7,7 +7,7 @@ and latest receipt (see gates.py).
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false as sa_false
+from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint, false as sa_false, true as sa_true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -58,6 +58,9 @@ class Engagement(Base):
     separation_of_duties: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
     # When on, a receipt needs a valid signature from the reviewer's own key (D-027).
     require_signatures: Mapped[bool] = mapped_column(default=False, server_default=sa_false())
+    # When on (the default), credentials and some personal data are replaced before raw
+    # evidence is stored (redact.py, D-038). An owner may turn it off for a lab.
+    redact_evidence: Mapped[bool] = mapped_column(default=True, server_default=sa_true())
     assets: Mapped[list["Asset"]] = relationship(back_populates="engagement")
     jobs: Mapped[list["Job"]] = relationship(back_populates="engagement", order_by="Job.id.desc()")
 
@@ -123,6 +126,9 @@ class Evidence(Base):
     summary: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))   # who attached it, or started the run
+    # What was redacted from the stored bytes (redact.Report.as_dict): counts and kinds, never
+    # values. The chain commits to the same facts through the summary's note.
+    redaction: Mapped[dict | None] = mapped_column(JSON)
     lane: Mapped[Lane] = relationship(back_populates="evidence")
 
 

@@ -367,6 +367,11 @@ function TargetBar({ scope, mods, editing, canClose, onToggle }: {
           <dd>{enabled.length ? enabled.map((m) => m.title).join(", ") : <span className="muted">None</span>}</dd>
         </div>
         <div>
+          <dt>Evidence</dt>
+          <dd>{scope.redact_evidence === false ? <span className="bad">Stored unredacted (lab)</span>
+               : "Credentials redacted before storage"}</dd>
+        </div>
+        <div>
           <dt>Authorization</dt>
           <dd>{scope.authorized_at
             ? <span className="ok">{scope.authorized_by}, {new Date(scope.authorized_at).toLocaleDateString()}</span>
@@ -796,6 +801,7 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
   const [ua, setUa] = useState(scope.research_user_agent ?? "");
   const [enabled, setEnabled] = useState<string[]>(scope.enabled_modules);
   const [depth, setDepth] = useState(scope.crawl_depth);
+  const [redactOn, setRedactOn] = useState(scope.redact_evidence !== false);
   const [operator, setOperator] = useState(scope.authorized_by ?? "");
   const [policy, setPolicy] = useState(scope.policy_url ?? "");
   const [confirm, setConfirm] = useState(false);
@@ -813,6 +819,10 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
         enabled_modules: enabled, crawl_depth: depth,
       });
       const added = s.hosts_added;
+      if (redactOn !== (scope.redact_evidence !== false)) {
+        const r = await api.updateEngagement(engId, { redact_evidence: redactOn });
+        s = { ...s, redact_evidence: r.redact_evidence };
+      }
       if (confirm) s = await api.attest(engId, operator, policy);
       setConfirm(false);
       const msg = `Rules saved.${addedText(added)}`;
@@ -877,6 +887,20 @@ function RulesOfEngagement({ engId, scope, mods, onSaved }: {
             ))}
           </fieldset>
         )}
+
+        <fieldset className="optins">
+          <legend>Evidence redaction</legend>
+          <label className="check optin-row">
+            <input type="checkbox" checked={redactOn} onChange={(e) => setRedactOn(e.target.checked)} />
+            <span><strong>Redact sensitive values before evidence is stored</strong>
+              <span className="hint"> Cookies, Authorization and API-key headers, tokens, keys and passwords in URLs
+                and bodies, JWTs and private keys, and email addresses and card numbers in responses and files, are
+                replaced by a marker such as [redacted:sha256:1a2b3c4d5e6f]. The same value always gets the same
+                marker. Evidence can never be removed from the ledger, so keep this on for client work. Turn it off
+                only for a lab: evidence is then stored as captured, and each entry says so. Other personal data
+                (names, addresses, phone numbers) and binary files are not redacted.</span></span>
+          </label>
+        </fieldset>
 
         <ScopeImporter engId={engId} onApplied={async (added) => {
           const s = await api.scope(engId);

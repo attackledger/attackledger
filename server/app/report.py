@@ -92,6 +92,7 @@ def build(session, eng: Engagement, controls: dict) -> dict:
             "rate_limit_rps": eng.rate_limit_rps,
             "separation_of_duties": eng.separation_of_duties,
             "require_signatures": eng.require_signatures,
+            "redact_evidence": eng.redact_evidence,
         },
         "summary": {
             "hosts_in_scope": sum(1 for h in hosts if h["in_scope"]),
@@ -341,6 +342,11 @@ def _scope(r: dict) -> str:
                      if eng["separation_of_duties"] else "Off"))
         rows.append(("Signatures required", "Yes: a receipt needs a signature from the reviewer’s key"
                      if eng["require_signatures"] else "No: a receipt may carry a name only"))
+    if "redact_evidence" in eng:
+        rows.append(("Evidence redaction", "On: credentials, and email addresses and card numbers in captured responses "
+                     "and files, are replaced by a hash marker before raw evidence is stored; each entry "
+                     "says what was redacted"
+                     if eng["redact_evidence"] else "Off: raw evidence is stored as captured"))
     if out_hosts:
         rows.append(("Hosts recorded as out of scope", _list(out_hosts, "")))
     return f"""<section id="scope"><h2>Scope and authorization</h2>

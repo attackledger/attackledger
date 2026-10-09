@@ -97,7 +97,9 @@ fallback). Every tool call goes through `agenttools.Toolbox`:
 There is no tool that closes a lane. Each exchange is stored in the content-addressed
 blob store (`blobs.py`, volume shared by API and worker), so an evidence hash can be
 opened and checked (`GET /blobs/{sha256}`, served as sandboxed plain text, only for
-hashes that evidence cites). Target content is framed as untrusted data in the
+hashes that evidence cites). Before an exchange is stored, credentials and some personal
+data are replaced by a hash marker (`redact.py`, D-038); the model sees the same redacted
+exchange. Target content is framed as untrusted data in the
 prompt and in every tool result. The gates are checked when the run is queued and
 again when it starts. A run that ends without `finish`, at the turn limit or at the
 time limit is `partial`, never `done`; a model refusal fails the job.
@@ -150,6 +152,10 @@ every route has one. See D-032.
   is ever shown as `done`.
 - Only a person issues a receipt.
 - Secrets are evidence, not inventory: masked, hashed and never tested.
+- Raw evidence is redacted before it is stored (agent exchanges, notes, files, recon URLs
+  and leads): `[redacted:sha256:<12 hex>]` replaces the value, and the evidence summary,
+  which the chain commits to, says how many values of which kinds. An owner can turn this
+  off per engagement for a lab; each entry then says it was stored as captured.
 - Third-party scanners are trusted only after measurement. A raw socket logger checks
   that every request carries the research identification (nuclei: 8,899/8,899), and the
   target's log checks that the per-second peak stays at the limit (feroxbuster 20/20,

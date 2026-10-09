@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { api, type Job, type LaneDetail, type LaneItem } from "./api";
+import { api, type Job, type LaneDetail, type LaneItem, type Redaction } from "./api";
 import { plural } from "./words";
 
 type Mode = null | "evidence" | "na";
@@ -177,6 +177,20 @@ function listIdx(idx: number[]): string {
 
 /** Mark every open item that has no evidence not applicable, with one reason. Each item goes through the
  *  same per-item request as marking it by hand, so the server checks every change. */
+/** What was taken out of an evidence entry's stored bytes before they were hashed (D-038). */
+export function RedactionNote({ r }: { r?: Redaction | null }) {
+  if (!r || (r.redacted === 0 && r.not_redacted.length === 0)) return null;
+  const off = r.not_redacted.some((w) => w.startsWith("redaction is off"));
+  return (
+    <span className={`ev-redaction${off || r.not_redacted.length ? " warn" : ""}`}>
+      {r.redacted > 0 && `${plural(r.redacted, "value")} redacted before storage: ${r.kinds.join(", ")}`}
+      {r.redacted > 0 && r.not_redacted.length > 0 && ". "}
+      {off ? "Stored as captured: redaction is off for this engagement"
+        : r.not_redacted.length > 0 && `Not redacted: ${r.not_redacted.join(", ")}`}
+    </span>
+  );
+}
+
 export function BulkNotApplicable({ lane, onChanged }: { lane: LaneDetail; onChanged: (l: LaneDetail) => void }) {
   const [step, setStep] = useState<"idle" | "reason" | "confirm">("idle");
   const [reason, setReason] = useState("");
