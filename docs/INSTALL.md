@@ -343,9 +343,14 @@ shell access, so that whoever reaches the web page first cannot make themselves 
    ```
 
    For a script, pass the password in an environment variable instead (never as an
-   argument, so it stays out of shell history and process lists):
-   `docker compose exec -e ATTACKLEDGER_NEW_PASSWORD api python -m app.people create ...`,
-   with `ATTACKLEDGER_NEW_PASSWORD` exported in your shell.
+   argument, so it stays out of shell history and process lists). Piping it in does not
+   work: the prompt discards anything typed before it appears.
+
+   ```sh
+   read -rs ATTACKLEDGER_NEW_PASSWORD && export ATTACKLEDGER_NEW_PASSWORD
+   docker compose exec -e ATTACKLEDGER_NEW_PASSWORD api python -m app.people create --owner --email you@example.com --name "Your Name"
+   unset ATTACKLEDGER_NEW_PASSWORD
+   ```
 
 2. Open `https://attackledger.example.com` and sign in with that email and password.
 
@@ -494,8 +499,9 @@ part. The folder appears under its final name only when it is complete.
    /opt/attackledger/tools/backup.sh /var/backups/attackledger
    ```
 
-   It ends with `backup: done: /var/backups/attackledger/attackledger-<UTC time>` and the
-   counts it saved.
+   It ends with `backup: done: /var/backups/attackledger/attackledger-<UTC time>` and what
+   it saved, for example `engagements 1, evidence entries 10, receipts 1, people 3, blob
+   files 10, migration 0016`.
 
 3. Run it every night at 02:15, and delete backups older than 30 days (set the number of
    days from your retention policy, section 7):
@@ -532,6 +538,9 @@ everything again.
    ```sh
    /opt/attackledger/tools/restore.sh /var/backups/attackledger/attackledger-20261009T021500Z
    ```
+
+   It ends with `restore: done`. Old sessions from the backup still work until they
+   expire (12 hours); people who were signed in stay signed in.
 
 4. Sign in as before. Check that the engagements are there, and that a report still
    verifies: on the engagement's **Report** tab, **Download JSON**, then run

@@ -93,7 +93,7 @@ echo "restore: stopping the API and the worker"
 dc stop api worker
 
 echo "restore: restoring the database"
-dc exec -T db psql -U attackledger -d attackledger -v ON_ERROR_STOP=1 -q \
+dc exec -T -e PGOPTIONS=--client-min-messages=warning db psql -U attackledger -d attackledger -v ON_ERROR_STOP=1 -q \
   -c "drop schema public cascade" -c "create schema public"
 dc exec -T db pg_restore -U attackledger -d attackledger --no-owner --exit-on-error < "$SRC/postgres.dump"
 

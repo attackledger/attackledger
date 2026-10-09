@@ -69,19 +69,20 @@ dc exec -T api tar -C /data/blobs --exclude='.*.tmp' -czf - . > "$WORK/blobs.tar
 
 MIGRATION=$(dc exec -T api python -c "from app import migrate; print(migrate.current())" | tr -d '\r')
 ROWS=$(dc exec -T db psql -U attackledger -d attackledger -tA -c \
-  "select (select count(*) from engagements) || ' engagements, ' || (select count(*) from evidence) || ' evidence entries, ' || (select count(*) from receipts) || ' receipts, ' || (select count(*) from users) || ' people'" | tr -d '\r')
+  "select 'engagements ' || (select count(*) from engagements) || ', evidence entries ' || (select count(*) from evidence) || ', receipts ' || (select count(*) from receipts) || ', people ' || (select count(*) from users)" | tr -d '\r')
 BLOBS=$(dc exec -T api sh -c "find /data/blobs -type f ! -name '.*.tmp' | wc -l" | tr -d ' \r')
 PG=$(dc exec -T db postgres --version | tr -d '\r')
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+PROJECT=$(dc ps --format '{{.Project}}' db)
 
 cat > "$WORK/info.txt" <<EOF
 format: attackledger-backup-v1
 created_at: $STAMP
-project: $(basename "$(pwd)")
+compose_project: $PROJECT
 code_commit: $COMMIT
 migration: $MIGRATION
 postgres: $PG
-contents: $ROWS, $BLOBS blob files
+contents: $ROWS, blob files $BLOBS
 not_included: .env and the encryption master key; keep them separately
 EOF
 
@@ -93,4 +94,4 @@ EOF
 mv "$WORK" "$FINAL"
 trap - EXIT
 echo "backup: done: $FINAL"
-echo "backup: $ROWS, $BLOBS blob files, migration $MIGRATION"
+echo "backup: $ROWS, blob files $BLOBS, migration $MIGRATION"
