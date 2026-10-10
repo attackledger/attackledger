@@ -67,8 +67,11 @@ with the API.
 
 ### 3. Job claiming: atomic, and the API runs the gates
 
-`POST /worker/claim` takes the oldest queued job in one transaction (`SELECT ... FOR UPDATE SKIP
-LOCKED` on Postgres; SQLite has one writer), marks it running and, before answering:
+`POST /worker/claim` takes the oldest queued job in one transaction, marks it running and, before
+answering (the steps below). The job is taken with a conditional UPDATE (`... WHERE id = ? AND
+status = 'queued'`): two workers that both read the same queued job never both take it, on any
+database, and the one that loses tries the next job. On Postgres the read also skips rows another
+claim holds (`SELECT ... FOR UPDATE SKIP LOCKED`). Then, before answering:
 
 - checks the engagement again (`jobgates.check_engagement`; for agent runs the lane, its executor
   and `agenttools.check_lane`). A job that fails is marked failed with the reason;

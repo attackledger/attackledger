@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-p+QXb0GnsEZy2w7RD6FlrQWh2qXpujjkYF4ilnFqKmA='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-wc6RWG0q5ZkrlB5fHp67Mh/YLMwcOjKUtrQe5BSYbuU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Verify a report · AttackLedger</title>
 <meta name="description" content="Check an AttackLedger report in your browser, with the same checks as verify_report.py. The file is not uploaded.">
@@ -272,7 +272,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             report, or save this page and open it offline.</p>
           <details class="cli">
             <summary>The policy this page is served with</summary>
-            <p class="csp">default-src 'none'; script-src 'sha256-p+QXb0GnsEZy2w7RD6FlrQWh2qXpujjkYF4ilnFqKmA='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
+            <p class="csp">default-src 'none'; script-src 'sha256-wc6RWG0q5ZkrlB5fHp67Mh/YLMwcOjKUtrQe5BSYbuU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
           </details>
           <h3>The same checks as the command line</h3>
           <p>The checks are a line-for-line port of <a href="/verify_report.py"><code>verify_report.py</code></a>, the
@@ -1539,18 +1539,24 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     }
     return st;
   }
-  function voidsReceipt(e, lane, rc, issued) {
+  function voidsReceipt(e, lane, rc, issued, when = null, signed = null, committed = null) {
     const ch = or(getk(e, "change"), dict());
     const laneRef = or(getk(ch, "lane"), dict()), receipt = or(getk(ch, "receipt"), dict());
     if (!pyEq(getk(laneRef, "id"), at(lane, "lane_id")) || !pyEq(getk(receipt, "manifest_sha256"), at(rc, "manifest_sha256"))) {
       return false;
     }
+    let t;
     try {
-      return utc(at(receipt, "issued_at")).us === issued.us;
+      t = utc(at(receipt, "issued_at"));
     } catch (err) {
       caught(err, "ValueError", "KeyError", "TypeError");
       return false;
     }
+    if (t.us === issued.us) return true;
+    if (signed === null || t.us - signed.us < PAYLOAD_WINDOW[0] || t.us - signed.us > PAYLOAD_WINDOW[1]) return false;
+    const seq = getk(e, "seq");
+    if (typeName(seq) === "int" && typeName(committed) === "int") return pyLt(committed, seq);
+    return when !== null && when.us > signed.us;
   }
   async function checkAuditLog(r, strict = false, sealed = null) {
     const notes = [];
@@ -1572,10 +1578,10 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     for (const lane of receipted) {
       const name = label(lane), rc = at(lane, "receipt");
       const sig = getk(rc, "signature");
-      let uid, who, email, issued;
+      let uid, who, email, issued, payload = null;
       try {
         if (truthy(sig)) {
-          const payload = loadsStr(at(sig, "payload"));
+          payload = loadsStr(at(sig, "payload"));
           [uid, who, email] = [at(at(payload, "signer"), "id"), at(at(payload, "signer"), "name"), getk(at(payload, "signer"), "email")];
         } else {
           [uid, who, email] = [getk(rc, "closed_by_user"), getk(rc, "closed_by"), getk(rc, "closed_by_email")];
@@ -1586,11 +1592,19 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
         problems.push(`${name}: the receipt's signer or issue time cannot be read`);
         continue;
       }
-      const voided = voids.find(([, e]) => voidsReceipt(e, lane, rc, issued));
+      const v4 = payloadV4(rc);
+      let signed;
+      try {
+        signed = payload !== null ? utc(at(payload, "issued_at")) : null;
+      } catch (e) {
+        caught(e, "ValueError", "KeyError", "TypeError");
+        signed = null;
+      }
+      const committed = v4 !== null ? getk(historyOf(v4)[0], "seq") : null;
+      const voided = voids.find(([when, e]) => voidsReceipt(e, lane, rc, issued, when, signed, committed));
       if (voided) {
         problems.push(`${name}: reported as receipted, but the change history records that this receipt was voided ${stamp(voided[0])}`);
       }
-      const v4 = payloadV4(rc);
       if (v4 !== null) {
         const a = historyOf(v4)[0];
         const upto = upTo(log, getk(a, "seq"), getk(a, "head"));
@@ -1742,14 +1756,14 @@ ${pyStr(getk(seal, "value"))}
         if (hh === null || !bytesEq(await digest(hh, encode(statement)), t.imprint)) problems.push("the seal's timestamp covers something else");
         const [found, tsa] = await tokenProblems(t, roots);
         problems.push(...found.map((x) => `the seal's timestamp: ${x}`));
-        let shown;
+        let shown2;
         try {
-          shown = utc(or(getk(ts, "time"), ""));
+          shown2 = utc(or(getk(ts, "time"), ""));
         } catch (e) {
           caught(e, "ValueError");
-          shown = null;
+          shown2 = null;
         }
-        if (shown === null || shown.us !== t.time.us) problems.push("the time shown for the seal's timestamp is not the token's time");
+        if (shown2 === null || shown2.us !== t.time.us) problems.push("the time shown for the seal's timestamp is not the token's time");
         const lag = sealedAt === null ? null : t.time.us - sealedAt.us;
         if (lag === null || lag < SEAL_WINDOW[0] || lag > SEAL_WINDOW[1]) {
           problems.push("the seal's timestamp is not from when the report was sealed");
@@ -2169,14 +2183,14 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
       if (h === null || !bytesEq(await digest(h, encode(statement)), t.imprint)) mine.push(`${name}: the timestamp covers a different receipt`);
       const [found, tsa] = await tokenProblems(t, roots);
       mine.push(...found.map((p) => `${name}: ${p}`));
-      let shown;
+      let shown2;
       try {
-        shown = utc(or(getk(ts, "time"), ""));
+        shown2 = utc(or(getk(ts, "time"), ""));
       } catch (e) {
         caught(e, "ValueError");
-        shown = null;
+        shown2 = null;
       }
-      if (shown === null || shown.us !== t.time.us) mine.push(`${name}: the time shown in the report is not the token's time`);
+      if (shown2 === null || shown2.us !== t.time.us) mine.push(`${name}: the time shown in the report is not the token's time`);
       problems.push(...mine);
       if (!mine.length) notes.push(`${name}: timestamped ${isoformat(t.time)} by ${tsa}`);
     }
@@ -2286,8 +2300,14 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     const facts = ok && html ? factsOf(report) : [];
     return { status: ok ? "verified" : "failed", title, results: checks, notes, message: null, exitCode: ok ? 0 : 1, facts };
   }
+  function shown(text) {
+    return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, (c) => {
+      const n = c.charCodeAt(0);
+      return n < 256 ? `\\x${n.toString(16).padStart(2, "0")}` : `\\u${n.toString(16).padStart(4, "0")}`;
+    });
+  }
   function cliText(o) {
-    if (o.status === "unusable") return `${o.message}
+    if (o.status === "unusable") return `${shown(`${o.message}`)}
 `;
     if (o.status === "error") return "";
     const out = [o.title[0], `  ${o.title[1]}`, ""];
@@ -2302,7 +2322,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     for (const n of o.notes) out.push(`  NOTE  ${n.text}`);
     out.push("", o.status === "verified" ? "Verified." : "Verification FAILED.");
     if (o.facts?.length) out.push("", FACTS_TITLE, ...o.facts.map((f) => `  ${f}`));
-    return out.join("\n") + "\n";
+    return out.map(shown).join("\n") + "\n";
   }
   function pageWording(text) {
     return text.replace("(pass --tsa-root FILE if you trust it)", "(add its root certificate under Trusted roots if you trust it)").replace("(pass --tsa-root FILE with the authority's root)", "(add the authority's root certificate under Trusted roots)");

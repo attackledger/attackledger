@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, select, update
 from sqlalchemy.orm import Session
 
 from . import agentloop, agenttools, approvals, auditlog, egress, executors, gates, jobgates, ledger, modules, packs, redact, scope, triage, urls
@@ -131,7 +131,9 @@ class ClaimIn(BaseModel):
 
 
 def _take(session, job_id: int | None) -> tuple[Job, str, str] | None:
-    """Mark the oldest queued job running and issue its two secrets, in one transaction."""
+    """Mark the oldest queued job running and issue its two secrets, in one transaction. The
+    job is taken with a conditional UPDATE (still queued), so two workers that both read it
+    never both take it, on any database: the one that loses tries the next job."""
     stmt = select(Job).where(Job.status == JobStatus.queued)
     if job_id is None:
         stmt = stmt.where(Job.driver.is_(None))         # outside drivers claim their own runs
@@ -140,15 +142,26 @@ def _take(session, job_id: int | None) -> tuple[Job, str, str] | None:
     stmt = stmt.order_by(Job.id).limit(1)
     if session.bind.dialect.name == "postgresql":
         stmt = stmt.with_for_update(skip_locked=True)
-    job = session.scalars(stmt).first()
-    if job is None:
-        return None
-    token = secrets.token_urlsafe(32)
-    job.worker_token_sha256 = _sha(token)
-    secret = egress.issue(job)          # the gateway credential for the job's tools (D-039)
-    job.status, job.started_at, job.heartbeat_at = JobStatus.running, now(), now()
-    session.commit()
-    return job, token, secret
+    for _ in range(20):
+        job = session.scalars(stmt).first()
+        if job is None:
+            return None
+        token = secrets.token_urlsafe(32)
+        secret = egress.issue(job)      # the gateway credential for the job's tools (D-039)
+        at = now()
+        with session.no_autoflush:      # nothing of the job is written unless this claim wins
+            taken = session.execute(
+                update(Job).where(Job.id == job.id, Job.status == JobStatus.queued)
+                .values(status=JobStatus.running, worker_token_sha256=_sha(token),
+                        gateway_secret_sha256=job.gateway_secret_sha256, started_at=at, heartbeat_at=at)
+                .execution_options(synchronize_session=False)).rowcount == 1
+        if not taken:                   # another worker took it between the read and the write
+            session.rollback()
+            continue
+        session.commit()
+        session.refresh(job)
+        return job, token, secret
+    return None
 
 
 def engagement_rules(eng: Engagement) -> dict:

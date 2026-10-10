@@ -124,6 +124,17 @@ HTML_NOTE = ("this is an HTML report: the checks cover the JSON report embedded 
              "displays, so an edit to the page's text alone would not be detected; what was verified is the JSON")
 
 
+# Characters a terminal acts on rather than shows: C0 (line breaks and ESC included), DEL and C1,
+# and the bidirectional controls and line separators. Text from the report is printed with them
+# escaped, so a name cannot print a fake "Verified." line, then hide the real result behind an
+# escape sequence (security recheck).
+_UNSHOWN = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def shown(text) -> str:
+    return _UNSHOWN.sub(lambda m: f"\\x{ord(m[0]):02x}" if ord(m[0]) < 0x100 else f"\\u{ord(m[0]):04x}", str(text))
+
+
 def check_body(r: dict) -> list[str]:
     body = {k: v for k, v in r.items() if k != "integrity"}
     want = r.get("integrity", {}).get("body_sha256")
@@ -705,17 +716,31 @@ def _state_at(records: list[tuple], eng_id, when) -> dict:
     return st
 
 
-def _voids(e: dict, lane: dict, rc: dict, issued) -> bool:
-    """Whether an audit entry voiding a receipt names this one. The entry has the server's
-    receipt id, which a report does not; it is matched by lane, manifest hash and issue time."""
+def _voids(e: dict, lane: dict, rc: dict, issued, at=None, signed=None, committed=None) -> bool:
+    """Whether an audit entry voiding a receipt (recorded at `at`) names this one. The entry has
+    the server's receipt id, which a report does not; it is matched by lane, manifest hash and
+    issue time. The receipt's issue time in a report is not signed, and the signature check
+    accepts any time within PAYLOAD_WINDOW of the signed payload's (signed), so moving the
+    report's copy by a second must not hide the void (security recheck EV-1): for a signed
+    receipt, a void whose issue time is in that window names it too, if the void came after the
+    payload was issued (a void before it is of an earlier receipt with the same manifest). A v4
+    payload names the audit log position it was issued at (committed); older ones, a time only."""
     ch = e.get("change") or {}
     lane_ref, receipt = ch.get("lane") or {}, ch.get("receipt") or {}
     if lane_ref.get("id") != lane["lane_id"] or receipt.get("manifest_sha256") != rc["manifest_sha256"]:
         return False
     try:
-        return _utc(receipt["issued_at"]) == issued
+        t = _utc(receipt["issued_at"])
     except (ValueError, KeyError, TypeError):
         return False
+    if t == issued:
+        return True
+    if signed is None or not PAYLOAD_WINDOW[0] <= t - signed <= PAYLOAD_WINDOW[1]:
+        return False
+    seq = e.get("seq")
+    if all(isinstance(x, int) and not isinstance(x, bool) for x in (seq, committed)):
+        return seq > committed
+    return at is not None and at > signed
 
 
 def check_audit_log(r: dict, strict: bool = False, sealed=None) -> tuple[list[str], list[str]]:
@@ -752,11 +777,16 @@ def check_audit_log(r: dict, strict: bool = False, sealed=None) -> tuple[list[st
         except (ValueError, KeyError, TypeError):
             problems.append(f"{label}: the receipt's signer or issue time cannot be read")
             continue
-        void = next((v for v in voids if _voids(v[1], lane, rc, issued)), None)
+        v4 = _payload(rc)
+        try:            # the signed issue time, which the report's copy may differ from by PAYLOAD_WINDOW
+            signed = _utc(payload["issued_at"]) if payload is not None else None
+        except (ValueError, KeyError, TypeError):
+            signed = None
+        committed = _history(v4)[0].get("seq") if v4 is not None else None
+        void = next((v for v in voids if _voids(v[1], lane, rc, issued, v[0], signed, committed)), None)
         if void is not None:     # a void is for good (D-052): the lane's status in the report is not signed
             problems.append(f"{label}: reported as receipted, but the change history records that this receipt was "
                             f"voided {void[0].strftime('%Y-%m-%d %H:%M UTC')}")
-        v4 = _payload(rc)
         if v4 is not None:          # the history it was signed against must all be here (D-054)
             a = _history(v4)[0]
             upto = _upto(log, a.get("seq"), a.get("head"))
@@ -1341,7 +1371,7 @@ def main(argv: list[str]) -> int:
     roots = load_roots(root_files)
     r = load(args[0])
     if r.get("format") not in FORMATS:
-        print(f"unsupported report format: {r.get('format')}")
+        print(shown(f"unsupported report format: {r.get('format')}"))
         return 2
 
     # (name, problems, skip): a check with a skip reason found nothing to check.
@@ -1382,25 +1412,31 @@ def main(argv: list[str]) -> int:
 
     eng, s = r["engagement"], r["summary"]
     lanes, entries = s["lanes_receipted"], s["evidence_entries"]
-    print(f"AttackLedger report: {eng['name']} ({eng['pack']['name']} {eng['pack']['version']})")
-    print(f"  {lanes} receipted lane{'' if lanes == 1 else 's'}, "
-          f"{entries} evidence entr{'y' if entries == 1 else 'ies'}\n")
+
+    def show(line: str = "") -> None:
+        print(shown(line))
+    show(f"AttackLedger report: {eng['name']} ({eng['pack']['name']} {eng['pack']['version']})")
+    show(f"  {lanes} receipted lane{'' if lanes == 1 else 's'}, "
+         f"{entries} evidence entr{'y' if entries == 1 else 'ies'}")
+    show()
     ok = True
     for name, problems, skip in results:
         if skip and not problems:
-            print(f"  SKIP  {name} ({skip})")
+            show(f"  SKIP  {name} ({skip})")
             continue
-        print(f"  {'PASS' if not problems else 'FAIL'}  {name}")
+        show(f"  {'PASS' if not problems else 'FAIL'}  {name}")
         for p in problems:
-            print(f"        - {p}")
+            show(f"        - {p}")
         ok = ok and not problems
     for n in notes:
-        print(f"  NOTE  {n}")
-    print("\nVerified." if ok else "\nVerification FAILED.")
+        show(f"  NOTE  {n}")
+    show()
+    show("Verified." if ok else "Verification FAILED.")
     if ok and args[0].endswith((".html", ".htm")):
-        print(f"\n{FACTS_TITLE}")
+        show()
+        show(FACTS_TITLE)
         for line in facts(r):
-            print(f"  {line}")
+            show(f"  {line}")
     return 0 if ok else 1
 
 

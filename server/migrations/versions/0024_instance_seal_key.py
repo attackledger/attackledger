@@ -7,18 +7,18 @@ changes; the chains and their hashes are untouched.
 
 Downgrade requires the column again only while the key log holds no instance entry. Those
 entries cannot be removed without breaking the chain, so with them the column stays optional;
-the code before 0023 reads them as entries of no person, and their hashes are unchanged.
+the code before 0024 reads them as entries of no person, and their hashes are unchanged.
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-10-10 20:00:00
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = '0023'
-down_revision = '0022'
+revision = '0024'
+down_revision = '0023'
 branch_labels = None
 depends_on = None
 

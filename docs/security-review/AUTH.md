@@ -9,7 +9,9 @@ traffic left the machine.
 Test suite: 758 passed and 1 skipped before; 762 passed and 1 skipped after (4 new tests).
 A second pass (branch `sec2-hardening`, 2026-10-10) fixed AUTH-4 and AUTH-7; see "Fixed in the
 second pass" below. Its suite, with the gateway items of the same pass: 790 passed and 1 skipped
-before, 816 passed and 1 skipped after.
+before, 816 passed and 1 skipped after. A third pass (branch `sec3-sessions`, 2026-10-10) fixed
+AUTH-5 and AUTH-6 and checked every other single-use step; see "Fixed in the third pass". Its
+suite: 825 passed and 1 skipped before, 835 passed and 1 skipped after (10 new tests).
 
 ## Findings
 
@@ -19,8 +21,8 @@ before, 816 passed and 1 skipped after.
 | AUTH-2 | Low | Changes sent by a page of another origin were accepted: a sibling subdomain (same site) with the session cookie, or any web page in open mode | `0859dbc` | `test_auth2_a_page_of_another_site_cannot_change_anything`, `test_auth2_open_mode_refuses_another_sites_page_too` |
 | AUTH-3 | Low | Separation of duties ignored who imported a lane's evidence | `cff4cc8` | `test_auth3_whoever_imported_a_lanes_evidence_cannot_sign_it` |
 | AUTH-4 | Info | `hmac.compare_digest` raises on non-ASCII bearer tokens and cookies (500, not a bypass) | `01d167b` (second pass) | `test_auth4_non_ascii_tokens_and_cookies_are_refused_with_401` |
-| AUTH-5 | Info | On SQLite, using an approval does not lock the row | not fixed (Postgres locks it) | none |
-| AUTH-6 | Info | The token-mode cookie is a fixed HMAC of the token, so signing out does not revoke it | not fixed (by design) | none |
+| AUTH-5 | Info | On SQLite, using an approval does not lock the row | `e3ea2d1` (third pass) | `test_auth5_two_concurrent_uses_of_one_approval_send_it_once`, `test_auth5_one_use_without_a_race_still_works_once` |
+| AUTH-6 | Info | The token-mode cookie is a fixed HMAC of the token, so signing out does not revoke it | `a927531` (third pass, D-056) | `test_auth6_signing_out_revokes_a_copied_token_mode_cookie` and four more `test_auth6_*` |
 | AUTH-7 | Info | A malformed signed payload gives a 500 instead of a 422 | `01d167b` (second pass) | `test_auth7_a_payload_with_fields_of_the_wrong_type_is_refused_with_422` |
 
 No Critical, High or Medium issue was found. Organization isolation (D-042) held everywhere I
@@ -87,6 +89,10 @@ same-origin. Clients that are not browsers (the worker, the gateway relay, the C
 with the token) send neither header and are not affected. Reads are not refused: a page of another
 origin cannot read the answers (no CORS).
 
+**Recheck.** In open mode, DNS rebinding passed: a page on a public name, rebound to 127.0.0.1,
+sends same-origin requests (and reads the answers). Open mode now answers only requests whose
+`Host` is an IP address, a name without a dot or a special-use name (`RECHECK.md`, AUTH-2).
+
 ### AUTH-3 (Low): separation of duties ignored who imported a lane's evidence
 
 **What.** With separation of duties on, whoever supplied a lane's evidence must not sign its
@@ -105,12 +111,8 @@ entries' `mappings`). `docs/TESTER_GUIDE.md` says so.
 ### Info
 
 - **AUTH-4.** Fixed in the second pass (below).
-- **AUTH-5.** `approvals.consume` locks the proposal (`SELECT ... FOR UPDATE`) on Postgres only. On
-  SQLite, two concurrent uses could both read `approved`. Production runs Postgres (both compose
-  files), where the second use waits and then sees `sent`. SQLite is used by the tests only.
-- **AUTH-6.** In token mode, the cookie is `HMAC(token, "attackledger-session-v1")`. Signing out
-  deletes it in the browser, but a copied cookie works until the token changes. This is by design
-  (no sessions without people). People mode uses random sessions stored as hashes.
+- **AUTH-5.** Fixed in the third pass (below).
+- **AUTH-6.** Fixed in the third pass (below).
 - **AUTH-7.** Fixed in the second pass (below).
 - Design notes, not defects: separation of duties covers evidence, not N/A decisions (a person can
   mark every item N/A and sign); sign-in lockout is per email and address, kept in memory (a
@@ -142,9 +144,67 @@ with a time without a zone (500 before: `TypeError` on the subtraction), a list 
 which compares `'1'` with 1), a string lane id, a number as the signer's name, and a date that is
 not one. Fix: `main._payload_problem` checks the field types after the canonical-form check and
 before any comparison (ids and the chain position whole numbers, the text fields text, `issued_at`
-a time with a zone) and answers 422 "the signed payload is malformed: ...". The real payload still
+a time with a zone) and answers 422 "the signed payload is malformed: ...". (Recheck: a chain
+position of 10**30 was still a 500; ids are now also bounded, `RECHECK.md`.) The real payload still
 signs (the control in the test). It never accepted a payload it should not have but the string
 chain position, which pointed at the same evidence row.
+
+### Fixed in the third pass
+
+**AUTH-6: signing out did not revoke a token-mode cookie** (`a927531`, D-056). In token mode the
+cookie was `HMAC(token, "attackledger-session-v1")`: the same value at every sign-in, deleted by
+sign-out in the browser only, so a copy opened the API as an owner until the token changed (and
+again if it was changed back). Reproduction: `test_auth6_signing_out_revokes_a_copied_token_mode_cookie`
+signs in with the token, keeps the cookie, signs out and sends the copy: 200 before the fix.
+Fix: signing in with the token creates a session in `user_sessions` like a person's (a random
+32-byte value, only its SHA-256 stored, 12 hours, ended by `/auth/logout`), which names nobody
+(`user_id` NULL, migration 0023) and is bound to the token (`token_binding`, a scrypt hash of it,
+cached per token value). `auth._principal` accepts such a session only while the API runs with
+the same token; `auth.end_stale_token_sessions` deletes the expired ones and those of any other
+token when the API starts and at each token sign-in, so a token change ends them for good. The
+bearer path is unchanged, and the old derived cookie is refused (everyone signed in with the
+token signs in once more after the upgrade). Tests: the copy is dead after sign-out and the bearer
+token still works; two sign-ins give two random values, stored as hashes, the old derived value is
+refused, and signing out ends one session only
+(`test_auth6_token_mode_sessions_are_random_and_stored_as_hashes`); an expired token session is
+refused and the lifetime is `SESSION_HOURS` (`test_auth6_token_mode_sessions_expire_like_people_sessions`);
+a session opened under one token opens nothing under another, is deleted, and stays dead when the
+first token comes back (`test_auth6_changing_the_api_token_ends_every_token_session`); the same in
+people mode (`test_auth6_token_sessions_work_and_end_in_people_mode_too`). Each failed before.
+
+**AUTH-5: an approval's single use relied on a Postgres row lock** (`e3ea2d1`). `approvals.consume`
+locked the proposal with `SELECT ... FOR UPDATE` on Postgres only, then wrote `status = 'sent'` by
+primary key. Reproduction: `test_auth5_two_concurrent_uses_of_one_approval_send_it_once` runs two
+uses in two threads, each with its own session and connection on one SQLite file; both read the
+row before either writes, then one finishes before the other goes on. Before the fix both
+succeeded and the audit log had two `write.sent`: the gateway would have sent the write twice.
+(Without the forced order the second use often failed on the audit log's unique `(organization,
+seq)` instead, by luck rather than by design.) Fix: `approvals.move` changes a proposal with one
+conditional UPDATE (`... WHERE id = ? AND status IN (...)`) and goes on only when it changed the
+row; `consume` uses it for `sent` (and `failed`) from `approved`, and the row lock is gone. Now one
+use succeeds and the other gets "an approval is used once"; one `write.sent` is recorded. The
+control (`test_auth5_one_use_without_a_race_still_works_once`) uses the approval once, then is
+refused.
+
+**Every other single-use step (task of the third pass).** I listed each step in the code that
+must happen at most once, or only from one state, and checked how it is made atomic:
+
+| Step | Before | Now | Test |
+|---|---|---|---|
+| Approving a write (`approve`, `confirm-delete`) | read the status, then wrote it by primary key: an approval that raced a rejection was written over it, and the rejected write became sendable | `approvals.move` from `pending` (or `confirming`); otherwise 409 | `test_an_approval_racing_a_rejection_does_not_make_a_rejected_write_sendable` |
+| Rejecting a write | the same: a rejection that raced the gateway's use was written over `sent`, so the queue showed a sent write as rejected | `move` from the open statuses; otherwise 409 | `test_a_rejection_racing_the_gateway_does_not_overwrite_a_sent_write` |
+| Expiring an approval | written by primary key | `move` from the open statuses, so an expiry cannot overwrite a write sent just before it | `test_an_approval_expires` (existing) |
+| Claiming a job (`/worker/claim`; issues the job token and gateway secret) | `SELECT ... FOR UPDATE SKIP LOCKED` on Postgres only: on SQLite two workers took the same job, it ran twice, and the second claim replaced the first one's token and secret | a conditional UPDATE from `queued`; the loser tries the next job (Postgres keeps SKIP LOCKED for the read) | `test_two_workers_claiming_at_once_never_take_the_same_job` |
+| Ending a run's undecided writes (`end_job`) | already a conditional UPDATE from the open statuses | unchanged | |
+| Invitations, password-reset tokens, key-registration challenges | do not exist: an owner sets the first password, resets are on the server (`python -m app.people set-password`), and a key is registered in the person's own session | nothing to do | |
+| Test-account injection (`/gateway/account`) | not single use by design: the material is given for each request of a running agent job, to a host named for the account | nothing to do | |
+| Job tokens and gateway secrets | not single use: valid while the job runs; issued once, at the claim (above) | covered by the claim | |
+| Signed receipt payloads | not single use: valid 10 minutes for the signer named in them, against the lane as it is. Two closes with the same payload make two receipts with the same manifest and signature, by the same person; nothing another person can use | nothing to do (design note) | |
+
+Each new test failed before its fix and passes after it; the thread tests passed 15 runs in a row.
+Not run here: the same races on Postgres (no Postgres was available without fetching an image).
+There the conditional UPDATE waits for the first writer's row lock and then matches no row, which is
+the behaviour the SQLite tests check.
 
 ## Scope covered
 
@@ -180,7 +240,7 @@ downloads.
   first owner. Unknown values count as on. The first owner comes from the CLI. In open mode the first
   person must be an owner.
 - **Sessions.** The value is random (32 bytes); only its SHA-256 is stored; expiry is checked on
-  every request; the cookie is HttpOnly, SameSite=Strict, and Secure behind HTTPS. A changed
+  every request; token-mode browsers get the same sessions since AUTH-6; the cookie is HttpOnly, SameSite=Strict, and Secure behind HTTPS. A changed
   password ends the other sessions, a disabled person's sessions end at once, and a demotion or a
   role removal takes effect on the next request (the principal is rebuilt each time). Session
   fixation is not possible, because the server chooses the value. Lockout after five failures, and
@@ -209,7 +269,7 @@ downloads.
   body, account), and the person must name the hash they read. When the approval is used, the
   method, normalized URL, body hash and account must match; the gateway then sends the approved
   headers, not the worker's, and checks them again (method overrides, upgrades). The approval
-  expires 15 minutes after it is given and is used once (row lock on Postgres; AUTH-5 for SQLite). A
+  expires 15 minutes after it is given and is used once (a conditional update on any database since AUTH-5). A
   DELETE stays `confirming` until the same approver types the exact path. Only testers and owners
   decide; with SoD on, the run's starter and the operator token cannot. An approval is accepted only
   from the job that proposed it, and only while it runs and the engagement allows writes.

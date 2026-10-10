@@ -38,6 +38,7 @@ async def lifespan(_app: FastAPI):
     migrate.upgrade_head()
     with SessionLocal() as s:
         vault.check_store(s)
+        auth.end_stale_token_sessions(s)    # a changed token ends the old one's browser sessions (D-056)
     # Retention and interrupted jobs, which the worker ran before it lost its database (D-042).
     stop = workerapi.start_maintenance()
     try:
@@ -256,7 +257,9 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
         raise HTTPException(422, "sign in with your email and password")
     if not auth.same_secret((body.token or "").strip(), tok):
         raise HTTPException(401, "wrong token")
-    return _session_cookie(JSONResponse({"ok": True, "mode": m}), auth.token_session_value(tok))
+    with orgscope.unscoped(session):        # a token session names nobody, so no organization yet
+        value = auth.new_token_session(session, tok)
+    return _session_cookie(JSONResponse({"ok": True, "mode": m}), value)
 
 
 @app.post("/auth/logout")
@@ -673,6 +676,8 @@ def _payload_problem(p: dict) -> str | None:
     ids = (p["engagement"]["id"], p["lane"]["id"], p["chain"]["seq"], p["signer"]["id"])
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in ids):
         return "an id or the chain position is not a whole number"
+    if not all(0 <= v < 2 ** 62 for v in ids):     # the database's integers (10**30 was a 500: security recheck)
+        return "an id or the chain position is out of range"
     texts = (p["engagement"]["name"], p["lane"]["host"], p["lane"]["role"], p["manifest_sha256"], p["chain"]["head"],
              p["signer"]["name"], p["key_fingerprint"], p["issued_at"])
     if not all(isinstance(v, str) for v in texts) or not isinstance(p["signer"]["email"], (str, type(None))):

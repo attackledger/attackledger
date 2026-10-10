@@ -70,7 +70,7 @@ def upgrade_and_check(eng, monkeypatch, tmp_path, fixture: Path):
     assert all(before[t] > 0 for t in before), before          # every table has rows to move
 
     migrate.upgrade_head()
-    assert migrate.current() == migrate.head()          # 0022, and the migrations after it
+    assert migrate.current() == migrate.head()                  # 0022, and the migrations after it
     with eng.connect() as c:
         orgs = c.execute(text("SELECT id, name FROM organizations")).all()
         assert len(orgs) == 1 and orgs[0][1] == "Default organization"

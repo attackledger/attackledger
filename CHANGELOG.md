@@ -105,11 +105,46 @@ Authentication, authorization and organization isolation (`AUTH.md`):
 - **A malformed signed payload gave a 500** (AUTH-7, Info, second pass): a time without a zone, a
   list as the chain position. A string chain position was even accepted. The field types are
   checked first: 422.
+- **Signing out did not revoke a browser signed in with the operator token** (AUTH-6, Info, third
+  pass). The cookie was a fixed HMAC of the token, so a copy of it worked until the token changed.
+  Signing in with the token now creates a random session stored as a hash, like a person's: it
+  ends on sign-out or after 12 hours, and when the API starts with another token (D-056,
+  migration 0023). Bearer tokens (scripts, the worker, the gateway) are unchanged.
+- **An approval could be used twice on SQLite** (AUTH-5, Info, third pass). Its single use relied on
+  a row lock taken on Postgres only. Using it, approving, confirming a DELETE, rejecting and
+  expiring are now conditional updates from the status that was read, on every database: of two
+  uses one succeeds, a rejection racing the gateway no longer overwrites a sent write, and an
+  approval racing a rejection no longer makes the rejected write sendable.
+- **Two workers could claim the same job on SQLite** (third pass). The job ran twice and the
+  second claim replaced the first one's job token and gateway secret. Claiming is a conditional
+  update from `queued` now; the worker that loses takes the next job.
+
+A second, adversarial pass over those fixes (`RECHECK.md`) found four bypasses and one new issue:
+- **A voided signed receipt could still verify as receipted** (EV-1 with EV-2, Medium). The void
+  was matched on the receipt's exact issue time, which a report repeats unsigned and EV-2 lets
+  differ from the signed time by up to 15 minutes: moving it a second hid the void, in strict mode
+  too. Both verifiers now match a void in that window around the signed time, if it came after
+  the payload.
+- **Open mode could be reached by DNS rebinding** (AUTH-2, Medium). A page whose public name was
+  pointed at 127.0.0.1 sent same-origin requests and read the answers. Open mode now answers only
+  requests that name the machine by an IP address, a name without a dot or a special-use name.
+- **The command-line verifier printed terminal controls from a report** (RC-1, Low): a name could
+  print a fake `Verified.` and conceal the real result. Such characters are now printed escaped.
+- **Port probes beside requests opened up to twice the rate in connections** (GW-2, Low). Probes
+  now wait for the connection limiter too.
+- Info: NAT64, 6to4 and IPv4-compatible forms of refused addresses are refused too (GW-5, GW-8);
+  every member of a multi-member gzip response is decoded (GW-3, it was cut short, without a leak);
+  a signed payload's ids out of the database's range are a 422, not a 500 (AUTH-7).
 
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
 database without a name on its recreated network, and the API failed to start (INSTALL §15).
+
+A browser signed in with the operator token is signed out once by the upgrade: the old token-mode
+cookie is no longer accepted (AUTH-6). Sign in with the token again. People's sessions, and
+scripts that send the token as a bearer header, are not affected. Migration 0023 runs when the API
+starts.
 
 ### Fixed
 - **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of

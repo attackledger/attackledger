@@ -860,7 +860,7 @@ options considered and who decided.
   - **An instance seal key.** Each deployment has one Ed25519 key, made on first use and kept
     in the blob store wrapped by the master key, like a data key (`vault.seal_key`; startup
     check and `rotate-master` cover it). Its public key is registered once in each
-    organization's key log as an entry that names no person (`via: instance`, migration `0023`
+    organization's key log as an entry that names no person (`via: instance`, migration `0024`
     makes `key_log.user_id` optional), before the first receipt payload the server issues there,
     so later receipt signatures cover the registration.
   - **The seal.** When a report is exported (JSON, HTML, the app's Verify tab), the server signs
@@ -894,6 +894,31 @@ options considered and who decided.
   - Keeping the key in the database. The blob store already holds the wrapped data keys and is
     covered by the same checks and rotation; a database row would need its own. Rejected.
 - **Made by:** Claude, from the security review's remaining O-2 gap, at Murat's request to close it.
+
+### D-056 · A browser signed in with the token gets a real session (2026-10-10, made autonomously)
+- **Problem** (security review AUTH-6, docs/security-review/AUTH.md): in token mode the cookie
+  was `HMAC(token, constant)`. Signing out deleted it in the browser only; a copy of it, from a
+  shared machine, a proxy log or a backup of a browser profile, opened the API as an owner until
+  the token changed. Nothing on the server could end it.
+- **Decision:**
+  - Signing in with the operator token gives the browser a session like a person's: a random
+    cookie value, of which only the SHA-256 is stored in `user_sessions`, ending on sign-out or
+    after 12 hours (`SESSION_HOURS`). The row names nobody (`user_id` empty, migration 0023).
+  - Each token session is bound to the token it was opened with (`token_binding`, a scrypt hash
+    of the token, so a database leak makes guessing a weak token no easier than a password). It
+    opens nothing while the API runs with another token, and the API deletes the sessions of any
+    other token when it starts, and at each token sign-in. Changing the token therefore ends them
+    for good; changing it back does not bring them back.
+  - The bearer token is unchanged: scripts, the worker and the gateway send it in the header and
+    hold no session. A token session still works in people mode, as the token does.
+  - The old derived cookie is no longer accepted, so a browser signed in with the token signs in
+    once more after the upgrade.
+- **Considered:** keeping the derived cookie and adding a revocation list (it still could not
+  end a copy without state, so it is the same table with a worse key); a session table of its own
+  for the token (two lookups, two expiry rules to keep the same; rejected for one table with one
+  rule).
+- **Number:** D-055 was left free for a decision being written in parallel on another branch.
+- **Made by:** Claude, from the security review (third pass, branch `sec3-sessions`).
 
 ## Adding entries
 

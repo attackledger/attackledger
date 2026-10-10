@@ -39,7 +39,8 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete, func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from . import auditlog, authz, gateway, ledger, redact, vault
 from .db import get_session
@@ -107,11 +108,30 @@ def request_of(p: WriteProposal) -> dict | None:
     return None if text is None else json.loads(text)
 
 
+def move(session, p: WriteProposal, frm: tuple[str, ...], **values) -> bool:
+    """Change a proposal only if its status is still one of `frm`: one conditional UPDATE, whose
+    row count says whether this caller made the change. Two requests that both read "approved"
+    can then never both use the approval, nor a rejection overwrite a write that was sent, on
+    any database (security review AUTH-5). On success the values are on `p` too; otherwise `p`
+    is reloaded, so its status is the one that won. The caller commits."""
+    done = session.execute(update(WriteProposal).where(WriteProposal.id == p.id, WriteProposal.status.in_(frm))
+                           .values(**values).execution_options(synchronize_session=False)).rowcount == 1
+    if done:
+        for k, v in values.items():
+            set_committed_value(p, k, v)
+    else:
+        session.refresh(p)
+    return done
+
+
 def expire_if_due(p: WriteProposal, at: datetime | None = None) -> bool:
     if p.status in OPEN and p.expires_at is not None and _aware(p.expires_at) <= (at or now()):
-        p.status = "expired"
-        p.decision_note = (p.decision_note or "") + (" " if p.decision_note else "") + "(the approval expired unused)"
-        return True
+        note = (p.decision_note or "") + (" " if p.decision_note else "") + "(the approval expired unused)"
+        session = object_session(p)
+        if session is None:
+            p.status, p.decision_note = "expired", note
+            return True
+        return move(session, p, OPEN, status="expired", decision_note=note)
     return False
 
 
@@ -206,10 +226,7 @@ def consume(session, *, job: Job, proposal_id: int, method: str, url: str, body_
     expired and not used, and that the method, URL, body and account are the approved ones; then
     mark it sent, so it is never used again. Returns the request the gateway sends. Raises
     PermissionError with the reason."""
-    if session.bind.dialect.name == "postgresql":
-        p = session.scalars(select(WriteProposal).where(WriteProposal.id == proposal_id).with_for_update()).first()
-    else:
-        p = session.get(WriteProposal, proposal_id)
+    p = session.get(WriteProposal, proposal_id)
     if p is None or p.job_id != job.id:
         raise PermissionError(f"approval {proposal_id} is not one of this run's writes")
     if expire_if_due(p):
@@ -230,10 +247,13 @@ def consume(session, *, job: Job, proposal_id: int, method: str, url: str, body_
         raise PermissionError("the test account is not the approved one")
     problem = unsendable(req["headers"])
     if problem:                 # never used: it could not be sent as approved (an approval from before the check)
-        p.status, p.decision_note = "failed", f"the approved request cannot be sent: {problem}"
-        session.commit()
-        raise PermissionError(p.decision_note)
-    p.status, p.sent_at = "sent", now()
+        note = f"the approved request cannot be sent: {problem}"
+        if move(session, p, ("approved",), status="failed", decision_note=note):
+            session.commit()
+        raise PermissionError(note)
+    # Used once: of two uses that both read "approved", only one changes it (AUTH-5).
+    if not move(session, p, ("approved",), status="sent", sent_at=now()):
+        raise PermissionError(f"write {proposal_id} is {p.status}, not approved; an approval is used once")
     auditlog.append(session, actor=GATEWAY_ACTOR, action="write.sent", engagement_id=p.engagement_id,
                     change={"after": _audit_ref(p)})
     session.commit()
@@ -367,11 +387,13 @@ def approve(eng_id: int, pid: int, body: DecideIn, request: Request, session: Se
     problem = unsendable(req["headers"])
     if problem:
         raise HTTPException(422, f"this request cannot be sent as it is ({problem}); reject it instead")
-    p.decided_by, p.decided_by_name, p.decided_at = who.user_id, _who_label(who), now()
-    p.decision_note, p.approved_sha256 = _note(body.note), p.request_sha256
-    p.status = "confirming" if p.method == "DELETE" else "approved"
-    if p.status == "approved":
-        p.expires_at = now() + timedelta(minutes=APPROVAL_MINUTES)
+    status = "confirming" if p.method == "DELETE" else "approved"
+    values = {"decided_by": who.user_id, "decided_by_name": _who_label(who), "decided_at": now(),
+              "decision_note": _note(body.note), "approved_sha256": p.request_sha256, "status": status}
+    if status == "approved":
+        values["expires_at"] = now() + timedelta(minutes=APPROVAL_MINUTES)
+    if not move(session, p, ("pending",), **values):          # decided meanwhile by someone else
+        raise HTTPException(409, f"this write is {p.status}; only a pending write can be approved")
     auditlog.append(session, actor=auditlog.actor(who), action="write.approved", engagement_id=eng_id,
                     change={"after": {**_audit_ref(p), "note": p.decision_note,
                                       "waits_for_delete_confirmation": p.method == "DELETE"}})
@@ -396,8 +418,9 @@ def confirm_delete(eng_id: int, pid: int, body: ConfirmDeleteIn, request: Reques
     path = (urlsplit(req["url"]).path or "/") if req else None
     if path is None or body.confirm_path.strip() != path:
         raise HTTPException(422, "type the URL's path exactly to confirm the DELETE; nothing was approved")
-    p.status, p.delete_confirmed_at = "approved", now()
-    p.expires_at = now() + timedelta(minutes=APPROVAL_MINUTES)
+    if not move(session, p, ("confirming",), status="approved", delete_confirmed_at=now(),
+                expires_at=now() + timedelta(minutes=APPROVAL_MINUTES)):
+        raise HTTPException(409, f"this write is {p.status}; only an approved DELETE waits for this confirmation")
     auditlog.append(session, actor=auditlog.actor(who), action="write.delete_confirmed", engagement_id=eng_id,
                     change={"after": {**_audit_ref(p), "path": path}})
     session.commit()
@@ -410,8 +433,9 @@ def reject(eng_id: int, pid: int, body: RejectIn, request: Request, session: Ses
     who = authz.current(request)
     if p.status not in OPEN:
         raise HTTPException(409, f"this write is {p.status}; it can no longer be rejected")
-    p.status, p.decided_by, p.decided_by_name, p.decided_at = "rejected", who.user_id, _who_label(who), now()
-    p.decision_note = _note(body.note)
+    if not move(session, p, OPEN, status="rejected", decided_by=who.user_id, decided_by_name=_who_label(who),
+                decided_at=now(), decision_note=_note(body.note)):
+        raise HTTPException(409, f"this write is {p.status}; it can no longer be rejected")
     auditlog.append(session, actor=auditlog.actor(who), action="write.rejected", engagement_id=eng_id,
                     change={"after": {**_audit_ref(p), "note": p.decision_note}})
     session.commit()

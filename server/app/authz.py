@@ -215,6 +215,9 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
         with orgscope.unscoped(session):
             setup = auth.mode(session) == "setup"
         raise HTTPException(401, auth.SETUP_HINT if setup else "sign in first")
+    if who.kind == "open" and not auth.local_request(request):
+        raise HTTPException(403, "open mode answers only on this machine's own names (localhost, an IP address); "
+                                 "to use AttackLedger under another name, set ATTACKLEDGER_API_TOKEN or add people")
     orgscope.scope(session, who.organization_id)
     request.state.principal = who
     if rule is None:

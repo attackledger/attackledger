@@ -3,17 +3,21 @@
 Four modes, chosen by what exists:
 
   open    no people and no ATTACKLEDGER_API_TOKEN: local use only, everyone is an owner.
-          /health says so; do not expose an open API beyond localhost.
+          /health says so; do not expose an open API beyond localhost. Requests that name the
+          host by a public DNS name are refused (local_request), so a page that rebinds its
+          name to 127.0.0.1 cannot act as the operator.
   setup   the same, but ATTACKLEDGER_REQUIRE_SIGN_IN=1 (production): nobody gets in until
           the first owner is created on the server (python -m app.people create --owner).
           Whoever reaches the server first over the network cannot make themselves owner.
   token   no people, ATTACKLEDGER_API_TOKEN set: the token (bearer header, or a session
-          cookie holding an HMAC of it) is required and acts as an owner.
+          cookie from signing in with it) is required and acts as an owner.
   people  at least one person exists: people sign in with email and password. The token,
           if set, still works as an owner for automation.
 
 Passwords are hashed with scrypt (standard library). A session cookie holds a random
-value; only its SHA-256 is stored, so a database leak does not leak sessions. Cookies
+value; only its SHA-256 is stored, so a database leak does not leak sessions. Signing in with
+the token gives the browser such a session too (D-056): it names nobody, is bound to the token,
+ends on sign-out or after SESSION_HOURS, and ends for good when the API starts with another token. Cookies
 are HttpOnly and SameSite=Strict, and a change that a page of another origin sends (a sibling
 subdomain is the same site) is refused (from_another_site). Failed sign-ins are counted per email and address,
 and further attempts are refused for a while after too many.
@@ -29,10 +33,12 @@ the API, so an owner cannot sign in as someone else and register a key in their 
 """
 import hashlib
 import hmac
+import ipaddress
 import os
 import secrets
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
@@ -104,16 +110,39 @@ def from_another_site(request: Request) -> bool:
     return not theirs or theirs != ours      # "null" (a sandboxed page) has no host: refused
 
 
+# Names a web page of another site cannot take by DNS rebinding: a public DNS name can be pointed
+# at 127.0.0.1, these cannot be registered (RFC 6761, RFC 8375, ICANN's .internal).
+LOCAL_SUFFIXES = ("localhost", "local", "internal", "home.arpa", "test")
+
+
+def local_request(request: Request) -> bool:
+    """Whether the request names this machine the way only a local client does: an IP address, a
+    name without a dot (localhost, a compose service such as api) or a special-use name, or no Host
+    at all. Open mode acts as the local operator for whoever reaches it, and a page on a public
+    name that its owner then points at 127.0.0.1 (DNS rebinding) reaches it with same-origin
+    requests, Sec-Fetch-Site and Origin included, and can read the answers (security recheck)."""
+    raw = request.headers.get("host", "")
+    try:
+        host = urlsplit("//" + raw).hostname
+    except ValueError:
+        return False
+    if not host:
+        return not raw
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    host = host.rstrip(".")
+    return "." not in host or any(host == s or host.endswith("." + s) for s in LOCAL_SUFFIXES)
+
+
 def same_secret(presented: str, expected: str) -> bool:
     """A presented token or cookie against the expected one, in constant time, as UTF-8 bytes.
     hmac.compare_digest raises TypeError on a str with a non-ASCII character (Starlette decodes
     headers as Latin-1; a JSON body may hold anything), which was a 500 instead of a 401
     (security review AUTH-4)."""
     return hmac.compare_digest(presented.encode("utf-8", "surrogatepass"), expected.encode("utf-8", "surrogatepass"))
-
-
-def token_session_value(tok: str) -> str:
-    return hmac.new(tok.encode(), b"attackledger-session-v1", hashlib.sha256).hexdigest()
 
 
 # ---- passwords ---------------------------------------------------------------
@@ -192,6 +221,42 @@ def end_session(session, value: str) -> None:
         session.commit()
 
 
+@lru_cache(maxsize=4)
+def token_binding(tok: str) -> str:
+    """What a token session is bound to: a slow hash of the token, so a database leak makes
+    guessing a weak token no easier than guessing a password. Computed once per token value."""
+    return hashlib.scrypt(tok.encode("utf-8", "surrogatepass"), salt=b"attackledger-token-session-v2",
+                          **_SCRYPT).hex()
+
+
+def new_token_session(session, tok: str) -> str:
+    """A browser signed in with the operator token (D-056): a session like a person's, bound to
+    the token instead of a person. Sessions of an earlier token are deleted first."""
+    from .models import UserSession
+    end_stale_token_sessions(session, commit=False)
+    value = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    session.add(UserSession(token_sha256=_sha(value), user_id=None, token_binding=token_binding(tok),
+                            created_at=now, expires_at=now + timedelta(hours=SESSION_HOURS)))
+    session.commit()
+    return value
+
+
+def end_stale_token_sessions(session, commit: bool = True) -> int:
+    """Delete the token sessions that no longer open anything: expired, or opened with another
+    token than the current one (all of them when no token is set). Run when the API starts, so a
+    token change ends them for good, and at each token sign-in. Returns how many went."""
+    from .models import UserSession
+    tok, now, n = token(), datetime.now(timezone.utc), 0
+    for row in session.scalars(select(UserSession).where(UserSession.user_id.is_(None))):
+        if tok is None or not same_secret(row.token_binding or "", token_binding(tok)) or _aware(row.expires_at) < now:
+            session.delete(row)
+            n += 1
+    if commit:
+        session.commit()
+    return n
+
+
 def end_sessions(session, user_id: int, keep: str | None = None) -> None:
     """Sign a person out everywhere (but the session `keep`, if given). The caller commits."""
     from .models import UserSession
@@ -240,15 +305,22 @@ def _principal(session, request: Request) -> Principal | None:
     tok = token()
     header = request.headers.get("authorization", "")
     cookie = request.cookies.get(COOKIE, "")
-    if tok and ((header.lower().startswith("bearer ") and same_secret(header[7:].strip(), tok))
-                or (cookie and same_secret(cookie, token_session_value(tok)))):
+
+    def operator() -> Principal:
         # The deployment's token: an owner of the default organization, as before there were others.
         return Principal(kind="token", organization_id=orgscope.default_id(session), name="operator token",
                          is_owner=True)
-    if m != "people" or not cookie:
+    if tok and header.lower().startswith("bearer ") and same_secret(header[7:].strip(), tok):
+        return operator()
+    if not cookie:
         return None
     row = session.scalar(select(UserSession).where(UserSession.token_sha256 == _sha(cookie)))
     if row is None or _aware(row.expires_at) < datetime.now(timezone.utc):
+        return None
+    if row.user_id is None:             # a browser signed in with the token, while it is the same token
+        ok = tok is not None and same_secret(row.token_binding or "", token_binding(tok))
+        return operator() if ok else None
+    if m != "people":
         return None
     user = session.get(User, row.user_id)
     if user is None or user.disabled:
