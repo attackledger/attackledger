@@ -92,3 +92,48 @@ def test_gw1_the_agents_own_calls_are_still_sent(stack):
     assert claude_call(stack, 6, json.dumps({"model": model, "messages": [], "tools": [AGENT_TOOL]}).encode(),
                        path="/v1/messages/count_tokens")[0] == 200
     assert len(stack.up.requests) == 2
+
+
+# ---- GW-2: upstream connections were opened before the rate token ------------------------------
+
+def test_gw2_connections_to_targets_are_paced_like_requests(stack):
+    stack.api.jobs[1]["rules"]["rate_limit_rps"] = 3
+    opened = []
+    inner = stack.gw.open_connection
+
+    async def counting(ip, port, ssl=None, server_hostname=None):
+        opened.append(time.monotonic())
+        return await inner(ip, port, ssl=ssl, server_hostname=server_hostname)
+    stack.gw.open_connection = counting
+    results = []
+    threads = [threading.Thread(target=lambda i=i: results.append(stack.get(f"http://app.example.com/{i}")[0]))
+               for i in range(9)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert results.count(200) == 9
+    # Before the fix all nine TCP (and TLS) connections were opened at once; only the request
+    # heads waited for a token.
+    assert peak(opened) <= 3 and peak([r["t"] for r in stack.up.requests]) <= 3
+
+
+def test_gw2_a_request_refused_for_the_rate_opens_no_connection(stack, monkeypatch):
+    monkeypatch.setattr(gateway, "MAX_WAIT", 0.2)
+    stack.api.jobs[1]["rules"]["rate_limit_rps"] = 1
+    opened = []
+    inner = stack.gw.open_connection
+
+    async def counting(ip, port, ssl=None, server_hostname=None):
+        opened.append(port)
+        return await inner(ip, port, ssl=ssl, server_hostname=server_hostname)
+    stack.gw.open_connection = counting
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(stack.get("http://app.example.com/")[0]))
+               for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert sorted(results) == [200, 429, 429, 429, 429]
+    assert len(opened) == 1 and len(stack.up.requests) == 1

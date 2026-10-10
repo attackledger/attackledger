@@ -674,6 +674,10 @@ class Gateway:
         self.limiters: dict[int, Limiter] = {}
         self.dns_limiters: dict[int, Limiter] = {}
         self.passive_limiters: dict[str, Limiter] = {}
+        # Upstream connections are paced too, before they are opened: the request token is taken
+        # only once the connection is open, so without these a tool's concurrency would open
+        # connections (and TLS handshakes) to a target at any rate (security review GW-2).
+        self.connect_limiters: dict[object, Limiter] = {}
         self._rules: dict[tuple, tuple[float, Rules | Refused]] = {}
         self._rules_locks: dict[tuple, asyncio.Lock] = {}
         self._accounts: dict[tuple, tuple[float, dict | Refused]] = {}
@@ -807,6 +811,21 @@ class Gateway:
         if ip in await self._denied_addresses():
             raise Refused(403, f"{host} resolves to an address of this deployment, which is never contacted")
         return str(ip)
+
+    def connect_limiter(self, rules: Rules, kind: str, host: str) -> Limiter | None:
+        """The limiter a new upstream connection waits for: the engagement's rate for targets,
+        PASSIVE_RPS per passive host. Service calls (the Claude API) are not paced."""
+        if kind == "target":
+            key, rate = rules.engagement_id, rules.rate_limit_rps
+        elif kind == "passive":
+            key, rate = ("passive", host), PASSIVE_RPS
+        else:
+            return None
+        lim = self.connect_limiters.get(key)
+        if lim is None:
+            lim = self.connect_limiters[key] = Limiter(rate, clock=self.clock)
+        lim.rate = rate
+        return lim
 
     def limiter(self, rules: Rules) -> Limiter:
         lim = self.limiters.get(rules.engagement_id)
@@ -1053,6 +1072,9 @@ class Gateway:
         upw = None
         label = account["label"] if account else None
         try:
+            pace = self.connect_limiter(rules, kind, host)
+            if pace is not None:
+                await pace.acquire(MAX_WAIT)        # before anything reaches the target, the handshake too
             try:
                 ip = await self.resolve(host)
                 ctx = None if scheme == "http" else (self.insecure_ctx if kind == "target" else self.verify_ctx)
