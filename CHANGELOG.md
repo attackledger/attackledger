@@ -53,6 +53,19 @@ Gateway and worker isolation (`GATEWAY.md`):
   the approval was used. They are now refused where they come in (422 for test accounts, a tool
   error for the agent, no approval of such a request), and the gateway logs a refusal instead of
   dropping the connection.
+- **One request log row the API refused stopped the gateway's log, and then all traffic** (GW-11,
+  third pass). The gateway sends an unwritten batch again until the API takes it, and refuses every
+  request once 5,000 rows wait; the API refused the whole batch for one bad row. Any tool in the
+  worker could do it: an `X-AttackLedger-As` label longer than 16 characters was logged whole, and
+  the API refused it (422). The label is now logged as the column holds it, and one row can no
+  longer hold the log up: the API writes every row it can and answers, per row, the ones it cannot
+  store, storing in each one's place a placeholder (verdict `unlogged`, no URL, and why), so the log
+  still counts the traffic it could not record. The gateway sets such rows aside in a bounded
+  quarantine file in its private volume (`/data/gateway/log-quarantine.jsonl`, holding only what
+  the log row holds); a batch refused whole with 400, 413 or 422 is halved until the row is found.
+  An API or database that is down, a 5xx or a wrong token keep the rows queued, and the gateway
+  still fails closed. A lone surrogate in a row (a 422, then a 500, for the whole batch) is kept
+  as U+FFFD, and a time with no UTC form is a placeholder.
 
 Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers changed the same way:
 - **The verifier missed a voided receipt reported as receipted** (EV-1). Setting a void lane's
@@ -176,7 +189,17 @@ starts.
 On a Postgres server whose `TimeZone` is not UTC (not the Compose stack's), times written before
 this upgrade stay shifted by that zone's offset; new ones are stored in UTC.
 
+Migration 0025 (run when the API starts) changes three columns of `gateway_requests` to BIGINT. On
+Postgres that rewrites the table under a lock: with a large request log the API takes longer to
+start, and the gateway queues its rows (failing closed past 5,000) until it is up. Counts recorded
+before as 2,147,483,647 stay so. Rows the gateway sets aside are in `/data/gateway/log-quarantine.jsonl`
+in the `gateway-private` volume; a backup of the database does not include them.
+
 ### Fixed
+- **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on
+  Postgres). They were 32-bit `INTEGER`, so a response past 2 GiB, which a target decides, was
+  recorded as 2,147,483,647 bytes; the exact count is kept now, up to 2^63 - 1. A negative duration
+  is recorded as unknown.
 - **A NUL character in a request gave a 500 on Postgres**, after part of the work, where SQLite
   stored it. Now on every database: in the path or query 400, in a person's JSON 422 with nothing
   stored; in an import, a row whose URL holds one is listed as unreadable, and other fields keep

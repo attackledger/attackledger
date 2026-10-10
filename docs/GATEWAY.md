@@ -42,7 +42,7 @@ gateway is the second (it makes trying useless). The nuclei template classifier 
 | CA | `/data/gateway` (private volume), `/data/gateway-public/ca.pem` | Created on first start (EC P-256, 5 years). Leaf certificates per host, in memory and in a private temporary folder. Only the worker mounts the public certificate |
 | DNS | same process, UDP 53, on the worker's network only | Answers A, AAAA and CNAME questions for names in scope of an engagement that has a running job; refuses everything else |
 | Rules | `GET`/`POST /gateway/*` on the API | The gateway asks the API who a job credential belongs to and what that engagement's rules are; it holds no database credentials |
-| Request log | table `gateway_requests` (migration `0019`) | One row per request, probe and DNS question, allowed or refused, with the reason. Read with `GET /engagements/{id}/gateway-log` |
+| Request log | table `gateway_requests` (migrations `0019`, `0025`) | One row per request, probe and DNS question, allowed or refused, with the reason; a placeholder (`unlogged`) for a row the API could not store (decision 10). Read with `GET /engagements/{id}/gateway-log` |
 | Worker client | `server/app/egress.py` | Builds each job's credential, the proxy URL and environment per tool, the urllib opener, the resolver address and the port prober |
 | Control relay | same process, port 8081, on the worker's network only | Forwards the worker's `GET`/`POST /worker/*` calls to the API, with only `Authorization` and `Content-Type`; refuses every other path (D-042, `WORKER_API.md`) |
 
@@ -247,7 +247,8 @@ Nothing is sent when:
   reached (503);
 - the gateway token is missing on either side (the API answers 503, the gateway refuses);
 - the request log cannot be written: more than 5,000 unsent rows and every new request is
-  refused until the API takes them;
+  refused until the API takes them. A row the API refuses as such does not hold the log up: it
+  is set aside and a placeholder takes its place (decision 10); a failure of the API itself does;
 - the engagement has no identification (target traffic), no scope, or no authorization.
 
 ### 9. Test accounts and approved writes (D-040, D-041)
@@ -306,6 +307,49 @@ skip it, and ignores the proxy environment, so it needs `-proxy`). The gateway a
 404 from a job's credential, sends nothing and logs nothing: it is the tool talking to its proxy,
 not a request towards anyone. Every other request to that name is refused as out of scope.
 
+### 10. The request log: rows the API cannot store (2026-10-10)
+
+The gateway queues every row and sends the oldest 500 to `POST /gateway/log` every half second.
+A batch that is not written stays queued and is sent again, and with 5,000 rows waiting the
+gateway refuses all traffic (decision 8). Before this, one row the API refused (a test-account
+label longer than its 16 characters, sent by any tool in the worker: security review GW-11) made
+the API refuse the whole batch, so the log stopped for good and, once 5,000 rows waited, every
+engagement's traffic with it. Now a row the API definitively refuses is taken out of the queue
+without leaving the log silent:
+
+- **The API answers per row.** It writes every row it can and answers
+  `{"written": n, "unlogged": [{"index": i, "reason": "<field>: <why>"}]}`. In place of each row it
+  cannot store it stores a placeholder (`app/gatewaylog.py`): verdict `unlogged`, the engagement,
+  job, tool, kind, method, host, test-account label and approval id the row named where they are
+  valid, **no URL** (whatever was refused may be in it), no counts, and why it was not stored. The
+  engagement's log (`GET /engagements/{id}/gateway-log`) therefore shows, in `by_verdict.unlogged`,
+  how many requests it could not record. A placeholder does not report an approved write's outcome:
+  that write stays `sent` without a response status. Values the database cannot hold but the API
+  can keep are kept instead (a NUL or a lone surrogate becomes U+FFFD; counts past BIGINT are its
+  maximum; a port, status or id out of range is none).
+- **The gateway sets the row aside** in its quarantine file (`ATTACKLEDGER_GATEWAY_QUARANTINE`,
+  default `/data/gateway/log-quarantine.jsonl`, the gateway's private volume, mode 0600): one JSON
+  line per row, `{"set_aside_at", "why", "row"}`. The row is what the API was sent, so the file holds
+  nothing the log does not: URLs redacted as in the log, test accounts by label, never a header
+  value, a body or a secret. It is bounded (`gateway.QUARANTINE_MAX_BYTES`, 16 MiB): past that a
+  row is only counted (the gateway prints how many were not kept), and its placeholder is in the
+  log all the same. Unlike the log, the file is not blanked when an engagement's content is
+  deleted; remove it from the volume then, and after reading it.
+- **A whole batch refused with 400, 413 or 422** (a body limit in front of the API, or a row that
+  breaks the request itself) is halved until the row the API refuses is alone. Before that row is
+  set aside, the gateway sends its placeholder by itself: only if the API takes it is the row the
+  problem; if the API refuses the placeholder too, the row stays queued, as for any other failure.
+  (An API older than the gateway, which knows no `unlogged` verdict, refuses the placeholder: the
+  log then stops at that row as it did before. The gateway and the API run from the same image.) Measured in the tests: 150 rows with 2 such rows, 64 per batch,
+  are written in at most 30 calls, in order.
+- **Every other failure keeps the rows queued and is retried**, as before: no answer, a 5xx, 401,
+  403, 404 or 429. The gateway still fails closed when the API or the database is down, its token
+  is wrong, or the database refuses a row (a 5xx: nothing in the API's checks predicted it, and
+  resending after a fix writes it).
+
+The byte counts and the duration are 64-bit since migration `0025` (they were 32-bit INTEGER on
+Postgres, where a response past 2 GiB did not fit; the API had kept such counts as 2^31 - 1).
+
 ## Threat model
 
 The question: what can a tool inside the worker do, if it is buggy (nuclei sending a POST) or
@@ -326,7 +370,8 @@ covers the whole worker process too.
 - go over the engagement's rate ceiling, whatever its concurrency (requests queue or are refused);
 - send target traffic without the engagement's identification, or with a forged one;
 - use a finished or cancelled job's credential, or name another engagement in its credential;
-- send a request the log does not record (the gateway refuses when the log is not being written);
+- send a request the log does not record (the gateway refuses when the log is not being written;
+  a row the API cannot store is a placeholder in the log and is kept in the gateway's quarantine file);
 - read the CA private key or the gateway token (not mounted in the worker);
 - **connect to the database** (it is on no network with it and has no credentials), or read the
   master key, an engagement key, a blob or the Anthropic API key (none is in the worker);
@@ -366,11 +411,15 @@ passive sources and the Claude API.
   that is not one of the container's addresses within 30 seconds stops the gateway; empty: every
   interface) and `ATTACKLEDGER_GATEWAY_TARGET_NETWORKS` (names, addresses or subnets marking the
   gateway's networks that hold targets; the compose files set `gateway-lab`; empty: none of its own
-  networks is a target). Worker: `ATTACKLEDGER_GATEWAY` (proxy address),
+  networks is a target), `ATTACKLEDGER_GATEWAY_QUARANTINE` (the file for request log rows the API
+  refused, default `/data/gateway/log-quarantine.jsonl`). Worker: `ATTACKLEDGER_GATEWAY` (proxy address),
   `ATTACKLEDGER_GATEWAY_DNS`, `ATTACKLEDGER_GATEWAY_CA`, `ATTACKLEDGER_WORKER_API` (default
   `http://gateway:8081`).
 - The request log: `GET /engagements/{id}/gateway-log` (any role on the engagement), with
-  totals by verdict, kind and method and the latest rows. `bytes_sent` is the request as the
+  totals by verdict, kind and method and the latest rows. `unlogged` rows are placeholders for
+  rows the API could not store (decision 10); the rows themselves are in the gateway's quarantine
+  file (`docker compose exec gateway cat /data/gateway/log-quarantine.jsonl`), and the gateway's
+  output says each time one is set aside. `bytes_sent` is the request as the
   gateway wrote it upstream, head and body (it was always 0 before 2026-10-09); each row names the
   test account (`account`) and the approval (`approval_id`) it used, if any.
 - Tools never check for updates: every ProjectDiscovery tool (subfinder, dnsx, httpx, katana,

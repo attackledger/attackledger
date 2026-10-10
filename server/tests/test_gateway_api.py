@@ -112,14 +112,19 @@ def test_request_log_is_written_by_the_gateway_and_read_by_members(api):
              "verdict": "refused", "reason": "POST is refused"},
             {"at": "2026-10-09T12:00:02+00:00", "engagement_id": None, "job_id": 12345, "tool": "unknown",
              "kind": "target", "method": "GET", "url": "http://evil.test/", "status": 407, "verdict": "refused"}]
-    assert gw(api, "POST", "/gateway/log", json={"rows": rows}).json() == {"written": 3}
-    bad = {**rows[0], "verdict": "maybe"}
-    assert gw(api, "POST", "/gateway/log", json={"rows": [bad]}).status_code == 422
+    assert gw(api, "POST", "/gateway/log", json={"rows": rows}).json() == {"written": 3, "unlogged": []}
     log = api.get(f"/engagements/{eng}/gateway-log").json()     # open mode: the local operator reads it
     assert log["total"] == 2 and log["by_verdict"] == {"allowed": 1, "refused": 1}
     assert log["by_method"] == {"GET": 1, "POST": 1} and log["rows"][0]["method"] == "POST"
     assert log["rows"][1]["at"].startswith("2026-10-09T12:00:00")
     assert api.get(f"/engagements/{eng}/gateway-log?verdict=refused").json()["total"] == 1
+    # A row the API cannot store is not stored as sent: a placeholder takes its place (gatewaylog.py).
+    bad = {**rows[0], "verdict": "maybe"}
+    r = gw(api, "POST", "/gateway/log", json={"rows": [bad]})
+    assert r.status_code == 200 and r.json()["written"] == 0 and r.json()["unlogged"][0]["index"] == 0
+    log = api.get(f"/engagements/{eng}/gateway-log").json()
+    assert log["by_verdict"] == {"allowed": 1, "refused": 1, "unlogged": 1}
+    assert log["rows"][0]["verdict"] == "unlogged" and log["rows"][0]["url"] == ""
     # The row for an unknown job is kept, without a job the database does not have.
     from app.models import GatewayRequest
     with api.Session() as s:

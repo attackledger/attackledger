@@ -77,7 +77,7 @@ from urllib.parse import parse_qsl, quote, unquote, unquote_plus, urlsplit
 
 import h11
 
-from . import redact, scope
+from . import gatewaylog, redact, scope
 
 READ_ONLY = frozenset({"GET", "HEAD", "OPTIONS"})
 # Never forwarded: they describe one hop, not the request (RFC 9110 7.6.1), or carry our credential.
@@ -111,6 +111,12 @@ RULES_TTL = 2.0          # a cancelled job or a changed rule takes effect within
 DNS_SCOPES_TTL = 3.0
 LOG_BACKLOG = 5000       # unsent log rows; above this, nothing is sent (fail closed)
 LOG_BATCH = 500
+# The API refused what it was sent, not a fault resending fixes: a body it cannot read, too large,
+# or a row it cannot take. The batch is halved until the row is found; that row is set aside (the
+# quarantine file) and a placeholder is logged in its place (gatewaylog.py). Every other answer
+# (no answer, 5xx, 401, 403, 404, 429) keeps the rows queued, to be sent again.
+LOG_REFUSED = frozenset({400, 413, 422})
+QUARANTINE_MAX_BYTES = 16 * 1024 * 1024    # rows past this are not kept in the file; their placeholders still are
 CONNECT_TIMEOUT = 10.0
 PROBE_TIMEOUT = 3.0
 READ_TIMEOUT = 60.0      # between two reads from either side
@@ -746,8 +752,10 @@ class Tunnel:
 class Gateway:
     def __init__(self, api: Api, ca: CA | None, *, policy: Policy | None = None,
                  deny_hosts=DENY_HOSTS, upstream_dns: str | None = None, clock=time.monotonic,
-                 networks=None, target_networks=()):
+                 networks=None, target_networks=(), quarantine: str | None = None):
         self.api, self.ca, self.policy = api, ca, policy or Policy()
+        # Where request log rows the API refused are set aside (in the gateway's private volume).
+        self.quarantine_path = quarantine
         self.deny_hosts = tuple(deny_hosts)
         # The networks the gateway is attached to (a callable: interface_networks, or a list in
         # tests), and the names or addresses that mark which of them hold targets (the lab's).
@@ -771,6 +779,9 @@ class Gateway:
         self._own_networks: tuple[float, list, list] = (0.0, [], [])
         self.log_rows: list[dict] = []
         self.dropped = 0
+        self.log_batch = LOG_BATCH        # smaller while the row the API refuses is searched for
+        self.quarantined = 0              # rows set aside, and how many of them the file could not keep
+        self.quarantine_lost = 0
         # Upstream connector, replaced in tests.
         self.open_connection = asyncio.open_connection
 
@@ -980,23 +991,65 @@ class Gateway:
                "url": url[:2000], "host": host[:255], "port": port, "status": status, "verdict": verdict,
                "reason": reason[:300], "bytes_sent": sent, "bytes_received": received,
                "duration_ms": int((self.clock() - started) * 1000) if started is not None else None,
-               "account": account, "approval_id": approval_id}
+               "account": account[:16] if account else None, "approval_id": approval_id}
         if len(self.log_rows) >= 2 * LOG_BACKLOG:
             self.dropped += 1         # only refusals get here: nothing is sent while the log is full
             return
         self.log_rows.append(row)
 
     async def flush_log(self) -> bool:
+        """Sends the oldest waiting rows. True if the log moved on (written, or a refused row found
+        and set aside); False if nothing was written, and the rows wait to be sent again."""
         if not self.log_rows:
+            self.log_batch = LOG_BATCH
             return True
-        batch = self.log_rows[:LOG_BATCH]
+        batch = self.log_rows[:max(1, min(LOG_BATCH, self.log_batch))]
         status, data = await self.api.post_log(batch)
         if status == 200:
+            for i, why in _unlogged(data, len(batch)):
+                self.set_aside(batch[i], f"the API stored a placeholder instead: {why}")
             del self.log_rows[:len(batch)]
             return True
+        if status in LOG_REFUSED:
+            if len(batch) > 1:
+                self.log_batch = len(batch) // 2          # the row it refuses is in here: halve until it is alone
+                return True
+            # One row, refused. Only if the API takes its placeholder is it this row and not the API.
+            why = f"the API refused it with {status}{_detail(data)}"
+            p_status, _ = await self.api.post_log([gatewaylog.placeholder(batch[0], why)])
+            if p_status == 200:
+                self.set_aside(batch[0], why)
+                del self.log_rows[:1]
+                self.log_batch = LOG_BATCH
+                return True
+            status, data = p_status, {"detail": "the API refused a placeholder row too"}
         print(f"gateway: request log not written ({status}: {str(data)[:200]}); "
               f"{len(self.log_rows)} rows waiting", file=sys.stderr, flush=True)
         return False
+
+    def set_aside(self, row: dict, why: str) -> None:
+        """Keeps a row the API would not store in the quarantine file, one JSON line each. The row is
+        what the API was sent, so the file holds nothing the log would not (URLs redacted as there,
+        no header values). The file is bounded: past QUARANTINE_MAX_BYTES a row is only counted, and
+        its placeholder in the log still says it existed."""
+        self.quarantined += 1
+        line = (json.dumps({"set_aside_at": datetime.now(timezone.utc).isoformat(), "why": why[:300], "row": row},
+                           separators=(",", ":")) + "\n").encode()
+        kept = ""
+        try:
+            if not self.quarantine_path:
+                raise OSError("no quarantine file is configured")
+            fd = os.open(self.quarantine_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "ab") as f:
+                if os.fstat(fd).st_size + len(line) > QUARANTINE_MAX_BYTES:
+                    raise OSError(f"the file is full ({QUARANTINE_MAX_BYTES} bytes)")
+                f.write(line)
+            kept = f"kept in {self.quarantine_path}"
+        except OSError as e:
+            self.quarantine_lost += 1
+            kept = f"not kept: {str(e)[:120]}; {self.quarantine_lost} rows not kept so far"
+        print(f"gateway: a request log row the API refused was set aside, a placeholder logged in its place "
+              f"({why[:160]}; {kept})", file=sys.stderr, flush=True)
 
     async def flush_forever(self) -> None:
         while True:
@@ -1716,10 +1769,30 @@ def _env_hosts(name: str, base) -> frozenset:
     return frozenset(base) | extra
 
 
+def _unlogged(data, n: int) -> list[tuple[int, str]]:
+    """The rows of a batch of n that the API answered as not stored (POST /gateway/log)."""
+    out = {}
+    for u in (data.get("unlogged") if isinstance(data, dict) else None) or []:
+        i = u.get("index") if isinstance(u, dict) else None
+        if type(i) is int and 0 <= i < n:
+            out[i] = str(u.get("reason") or "")[:200]
+    return sorted(out.items())
+
+
+def _detail(data) -> str:
+    """Where the API says a refused batch went wrong (FastAPI's field and message, never the
+    value it repeats as "input")."""
+    detail = data.get("detail") if isinstance(data, dict) else None
+    if isinstance(detail, list) and detail and isinstance(detail[0], dict):
+        loc = ".".join(x for x in (detail[0].get("loc") or []) if isinstance(x, str) and x not in ("body", "rows"))
+        return f" ({loc}: {str(detail[0].get('msg', ''))[:120]})"
+    return f" ({detail[:120]})" if isinstance(detail, str) else ""
+
+
 def main() -> None:
     token = gateway_token(create=True)
-    ca = CA(os.environ.get("ATTACKLEDGER_GATEWAY_STATE", "/data/gateway"),
-            os.environ.get("ATTACKLEDGER_GATEWAY_PUBLIC", "/data/gateway-public"))
+    state = os.environ.get("ATTACKLEDGER_GATEWAY_STATE", "/data/gateway")
+    ca = CA(state, os.environ.get("ATTACKLEDGER_GATEWAY_PUBLIC", "/data/gateway-public"))
     deny = tuple(h.strip() for h in os.environ.get("ATTACKLEDGER_GATEWAY_DENY_HOSTS", ",".join(DENY_HOSTS)).split(",")
                  if h.strip())
     gw = Gateway(Api(os.environ.get("ATTACKLEDGER_API_URL", "http://api:8000"), token), ca,
@@ -1728,7 +1801,8 @@ def main() -> None:
                                service_key=os.environ.get("ANTHROPIC_API_KEY")),
                  deny_hosts=deny, upstream_dns=os.environ.get("ATTACKLEDGER_GATEWAY_UPSTREAM_DNS") or None,
                  target_networks=tuple(t.strip() for t in os.environ.get("ATTACKLEDGER_GATEWAY_TARGET_NETWORKS", "")
-                                       .split(",") if t.strip()))
+                                       .split(",") if t.strip()),
+                 quarantine=os.environ.get("ATTACKLEDGER_GATEWAY_QUARANTINE") or os.path.join(state, "log-quarantine.jsonl"))
     dns_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_DNS_PORT", "53"))
     control_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_CONTROL_PORT", "8081"))
     hosts = listen_addresses(os.environ.get("ATTACKLEDGER_GATEWAY_LISTEN", ""))
