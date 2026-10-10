@@ -502,3 +502,66 @@ def test_gw9_the_relay_the_proxy_and_the_resolver_answer_on_the_listen_address_o
             loop.run_until_complete(server.wait_closed())
     finally:
         loop.close()
+
+
+# ---- Second pass: headers from people and the API that the gateway cannot write ------------------
+
+def _approval_stack(stack, approved_headers, account=None):
+    """Agent job 6, whose approval 7 is for POST http://app.example.com/api/basket."""
+    stack.api.add(6, kind="agent", traffic="agent")
+    used = []
+
+    async def approval(job_id, secret, approval_id, method, url, body_sha256, acct):
+        used.append(approval_id)
+        return 200, {"approval_id": approval_id, "method": method, "url": url, "headers": approved_headers,
+                     "account": acct}
+
+    async def get_account(job_id, secret, label, host):
+        return 200, account
+    stack.api.approval, stack.api.account = approval, get_account
+    return used
+
+
+@pytest.mark.parametrize("value", ["a\r\nInjected: 1", "a\rb", "a\x00b", "caf€"])
+def test_gw10_an_approved_header_the_gateway_cannot_write_is_a_refused_row(stack, value):
+    """An approved write's headers come from the API. One the gateway cannot write ended the
+    connection after the approval was used, with no row in the request log."""
+    used = _approval_stack(stack, [["Content-Type", "application/json"], ["X-Note", value]])
+    status, _, body = stack.get("http://app.example.com/api/basket", method="POST", body=b'{"item": 1}',
+                                auth=stack.auth(job=6, tool="agent"), headers={"X-AttackLedger-Approval": "7"})
+    assert status == 400 and b"X-Note" in body and value.encode("utf-8") not in body
+    assert used == [7] and stack.up.requests == []
+    row = stack.rows(1)[-1]
+    assert row["verdict"] == "refused" and row["approval_id"] == 7 and "X-Note" in row["reason"]
+    assert value not in row["reason"]
+
+
+def test_gw10_a_test_accounts_header_the_gateway_cannot_write_is_refused_before_the_approval(stack):
+    """Checked when the account's headers arrive, so the approval is not used up."""
+    session = "sid=caf€-session-value"
+    used = _approval_stack(stack, [["Content-Type", "application/json"]],
+                           account={"label": "alice", "headers": [["Cookie", session]]})
+    status, _, body = stack.get("http://app.example.com/api/basket", method="POST", body=b'{"item": 1}',
+                                auth=stack.auth(job=6, tool="agent"),
+                                headers={"X-AttackLedger-Approval": "7", "X-AttackLedger-As": "alice"})
+    assert status == 403 and b"Cookie" in body and b"Latin-1" in body
+    assert used == [] and stack.up.requests == []
+    row = stack.rows(1)[-1]
+    assert row["verdict"] == "refused" and row["account"] == "alice" and session not in row["reason"]
+    status, _, _ = stack.get("http://app.example.com/me", auth=stack.auth(job=6, tool="agent"),
+                             headers={"X-AttackLedger-As": "alice"})
+    assert status == 403 and stack.up.requests == []
+
+
+def test_gw10_what_the_gateway_accepts_h11_can_write():
+    """header_problem is stricter than h11, never looser: every value it lets through, h11 writes."""
+    import h11
+    for c in map(chr, range(0, 0x180)):
+        value = f"a{c}b"
+        if gateway.header_problem("X-Test", value) is None:
+            h11.Request(method="GET", target="/", headers=[("Host", "h"), ("X-Test", value.encode("latin-1"))])
+        if gateway.header_problem(f"X{c}Y", "v") is None:
+            h11.Request(method="GET", target="/", headers=[("Host", "h"), (f"X{c}Y".encode(), b"v")])
+    assert gateway.header_problem("X-Test", "tab\tinside and spaces") is None
+    for bad in (" lead", "trail ", "a\x0bb", "a\x7fb"):
+        assert gateway.header_problem("X-Test", bad)

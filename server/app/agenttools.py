@@ -58,7 +58,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
-from . import approvals, blobs, egress, gates, ledger, pagetext, redact, scope, testaccounts
+from . import approvals, blobs, egress, gateway, gates, ledger, pagetext, redact, scope, testaccounts
 from .models import Evidence, ItemState, Job, Lane, Lead, WriteProposal
 
 READ_ONLY_METHODS = ("GET", "HEAD", "OPTIONS")
@@ -202,6 +202,9 @@ def check_headers(items, ident: dict[str, str]) -> dict[str, str]:
         value = _text(h.get("value"), "header value", required=False, limit=4000)
         if not (_clean(name) and _clean(value)) or ":" in name or " " in name:
             raise ToolError(f"header {name!r} is malformed")
+        problem = gateway.header_problem(name, value)     # what the gateway can send
+        if problem:
+            raise ToolError(f"header {name[:60]!r} cannot be sent: {problem}")
         if name.lower() in reserved or name.lower().startswith("x-attackledger-"):
             raise ToolError(f"header {name} is set by AttackLedger and cannot be changed")
         out[name] = value

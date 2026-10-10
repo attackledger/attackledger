@@ -161,6 +161,11 @@ CONTROL_PATH = re.compile(r"^/worker/[a-z0-9/_-]{0,200}$")
 CONTROL_METHODS = frozenset({"GET", "POST"})
 MAX_CONTROL_BODY = 16 * 1024 * 1024
 DNS_TYPES = {1: "A", 5: "CNAME", 28: "AAAA"}
+# A header name as HTTP/1.1 allows it (RFC 9110 5.1, a token), and what h11 accepts in a value
+# when it writes one: no NUL, no CR, LF or other whitespace but spaces and tabs inside.
+HEADER_NAME = re.compile(r"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
+_WIRE_NAME = re.compile(rb"[-!#$%&'*+.^_`|~0-9A-Za-z]+")
+_WIRE_VALUE = re.compile(rb"(?:[^\x00\s]+(?:[ \t]+[^\x00\s]+)*)?")
 NETWORK_REFRESH = 60.0   # the deployment's addresses and the gateway's own networks are re-read this often
 
 
@@ -465,6 +470,57 @@ def credential(auth: str | None) -> tuple[int, str, str]:
     return int(m.group(1)), m.group(2) or "unknown", secret
 
 
+def header_problem(name, value) -> str | None:
+    """Why a header that a person or the API gave (a test account's, D-040, or an approved
+    write's, D-041) cannot be sent as it is, or None. Stricter than what h11 accepts when it
+    writes a request: no control character at all (tab inside a value aside), and Latin-1 only,
+    which is how the gateway writes header values. Checked where the value comes in (the API
+    answers 422) and again here before anything is sent. The sentence never repeats the value."""
+    if not isinstance(name, str) or not HEADER_NAME.fullmatch(name):
+        return "its name is not a header name (letters, digits and !#$%&'*+-.^_`|~ only)"
+    if not isinstance(value, str):
+        return "its value is not text"
+    if "\r" in value or "\n" in value:
+        return "its value has a line break (CR or LF)"
+    if any((ord(c) < 32 and c != "\t") or ord(c) == 127 for c in value):
+        return "its value has a control character"
+    if any(ord(c) > 255 for c in value):
+        return "its value has a character outside Latin-1"
+    if value != value.strip(" \t"):
+        return "its value starts or ends with a space"
+    return None
+
+
+def checked_headers(pairs, what: str) -> list[tuple[bytes, bytes]]:
+    """[name, value] pairs from the API (an approved request's headers, a test account's) as
+    bytes to send. Raises Refused, naming the header but never its value."""
+    out = []
+    for pair in pairs or []:
+        try:
+            name, value = pair
+        except (TypeError, ValueError):
+            raise Refused(400, f"not sent: {what} has a header that is not a name and a value")
+        problem = header_problem(name, value)
+        if problem:
+            label = name[:60] if isinstance(name, str) and HEADER_NAME.fullmatch(name) else "(unnamed)"
+            raise Refused(400, f"not sent: {what} has a header {label} that cannot be sent: {problem}")
+        out.append((name.encode("ascii"), value.encode("latin-1")))
+    return out
+
+
+def _wire_problem(headers) -> str | None:
+    """Why h11 would refuse to write these headers, or None. Checked before anything is sent, so
+    a header the gateway cannot write is a refusal in the log, not a connection ended by an error
+    (the value is never named: it may be a test account's session)."""
+    for k, v in headers:
+        if not _WIRE_NAME.fullmatch(k):
+            return "a header name is not a valid token"
+        if not _WIRE_VALUE.fullmatch(v):
+            name = k.decode("ascii")[:60]
+            return f"the value of header {name} has a line break, a NUL or another character HTTP/1.1 does not allow"
+    return None
+
+
 def _header(headers, name: bytes) -> str | None:
     for k, v in headers:
         if k == name:
@@ -602,7 +658,7 @@ class Policy:
         approved ones, minus hop-by-hop and identification names, then Host, the identification
         (targets), the test account's headers and Connection: close."""
         if approved is not None:
-            headers = [(str(k).lower().encode("latin-1"), str(v).encode("latin-1")) for k, v in approved]
+            headers = [(k.lower(), v) for k, v in checked_headers(approved, "the approved request")]
         drop = set(HOP_BY_HOP) | {ERRORS_HEADER.decode(), AS_HEADER.decode(), APPROVAL_HEADER.decode()}
         conn = _header(headers, b"connection") or ""
         drop |= {t.strip().lower() for t in conn.split(",") if t.strip()}
@@ -616,6 +672,9 @@ class Policy:
         out += ident
         out = self.inject_credentials(rules, kind, out, account)
         out.append((b"Connection", b"close"))
+        problem = _wire_problem(out)
+        if problem:
+            raise Refused(400, f"not sent: {problem}")
         return out
 
     # ---- hooks for later decisions -------------------------------------------------
@@ -626,9 +685,10 @@ class Policy:
         never holds header values."""
         if not account or kind != "target":
             return headers
-        names = {str(n).lower() for n, _ in account["headers"]} | {"accept-encoding"}
+        extra = checked_headers(account["headers"], f"test account {account.get('label', '')}".strip())
+        names = {n.decode("ascii").lower() for n, _ in extra} | {"accept-encoding"}
         out = [(k, v) for k, v in headers if k.decode("latin-1").lower() not in names]
-        out += [(str(n).encode("latin-1"), str(v).encode("latin-1")) for n, v in account["headers"]]
+        out += extra
         out.append((b"Accept-Encoding", b"identity"))
         return out
 
@@ -739,6 +799,10 @@ class Gateway:
             detail = data.get("detail") if isinstance(data, dict) else None
             if status == 200 and isinstance(data, dict) and isinstance(data.get("headers"), list):
                 hit = (self.clock() + ACCOUNT_TTL, {"label": str(data.get("label") or label), "headers": data["headers"]})
+                try:            # checked here, before an approval is used for a request as this account
+                    checked_headers(data["headers"], f"test account {label}")
+                except Refused as e:
+                    hit = (hit[0], Refused(403, e.reason))
             elif status in (403, 404):
                 hit = (self.clock() + ACCOUNT_TTL, Refused(403, f"not sent as test account {label}: "
                                                                 f"{detail or 'refused by the API'}"))
@@ -1101,8 +1165,8 @@ class Gateway:
                 approved = await self.use_approval(rules, auth, approval_id, method, url, body,
                                                    account["label"] if account else None)
                 self.policy.check(rules, kind, method, path,
-                                  [(str(k).lower().encode("latin-1"), str(v).encode("latin-1"))
-                                   for k, v in approved["headers"]], write=True)
+                                  [(k.lower(), v) for k, v in checked_headers(approved["headers"],
+                                                                              "the approved request")], write=True)
             out = self.policy.headers(rules, kind, ev.headers, host if port == default else f"{host}:{port}",
                                       account=account, approved=approved["headers"] if approved else None)
             if body:
@@ -1136,6 +1200,10 @@ class Gateway:
         upw = None
         label = account["label"] if account else None
         try:
+            try:        # h11 checks the head here, before anything is connected or sent
+                request = h11.Request(method=method, target=path, headers=headers)
+            except (h11.LocalProtocolError, UnicodeError):
+                raise Refused(400, "not sent: the request cannot be written as HTTP/1.1")
             pace = self.connect_limiter(rules, kind, host)
             if pace is not None:
                 await pace.acquire(MAX_WAIT)        # before anything reaches the target, the handshake too
@@ -1159,7 +1227,7 @@ class Gateway:
                 await lim.acquire()
             # Nothing between the token and the write: the head leaves with the token's time.
             upc = h11.Connection(h11.CLIENT, max_incomplete_event_size=MAX_HEAD)
-            out = upc.send(h11.Request(method=method, target=path, headers=headers))
+            out = upc.send(request)
             if body:
                 out += upc.send(h11.Data(data=body))
             out += upc.send(h11.EndOfMessage())
@@ -1182,7 +1250,7 @@ class Gateway:
             if upw is not None:
                 upw.close()
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
-                        status=e.status, verdict="refused" if e.status in (403, 429) else "failed",
+                        status=e.status, verdict="refused" if e.status in (400, 403, 429) else "failed",
                         reason=e.reason, sent=sent, started=started, account=label, approval_id=approval_id)
             if e.status != 502 or wants_errors:
                 await self._refuse(conn, writer, method.encode(), e)
