@@ -176,6 +176,36 @@ On Postgres, as production runs (the suite had run on SQLite only; `tools/test_p
   A NUL in a tool's output did the same to a job's log and results on the worker's channel; it is
   kept as U+FFFD there too.
 
+Containers and dependencies (`SUPPLY_CHAIN.md`):
+- **Every container ran with Docker's default capabilities and a writable root filesystem**
+  (SC-1), and Postgres, nginx and Caddy as root. Every service now has `no-new-privileges`, no
+  capability (Caddy keeps `NET_BIND_SERVICE`, which its binary needs to run), a read-only root
+  filesystem with sized `noexec` tmpfs folders, a non-root user (Postgres 70, nginx 101) and
+  memory and process limits, in the development file too. The gateway's port 53 and nginx's port
+  80 are bound through `net.ipv4.ip_unprivileged_port_start=0`, not a capability.
+- **Base images were unpinned, and four no longer got fixes** (SC-2): nginx 1.27 and Caddy 2.8.4,
+  which face clients, Node 20 and Go 1.23 (which compiled seven recon tools). Every image is now
+  pinned by its multi-arch digest, on nginx 1.30.5, Caddy 2.11.4, Node 24.21.0 and Go 1.26.9.
+- **Python dependencies were pinned at the top only** (SC-3): 34 of the 46 installed packages
+  were whatever PyPI had on the day of the build, unchecked. `server/requirements.txt` is now a
+  lock with every package hashed (`server/requirements.in` is what people edit;
+  `tools/lock_requirements.sh` makes the lock), installed with `pip --require-hashes --no-deps
+  --only-binary :all:`. Arjun's source packages are built with a hash-pinned setuptools (SC-5).
+- **Known advisories in the API's packages** (SC-4), none found reachable in a way that mattered
+  here: cryptography 43.0.3 → 50.0.0, starlette 0.41.3 → 1.6.0 (FastAPI 0.115.6 → 0.136.3),
+  pip 25.0.1 → 26.2.1, pytest 8.3.4 → 9.1.1. `pip-audit` now finds none in either image.
+- **The web build ran npm install scripts** (SC-6). It now uses `npm ci --ignore-scripts`; the
+  production dependencies have no advisory, and the development tools were upgraded (Vite
+  5.4.21, ESLint 9.39.5, typescript-eslint 8.71.1), leaving two dev-server-only advisories that
+  need Vite 6.
+- **SBOM**: `tools/sbom.sh` writes a CycloneDX SBOM per image (OS packages, Python, the Go
+  modules of each recon tool, npm), from the built images (SC-7, `docs/SUPPLY_CHAIN.md`).
+- `tools/backup.sh`, `tools/restore.sh` and the pre-encryption upgrade step run their root steps
+  as one-off containers with only the capabilities they need (SC-8), so they keep working without
+  the default ones (measured: without them, root could not read the engagement keys and every
+  backup failed). The lab proxy's nginx configuration is now a file, `deploy/lab-proxy.conf`:
+  Compose cannot write inline content into a read-only container (SC-9).
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
@@ -194,6 +224,16 @@ Postgres that rewrites the table under a lock: with a large request log the API 
 start, and the gateway queues its rows (failing closed past 5,000) until it is up. Counts recorded
 before as 2,147,483,647 stay so. Rows the gateway sets aside are in `/data/gateway/log-quarantine.jsonl`
 in the `gateway-private` volume; a backup of the database does not include them.
+
+Containers and dependencies (`docs/security-review/SUPPLY_CHAIN.md`): `docker compose build`
+pulls the new base images by digest, and `docker compose down` then `docker compose up -d --wait`
+(see above) recreates every container with the new limits; volumes and data are kept. Postgres now runs as uid 70 from the start: a
+data volume made by an earlier release is already owned by it. Caddy reads
+`deploy/certs/key.pem` as root without `DAC_OVERRIDE`: keep the key owned by root (INSTALL §5
+copies it as root), or Caddy cannot read it. The web container's memory limit is 512 MB (was
+256 MB): uploads wait in a memory-backed tmpfs. Scripts of your own that `docker compose exec
+--user 0` into a container and expect root's usual powers (reading other users' files, chown) now
+need a one-off `docker compose run --cap-add ...` instead, as `tools/backup.sh` does.
 
 ### Fixed
 - **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on

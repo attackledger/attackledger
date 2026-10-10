@@ -1,0 +1,3 @@
+# pip itself, upgraded first in each image: the base image's pip has advisories
+# (docs/security-review/SUPPLY_CHAIN.md). Locked with hashes into requirements-pip.txt.
+pip==26.2.1

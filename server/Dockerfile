@@ -1,7 +1,14 @@
-FROM python:3.12-slim
+# Base images are pinned by the digest of their multi-arch index (docs/SUPPLY_CHAIN.md); the
+# tag says what the digest was when it was pinned. tools/sbom.sh lists what each image holds.
+# python:3.12.15-slim, pinned 2026-10-10.
+FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
 WORKDIR /srv
-COPY server/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Every package is pinned with the SHA-256 of its files (tools/lock_requirements.sh): pip
+# installs exactly those files or fails. --no-deps: nothing outside the lock. pip itself
+# first, since the base image's pip has advisories.
+COPY server/requirements-pip.txt server/requirements.txt ./
+RUN pip install --no-cache-dir --disable-pip-version-check --require-hashes --no-deps -r requirements-pip.txt \
+ && pip install --no-cache-dir --disable-pip-version-check --require-hashes --no-deps --only-binary :all: -r requirements.txt
 # The blob store is shared with the worker, and both run as uid 10001: each must read the
 # engagement keys and write into the engagement folders the other created (D-043).
 RUN useradd --create-home --uid 10001 api && mkdir -p /data/blobs && chown 10001 /data/blobs \

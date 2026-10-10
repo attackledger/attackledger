@@ -1,0 +1,3 @@
+# Arjun, installed apart (pip --target /opt/arjun) so its dependencies never mix with the
+# worker's. Locked with hashes into requirements-arjun.txt by tools/lock_requirements.sh.
+arjun==2.2.7
