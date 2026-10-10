@@ -925,20 +925,21 @@ class Gateway:
             addrs = [ipaddress.ip_address(i[4][0].split("%")[0]) for i in infos]
         if not addrs:
             raise Refused(502, f"{host} does not resolve")
-        ip = addrs[0]
-        if getattr(ip, "ipv4_mapped", None):
-            ip = ip.ipv4_mapped
-        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip in METADATA_ADDRESSES:
-            raise Refused(403, f"{host} resolves to {ip}, which is never contacted (loopback, link-local, cloud "
-                               f"metadata or special address)")
-        if ip in await self._denied_addresses():
-            raise Refused(403, f"{host} resolves to an address of this deployment, which is never contacted")
-        refused, _ = await self.own_networks()
-        net = next((n for n in refused if ip.version == n.version and ip in n), None)
-        if net is not None:
-            raise Refused(403, f"{host} resolves to {ip}, on the gateway's own network {net} (the Docker host and "
-                               f"this deployment), which is never contacted; only the lab's network is a target there")
-        return str(ip)
+        # The address connected to, and the IPv4 address it carries, if any (embedded_ipv4).
+        for ip in dict.fromkeys(a for a in (embedded_ipv4(addrs[0]), addrs[0]) if a is not None):
+            if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip in METADATA_ADDRESSES:
+                raise Refused(403, f"{host} resolves to {ip}, which is never contacted (loopback, link-local, cloud "
+                                   f"metadata or special address)")
+            if ip in await self._denied_addresses():
+                raise Refused(403, f"{host} resolves to an address of this deployment, which is never contacted")
+            refused, _ = await self.own_networks()
+            net = next((n for n in refused if ip.version == n.version and ip in n), None)
+            if net is not None:
+                raise Refused(403, f"{host} resolves to {ip}, on the gateway's own network {net} (the Docker host and "
+                                   f"this deployment), which is never contacted; only the lab's network is a target "
+                                   f"there")
+        mapped = addrs[0].ipv4_mapped if addrs[0].version == 6 else None
+        return str(mapped or addrs[0])          # an IPv4-mapped address is connected to as IPv4, as before
 
     def connect_limiter(self, rules: Rules, kind: str, host: str) -> Limiter | None:
         """The limiter a new upstream connection waits for: the engagement's rate for targets,
@@ -1085,6 +1086,9 @@ class Gateway:
         await self._serve(reader, writer, Tunnel(host, port, auth))
 
     async def _probe(self, conn, writer, rules: Rules, tool: str, host: str, port: int, started: float) -> None:
+        # A probe is a connection too: it waits for the connection limiter like a request does, so
+        # probes and requests together open at most the rate in connections (security recheck GW-2).
+        await self.connect_limiter(rules, "target", host).acquire(MAX_WAIT)
         ip = await self.resolve(host)
         await self.limiter(rules).acquire()
         status, reason = 200, "open"
@@ -1529,6 +1533,28 @@ def listen_addresses(value: str, *, wait: float = 30.0, resolve=socket.getaddrin
         sleep(1.0)
 
 
+NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")      # the well-known prefix; another one cannot be known
+
+
+def embedded_ipv4(ip):
+    """The IPv4 address an IPv6 address carries and is delivered to, or None: IPv4-mapped
+    (::ffff:a.b.c.d), NAT64 (the well-known prefix of RFC 6052, delivered by a translator), 6to4
+    (2002:aabb:ccdd::) and IPv4-compatible (::a.b.c.d). The checks apply to that address, so
+    loopback, metadata and the gateway's own networks are refused in these forms too (security
+    recheck)."""
+    if ip.version != 6:
+        return None
+    if ip.ipv4_mapped:
+        return ip.ipv4_mapped
+    if ip in NAT64_PREFIX:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip.sixtofour:
+        return ip.sixtofour
+    if int(ip) >> 32 == 0 and int(ip) > 1:        # ::a.b.c.d (not :: and ::1)
+        return ipaddress.IPv4Address(int(ip))
+    return None
+
+
 def _bindable(address: str) -> bool:
     """Whether this machine has the address (a socket can be bound to it)."""
     ip = ipaddress.ip_address(address)
@@ -1555,17 +1581,28 @@ async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
 
 def _decode(coding: str, body: bytes, limit: int) -> bytes:
     """A body in Content-Encoding gzip or deflate, decoded (at most `limit` bytes). ValueError for
-    any other encoding, or a body that decodes to more."""
+    any other encoding, or a body that decodes to more. A gzip body may hold several members one
+    after the other (RFC 1952 2.2), as clients read it: each one is decoded (security recheck)."""
     if coding in ("gzip", "x-gzip"):
-        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        wbits = 16 + zlib.MAX_WBITS
     elif coding == "deflate":
-        d = zlib.decompressobj(zlib.MAX_WBITS if body[:1] == b"\x78" else -zlib.MAX_WBITS)
+        wbits = zlib.MAX_WBITS if body[:1] == b"\x78" else -zlib.MAX_WBITS
     else:
         raise ValueError(f"it is encoded as {coding[:40]}, which the gateway cannot read to scrub it")
-    out = d.decompress(body, limit + 1)
-    if len(out) > limit or d.unconsumed_tail:
-        raise ValueError(f"it decodes to more than {limit} bytes")
-    return out
+    out, rest, first = b"", body, True
+    while True:
+        d = zlib.decompressobj(wbits)
+        try:
+            out += d.decompress(rest, limit + 1 - len(out))
+        except zlib.error:
+            if first:
+                raise
+            return out        # bytes after the last member that are not one: dropped, never passed on
+        if len(out) > limit or d.unconsumed_tail:
+            raise ValueError(f"it decodes to more than {limit} bytes")
+        rest, first = d.unused_data, False
+        if wbits != 16 + zlib.MAX_WBITS or not d.eof or not rest.strip(b"\0"):
+            return out        # trailing zeros pad some gzip files; anything else after deflate is ignored, as before
 
 
 async def _read_body(conn, reader, limit: int) -> bytes:

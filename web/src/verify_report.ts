@@ -1405,20 +1405,33 @@ function stateAt(records: Rec[], engId: unknown, when: Time): State {
   return st;
 }
 
-/** Whether an audit entry voiding a receipt names this one. The entry has the server's receipt
- * id, which a report does not; it is matched by lane, manifest hash and issue time. */
-function voidsReceipt(e: unknown, lane: unknown, rc: unknown, issued: Time): boolean {
+/** Whether an audit entry voiding a receipt (recorded at `when`) names this one. The entry has the
+ * server's receipt id, which a report does not; it is matched by lane, manifest hash and issue time.
+ * The receipt's issue time in a report is not signed, and the signature check accepts any time
+ * within PAYLOAD_WINDOW of the signed payload's (signed), so moving the report's copy by a second
+ * must not hide the void (security recheck EV-1): for a signed receipt, a void whose issue time is
+ * in that window names it too, if the void came after the payload was issued (a void before it is
+ * of an earlier receipt with the same manifest). A v4 payload names the audit log position it was
+ * issued at (committed); older ones, a time only. */
+function voidsReceipt(e: unknown, lane: unknown, rc: unknown, issued: Time, when: Time | null = null,
+                      signed: Time | null = null, committed: unknown = null): boolean {
   const ch = or(getk(e, "change"), dict());
   const laneRef = or(getk(ch, "lane"), dict()), receipt = or(getk(ch, "receipt"), dict());
   if (!pyEq(getk(laneRef, "id"), at(lane, "lane_id")) || !pyEq(getk(receipt, "manifest_sha256"), at(rc, "manifest_sha256"))) {
     return false;
   }
+  let t: Time;
   try {
-    return utc(at(receipt, "issued_at")).us === issued.us;
+    t = utc(at(receipt, "issued_at"));
   } catch (err) {
     caught(err, "ValueError", "KeyError", "TypeError");
     return false;
   }
+  if (t.us === issued.us) return true;
+  if (signed === null || t.us - signed.us < PAYLOAD_WINDOW[0] || t.us - signed.us > PAYLOAD_WINDOW[1]) return false;
+  const seq = getk(e, "seq");
+  if (typeName(seq) === "int" && typeName(committed) === "int") return pyLt(committed, seq);
+  return when !== null && when.us > signed.us;
 }
 
 /** With strict (--require-history), the report must carry the audit log and every receipt must
@@ -1444,10 +1457,10 @@ async function checkAuditLog(r: Dict, strict = false): Promise<[Problems, Notes]
   for (const lane of receipted) {
     const name = label(lane), rc = at(lane, "receipt");
     const sig = getk(rc, "signature");
-    let uid: unknown, who: unknown, email: unknown, issued: Time;
+    let uid: unknown, who: unknown, email: unknown, issued: Time, payload: unknown = null;
     try {
       if (truthy(sig)) {
-        const payload = loadsStr(at(sig, "payload"));
+        payload = loadsStr(at(sig, "payload"));
         [uid, who, email] = [at(at(payload, "signer"), "id"), at(at(payload, "signer"), "name"), getk(at(payload, "signer"), "email")];
       } else {
         [uid, who, email] = [getk(rc, "closed_by_user"), getk(rc, "closed_by"), getk(rc, "closed_by_email")];
@@ -1458,12 +1471,20 @@ async function checkAuditLog(r: Dict, strict = false): Promise<[Problems, Notes]
       problems.push(`${name}: the receipt's signer or issue time cannot be read`);
       continue;
     }
-    const voided = voids.find(([, e]) => voidsReceipt(e, lane, rc, issued));
+    const v4 = payloadV4(rc);
+    let signed: Time | null;      // the signed issue time, which the report's copy may differ from by PAYLOAD_WINDOW
+    try {
+      signed = payload !== null ? utc(at(payload, "issued_at")) : null;
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      signed = null;
+    }
+    const committed = v4 !== null ? getk(historyOf(v4)![0], "seq") : null;
+    const voided = voids.find(([when, e]) => voidsReceipt(e, lane, rc, issued, when, signed, committed));
     if (voided) {     // a void is for good (D-052): the lane's status in the report is not signed
       problems.push(`${name}: reported as receipted, but the change history records that this receipt was `
                     + `voided ${stamp(voided[0])}`);
     }
-    const v4 = payloadV4(rc);
     if (v4 !== null) {          // the history it was signed against must all be here (D-054)
       const a = historyOf(v4)![0];
       const upto = upTo(log, getk(a, "seq"), getk(a, "head"));
@@ -2141,8 +2162,18 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
 }
 
 /** The verifier's output, line for line as verify_report.py prints it. */
+/** Text from the report as the command line prints it: characters a terminal acts on rather
+ * than shows (C0, DEL, C1, bidirectional controls, line separators) escaped, so a name cannot print
+ * a fake result and hide the real one (security recheck). The page shows text through the DOM. */
+export function shown(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, (c) => {
+    const n = c.charCodeAt(0);
+    return n < 0x100 ? `\\x${n.toString(16).padStart(2, "0")}` : `\\u${n.toString(16).padStart(4, "0")}`;
+  });
+}
+
 export function cliText(o: Outcome): string {
-  if (o.status === "unusable") return `${o.message}\n`;
+  if (o.status === "unusable") return `${shown(`${o.message}`)}\n`;
   if (o.status === "error") return "";
   const out = [o.title[0], `  ${o.title[1]}`, ""];
   for (const c of o.results) {
@@ -2153,7 +2184,7 @@ export function cliText(o: Outcome): string {
   for (const n of o.notes) out.push(`  NOTE  ${n.text}`);
   out.push("", o.status === "verified" ? "Verified." : "Verification FAILED.");
   if (o.facts?.length) out.push("", FACTS_TITLE, ...o.facts.map((f) => `  ${f}`));
-  return out.join("\n") + "\n";
+  return out.map(shown).join("\n") + "\n";
 }
 
 /** A message as a page shows it: the command line's --tsa-root hints become the page's own. */

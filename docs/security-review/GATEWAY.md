@@ -102,6 +102,10 @@ most *rate* per window. A single limiter taken before connecting was rejected: c
 vary by seconds, so heads could bunch up and break the per-window ceiling. Service calls (the
 Claude API) are not paced, as before.
 
+**Recheck.** Port probes still connected after the request token only, so probes beside requests
+opened up to twice the rate in connections. Since the recheck a probe waits for the connection
+limiter too (`RECHECK.md`, GW-2).
+
 ### GW-3 (Medium): a compressed response leaked a test account's session
 
 **Where.** `Gateway._scrubbed`, `scrub_response`.
@@ -125,6 +129,9 @@ compression bomb is cut off) and removes `Content-Encoding` before the scrub. A 
 encoding the gateway cannot read (br, zstd, several encodings) is withheld: the client gets the
 status and headers with an empty body, and the log row says why
 (`test_gw3_an_encoding_the_gateway_cannot_read_is_not_passed_on`).
+
+**Recheck.** A gzip body of several members was cut to its first (no leak, but a silently
+shortened response); every member is now decoded (`RECHECK.md`, GW-3).
 
 ### GW-4 (Low): reflected sessions in another encoding were not scrubbed
 
@@ -377,7 +384,8 @@ with `-dr`.
 checks the first address, connects to that address (SNI and `Host` keep the name), so an answer
 cannot change between check and use. Tools' own DNS answers do not matter: tools never connect to
 targets themselves. Loopback, link-local (including 169.254.169.254), multicast, unspecified and
-IPv4-mapped forms of them are refused. Private addresses are allowed by design.
+IPv4-mapped forms of them are refused (since the recheck also the NAT64, 6to4 and IPv4-compatible
+forms: `RECHECK.md`). Private addresses are allowed by design.
 
 **Request smuggling and header injection** (`Policy.check`, `Policy.headers`, `_forward`):
 requests are parsed by h11 0.16 and re-serialised; client `Content-Length` and

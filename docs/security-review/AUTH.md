@@ -89,6 +89,10 @@ same-origin. Clients that are not browsers (the worker, the gateway relay, the C
 with the token) send neither header and are not affected. Reads are not refused: a page of another
 origin cannot read the answers (no CORS).
 
+**Recheck.** In open mode, DNS rebinding passed: a page on a public name, rebound to 127.0.0.1,
+sends same-origin requests (and reads the answers). Open mode now answers only requests whose
+`Host` is an IP address, a name without a dot or a special-use name (`RECHECK.md`, AUTH-2).
+
 ### AUTH-3 (Low): separation of duties ignored who imported a lane's evidence
 
 **What.** With separation of duties on, whoever supplied a lane's evidence must not sign its
@@ -140,7 +144,8 @@ with a time without a zone (500 before: `TypeError` on the subtraction), a list 
 which compares `'1'` with 1), a string lane id, a number as the signer's name, and a date that is
 not one. Fix: `main._payload_problem` checks the field types after the canonical-form check and
 before any comparison (ids and the chain position whole numbers, the text fields text, `issued_at`
-a time with a zone) and answers 422 "the signed payload is malformed: ...". The real payload still
+a time with a zone) and answers 422 "the signed payload is malformed: ...". (Recheck: a chain
+position of 10**30 was still a 500; ids are now also bounded, `RECHECK.md`.) The real payload still
 signs (the control in the test). It never accepted a payload it should not have but the string
 chain position, which pointed at the same evidence row.
 

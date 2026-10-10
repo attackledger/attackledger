@@ -151,13 +151,15 @@ requests reach the target.
 
 ### Authentication and permissions
 
-Four modes (`auth.py`): open (no people, no token: localhost only), setup (production with
-nobody yet, D-045), token (`ATTACKLEDGER_API_TOKEN`) and people (email and password). A browser that signs in, with a password or with the token, gets a random session
-cookie; only its SHA-256 is stored (`user_sessions`), it ends on sign-out or after 12 hours, and
-a person's sessions end when their password is reset or they are disabled. A token session names
-nobody and is bound to the token: it works while the API runs with that token, and the API
-deletes the sessions of any other token when it starts (D-056). Scripts, the worker and the
-gateway send their tokens as bearer headers and hold no session.
+Four modes (`auth.py`): open (no people, no token: localhost only, and it answers only requests
+that name the machine locally, so DNS rebinding cannot reach it), setup (production with nobody
+yet, D-045), token (`ATTACKLEDGER_API_TOKEN`) and people (email and password). A browser that
+signs in, with a password or with the token, gets a random session cookie; only its SHA-256 is
+stored (`user_sessions`), it ends on sign-out or after 12 hours, and a person's sessions end when
+their password is reset or they are disabled. A token session names nobody and is bound to the
+token: it works while the API runs with that token, and the API deletes the sessions of any other
+token when it starts (D-056). Scripts, the worker and the gateway send their tokens as bearer
+headers and hold no session.
 Every route passes `authz.authorize`, which looks the route up in one permission table:
 public, signed in, owner, or a role on the route's engagement (viewer, tester,
 reviewer). Routes without an entry are open to owners only, and a test checks that

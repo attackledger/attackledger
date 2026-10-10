@@ -26,6 +26,7 @@
     {"name": "chain entry removed", "file": "tools/verifier_equivalence/fixtures/chain-entry-removed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL", "R": "FAIL"}},
     {"name": "chain head changed", "file": "tools/verifier_equivalence/fixtures/chain-head-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
     {"name": "chain genesis changed", "file": "tools/verifier_equivalence/fixtures/chain-genesis-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "C": "FAIL"}},
+    {"name": "security recheck: an engagement name with terminal controls is printed escaped", "file": "tools/verifier_equivalence/fixtures/engagement-name-with-terminal-controls.json", "roots": ["ec-root.pem"], "expect": {"status": "verified"}},
     {"name": "item marked done without evidence", "file": "tools/verifier_equivalence/fixtures/item-done-without-evidence.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "R": "FAIL"}},
     {"name": "N/A with a blank reason", "file": "tools/verifier_equivalence/fixtures/na-without-reason.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "R": "FAIL"}},
     {"name": "receipt manifest changed", "file": "tools/verifier_equivalence/fixtures/receipt-manifest-changed.json", "roots": ["ec-root.pem"], "expect": {"status": "failed", "R": "FAIL", "S": "FAIL", "T": "FAIL"}},
@@ -83,6 +84,7 @@
     {"name": "organizations: another organization's audit log head", "file": "tools/verifier_equivalence/fixtures/org-second-foreign-head.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
     {"name": "security review: a void receipt, the lane changed back", "file": "tools/verifier_equivalence/fixtures/void.json", "v2": true, "expect": {"status": "verified", "S": "SKIP", "T": "SKIP"}},
     {"name": "security review: that void reported as receipted", "file": "tools/verifier_equivalence/fixtures/void-reported-as-receipted.json", "v2": true, "expect": {"status": "failed", "R": "PASS", "S": "PASS", "H": "FAIL"}},
+    {"name": "security recheck EV-1: that void kept, the receipt's issue time moved a second", "file": "tools/verifier_equivalence/fixtures/void-receipted-issue-time-moved.json", "v2": true, "expect": {"status": "failed", "R": "PASS", "S": "PASS", "H": "FAIL"}},
     {"name": "security review: receipt issue time moved 30 days", "file": "tools/verifier_equivalence/fixtures/receipt-issued-at-moved.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "S": "FAIL", "H": "PASS"}},
     {"name": "security review: receipt issue time within the window", "file": "tools/verifier_equivalence/fixtures/receipt-issued-at-within-window.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
     {"name": "security review: engagement id changed", "file": "tools/verifier_equivalence/fixtures/engagement-id-changed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "S": "FAIL"}},
@@ -113,6 +115,7 @@
     {"name": "O-2: a void, then another lane signed", "file": "tools/verifier_equivalence/fixtures/v4-void.json", "v2": true, "expect": {"status": "verified"}},
     {"name": "O-2: that void as HTML: the facts name it", "file": "tools/verifier_equivalence/fixtures/v4-void.html", "v2": true, "expect": {"status": "verified"}},
     {"name": "O-2: that void hidden (status and entry): the later signature counts it", "file": "tools/verifier_equivalence/fixtures/v4-void-hidden.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "security recheck EV-1: the v4 void kept, the receipt's issue time moved a second (strict)", "file": "tools/verifier_equivalence/fixtures/v4-void-issue-time-moved.json", "history": true, "v2": true, "expect": {"status": "failed", "S": "PASS", "H": "FAIL"}},
     {"name": "O-2: a void after the last signature", "file": "tools/verifier_equivalence/fixtures/v4-void-after-the-last-signature.json", "history": true, "v2": true, "expect": {"status": "verified"}},
     {"name": "O-2: that void hidden: not detectable, strict mode says so", "file": "tools/verifier_equivalence/fixtures/v4-void-after-the-last-signature-hidden.json", "history": true, "v2": true, "expect": {"status": "verified", "H": "PASS"}}
   ]
