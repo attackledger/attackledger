@@ -52,7 +52,15 @@ services:
       - blobs:/data/blobs
       - gateway-control:/data/gateway-control:ro   # the gateway's token, for its routes only
       - worker-control:/data/worker-control:ro     # the worker's token, for its routes only (D-042)
-    networks: [database, control, default]
+    # One alias per network the gateway shares with it: Docker answers "api" with one address
+    # only, and the gateway refuses every address of the deployment's own containers by name
+    # (gateway.DENY_HOSTS).
+    networks:
+      database: {}
+      control:
+        aliases: [api-control]
+      default:
+        aliases: [api-default]
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

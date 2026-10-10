@@ -55,6 +55,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import html
 import ipaddress
 import json
 import os
@@ -66,12 +67,13 @@ import struct
 import sys
 import tempfile
 import time
+import zlib
 import urllib.error
 import urllib.request
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, unquote_plus, urlsplit
 
 import h11
 
@@ -134,9 +136,24 @@ PASSIVE_HOSTS = frozenset({
 SERVICE_HOSTS = frozenset({"api.anthropic.com"})
 # The Claude API calls an agent run makes (agentloop: client.beta.messages.create).
 SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"))
-DENY_HOSTS = ("db", "api", "web", "worker", "gateway")
+# The deployment's own containers, by every name that resolves to one of their addresses. Docker
+# answers a service name with its address on one shared network only, so a container the gateway
+# shares two networks with has an alias per network (docker-compose.yml; security review GW-6).
+DENY_HOSTS = ("db", "api", "api-control", "api-default", "web", "worker", "gateway", "caddy",
+              "lab-proxy", "lab-proxy-lab", "lab-proxy-default")
+# Cloud metadata services outside link-local (169.254.0.0/16 is refused as link-local): Alibaba
+# Cloud, AWS over IPv6, Azure's WireServer, Oracle Cloud Classic (security review GW-5).
+METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in (
+    "100.100.100.200", "fd00:ec2::254", "168.63.129.16", "192.0.0.192"))
 # Removed from an agent's Claude API call; the gateway's own key goes in their place.
 SERVICE_KEY_HEADERS = frozenset({"x-api-key", "authorization"})
+# What an agent run's Claude API call may carry (agentloop.request_params, and what count_tokens
+# takes). Anything else is refused: server tools (web fetch, web search, code execution), the MCP
+# connector (mcp_servers) and URL sources in content make Anthropic's servers reach hosts the
+# gateway never checks, so they would be a way out of the scope (security review GW-1).
+SERVICE_BODY_KEYS = frozenset({"model", "max_tokens", "system", "tools", "messages", "thinking", "output_config",
+                               "cache_control", "fallbacks", "tool_choice", "stream", "metadata", "temperature",
+                               "top_p", "top_k", "stop_sequences", "service_tier"})
 # The worker's channel (D-042): what the control port relays to the API, and nothing else.
 CONTROL_PATH = re.compile(r"^/worker/[a-z0-9/_-]{0,200}$")
 CONTROL_METHODS = frozenset({"GET", "POST"})
@@ -538,6 +555,44 @@ class Policy:
         if kind == "target" and not rules.identification():
             raise Refused(403, "the engagement has no research header or user agent; nothing is sent to targets")
 
+    @staticmethod
+    def check_service_body(body: bytes) -> None:
+        """A Claude API call is sent only if Anthropic will not reach anything on its behalf: no
+        server tools, no MCP servers, no URL sources (SERVICE_BODY_KEYS). The body is forwarded as
+        received, so it is parsed strictly: a key given twice is refused, as another parser might
+        keep the other one."""
+        def unique(pairs):
+            out = {}
+            for k, v in pairs:
+                if k in out:
+                    raise ValueError(f"the key {k[:40]} is given twice")
+                out[k] = v
+            return out
+        try:
+            doc = json.loads(body, object_pairs_hook=unique)
+        except (ValueError, RecursionError) as e:
+            raise Refused(403, f"Claude API call not sent: the body is not one JSON object ({str(e)[:80]})")
+        if not isinstance(doc, dict):
+            raise Refused(403, "Claude API call not sent: the body is not one JSON object")
+        extra = sorted(set(doc) - SERVICE_BODY_KEYS)
+        if extra:
+            raise Refused(403, f"Claude API call not sent: {', '.join(extra)[:100]} is not what an agent run sends")
+        tools = doc.get("tools") or []
+        if not isinstance(tools, list) or any(not isinstance(t, dict) or t.get("type", "custom") != "custom"
+                                              for t in tools):
+            raise Refused(403, "Claude API call not sent: only the agent's own tools are allowed, no server tools "
+                               "(they would reach hosts the gateway does not check)")
+        stack = [doc.get("messages"), doc.get("system")]
+        while stack:
+            v = stack.pop()
+            if isinstance(v, list):
+                stack += v
+            elif isinstance(v, dict):
+                if v.get("type") == "url":
+                    raise Refused(403, "Claude API call not sent: a URL source would be fetched by Anthropic, "
+                                       "not through the gateway")
+                stack += v.values()
+
     def headers(self, rules: Rules, kind: str, headers, host_header: str, *, account: dict | None = None,
                 approved: list | None = None) -> list[tuple[bytes, bytes]]:
         """The headers sent upstream: the tool's (as received), or for an approved write the
@@ -577,7 +632,9 @@ class Policy:
 
 def account_values(account: dict) -> list[str]:
     """The secret values an account's headers carry: each header value, each cookie's value and a
-    bearer token on its own, longest first, so a response that echoes them can be scrubbed."""
+    bearer token on its own, longest first, so a response that echoes them can be scrubbed. Each
+    also in the forms a page shows it in (security review GW-4): URL-decoded (phpinfo's $_COOKIE,
+    debug pages) and URL-encoded, HTML-escaped and with escaped slashes (JSON)."""
     out = set()
     for name, value in account.get("headers") or []:
         value = str(value)
@@ -588,7 +645,12 @@ def account_values(account: dict) -> list[str]:
         scheme, _, rest = value.partition(" ")
         if rest and scheme.isalpha():
             out.add(rest.strip())
-    return sorted((v for v in out if len(v) >= MIN_SCRUB), key=len, reverse=True)
+    forms = set()
+    for v in out:
+        for form in (v, unquote(v), unquote_plus(v)):
+            forms |= {form, quote(form, safe=""), html.escape(form), html.escape(form, quote=False),
+                      form.replace("/", "\\/")}
+    return sorted((v for v in forms if len(v) >= MIN_SCRUB), key=len, reverse=True)
 
 
 def scrub_response(account: dict, headers: list, body: bytes) -> tuple[list, bytes]:
@@ -629,6 +691,10 @@ class Gateway:
         self.limiters: dict[int, Limiter] = {}
         self.dns_limiters: dict[int, Limiter] = {}
         self.passive_limiters: dict[str, Limiter] = {}
+        # Upstream connections are paced too, before they are opened: the request token is taken
+        # only once the connection is open, so without these a tool's concurrency would open
+        # connections (and TLS handshakes) to a target at any rate (security review GW-2).
+        self.connect_limiters: dict[object, Limiter] = {}
         self._rules: dict[tuple, tuple[float, Rules | Refused]] = {}
         self._rules_locks: dict[tuple, asyncio.Lock] = {}
         self._accounts: dict[tuple, tuple[float, dict | Refused]] = {}
@@ -756,12 +822,27 @@ class Gateway:
         ip = addrs[0]
         if getattr(ip, "ipv4_mapped", None):
             ip = ip.ipv4_mapped
-        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-            raise Refused(403, f"{host} resolves to {ip}, which is never contacted (loopback, link-local or "
-                               f"special address)")
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip in METADATA_ADDRESSES:
+            raise Refused(403, f"{host} resolves to {ip}, which is never contacted (loopback, link-local, cloud "
+                               f"metadata or special address)")
         if ip in await self._denied_addresses():
             raise Refused(403, f"{host} resolves to an address of this deployment, which is never contacted")
         return str(ip)
+
+    def connect_limiter(self, rules: Rules, kind: str, host: str) -> Limiter | None:
+        """The limiter a new upstream connection waits for: the engagement's rate for targets,
+        PASSIVE_RPS per passive host. Service calls (the Claude API) are not paced."""
+        if kind == "target":
+            key, rate = rules.engagement_id, rules.rate_limit_rps
+        elif kind == "passive":
+            key, rate = ("passive", host), PASSIVE_RPS
+        else:
+            return None
+        lim = self.connect_limiters.get(key)
+        if lim is None:
+            lim = self.connect_limiters[key] = Limiter(rate, clock=self.clock)
+        lim.rate = rate
+        return lim
 
     def limiter(self, rules: Rules) -> Limiter:
         lim = self.limiters.get(rules.engagement_id)
@@ -958,6 +1039,7 @@ class Gateway:
             body = b""
             if kind == "service":
                 body = await _read_body(conn, reader, MAX_SERVICE_BODY)
+                self.policy.check_service_body(body)
             elif approval_id is not None:
                 body = await _read_body(conn, reader, MAX_WRITE_BODY)
             else:
@@ -1007,6 +1089,9 @@ class Gateway:
         upw = None
         label = account["label"] if account else None
         try:
+            pace = self.connect_limiter(rules, kind, host)
+            if pace is not None:
+                await pace.acquire(MAX_WAIT)        # before anything reaches the target, the handshake too
             try:
                 ip = await self.resolve(host)
                 ctx = None if scheme == "http" else (self.insecure_ctx if kind == "target" else self.verify_ctx)
@@ -1107,7 +1192,18 @@ class Gateway:
                 reason = "the response ended early"
                 break
         head = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in HOP_BY_HOP]
-        head, body = scrub_response(account, head, b"".join(chunks))
+        body = b"".join(chunks)
+        # Accept-Encoding: identity was asked for, but a target may compress anyway, and the
+        # account's values cannot be found in compressed bytes (security review GW-3): the body
+        # is decoded here, or withheld when it cannot be.
+        coding = ",".join(v.decode("latin-1") for k, v in head if k == b"content-encoding").strip().lower()
+        if coding and coding != "identity":
+            head = [(k, v) for k, v in head if k != b"content-encoding"]
+            try:
+                body = _decode(coding, body, MAX_SCRUBBED_BODY)
+            except (ValueError, zlib.error) as e:
+                body, reason = b"", reason or f"the response body was withheld: {str(e)[:100]}"
+        head, body = scrub_response(account, head, body)
         if method == "HEAD":
             length = _header(resp.headers, b"content-length")
             head += [(b"Content-Length", length.encode())] if length else []
@@ -1273,6 +1369,21 @@ async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
         if ev is h11.PAUSED:
             return h11.ConnectionClosed()
         return ev
+
+
+def _decode(coding: str, body: bytes, limit: int) -> bytes:
+    """A body in Content-Encoding gzip or deflate, decoded (at most `limit` bytes). ValueError for
+    any other encoding, or a body that decodes to more."""
+    if coding in ("gzip", "x-gzip"):
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif coding == "deflate":
+        d = zlib.decompressobj(zlib.MAX_WBITS if body[:1] == b"\x78" else -zlib.MAX_WBITS)
+    else:
+        raise ValueError(f"it is encoded as {coding[:40]}, which the gateway cannot read to scrub it")
+    out = d.decompress(body, limit + 1)
+    if len(out) > limit or d.unconsumed_tail:
+        raise ValueError(f"it decodes to more than {limit} bytes")
+    return out
 
 
 async def _read_body(conn, reader, limit: int) -> bytes:

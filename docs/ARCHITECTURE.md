@@ -65,7 +65,8 @@ The API applies these when a job is queued, and again when the worker claims it
 3. A scope is defined.
 4. If the module is opt-in, it is enabled for this engagement.
 5. If the module sends HTTP, a research header or user agent is set.
-6. Every target is in scope for the module's input type.
+6. Every target is in scope for the module's input type, and is one line (no whitespace or
+   control characters: tools read targets one per line).
 
 A run that stops at the time limit is `partial` and lists its remaining targets. It
 is never `done`.
