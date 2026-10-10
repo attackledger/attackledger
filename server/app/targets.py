@@ -6,7 +6,7 @@ runs and the steps before it have finished.
 """
 from collections.abc import Callable
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from . import jobgates, modules, scope, surface, triage, urls
 from .models import Endpoint, Engagement, Observation
@@ -67,8 +67,10 @@ def api_shapes_by_host(session, eng: Engagement, hosts) -> dict[str, int]:
     Only URLs that look like an API are read, so a large archive costs one filtered query."""
     if not hosts:
         return {}
-    like = or_(*(Endpoint.url.like(f"%/{p}/%") for p in ("api", "rest", "graphql", "gql", "rpc", "odata"))
-               , Endpoint.url.like("%/v_/%"), Endpoint.url.like("%/v__/%"))
+    # LIKE ignores case on SQLite and not on Postgres; surface.API_RE ignores it, so lower() here.
+    url = func.lower(Endpoint.url)
+    like = or_(*(url.like(f"%/{p}/%") for p in ("api", "rest", "graphql", "gql", "rpc", "odata"))
+               , url.like("%/v_/%"), url.like("%/v__/%"))
     rows = session.execute(select(Endpoint.host, Endpoint.url).where(
         Endpoint.engagement_id == eng.id, Endpoint.host.in_(list(hosts)), Endpoint.is_js.is_(False), like)).all()
     by_host: dict[str, list[str]] = {}

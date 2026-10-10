@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, object_session
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault, workerapi
-from . import approvals, orgs, orgscope, testaccounts
+from . import approvals, nulguard, orgs, orgscope, testaccounts
 from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
@@ -52,6 +52,7 @@ async def lifespan(_app: FastAPI):
 # below as ordinary routes, which the permission table covers (sign-in whenever it is needed).
 app = FastAPI(title="AttackLedger", version="0.8.0", lifespan=lifespan,
               dependencies=[Depends(authz.authorize)], docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(nulguard.NulGuard)     # a NUL in a request: refused, or replaced on the machine channels
 app.include_router(gatewayapi.router)
 app.include_router(workerapi.router)
 app.include_router(testaccounts.router)
@@ -78,11 +79,14 @@ class LaneIn(BaseModel):
     role: str  # lane key from the engagement's pack
 
 
+URI_MAX = 1000          # models.Evidence.uri
+
+
 class EvidenceIn(BaseModel):
     item_idx: int | None = None
     kind: str = Field(pattern="^(request|response|file|note)$")
     sha256: str = Field(pattern="^[0-9a-f]{64}$")
-    uri: str | None = None
+    uri: str | None = Field(default=None, max_length=URI_MAX)     # the column's length, on Postgres too
     summary: str = Field(min_length=1)
 
 
@@ -477,6 +481,8 @@ def add_evidence(lane_id: int, body: EvidenceIn, request: Request, session: Sess
     summary, uri, rep = body.summary, body.uri, redact.Report()
     if redact.enabled(lane.asset.engagement):
         summary, uri = redact.text(summary, rep), redact.text(uri, rep) if uri else uri
+    if uri and len(uri) > URI_MAX:          # redaction markers can be longer than what they replace
+        raise HTTPException(422, f"the URI is longer than {URI_MAX} characters once redacted; shorten it")
     try:
         ev = ledger.append_evidence(session, lane, kind=body.kind, sha256_hex=body.sha256,
                                     summary=summary + rep.suffix(), uri=uri, item_id=item_id, source="manual",
@@ -1337,7 +1343,7 @@ def endpoints(eng_id: int, host: str | None = None, js: bool | None = None, q: s
     if js is not None:
         stmt = stmt.where(Endpoint.is_js == js)
     if q:
-        stmt = stmt.where(Endpoint.url.contains(q))
+        stmt = stmt.where(Endpoint.url.icontains(q, autoescape=True))     # the same on SQLite and Postgres
     total = len(session.scalars(stmt).all())
     rows = session.scalars(stmt.order_by(Endpoint.host, Endpoint.url).offset(offset).limit(min(limit, 1000))).all()
     return {"total": total, "items": [{"host": e.host, "url": e.url, "source": e.source, "js": e.is_js}
@@ -1922,7 +1928,7 @@ def list_inbox(eng_id: int, state: str | None = None, host: str | None = None, m
         else:
             raise HTTPException(422, "status is a code such as 404, a class such as 4xx, or none")
     if q:
-        query = query.where(InboxEntry.url.contains(q.strip()[:200], autoescape=True))
+        query = query.where(InboxEntry.url.icontains(q.strip()[:200], autoescape=True))   # case: as on SQLite
     limit, offset = max(1, min(limit, 500)), max(offset, 0)
     total = session.scalar(select(func.count()).select_from(query.subquery()))
     rows = session.scalars(query.order_by(InboxEntry.batch_id.desc(), InboxEntry.row).offset(offset).limit(limit))

@@ -77,12 +77,13 @@ class Adapter:
 # ---- helpers the adapters share ----------------------------------------------------------
 
 def text(value, limit: int) -> str | None:
-    """A short string field from an export: None when absent or empty, cut to a limit."""
+    """A short string field from an export: None when absent or empty, cut to a limit. A NUL,
+    which Postgres cannot store, becomes U+FFFD (the replacement character) on every database."""
     if value is None:
         return None
     if not isinstance(value, (str, int)) or isinstance(value, bool):
         raise RowError("a text field has the wrong type")
-    s = str(value).strip()
+    s = str(value).replace("\x00", "\ufffd").strip()
     return s[:limit] or None
 
 
@@ -93,7 +94,7 @@ def method(value) -> str:
 
 
 def http_url(value) -> str:
-    if not isinstance(value, str) or len(value) > 8_000:
+    if not isinstance(value, str) or len(value) > 8_000 or "\x00" in value:
         raise RowError("no readable URL")
     u = value.strip()
     try:

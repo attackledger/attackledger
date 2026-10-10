@@ -119,6 +119,25 @@ Authentication, authorization and organization isolation (`AUTH.md`):
   second claim replaced the first one's job token and gateway secret. Claiming is a conditional
   update from `queued` now; the worker that loses takes the next job.
 
+On Postgres, as production runs (the suite had run on SQLite only; `tools/test_postgres.sh`):
+- **Approvals and sessions expired late, or early, on a database session not in UTC.** Times are
+  stored without a zone and read back as UTC, but Postgres stored a timezone-aware time in the
+  session's local time (the server's `TimeZone`, or `PGTZ`). At +03:30 an approved write stayed
+  usable for three and a half hours after its 5 minutes, an expired browser session still signed
+  in, and a signed receipt's stored issue time no longer matched its signed payload, so its
+  report failed verification (24 tests failed with the server in such a zone; the 0.7.1 code's own
+  report failed `verify_report.py`). Every connection now sets its time zone to UTC. The Compose
+  stack's database is in UTC, so it was not affected.
+- **One row could stop the gateway's request log for good, and then its traffic.** A NUL character
+  in a logged URL or reason (an agent can be steered to request one), or a response of more than
+  2 GiB (a target can send one: the byte count overflowed Postgres's 32-bit `INTEGER`), made the
+  API refuse the whole log batch with a 500. The gateway keeps an unwritten batch and sends it
+  again, so nothing it logged after that row was written, and once 5,000 rows waited it refused
+  all traffic (it fails closed). The API now writes every row: a NUL becomes U+FFFD, counts past
+  the column's range are kept as its maximum, and ports, statuses and ids outside theirs as none.
+  A NUL in a tool's output did the same to a job's log and results on the worker's channel; it is
+  kept as U+FFFD there too.
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
@@ -129,7 +148,20 @@ cookie is no longer accepted (AUTH-6). Sign in with the token again. People's se
 scripts that send the token as a bearer header, are not affected. Migration 0023 runs when the API
 starts.
 
+On a Postgres server whose `TimeZone` is not UTC (not the Compose stack's), times written before
+this upgrade stay shifted by that zone's offset; new ones are stored in UTC.
+
 ### Fixed
+- **A NUL character in a request gave a 500 on Postgres**, after part of the work, where SQLite
+  stored it. Now on every database: in the path or query 400, in a person's JSON 422 with nothing
+  stored; in an import, a row whose URL holds one is listed as unreadable, and other fields keep
+  it as U+FFFD (`app/nulguard.py`, `importers.text`).
+- **An evidence URI longer than 1,000 characters gave a 500 on Postgres** (the column's length is
+  enforced there only). It is refused with 422, also when redaction makes it longer.
+- **URL search and triage's API signal depended on the database.** `LIKE` ignores case on SQLite
+  and not on Postgres: `/API/v1/...` paths counted for triage on SQLite only, and the endpoint and
+  inbox searches matched case on Postgres. Both now ignore case everywhere, and the endpoint search
+  takes `%` and `_` literally.
 - **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of
   `gateway.invalid`; a resolver that answered inconsistently made them differ. The tests now
   answer `.invalid` names themselves (RFC 6761: they never resolve).

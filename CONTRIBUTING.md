@@ -40,7 +40,7 @@ Thank you for your interest. Issues and pull requests are welcome.
 Production runs on Postgres 16; `python -m pytest` runs on SQLite, which forgives things Postgres
 does not. `tools/test_postgres.sh` runs the whole server suite on a throwaway Postgres in one
 command (Docker, the `postgres:16-alpine` image and the API image; it removes what it started).
-Each test gets new, empty databases. It then
+Each test gets new, empty databases, and the server is in a time zone other than UTC. It then
 upgrades a database that the 0.7.1 code filled (migration 0022 with data).
 
 Run it before a pull request that touches:

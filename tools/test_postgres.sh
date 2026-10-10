@@ -9,7 +9,8 @@
 # network and its temporary files when it ends, however it ends.
 #
 #  1. The suite with ATTACKLEDGER_TEST_PG (server/tests/testdb.py): every test gets new, empty
-#     databases of its own.
+#     databases of its own. The server's TimeZone is not UTC (Asia/Tehran, +03:30), so a
+#     time stored in a session's local zone shows.
 #  2. The upgrade check of docs/ORGANIZATIONS.md ("Upgrading"): the 0.7.1 code (migration
 #     0021) fills a database through its API (make_fixture.py), and test_org_migration.py
 #     upgrades it with this code. Skipped, with a note, in a clone without that commit.
@@ -44,7 +45,8 @@ echo "[pg] starting $PG_IMAGE ($PG, internal network $NET)"
 docker network create --internal "$NET" >/dev/null
 docker run -d --name "$PG" --network "$NET" --tmpfs /var/lib/postgresql/data:rw,size=1536m \
   -e POSTGRES_PASSWORD="$PGPASSWORD" "$PG_IMAGE" \
-  -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=300 >/dev/null
+  -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c max_connections=300 \
+  -c timezone=Asia/Tehran >/dev/null
 for _ in $(seq 1 120); do              # TCP answers only once the initial setup is done
   docker exec "$PG" psql -U postgres -h 127.0.0.1 -tAc "select 1" >/dev/null 2>&1 && break
   sleep 0.5
@@ -78,7 +80,8 @@ else
   cp "$ROOT/server/tests/orgfill.py" "$TMP/old/server/tests/"
   chmod -R a+rwX "$TMP"
   docker exec "$PG" psql -U postgres -h 127.0.0.1 -qc "CREATE DATABASE al_at_0021" >/dev/null
-  if in_image -e DATABASE_URL="$URL/al_at_0021" -v "$TMP/old":/w -v "$TMP/fixture":/out -w /w/server -- \
+  # PGTZ=UTC: the 0.7.1 code stored times in its session's zone, and this server's is not UTC.
+  if in_image -e PGTZ=UTC -e DATABASE_URL="$URL/al_at_0021" -v "$TMP/old":/w -v "$TMP/fixture":/out -w /w/server -- \
        tests/data/org-migration/make_fixture.py /out/fx; then
     in_image -e ATTACKLEDGER_HOME=/w -e ATTACKLEDGER_TEST_PG_URL="$URL/al_at_0021" -e ATTACKLEDGER_TEST_PG_FIXTURE=/fx \
       -v "$ROOT":/w -v "$TMP/fixture/fx":/fx -w /w/server -- \
