@@ -602,49 +602,78 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .target-bar .ok { color: var(--stamp); }
 .target-bar .bad { color: var(--red); }
 
-.funnel { list-style: none; margin: 0 0 1.25rem; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--rule); border-radius: var(--radius); }
-.funnel li { padding: 0.6rem 0.75rem; font-size: var(--step--1); color: var(--text-soft); border-right: 1px solid var(--rule); position: relative; }
-.funnel li:last-child { border-right: 0; }
-.funnel li:not(:last-child)::after { content: ""; position: absolute; right: -0.36rem; top: 50%; width: 0.6rem; height: 0.6rem; background: var(--sheet); border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); transform: translateY(-50%) rotate(45deg); z-index: 1; }
-.funnel-n { display: block; font: 700 var(--step-1) / 1.15 var(--slab); color: var(--text); font-variant-numeric: tabular-nums; }
-@media (max-width: 44rem) { .funnel { grid-template-columns: repeat(3, minmax(0, 1fr)); } .funnel li:nth-child(3) { border-right: 0; } .funnel li:nth-child(-n+3) { border-bottom: 1px solid var(--rule); } .funnel li::after { display: none; } }
+/* Recon workflow: a header with the one action, the narrowing surface, then the steps as a timeline of tool cards. */
+.wf-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.5rem 1rem; }
+.wf-title .panel-title { margin-bottom: 0.15rem; }
+.wf-sum { margin: 0; font-size: var(--step--1); color: var(--text-soft); font-variant-numeric: tabular-nums; }
+.wf-run { padding: 0.55rem 1.1rem; font-size: var(--step-0); }
+.wf-hint { margin: 0.45rem 0 1rem; font-size: var(--step--1); color: var(--text-faint); max-width: 72ch; }
 
-.phases { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
-.phase { padding: 1rem 0 1.15rem; border-top: 1px solid var(--rule-strong); }
-.phase-head { display: grid; grid-template-columns: 2.25rem minmax(0, 1fr) auto; gap: 0.25rem 0.9rem; align-items: start; }
-.phase-n { font: 700 var(--step-2) / 1 var(--slab); color: var(--ink); font-variant-numeric: tabular-nums; }
-.phase-text h4 { margin: 0; font: 700 var(--step-0) / 1.3 var(--slab); font-size: var(--step-1); }
-.phase-text p { margin: 0.15rem 0 0; color: var(--text-soft); font-size: var(--step--1); max-width: 64ch; }
-.phase-text .phase-stat { color: var(--text); font-variant-numeric: tabular-nums; }
-.phase-help { margin: 0.5rem 0 0 3.15rem; font-size: var(--step--1); max-width: 68ch; }
+.batch { margin: 0 0 0.75rem; display: grid; gap: 0.4rem; font-size: var(--step--1); }
+.batch-bar { height: 0.5rem; border-radius: 999px; background: var(--sheet-head); border: 1px solid var(--rule); overflow: hidden; }
+.batch-bar > span { display: block; height: 100%; background: var(--ink); border-radius: inherit; }
+@media (prefers-reduced-motion: no-preference) { .batch-bar > span { transition: width 0.6s ease; } }
+
+.funnel { list-style: none; margin: 0 0 1.5rem; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.35rem; }
+.funnel li { position: relative; display: grid; gap: 0.2rem; align-content: start; padding: 0.7rem 0.85rem 0.75rem; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); font-size: var(--step--1); color: var(--text-soft); min-width: 0; }
+.funnel li:not(:last-child)::after { content: "›"; position: absolute; right: -0.42rem; top: 0.85rem; z-index: 1; font: 700 var(--step-1) / 1 var(--slab); color: var(--rule-strong); }
+.funnel-n { font: 700 var(--step-2) / 1.05 var(--slab); color: var(--text); font-variant-numeric: tabular-nums; }
+.funnel-label { overflow-wrap: anywhere; }
+.funnel-bar { display: block; height: 0.3rem; margin-top: 0.25rem; border-radius: 999px; background: var(--sheet-head); overflow: hidden; }
+.funnel-bar > span { display: block; height: 100%; background: var(--stamp); border-radius: inherit; }
+@media (max-width: 44rem) { .funnel { grid-template-columns: repeat(3, minmax(0, 1fr)); } .funnel li::after { display: none; } }
+
+/* Steps: numbered nodes on a rail. A node fills in when every tool of its step has finished. */
+.phases { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.phase { position: relative; display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); gap: 0 0.9rem; padding-bottom: 1.6rem; }
+.phase:not(:last-child)::before { content: ""; position: absolute; left: calc(1.2rem - 1px); top: 2.5rem; bottom: 0.1rem; width: 2px; background: var(--rule); }
+.phase.done:not(:last-child)::before { background: var(--stamp); opacity: 0.6; }
+.phase-node { width: 2.4rem; height: 2.4rem; border-radius: 50%; display: grid; place-items: center; font: 700 var(--step-0) / 1 var(--slab); font-variant-numeric: tabular-nums; color: var(--text-soft); background: var(--sheet); border: 2px solid var(--rule-strong); }
+.phase.partial .phase-node { color: var(--stamp); border-color: var(--stamp); border-style: dashed; }
+.phase.done .phase-node { color: var(--on-ink, #fff); background: var(--stamp); border-color: var(--stamp); }
+.phase.running .phase-node { color: var(--ink); border-color: var(--ink); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink) 18%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .phase.running .phase-node { animation: node-pulse 1.6s ease-in-out infinite; }
+  @keyframes node-pulse { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--ink) 8%, transparent); } }
+}
+.phase-body { min-width: 0; padding-top: 0.2rem; }
+.phase-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.35rem 1rem; }
+.phase-text { min-width: 0; flex: 1 1 22rem; }
+.phase-text h4 { margin: 0; font: 700 var(--step-1) / 1.25 var(--slab); }
+.phase-text p { margin: 0.2rem 0 0; color: var(--text-soft); font-size: var(--step--1); max-width: 64ch; }
+.phase-side { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem; }
+.phase-stat { font-size: var(--step--1); color: var(--text); font-variant-numeric: tabular-nums; padding: 0.15rem 0.55rem; border-radius: 999px; background: var(--sheet-head); border: 1px solid var(--rule); }
+.phase-help { margin: 0.45rem 0 0; font-size: var(--step--1); max-width: 68ch; }
 .phase-help summary { cursor: pointer; color: var(--ink); font-size: var(--step--1); width: fit-content; }
 .phase-help p { margin: 0.4rem 0 0; color: var(--text-soft); }
-@media (max-width: 36rem) { .phase-help { margin-left: 0; } }
-
-.tools { list-style: none; margin: 0.8rem 0 0 3.15rem; padding: 0; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface); container-type: inline-size; }
-@media (max-width: 36rem) { .tools { margin-left: 0; } }
-.tool { display: grid; grid-template-columns: minmax(10rem, 1.3fr) 11.5rem minmax(9rem, 1.4fr) 11.5rem; gap: 0.35rem 1rem; align-items: center; padding: 0.65rem 0.85rem; border-top: 1px solid var(--rule); }
-.tool:first-child { border-top: 0; }
-.tool.blocked .tool-name h5 { color: var(--text-soft); }
-.tool-name { min-width: 0; }
-.tool-name h5 { margin: 0; font: 700 var(--step-0) / 1.3 var(--body); cursor: help; }
-.tool-uses { margin: 0.1rem 0 0; font-size: var(--step--1); color: var(--ink); }
-.tool-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.tool-badges .traffic { margin-left: 0; }
-.tool-last { margin: 0; font-size: var(--step--1); font-variant-numeric: tabular-nums; min-width: 0; }
-.tool-why { display: block; color: var(--text-faint); }
-.tool-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
-.tool > .log { grid-column: 1 / -1; margin-top: 0.2rem; }
-.tool .log pre { max-height: 14rem; }
-/* By the list's own width, not the window's: the sidebar takes room the window size does not show. */
-@container (max-width: 46rem) {
-  .tool { grid-template-columns: minmax(0, 1fr) auto; }
-  .tool-last { grid-column: 1; }
-  .tool-actions { grid-column: 2; grid-row: 2; }
-}
 .phase-help dl { margin: 0.6rem 0 0; display: grid; gap: 0.45rem; }
 .phase-help dt { font-weight: 700; color: var(--text); }
 .phase-help dd { margin: 0.05rem 0 0; color: var(--text-soft); }
+
+/* Tool cards: same layout everywhere, so the eye learns one pattern. The number leads; the buttons sit at the bottom. */
+.tools { list-style: none; margin: 0.8rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr)); gap: 0.6rem; }
+.tool { display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; padding: 0.75rem 0.85rem 0.7rem; background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid var(--rule-strong); border-radius: var(--radius); }
+.tool.done, .tool.skipped { border-top-color: var(--stamp); }
+.tool.running, .tool.queued { border-top-color: var(--ink); }
+.tool.failed, .tool.partial, .tool.cancelled { border-top-color: var(--red); }
+.tool.blocked { background: transparent; border-style: dashed; border-top-style: solid; }
+.tool.blocked .tool-name h5, .tool.blocked .tool-n { color: var(--text-soft); }
+.tool.log-open { grid-column: 1 / -1; }
+.tool-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+.tool-name { min-width: 0; }
+.tool-name h5 { margin: 0; font: 700 var(--step-0) / 1.3 var(--body); cursor: help; }
+.tool-uses { margin: 0.1rem 0 0; font-size: var(--step--1); color: var(--ink); overflow-wrap: anywhere; }
+.tool-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.3rem; flex-shrink: 0; }
+.tool-badges .traffic { margin-left: 0; }
+.tool-metric { margin: 0.1rem 0 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 0.45rem; }
+.tool-n { font: 700 var(--step-2) / 1 var(--slab); color: var(--text); font-variant-numeric: tabular-nums; }
+.tool-n-label { font-size: var(--step--1); color: var(--text-soft); }
+.tool-last { font-size: var(--step--1); font-variant-numeric: tabular-nums; min-width: 0; }
+.tool-why { display: block; margin-top: 0.15rem; color: var(--text-faint); }
+.tool-actions { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: auto; padding-top: 0.35rem; border-top: 1px solid var(--rule); }
+.tool-actions .btn:first-child { flex: 1 1 auto; }
+.tool > .log { margin-top: 0.2rem; }
+.tool .log pre { max-height: 14rem; }
 
 .rtabs { display: flex; flex-wrap: wrap; gap: 0.25rem; border-bottom: 1px solid var(--rule-strong); margin: -0.25rem 0 1rem; }
 .rtab { font: 500 var(--step-0) / 1 var(--slab); padding: 0.6rem 0.8rem 0.55rem; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--text-soft); cursor: pointer; margin-bottom: -1px; }
@@ -701,8 +730,6 @@ button.stamp:hover { opacity: 1; background: var(--stamp-wash); }
 .queue { margin: 0 0 1.1rem; padding: 0.65rem 0.85rem; border: 1px solid var(--rule); border-left: 3px solid var(--ink); border-radius: var(--radius); background: var(--surface); font-size: var(--step--1); display: grid; gap: 0.3rem; min-width: 0; }
 .queue p { margin: 0; min-width: 0; }
 .queue .hint { color: var(--text-faint); }
-.run-all { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.35rem 0.75rem; }
-.run-all .step-why { max-width: 24rem; text-align: right; }
 .pipe-skipped { margin: 0.4rem 0 0.9rem; padding-left: 1.2rem; font-size: var(--step--1); color: var(--text-soft); display: grid; gap: 0.15rem; }
 .no-hosts { border-left: 4px double var(--red); }
 .no-hosts > p { margin: 0 0 0.5rem; max-width: 68ch; }

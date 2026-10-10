@@ -5,6 +5,18 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+### Changed
+- **Recon workflow, redesigned** (ideas from the ars0n framework; no code taken).
+  - A summary line ("6 steps, 13 tools; 13 done, last finished …") and one clear Run all
+    button.
+  - While steps run, one progress bar shows which tool runs now and for how long. It stays
+    under 100% until the last step finishes.
+  - The found counts are large, with log-scale bars.
+  - Steps are a timeline: numbered nodes turn into a check when every tool of the step has
+    finished.
+  - Tool cards sit in a grid, each led by its result count, with Run, Results and Log in
+    the same place on every card.
+
 ## [0.8.0] - 2026-10-10
 
 Test accounts and approved writes for agents, and organizations on every record.

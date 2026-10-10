@@ -197,6 +197,15 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
     manual: plural(s.step_leads?.manual ?? s.lead_kinds.dork ?? 0, "query", "queries"),
   } : {};
 
+  const funnelMax = Math.max(1, ...funnel.map(([, n]) => n ?? 0));
+  const toolKinds = phases.flatMap((p) => p.kinds);
+  const lastOf = (k: string) => jobs.find((j) => j.kind === k);
+  const toolsDone = toolKinds.filter((k) => { const j = lastOf(k); return j && ["done", "skipped"].includes(shownStatus(j)); }).length;
+  const lastFinished = jobs.map((j) => j.finished_at).filter((t): t is string => !!t).sort().slice(-1)[0] ?? null;
+  const wfSummary = phases.length === 0 ? "" :
+    `${plural(phases.length, "step")}, ${plural(toolKinds.length, "tool")}; ${toolsDone} done` +
+    (lastFinished ? `, last finished ${ago(lastFinished)}` : ", nothing run yet");
+
   return (
     <div className="recon">
       <TargetBar scope={scope} mods={mods} editing={canManage && (editing || needsRules)}
@@ -243,21 +252,24 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
       )}
 
       <section aria-labelledby="workflow-title" className="panel workflow">
-        <div className="panel-head">
-          <h3 id="workflow-title" className="panel-title">Recon workflow</h3>
+        <header className="wf-head">
+          <div className="wf-title">
+            <h3 id="workflow-title" className="panel-title">Recon workflow</h3>
+            <p className="wf-sum">{wfSummary}</p>
+          </div>
           {canRun ? (
-            <div className="run-all">
-              <button id="run-all" className="btn" disabled={!!runAllWhy || active} onClick={() => queue()}
-                      aria-describedby="run-all-why">
-                {running ? "Running…" : active ? "Queued…" : "Run all steps"}
-              </button>
-              <span id="run-all-why" className="step-why">
-                {active ? "Wait for the queued steps to finish."
-                  : runAllWhy ?? "Queues every step that passes its gates. They run one at a time, in order."}
-              </span>
-            </div>
+            <button id="run-all" className="btn wf-run" disabled={!!runAllWhy || active} onClick={() => queue()}
+                    aria-describedby="run-all-why">
+              {running ? "Running…" : active ? "Queued…" : "Run all steps"}
+            </button>
           ) : active && <span className="chip running">Running</span>}
-        </div>
+        </header>
+        {canRun && (
+          <p id="run-all-why" className="wf-hint">
+            {active ? "Wait for the queued steps to finish."
+              : runAllWhy ?? "Queues every step that passes its gates. They run one at a time, in order, and each picks its targets from what the steps before it found."}
+          </p>
+        )}
         {pipeMsg && <p className="saved" role="status">{pipeMsg}</p>}
         {pipeSkipped.length > 0 && (
           <ul className="pipe-skipped" aria-label="Steps not queued">
@@ -267,50 +279,61 @@ export function Recon({ engId, onAssetsChanged, canManage = true, canRun = true,
           </ul>
         )}
         {error && <p className="field-error" role="alert">{error}</p>}
+        {active && <BatchProgress jobs={jobs} mods={mods} phases={phases} />}
         {active && <QueueStatus jobs={jobs} mods={mods} liveLine={liveLine} />}
 
-        <ol className="funnel" aria-label="How the surface narrows">
+        <ol className="funnel" aria-label="What recon found, step by step">
           {funnel.map(([label, n]) => (
-            <li key={label}><span className="funnel-n">{n === undefined ? "–" : n.toLocaleString()}</span>{label}</li>
+            <li key={label}>
+              <span className="funnel-n">{n === undefined ? "–" : n.toLocaleString()}</span>
+              <span className="funnel-label">{label}</span>
+              <span className="funnel-bar" aria-hidden="true"><span style={{ width: `${barWidth(n, funnelMax)}%` }} /></span>
+            </li>
           ))}
         </ol>
 
         <ol className="phases">
           {phases.map((p, i) => {
             const runnable = p.kinds.filter((k) => !blocker(k));
+            const ps = phaseState(p.kinds, jobs);
             return (
-              <li key={p.key} className="phase">
-                <div className="phase-head">
-                  <span className="phase-n" aria-hidden="true">{i + 1}</span>
-                  <div className="phase-text">
-                    <h4>{p.title}</h4>
-                    <p>{p.summary}</p>
-                    {stat[p.key] && <p className="phase-stat">{stat[p.key]}</p>}
+              <li key={p.key} className={`phase ${ps}`}>
+                <span className="phase-node" aria-hidden="true">{ps === "done" ? "✓" : i + 1}</span>
+                <div className="phase-body">
+                  <div className="phase-head">
+                    <div className="phase-text">
+                      <h4><span className="sr-only">Step {i + 1}: </span>{p.title}
+                        <span className="sr-only"> ({PHASE_WORD[ps]})</span></h4>
+                      <p>{p.summary}</p>
+                    </div>
+                    <div className="phase-side">
+                      {stat[p.key] && <span className="phase-stat">{stat[p.key]}</span>}
+                      {canRun && (
+                        <button className="btn ghost small" disabled={active || runnable.length === 0}
+                                onClick={() => queue(runnable)}
+                                title={runnable.length ? `Queue ${runnable.length} of ${p.kinds.length} tools in this step` : "Nothing in this step can run yet"}>
+                          Run step
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  {canRun && (
-                    <button className="btn ghost small" disabled={active || runnable.length === 0}
-                            onClick={() => queue(runnable)}
-                            title={runnable.length ? `Queue ${runnable.length} of ${p.kinds.length} tools in this step` : "Nothing in this step can run yet"}>
-                      Run step
-                    </button>
-                  )}
-                </div>
-                <details className="phase-help">
-                  <summary>How this step works</summary>
-                  <p>{p.help}</p>
-                  <dl>
+                  <details className="phase-help">
+                    <summary>Why this step, and how it works</summary>
+                    <p>{p.help}</p>
+                    <dl>
+                      {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
+                        <div key={m.kind}><dt>{m.title}</dt><dd>{m.summary}</dd></div>
+                      ))}
+                    </dl>
+                  </details>
+                  <ul className="tools">
                     {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
-                      <div key={m.kind}><dt>{m.title}</dt><dd>{m.summary}</dd></div>
+                      <ToolCard key={m.kind} m={m} last={jobs.find((j) => j.kind === m.kind)} why={blocker(m.kind)} canRun={canRun}
+                                jobs={jobs} liveLine={liveLine}
+                                onRun={() => run(m.kind)} onResults={() => showResults(m.kind)} />
                     ))}
-                  </dl>
-                </details>
-                <ul className="tools">
-                  {p.kinds.map((k) => mods.find((m) => m.kind === k)).filter((m): m is ReconModule => !!m).map((m) => (
-                    <ToolCard key={m.kind} m={m} last={jobs.find((j) => j.kind === m.kind)} why={blocker(m.kind)} canRun={canRun}
-                              jobs={jobs} liveLine={liveLine}
-                              onRun={() => run(m.kind)} onResults={() => showResults(m.kind)} />
-                  ))}
-                </ul>
+                  </ul>
+                </div>
               </li>
             );
           })}
@@ -408,30 +431,36 @@ function ToolCard({ m, last, why, canRun, jobs, liveLine, onRun, onResults }: {
   const [log, setLog] = useState(false);
   const busy = !!last && (last.status === "queued" || last.status === "running");
   const st = last ? shownStatus(last) : null;
+  // The one number a card leads with: what the last run found, or how far the running one is.
+  const metric = !last ? { n: "–", label: "not run yet" }
+    : st === "running" ? { n: `${last.targets_done}/${last.targets.length || "…"}`, label: "targets finished" }
+    : st === "queued" ? { n: "…", label: "waiting its turn" }
+    : st === "partial" ? { n: last.result_count.toLocaleString(), label: `results, ${last.remaining} targets not run yet` }
+    : st === "skipped" ? { n: "–", label: "skipped" }
+    : { n: last.result_count.toLocaleString(), label: last.result_count === 1 ? "result" : "results" };
   return (
-    <li className={`tool${why ? " blocked" : ""}`}>
-      <div className="tool-name">
-        <h5 title={m.summary}>{m.title}</h5>
-        <p className="tool-uses">{m.tools.join(", ")}</p>
+    <li className={`tool ${st ?? "never"}${why ? " blocked" : ""}${log ? " log-open" : ""}`}>
+      <div className="tool-top">
+        <div className="tool-name">
+          <h5 title={m.summary}>{m.title}</h5>
+          <p className="tool-uses">{m.tools.join(", ")}</p>
+        </div>
+        <span className="tool-badges">
+          <span className={`traffic ${m.traffic}`}>{TRAFFIC_LABEL[m.traffic]}</span>
+          {m.opt_in && <span className="traffic optin">Opt-in</span>}
+        </span>
       </div>
-      <span className="tool-badges">
-        <span className={`traffic ${m.traffic}`}>{TRAFFIC_LABEL[m.traffic]}</span>
-        {m.opt_in && <span className="traffic optin">Opt-in</span>}
-      </span>
-      <p className="tool-last">
-        {last ? (
-          <>
-            <StatusChip job={last} />{" "}
-            {st === "done" && plural(last.result_count, "result")}
-            {st === "partial" && `${last.remaining} not run yet`}
-            {st !== "running" && st !== "queued" &&
-              <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>}
-            {st === "skipped" && <SkipReason job={last} />}
-            {(st === "running" || st === "queued") && <JobProgress job={last} jobs={jobs} liveLine={liveLine} />}
-          </>
-        ) : <span className="muted">Not run yet</span>}
-        {why && canRun && <span className="tool-why">{why}</span>}
+      <p className="tool-metric">
+        <span className="tool-n">{metric.n}</span>
+        <span className="tool-n-label">{metric.label}</span>
       </p>
+      <div className="tool-last">
+        {last && <><StatusChip job={last} />{st !== "running" && st !== "queued" &&
+          <span className="muted"> {ago(last.finished_at ?? last.started_at ?? last.created_at)}</span>}</>}
+        {st === "skipped" && last && <SkipReason job={last} />}
+        {(st === "running" || st === "queued") && last && <JobProgress job={last} jobs={jobs} liveLine={liveLine} />}
+        {why && canRun && <span className="tool-why">{why}</span>}
+      </div>
       <div className="tool-actions">
         {canRun && <button className="btn small" disabled={!!why || busy} onClick={onRun}>{last?.status === "running" ? "Running…" : busy ? "Queued" : "Run"}</button>}
         <button className="btn ghost small" onClick={onResults}>Results</button>
@@ -443,6 +472,54 @@ function ToolCard({ m, last, why, canRun, jobs, liveLine, onRun, onResults }: {
       </div>
       {log && last && <JobLog jobId={last.id} live={busy} />}
     </li>
+  );
+}
+
+type PhaseState = "done" | "running" | "partial" | "idle";
+const PHASE_WORD: Record<PhaseState, string> = { done: "done", running: "running", partial: "partly done", idle: "not run yet" };
+
+/** A step is done when every tool's last run finished (or had nothing to do), running while one is queued or running. */
+function phaseState(kinds: string[], jobs: Job[]): PhaseState {
+  const last = kinds.map((k) => jobs.find((j) => j.kind === k));
+  if (last.some((j) => j && (j.status === "queued" || j.status === "running"))) return "running";
+  const finished = last.filter((j) => j && ["done", "skipped"].includes(shownStatus(j))).length;
+  if (finished === kinds.length && kinds.length > 0) return "done";
+  return finished > 0 ? "partial" : "idle";
+}
+
+/** Bar widths on a log scale, so 3 host names and 13,000 URLs are both visible and the narrowing reads left to right. */
+function barWidth(n: number | undefined, max: number): number {
+  if (!n) return 0;
+  return Math.max(4, Math.round((Math.log10(n + 1) / Math.log10(max + 1)) * 100));
+}
+
+/** The queued batch as one bar: which step of how many, what runs now, for how long. Never shows 100% before the
+ *  last step has finished, because each step only learns its targets when it starts. */
+function BatchProgress({ jobs, mods, phases }: { jobs: Job[]; mods: ReconModule[]; phases: ReconPhase[] }) {
+  const open = jobs.filter((j) => j.status === "queued" || j.status === "running");
+  if (open.length === 0) return null;
+  const since = open.map((j) => j.created_at).sort()[0];
+  const batch = jobs.filter((j) => j.created_at >= since && j.kind !== "agent");
+  const finished = batch.filter((j) => j.finished_at).length;
+  const running = batch.find((j) => j.status === "running");
+  const total = Math.max(batch.length, 1);
+  const pct = Math.min(95, Math.round(((finished + (running ? 0.5 : 0)) / total) * 100));
+  const startedAt = batch.map((j) => j.started_at).filter((t): t is string => !!t).sort()[0] ?? null;
+  const elapsed = secondsSince(startedAt);
+  const title = (k: string) => mods.find((m) => m.kind === k)?.title ?? k;
+  const phaseOf = (k: string) => phases.findIndex((p) => p.kinds.includes(k));
+  return (
+    <div className="batch" role="group" aria-label="Progress of the queued steps">
+      <div className="batch-line">
+        <strong>{finished} of {plural(total, "tool")} finished</strong>
+        {running && <span> · Now: {title(running.kind)}{phaseOf(running.kind) >= 0 && <> (step {phaseOf(running.kind) + 1})</>}</span>}
+        {elapsed != null && <span className="muted"> · {duration(elapsed)} so far</span>}
+      </div>
+      <div className="batch-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}
+           aria-label={`${finished} of ${total} tools finished`}>
+        <span style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   );
 }
 
