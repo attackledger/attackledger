@@ -217,6 +217,33 @@ def make_unsigned():
         return report(c, e)
 
 
+def make_void():
+    """A signed receipt voided by a change, then the lane changed back (D-052): the manifest matches
+    the receipt again, the lane stays void, and the change history records the void."""
+    use_tsa(None)
+    with fresh_client() as c:
+        e, assets = people_engagement(c, "Equivalence: void")
+        a = lane_with_items(c, assets["shop.lab.test"], "recon", {1: "scope confirmed"})
+        sign_in(c, "riza@lab.test")
+        signed_close(c, a, register(c, "Ed25519"))
+        sign_in(c, "ray@lab.test")
+        ok(c.patch(f"/lanes/{a}/items/1", json={"state": "open"}))
+        ok(c.patch(f"/lanes/{a}/items/1", json={"state": "done"}))
+        return report(c, e)
+
+
+def void_mutations(void: dict) -> dict:
+    out = {}
+
+    def as_receipted(r):    # the void hidden: the lane's status (not signed) and the count with it
+        next(l for l in r["lanes"] if l["status"] == "stale")["status"] = "closed"
+        r["summary"]["lanes_receipted"] += 1
+    r = copy.deepcopy(void)
+    as_receipted(r)
+    out["void-reported-as-receipted"] = rehash(r)
+    return out
+
+
 def make_token():
     """Operator-token mode: no people, the close names whoever the operator says."""
     use_tsa(None)
@@ -292,7 +319,10 @@ def mutations(base: dict, deleted: dict) -> dict:
     m("na-without-reason", base, lambda r: next(i for l in r["lanes"] if l["receipt"] for i in l["items"] if i["state"] == "na")
       .__setitem__("na_reason", " \u3000"))
     m("receipt-manifest-changed", base, lambda r: signed_lanes(r)[0]["receipt"].__setitem__("manifest_sha256", "e" * 64))
-    m("lane-status-stale", base, lambda r: signed_lanes(r)[0].__setitem__("status", "stale"))
+    def stale(r):           # and the summary's count with it, as the server would count it
+        signed_lanes(r)[0]["status"] = "stale"
+        r["summary"]["lanes_receipted"] -= 1
+    m("lane-status-stale", base, stale)
     # signatures
     def sig_of(r, algorithm):
         return next(l for l in signed_lanes(r) if l["receipt"]["signature"]["algorithm"] == algorithm)["receipt"]["signature"]
@@ -375,6 +405,18 @@ def mutations(base: dict, deleted: dict) -> dict:
     m("deleted-summary-put-back-wrong", deleted, lambda r: first(r).__setitem__("summary", "not what was there"))
     m("deleted-without-the-record", deleted, lambda r: r["engagement"].__setitem__("content_deleted", None))
     m("deleted-record-without-date", deleted, lambda r: r["engagement"]["content_deleted"].pop("at"))
+    # what the signatures cover and the report repeats unsigned (docs/security-review/EVIDENCE.md)
+    def moved(delta):
+        def fn(r):
+            rc = signed_lanes(r)[0]["receipt"]
+            rc["issued_at"] = (datetime.fromisoformat(rc["issued_at"]) + delta).isoformat()
+        return fn
+    m("receipt-issued-at-moved", base, moved(timedelta(days=-30)))
+    m("receipt-issued-at-within-window", base, moved(timedelta(minutes=5)))
+    m("engagement-id-changed", base, lambda r: r["engagement"].__setitem__("id", r["engagement"]["id"] + 1000))
+    m("engagement-renamed", base, lambda r: r["engagement"].__setitem__("name", "Another client"))
+    m("summary-lanes-inflated", base, lambda r: r["summary"].__setitem__("lanes_receipted", 12))
+    m("summary-evidence-inflated", base, lambda r: r["summary"].__setitem__("evidence_entries", 40))
     return out
 
 
@@ -407,6 +449,10 @@ def main():
 
     for name, r in mutations(json.loads(signed_raw), json.loads(deleted_raw)).items():
         (OUT / f"{name}.json").write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
+    void_raw = make_void()
+    (OUT / "void.json").write_bytes(void_raw)
+    for name, r in void_mutations(json.loads(void_raw)).items():
+        (OUT / f"{name}.json").write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
 
     # The DigiCert token kept with the server tests, in the smallest report that carries it:
     # the timestamp verifies; the made-up receipt around it does not.
@@ -426,5 +472,28 @@ def main():
     print(f"{OUT}: {len(list(OUT.glob('*.json')))} reports")
 
 
+def only(names: set[str]) -> None:
+    """Remake some fixtures and leave the others as they are: the mutations of signed.json and
+    content-deleted.json as they are on disk, and the void report (made anew).
+
+        ... make_fixtures.py --only void,void-reported-as-receipted,receipt-issued-at-moved
+    """
+    made = {name: json.dumps(r, ensure_ascii=False).encode() for name, r in mutations(
+        json.loads((OUT / "signed.json").read_bytes()), json.loads((OUT / "content-deleted.json").read_bytes())).items()}
+    if names & {"void", "void-reported-as-receipted"}:
+        made["void"] = make_void()
+        made.update({name: json.dumps(r, ensure_ascii=False).encode()
+                     for name, r in void_mutations(json.loads(made["void"])).items()})
+    unknown = names - set(made)
+    if unknown:
+        raise SystemExit(f"no such fixture: {', '.join(sorted(unknown))}")
+    for name in sorted(names):
+        (OUT / f"{name}.json").write_bytes(made[name])
+    print(f"{OUT}: wrote {len(names)} reports")
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--only"] and len(sys.argv) == 3:
+        only(set(sys.argv[2].split(",")))
+    else:
+        main()

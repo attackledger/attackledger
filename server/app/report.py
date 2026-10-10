@@ -492,7 +492,8 @@ def _verify(r: dict) -> str:
                   "pass that authority’s root certificate with <code>--tsa-root</code>; obtain it from the authority and "
                   "check its fingerprint first.</p>") if others else ""
     checks = [
-        ("Report body hash", "The report has not been edited since it was generated: its SHA-256 matches the recorded value."),
+        ("Report body hash", "The report’s SHA-256 matches the value recorded in it. Anyone who edits a report can "
+                             "recompute it, so also compare it with the value the tester gave you."),
         ("Evidence chain", "Every evidence entry links to the one before it, from the genesis value to the chain head. "
                            "No entry was removed, reordered or changed. Each summary matches the hash the chain "
                            "commits to; a summary deleted with the engagement's key is reported as unavailable "
@@ -500,15 +501,15 @@ def _verify(r: dict) -> str:
         ("Lane receipts", "For every receipted lane, a manifest rebuilt from the report’s own items and evidence has the "
                           "receipt’s hash, every item marked done has evidence, and every not-applicable item has a reason."),
         ("Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its "
-                               "fingerprint, and the signed text names this lane, this manifest and a chain head in the report. "
-                               "SKIP when no receipt is signed."),
+                               "fingerprint, and the signed text names this engagement, this lane, this manifest, "
+                               "a chain head in the report and the receipt’s issue time. SKIP when no receipt is signed."),
         ("Signing key history", "Each signing key’s entries in the key log hash correctly and link into the log in order, "
                                 "and the key was registered to the signer before the receipt was issued and not revoked "
                                 "before it. Shown only when the report has signed receipts."),
         ("Change history", "The audit log entries in the report hash correctly and link into the log in order. For each "
                            "receipt, the signer held the reviewer role on this engagement (or was an owner) and had the "
-                           "name in the receipt when it was issued; NOTE lines give the scope in force then. Shown only "
-                           "when the report carries the audit log."),
+                           "name in the receipt when it was issued, and no entry records that the receipt was voided; NOTE "
+                           "lines give the scope in force then. Shown only when the report carries the audit log."),
         ("Receipt timestamps", "Each timestamp token covers this receipt’s manifest hash and signature, the authority’s "
                                "signature verifies, and its certificate chain reaches a root you trust. SKIP when no receipt "
                                "is timestamped."),

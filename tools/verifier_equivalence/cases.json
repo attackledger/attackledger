@@ -80,6 +80,14 @@
     {"name": "organizations: report issued at migration 0021", "file": "tools/verifier_equivalence/fixtures/org-before-0022.json", "v2": true, "expect": {"status": "verified", "T": "SKIP"}},
     {"name": "organizations: the same engagement after 0022", "file": "tools/verifier_equivalence/fixtures/org-after-0022.json", "v2": true, "expect": {"status": "verified", "T": "SKIP"}},
     {"name": "organizations: a second organization's own chains", "file": "tools/verifier_equivalence/fixtures/org-second.json", "v2": true, "expect": {"status": "verified", "T": "SKIP"}},
-    {"name": "organizations: another organization's audit log head", "file": "tools/verifier_equivalence/fixtures/org-second-foreign-head.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}}
+    {"name": "organizations: another organization's audit log head", "file": "tools/verifier_equivalence/fixtures/org-second-foreign-head.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "security review: a void receipt, the lane changed back", "file": "tools/verifier_equivalence/fixtures/void.json", "v2": true, "expect": {"status": "verified", "S": "SKIP", "T": "SKIP"}},
+    {"name": "security review: that void reported as receipted", "file": "tools/verifier_equivalence/fixtures/void-reported-as-receipted.json", "v2": true, "expect": {"status": "failed", "R": "PASS", "S": "PASS", "H": "FAIL"}},
+    {"name": "security review: receipt issue time moved 30 days", "file": "tools/verifier_equivalence/fixtures/receipt-issued-at-moved.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "S": "FAIL", "H": "PASS"}},
+    {"name": "security review: receipt issue time within the window", "file": "tools/verifier_equivalence/fixtures/receipt-issued-at-within-window.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
+    {"name": "security review: engagement id changed", "file": "tools/verifier_equivalence/fixtures/engagement-id-changed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "S": "FAIL"}},
+    {"name": "security review: engagement renamed", "file": "tools/verifier_equivalence/fixtures/engagement-renamed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
+    {"name": "security review: summary claims more receipted lanes", "file": "tools/verifier_equivalence/fixtures/summary-lanes-inflated.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "R": "FAIL"}},
+    {"name": "security review: summary claims more evidence entries", "file": "tools/verifier_equivalence/fixtures/summary-evidence-inflated.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}}
   ]
 }
