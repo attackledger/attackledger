@@ -63,7 +63,11 @@ echo "restore: manifest verified: $(sed -n 's/^contents: //p' "$SRC/info.txt"), 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "${ATTACKLEDGER_DIR:-$HERE}"
 [ -f docker-compose.yml ] || die "no docker-compose.yml in $(pwd); set ATTACKLEDGER_DIR to the install folder"
-dc() { docker compose "$@"; }
+# dc never reads this script's stdin: from a pipe or a heredoc (`ssh host 'bash -s' < script`),
+# `docker compose exec` and `run` would swallow the rest of it. dc_in is for the two calls
+# that are fed a file.
+dc() { docker compose "$@" </dev/null; }
+dc_in() { docker compose "$@"; }
 
 # ---- 2. the migration --------------------------------------------------------------------
 dc run --rm --no-deps -T api python -c "
@@ -86,7 +90,9 @@ fi
 dc up -d --wait db
 ROWS=$(dc exec -T db psql -U attackledger -d attackledger -tA -c "
   select coalesce(sum((xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', schemaname, tablename), false, true, '')))[1]::text::bigint), 0)
-  from pg_tables where schemaname = 'public' and tablename <> 'alembic_version'" | tr -d '\r')
+  from pg_tables where schemaname = 'public' and tablename not in ('alembic_version', 'organizations')" | tr -d '\r')
+# A fresh install already holds one row: the default organization that migration 0022 makes.
+# Organizations alone are not data; every table that holds data belongs to one of them.
 BLOBS=$(dc run --rm --no-deps -T --user 0 --entrypoint sh api -c "find /data/blobs -type f | wc -l" | tr -d ' \r')
 if [ "$ROWS" != "0" ] || [ "$BLOBS" != "0" ]; then
   if [ "$FORCE" != "1" ]; then
@@ -102,11 +108,11 @@ dc stop api worker
 echo "restore: restoring the database"
 dc exec -T -e PGOPTIONS=--client-min-messages=warning db psql -U attackledger -d attackledger -v ON_ERROR_STOP=1 -q \
   -c "drop schema public cascade" -c "create schema public"
-dc exec -T db pg_restore -U attackledger -d attackledger --no-owner --exit-on-error < "$SRC/postgres.dump"
+dc_in exec -T db pg_restore -U attackledger -d attackledger --no-owner --exit-on-error < "$SRC/postgres.dump"
 
 echo "restore: restoring the blob store"
 # As root, then handed to uid 10001, which the API and the worker both run as.
-dc run --rm --no-deps -T --user 0 --entrypoint sh api -c \
+dc_in run --rm --no-deps -T --user 0 --entrypoint sh api -c \
   "find /data/blobs -mindepth 1 -delete && tar -C /data/blobs -xzf - && chown -R 10001 /data/blobs && find /data/blobs -type f | wc -l" \
   < "$SRC/blobs.tar.gz" | tr -d ' \r' | sed 's/^/restore: blob files restored: /'
 

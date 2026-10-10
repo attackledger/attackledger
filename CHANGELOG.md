@@ -5,7 +5,19 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+Tested on a real server: a fresh Ubuntu 22.04 VPS (Docker 29.1, Compose 2.40), with the
+production file, loopback-only option D and the lab profile. Lab recon ran through the
+gateway (22 requests, all GET or DNS). The worker could not reach the internet, the
+database or the API. Backup, wiping every volume and restoring without `--force` kept the
+evidence chain identical, and the encrypted note stayed readable.
+
 ### Fixed
+- **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
+  pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
+  read the caller's stdin, so nothing after the backup ran. Docker calls no longer read
+  stdin; the two restore steps fed a file are the only exceptions.
+- **Restore refused a freshly wiped install.** Since migration 0022 every new install holds
+  the default organization, and restore counted that row as data and asked for `--force`.
 - **The web image had no favicons**: `web/Dockerfile` did not copy `web/public`, so a
   self-hosted install answered `/favicon.svg` with the app's HTML. Found by capturing the
   local app through Caido.

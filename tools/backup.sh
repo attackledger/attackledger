@@ -46,7 +46,9 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 cd "${ATTACKLEDGER_DIR:-$HERE}"
 [ -f docker-compose.yml ] || die "no docker-compose.yml in $(pwd); set ATTACKLEDGER_DIR to the install folder"
 
-dc() { docker compose "$@"; }
+# Never let a docker command read this script's stdin: run from a pipe or a heredoc (for
+# example `ssh host 'bash -s' < script`), `docker compose exec` would swallow the rest of it.
+dc() { docker compose "$@" </dev/null; }
 
 # Both services must be up: pg_dump runs in the database container, tar in the API's.
 for svc in db api; do

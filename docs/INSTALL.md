@@ -127,6 +127,11 @@ the Compose version this needs).
    docker compose version
    ```
 
+   **If Docker is already installed** from Ubuntu's own packages (`docker.io`) and is recent
+   enough, you can keep it. If `docker compose version` says `unknown command`, the Compose
+   plugin is missing; on Ubuntu 22.04 and later, `apt-get install -y docker-compose-v2` adds
+   it. Tested on Ubuntu 22.04 with Docker 29.1 and Compose 2.40.
+
 ## 3. Get AttackLedger
 
 1. Clone the repository and check out the newest release (or the one you were told to
