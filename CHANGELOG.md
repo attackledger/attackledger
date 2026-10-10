@@ -205,6 +205,22 @@ Containers and dependencies (`SUPPLY_CHAIN.md`):
   the default ones (measured: without them, root could not read the engagement keys and every
   backup failed). The lab proxy's nginx configuration is now a file, `deploy/lab-proxy.conf`:
   Compose cannot write inline content into a read-only container (SC-9).
+- **FastAPI 0.136.3 → 0.141.1, starlette 1.6.0 → 1.7.0.** FastAPI 0.137+ no longer lists an
+  included router's routes in `app.routes`, so the tests that check every route (each has a
+  permission rule, none reaches another organization, the worker's routes) would have seen none
+  of the gateway, worker, test-account and approval routes. They now walk included routers
+  (`server/tests/routewalk.py`), checked against the OpenAPI schema and each router, and a new
+  test sends a request to every route and checks that `authz.authorize` runs and finds that
+  route's own rule.
+- **Vite 5.4.21 → 8.3.1** (@vitejs/plugin-react 4.3.4 → 6.1.1, esbuild 0.28.2 as a development
+  dependency of its own): the two development-server advisories left (SC-6) are gone, `npm audit`
+  finds none. The built app has the same files and the same inline script, so the
+  Content-Security-Policy is unchanged; the verifier page builds byte-identical.
+- **GitHub Actions are pinned by commit SHA**, with the tag in a comment; a test fails on any
+  `uses:` that is not.
+- **`tools/refresh_pins.sh`** shows, for every digest-pinned base image, the digest its tag points
+  at today (`--write` moves the stale ones). `docs/SUPPLY_CHAIN.md` suggests running it monthly
+  and whenever an advisory names a base image.
 
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
@@ -233,7 +249,9 @@ data volume made by an earlier release is already owned by it. Caddy reads
 copies it as root), or Caddy cannot read it. The web container's memory limit is 512 MB (was
 256 MB): uploads wait in a memory-backed tmpfs. Scripts of your own that `docker compose exec
 --user 0` into a container and expect root's usual powers (reading other users' files, chown) now
-need a one-off `docker compose run --cap-add ...` instead, as `tools/backup.sh` does.
+need a one-off `docker compose run --cap-add ...` instead, as `tools/backup.sh` does. The web app is built
+for Vite 8's default browsers (Chrome and Edge 111, Firefox 114, Safari 16.4 or later; before:
+Chrome 87, Firefox 78, Safari 14).
 
 ### Fixed
 - **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on

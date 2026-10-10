@@ -3,6 +3,8 @@
 Date: 2026-10-10. Branch `sec3-supply`, from `cf286b5`. What the images are built from, how
 the containers run, and which known advisories affect the dependencies; the fixes, what was
 measured on a running copy, and what is left. How to maintain it is `docs/SUPPLY_CHAIN.md`.
+A follow-up on 2026-10-11 (branch `sec4-deps`) closed four of the gaps: FastAPI past 0.136, Vite 5,
+GitHub Actions by tag and the base-image refresh routine ("Follow-up" below).
 
 Network traffic in this review went only to Docker Hub, PyPI, the npm registry, the Go module
 proxy and checksum database, GitHub (the worker's pinned downloads, as the build already does)
@@ -134,6 +136,7 @@ every route (every route has a permission rule, no route reaches another organiz
 worker's routes) saw none of the included routers' routes and failed. Nothing in the
 application walks `app.routes`. Moving past 0.136 first needs those tests to walk included
 routers. FastAPI 0.142.4 and 0.143.0 (the newest) also require `opentelemetry-api`.
+(Done in the follow-up: the tests walk included routers, FastAPI 0.141.1, starlette 1.7.0.)
 
 Version choice: the newest release at least two weeks old that fixes every advisory
 (cryptography 50.0.0 of 2026-07-31 rather than 50.0.2 of 2026-09-30, starlette 1.6.0, setuptools
@@ -154,6 +157,7 @@ build and lint tools; 2 after:
 
 Developers who run `npm run dev` should keep it on loopback (Vite's default) and not browse
 untrusted sites meanwhile, until the Vite major upgrade.
+(Done in the follow-up: Vite 8.3.1, `npm audit` 0 with development dependencies.)
 
 ## Measured on a running copy
 
@@ -239,23 +243,108 @@ and 46 Python packages; worker 87 and 46, Arjun 8, Go modules per tool (dnsx 100
 only); web 71 OS packages and 7 npm packages; Postgres 45, nginx 71 and Caddy 32 OS packages.
 The output is not committed.
 
+## Follow-up, 2026-10-11: four gaps closed
+
+Branch `sec4-deps`. Network traffic went only to PyPI, the npm registry (packages and its
+advisory database), Docker Hub (manifest lookups, base images) and the GitHub API (tag lookups).
+
+| Gap | Before | After | Test |
+|---|---|---|---|
+| FastAPI held back (SC-4) | FastAPI 0.136.3, starlette 1.6.0 | FastAPI 0.141.1, starlette 1.7.0 | `test_routes.py` (4 new), and the four route-walking tests on `routewalk.py` |
+| Vite 5 (SC-6) | Vite 5.4.21, @vitejs/plugin-react 4.3.4, esbuild 0.21.5 (through Vite); `npm audit` 2 | Vite 8.3.1, @vitejs/plugin-react 6.1.1, esbuild 0.28.2 (a direct development dependency); `npm audit` 0 | `npm ci --ignore-scripts`, `tsc`, lint, build; outputs compared (below) |
+| Actions by tag | `actions/checkout@v4`, `actions/setup-python@v5`, `actions/setup-node@v4` | each by the full commit SHA its tag pointed at, the tag in a comment | `test_supply_chain.py::test_github_actions_are_pinned_by_commit` |
+| No refresh routine for base images (SC-2) | none | `tools/refresh_pins.sh`, monthly and on any advisory naming an image (`docs/SUPPLY_CHAIN.md`) | run here (below) |
+
+Tests: 938 passed and 1 skipped before; 943 passed and 1 skipped after, on the rebuilt API image
+(5 new); `tools/test_postgres.sh` passes (944 passed on Postgres 16, and the migration-0022 upgrade check). `pip-audit` on the rebuilt image's site-packages:
+`No known vulnerabilities found`.
+
+**FastAPI.** From 0.137, `app.routes` holds an included router as one `_IncludedRouter` entry
+and its routes are reached through that entry's `effective_route_contexts()`. The four tests
+that walk every route now use `server/tests/routewalk.py`, which walks both shapes and fails on
+any entry it does not recognise, rather than skipping it. `test_routes.py` checks the walk
+against two independent lists: FastAPI's own OpenAPI schema (93 method and path pairs, the same
+as the walk apart from `/openapi.json` and `/docs`, which keep themselves out of it) and the
+routes each router `main.py` includes declares. Measured on 0.141.1 and on 0.143.0: the old walk
+(the `APIRoute` entries of `app.routes`) saw 72 of the 95 pairs and missed all 23 of the four
+included routers; the new one sees 95.
+
+`authz.authorize` looks the rule up by `request.scope["route"].path`. For an included route,
+FastAPI 0.137+ puts the included router's own `APIRoute` there, whose path is the one its router
+declared, without the prefix of the include. The includes take no prefix, so the two are the
+same; `test_routes.py` fails if one gains a prefix (the rule lookup would then miss, and the route
+would answer owners only, which fails closed). And it proves the lookup on the running app: a
+request to each of the 95 routes, with a rules table that records the lookup and stops the
+request there (HTTP 418, before anything else in `authorize` and before any handler runs).
+Every route reached `authorize`, and each looked up its own (method, path), which has a rule. The
+app-wide `dependencies=[Depends(authz.authorize)]` still applies to included routers' routes
+(that request reached `authorize` for each of them).
+
+Version choice, as before: the newest release at least two weeks old. FastAPI 0.142.0 (2026-09-29)
+and 0.143.0 (2026-10-08, the newest) are younger than that, and from 0.142 FastAPI also requires
+`opentelemetry-api`, a new package in the image. The route tests and `test_people.py`,
+`test_organizations.py` and `test_worker_api.py` (51 tests) pass on 0.143.0 too, so moving on is
+an `.in` edit and a re-lock once it is old enough and the new dependency is accepted. Starlette
+1.7.0 is of 2026-09-23.
+
+**Vite 8.** Version choice as above: Vite 8.3.1 of 2026-09-24 (8.3.3 and 8.3.4 are of October),
+@vitejs/plugin-react 6.1.1 (6.1.2 is of 2026-10-05), esbuild 0.28.2. npm's advisory database lists
+no advisory for any of them. Vite 8 bundles with Rolldown and minifies CSS with Lightning CSS;
+plugin-react 6 transforms JSX with Oxc, so Babel and its packages left the lockfile (174 packages
+before, 136 after). Their binaries, like esbuild's, come from per-platform packages in the
+lockfile, so `npm ci --ignore-scripts` still installs a working build (measured: in
+`node:24-alpine` for the image, and on macOS). esbuild is no longer one of Vite's dependencies;
+it is now a development dependency of its own, because `tools/build_verify.sh` and
+`tools/verifier_equivalence/run.sh` call it.
+
+The built app, Vite 5 against Vite 8, from the same sources:
+- the same files (`index.html`, one script, one stylesheet, 16 font files, the icons); the image's
+  build in `node:24-alpine` gave the same asset names (content hashes) as the build on macOS;
+- `index.html` identical apart from the two asset names; its one inline script unchanged, so the
+  `sha256-UrXTevb7…` in `web/nginx.conf`'s Content-Security-Policy still matches and no other
+  inline script appeared; the script and stylesheet are loaded as before (`type="module"
+  crossorigin`, no `modulepreload` inlined);
+- no `eval` and no `new Function` in either bundle (the one `Function(` match is React DOM's
+  `MSApp.execUnsafeLocalFunction`, in both);
+- script 391.05 kB (gzip 122.35) → 392.05 kB (119.77), stylesheet 57.55 kB → 57.07 kB;
+- the default browser target moved from Vite 5's `modules` (Chrome 87, Firefox 78, Safari 14) to
+  Vite 8's `baseline-widely-available` (Chrome and Edge 111, Firefox 114, Safari 16.4).
+- The demo build (`VITE_DEMO=1 npx vite build --base ./`, into a scratch folder) gives the same
+  file set as before, with relative asset paths. `tools/build_verify.sh` wrote a byte-identical
+  `site/verify.html` with esbuild 0.28.2, `tools/build_pages.sh` accepted it (its inline script
+  and style match its CSP), and `tools/verifier_equivalence/run.sh` found 0 differences on 126
+  reports and 107 building-block cases.
+
+**Actions.** Each tag was resolved through the GitHub API (`git/ref/tags/<tag>`; none was an
+annotated tag): `actions/checkout` v4 = v4.4.0 `11d5960a…`, `actions/setup-python` v5 = v5.6.0
+`a26af69b…`, `actions/setup-node` v4 = v4.4.0 `49933ea5…`. The CLA action was already pinned; its
+tag comment moved onto the `uses:` line, where the test reads it. The test also failed, as it
+should, with one action set back to `@v4` and with one tag comment removed.
+
+**Base images.** `tools/refresh_pins.sh` asks the registry (HEAD on the tag's manifest, which
+Docker Hub does not count against its pull limit) for the digest each pinned tag points at now.
+Run here, one day after the pins: 10 pins, 3 stale (`python:3.12-slim` in both Dockerfiles,
+`caddy:2.11-alpine`), every current digest a multi-arch index. They were not moved in this
+branch: the routine is for a maintainer to run, on the cadence in `docs/SUPPLY_CHAIN.md`. `--write`
+replaced exactly those three digests (checked, then reverted).
+
 ## Gaps left
 
 - **OS packages are not version-pinned.** `apt-get install ca-certificates curl unzip` takes the
   versions of that day; apt checks the signed release files, so the risk is drift, not
   tampering. Pinning them would mean snapshot.debian.org, a source the build does not use.
-- **Base images need a refresh routine** (SC-2): pinned digests do not pick up security
-  updates. Nothing reminds anyone yet; a scheduled CI job comparing the pinned digests with the
-  tags would.
 - **No image vulnerability scan of OS packages** (Trivy, Grype). The SBOM's OS files are the input
   such a scanner needs; adding one means a scanner and its database as new sources.
 - **feroxbuster, nuclei-templates and the word list** are checked against hashes recorded at pin
   time, not against signatures or checksums their publishers sign: feroxbuster publishes none.
-- **GitHub Actions** in `.github/workflows/tests.yml` are referenced by tag (`actions/checkout@v4`),
-  not by commit SHA.
 - **The images are not signed** (cosign or similar) and no build provenance is published. An
   install builds its own images from the repository, so the trust anchor is the git checkout
   (`git checkout` of a tag; tags are not signed either).
 - **Arjun's sources** are built from sdists (hash-pinned, but their `setup.py` runs at build time).
-- **FastAPI 0.136** (SC-4) until the route-walking tests read included routers.
-- **Vite 5** (SC-6) until a major upgrade.
+- **Base images are refreshed by hand** (closed as a routine in the follow-up): `tools/refresh_pins.sh`
+  shows what is stale, but nothing runs it on a schedule yet; a scheduled CI job running it (it
+  exits 1 when a pin is stale) would remind someone.
+- **Actions are pinned, not watched**: a pinned action gets no fixes until someone moves the pin
+  (no Dependabot or Renovate configuration; adding one is a new service with write access to
+  pull requests).
+- **FastAPI 0.142+** wait for the two-week rule and a decision on `opentelemetry-api` (follow-up).

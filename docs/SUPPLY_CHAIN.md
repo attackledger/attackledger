@@ -15,6 +15,7 @@ what was measured and the gaps left, is `docs/security-review/SUPPLY_CHAIN.md`.
 | Go recon tools (subfinder, dnsx, httpx, katana, nuclei, assetfinder, waybackurls, gau) | the Go module proxy | `go install module@version`: each module against the tool's `go.sum` and the public checksum database (sum.golang.org). `worker/Dockerfile` writes these settings out (`GOSUMDB`, `GOPROXY`, no `GONOSUMDB`/`GOPRIVATE`/`GOINSECURE`) and sets `GOTOOLCHAIN=local`, so no other Go toolchain is fetched |
 | feroxbuster, nuclei-templates, the SecLists word list | GitHub | a SHA-256 recorded in `worker/Dockerfile` when the version was pinned; the build fails on a mismatch |
 | npm packages (web build stage only) | the npm registry | `npm ci` from `web/package-lock.json`, each package against its SHA-512 there; `--ignore-scripts`, so no install script runs |
+| GitHub Actions (CI only: `.github/workflows/`) | GitHub | each `uses:` names the full commit SHA its tag pointed at when pinned, with the tag in a comment (`server/tests/test_supply_chain.py` checks) |
 | Debian packages (`ca-certificates`, `curl`, `unzip`) | Debian's mirrors | apt's signed release files. Versions are not pinned: they are whatever the pinned base image's release has that day (see the gaps in the review) |
 
 ## Changing a dependency
@@ -33,7 +34,14 @@ Python 3.12 on any machine. It talks to PyPI only. `server/tests/test_supply_cha
 a lock no longer matches its `.in` file or a package has no hash.
 
 npm: change `web/package.json`, run `npm install --package-lock-only` in `web/`, review the lock
-diff, then `npm ci && npx tsc --noEmit && npm run lint && npm run build`.
+diff, then `npm ci --ignore-scripts && npx tsc --noEmit && npm run lint && npm run build`.
+`tools/build_verify.sh` and `tools/verifier_equivalence/run.sh` use the esbuild of
+`web/node_modules` (a development dependency of its own, not Vite's): after changing it, run both
+and check that `site/verify.html` is unchanged or that its change is intended.
+
+Which version: the newest release at least two weeks old (a release that is withdrawn or
+compromised is usually found within days), unless only a younger one fixes a known advisory.
+Check with `pip-audit` and `npm audit` (below).
 
 A base image: pull the new tag, read its index digest and put both in the file:
 
@@ -44,9 +52,48 @@ docker buildx imagetools inspect python:3.12-slim                         # or, 
 ```
 
 The digest must be the index's (`application/vnd.oci.image.index.v1+json` or a Docker manifest
-list), not one platform's, or the other architecture stops building. Base images do not update
-by themselves now: refresh them deliberately, for example monthly and when an advisory names
-one, then rebuild and run the tests.
+list), not one platform's, or the other architecture stops building.
+
+### Refreshing the base images
+
+A pinned digest does not pick up the Debian or Alpine security fixes later builds of the same
+tag carry. `tools/refresh_pins.sh` lists every digest-pinned `FROM` and `image:` with the digest
+its tag points at today:
+
+```sh
+tools/refresh_pins.sh            # report: current or STALE per pin; changes nothing
+tools/refresh_pins.sh --write    # also put each tag's current digest in place of a stale one
+```
+
+It asks the registry with HEAD requests on the tags' manifests (Docker Hub does not count those
+against its pull limit); nothing is pulled or run. Exit status 0 means every pin is current, 1 that
+at least one is stale, 2 that a lookup failed, so a scheduled job can run it. It warns when a tag
+resolves to a single-platform manifest. The benchmark target (`tools/benchmark/`) is pinned to one
+release on purpose and is left out.
+
+Suggested cadence: **monthly**, and **at once when an advisory names a base image** (Debian and
+Alpine security announcements, the Docker Official Images' release notes) or one of its
+packages. After `--write`: update the version and date in the comment above each changed line
+(`docker run --rm IMAGE ...` shows the version, for example `python --version` or `nginx -v`),
+review `git diff`, rebuild the images (`docker compose build`), run the tests and
+`tools/test_postgres.sh`, and for the worker image the lab pipeline.
+
+To move to a new tag (a new minor or major), edit the tag in the file first, then run it with
+`--write`.
+
+### GitHub Actions
+
+Each `uses:` in `.github/workflows/` is pinned to a commit, with its tag in a comment
+(`uses: actions/checkout@<sha> # v4.4.0 (tag v4)`). To move one, read the commit a tag points at
+from the GitHub API, dereferencing an annotated tag:
+
+```sh
+gh api repos/actions/checkout/git/ref/tags/v4 --jq '.object.type + " " + .object.sha'
+gh api repos/actions/checkout/git/tags/<sha> --jq .object.sha     # only when the type was "tag"
+```
+
+Put the commit SHA and the tag in the file. Check the actions at the same time as the base
+images, and read the action's release notes before moving to a new major.
 
 Advisories, before a release:
 
