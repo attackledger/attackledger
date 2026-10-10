@@ -709,6 +709,10 @@ def _sign_refusal(lane: Lane, who) -> tuple[int, object, str] | None:
             msg = ("Separation of duties is on: you attached evidence to this lane, "
                    "so someone else must sign its receipt.")
             return 422, msg, msg
+        if _imported_by(lane, who.user_id):
+            msg = ("Separation of duties is on: you imported evidence that is on this lane, "
+                   "so someone else must sign its receipt.")
+            return 422, msg, msg
     if eng.require_signatures and who.kind != "person":
         msg = "This engagement requires signed receipts: sign in as a person and sign with your key."
         return 422, msg, msg
@@ -721,6 +725,20 @@ def _sign_refusal(lane: Lane, who) -> tuple[int, object, str] | None:
     except gates.GateError as e:
         return 422, str(e), f"{e}."
     return None
+
+
+def _imported_by(lane: Lane, user_id: int | None) -> bool:
+    """Whether this person uploaded an export whose entries are evidence on the lane. As for
+    recon and agent runs, whose evidence counts as the starter's, the uploader supplied it,
+    whoever mapped it (separation of duties)."""
+    ids = {e.id for e in lane.evidence if (e.source or "").startswith("import:")}
+    session = object_session(lane)
+    if not ids or user_id is None or session is None:
+        return False
+    rows = session.scalars(select(InboxEntry.mappings).join(ImportBatch, ImportBatch.id == InboxEntry.batch_id).where(
+        InboxEntry.engagement_id == lane.asset.engagement_id, InboxEntry.host == lane.asset.host,
+        ImportBatch.created_by == user_id))
+    return any(m.get("evidence_id") in ids for maps in rows for m in maps or [])
 
 
 def _can_sign(lane: Lane, who) -> dict:

@@ -15,7 +15,7 @@ from app import auth, blobs, vault
 from app.models import Lane
 from test_agent import api  # noqa: F401  (fixture)
 from test_encryption import delete, engagement, v1_row
-from test_people import person, sign_in
+from test_people import client, person, sign_in  # noqa: F401  (fixture)
 
 
 def sha(b: bytes) -> str:
@@ -114,3 +114,39 @@ def test_auth2_open_mode_refuses_another_sites_page_too(api, monkeypatch):
     r = api.post("/engagements", json={"name": "lab"}, headers={"Sec-Fetch-Site": "cross-site"})
     assert r.status_code == 403
     assert api.post("/engagements", json={"name": "lab"}).status_code == 201
+
+
+# ---- AUTH-3: separation of duties did not count who imported the evidence ------------------------
+
+def test_auth3_whoever_imported_a_lanes_evidence_cannot_sign_it(client):  # noqa: F811
+    """With separation of duties on, the person who supplied evidence cannot sign its receipt:
+    for agent and recon runs the person who started them counts, not only who attached. An import
+    is the same: the person who uploaded the export supplied the exchanges, whoever mapped them."""
+    import test_import as ti
+    ids, e, a = ti.team(client)
+    client.put(f"/engagements/{e}/members", json={"members": [
+        {"user_id": ids["tess"], "roles": ["tester"]},
+        {"user_id": ids["rita"], "roles": ["tester", "reviewer"]}]})
+    assert client.patch(f"/engagements/{e}", json={"separation_of_duties": True}).status_code == 200
+    athn = ti.lane(client, a, "athn")
+
+    sign_in(client, "rita@lab.test")                       # Rita uploads the export ...
+    assert ti.upload(client, e, ti.HAR).status_code == 201
+    sign_in(client, "tess@lab.test")                       # ... Tess maps it and resolves the lane
+    login = ti.by_url(client, e, "/rest/user/login")
+    r = client.post(f"/engagements/{e}/inbox/map", json={
+        "entry_ids": [login["id"]], "targets": [{"lane_id": athn["id"], "item_idx": 1}], "mark_done": True})
+    assert r.status_code == 200, r.text
+    for it in client.get(f"/lanes/{athn['id']}").json()["items"]:
+        if it["state"] == "open":
+            client.patch(f"/lanes/{athn['id']}/items/{it['idx']}", json={"state": "na", "na_reason": "lab"})
+
+    sign_in(client, "rita@lab.test")
+    view = client.get(f"/lanes/{athn['id']}").json()
+    assert view["can_sign"]["ok"] is False and "imported" in view["can_sign"]["reason"]
+    r = client.post(f"/lanes/{athn['id']}/close", json={"reviewed": True})
+    assert r.status_code == 422 and "imported" in r.json()["detail"]
+
+    sign_in(client, "owner@lab.test")                      # someone who did neither signs it
+    r = client.post(f"/lanes/{athn['id']}/close", json={"reviewed": True})
+    assert r.status_code == 200, r.text

@@ -316,8 +316,8 @@ The reviewer opens the lane, reads its evidence, ticks **I reviewed this lane's 
 Only a person closes a lane.**, and chooses **Sign and close lane**. Their browser signs the
 receipt with a key that never leaves it. Then:
 
-- If the engagement has **separation of duties** on, whoever attached or mapped evidence on
-  a lane cannot sign it. Ask someone else.
+- If the engagement has **separation of duties** on, whoever attached, mapped or imported
+  evidence on a lane (or started the run that recorded it) cannot sign it. Ask someone else.
 - If the reviewer's sign-off is refused, the panel lists each item that still needs evidence
   or a reason, and the list follows your changes.
 - If the lane depends on another lane (**Needs …**), that lane must be receipted first.
