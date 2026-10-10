@@ -5,6 +5,11 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+### Fixed
+- **The web image had no favicons**: `web/Dockerfile` did not copy `web/public`, so a
+  self-hosted install answered `/favicon.svg` with the app's HTML. Found by capturing the
+  local app through Caido.
+
 ### Changed
 - **Recon workflow, redesigned** (ideas from the ars0n framework; no code taken).
   - A summary line ("6 steps, 13 tools; 13 done, last finished …") and one clear Run all

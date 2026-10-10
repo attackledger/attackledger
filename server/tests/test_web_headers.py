@@ -67,3 +67,10 @@ def test_the_caddyfile_sends_the_same_values_and_no_policy_of_its_own():
     assert "Content-Security-Policy" not in caddy and caddy["Strict-Transport-Security"].startswith("max-age=")
     for name, value in _headers(_location("/api/")).items():
         assert caddy.get(name) == value, name
+
+
+def test_web_image_ships_the_public_folder():
+    """Vite copies web/public (favicons) into the build only if the image has it."""
+    dockerfile = (ROOT / "web" / "Dockerfile").read_text()
+    assert "COPY public ./public" in dockerfile
+    assert (ROOT / "web" / "public" / "favicon.svg").is_file()
