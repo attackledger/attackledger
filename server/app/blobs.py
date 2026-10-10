@@ -89,6 +89,17 @@ def get(digest: str, *, engagement_id: int | None = None, plaintext: bool = True
     return data if hashlib.sha256(data).hexdigest() == digest else None
 
 
+def plain_digests() -> list[str]:
+    """Every blob of the plaintext store (<blobs>/<dd>/<digest>, written before 0017)."""
+    out = []
+    r = root()
+    for d in sorted(r.iterdir()) if r.is_dir() else []:
+        if not re.fullmatch(r"[0-9a-f]{2}", d.name) or not d.is_dir():
+            continue
+        out += [p.name for p in sorted(d.iterdir()) if _HEX.match(p.name) and p.name[:2] == d.name and p.is_file()]
+    return out
+
+
 def remove_plain(digest: str) -> bool:
     """Delete a plaintext blob (vault.py decides which may go)."""
     if not _HEX.match(digest or ""):

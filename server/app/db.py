@@ -19,7 +19,21 @@ def make_engine(url: str, **kw):
     engine = create_engine(url, connect_args=connect_args, **kw)
     if engine.dialect.name == "postgresql":
         event.listen(engine, "connect", _utc_session)
+    elif engine.dialect.name == "sqlite":
+        event.listen(engine, "connect", _secure_delete)
     return engine
+
+
+def _secure_delete(dbapi_connection, _record) -> None:
+    """SQLite overwrites what it deletes. Otherwise a deleted row's bytes, and an updated value's
+    old bytes, stay in the file until reused, and a copy of the file shows content that deleting an
+    engagement's content removed (docs/security-review/RETENTION.md). Debian's SQLite, in the Docker
+    image, has it on already; others, such as the one in macOS's Python, do not."""
+    cur = dbapi_connection.cursor()
+    try:
+        cur.execute("PRAGMA secure_delete = ON")
+    finally:
+        cur.close()
 
 
 def _utc_session(dbapi_connection, _record) -> None:

@@ -505,14 +505,18 @@ same, recorded as "the operator on the server".
 
 **What deletion removes, and what stays.** Deleted: the engagement's key and its raw
 evidence (HTTP exchanges, notes, attached files), the evidence summaries, the recon results
-(hosts found, URLs, leads), the recon and agent logs, and the imported entries' URLs and
-labels. What stays, in plain text, because the reports and their verification depend on it:
+(hosts found, URLs, leads), the recon and agent logs and agent summaries, the URLs among job
+targets, the imported entries' URLs and labels, the test accounts, the proposed writes'
+requests, URLs and reasons, and the URLs and reasons in the gateway's request log, also in the
+gateway's quarantine file. A run still going is cancelled. What stays, in plain text, because
+the reports and their verification depend on it:
 - the evidence chain, with each entry's host, lane, kind, hash and **URL: host, path and
   query string** (secrets in it redacted when it was stored), or an attached file's name;
 - the lanes, items and their not-applicable reasons;
 - the receipts, their signatures and timestamps;
-- the logs: the audit log, the key log and the gateway's request log (method, URL and
-  verdict of every request recon and agents sent).
+- the logs: the audit log (with the notes people wrote on writes they approved or rejected,
+  and the path typed to confirm a DELETE), the key log, and the gateway's request log without
+  its URLs (method, host, status and verdict of every request recon and agents sent).
 
 So a URL that names something confidential stays readable after the deletion. Evidence
 summaries written before 0.7 (chain record v1) also stay, because the chain covers their
@@ -563,11 +567,21 @@ Run the steps in one shell: step 1 sets `KEY` to the key file's path, the one in
 5. Destroy the old key (`shred -u "$KEY.old"`, and its stored copy) once you no longer
    need the backups made with it: those backups open only with it.
 
-**Backups and deletion.** A backup holds the wrapped engagement keys that existed when it
-was made. Content deleted since can therefore still be recovered from an older backup
-together with the master key of that time. To make a deletion final in the backups too,
-either keep backups no longer than your retention policy allows, or rotate the master key
-after the deletion and destroy the old one.
+**Backups and deletion.** Deleting content does not reach the backups made before it. Such
+a backup has two parts, and only one of them is encrypted:
+- the blob store holds the wrapped engagement keys that existed when it was made, so content
+  deleted since can be recovered from it with the master key of that time. Rotating the
+  master key after the deletion and destroying the old one makes that part unreadable;
+- the database dump is not encrypted. It holds in plain text what deletion removes from the
+  database: recon results (hosts, URLs, leads), job logs and targets, the request log's URLs
+  and reasons, imported entries' URLs and labels, proposed writes' URLs and reasons. Rotating
+  the key does nothing to it.
+
+So to make a deletion final, delete the backups made before it, or keep backups no longer
+than your retention policy allows. Restoring a backup made before a deletion brings the
+deleted content back, and the engagement then shows no deletion: delete it again after the
+restore. On Postgres, deleted rows also stay in the database's files until `VACUUM` reuses
+the space and in its write-ahead log until it is recycled (`docs/ENCRYPTION.md`).
 
 **Upgrading an install from before encryption (0.6 or earlier).** The API now runs as uid
 10001, like the worker. Before the first start of the new version, give the blob store to

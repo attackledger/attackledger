@@ -21,6 +21,16 @@
 # The blob store also holds each engagement's data key, wrapped by the master key
 # (<blobs>/e/<id>/key.json), so the two parts must always be backed up together.
 #
+# Deleting an engagement's content (D-043) does not reach a backup made before it, and
+# restoring that backup brings the content back (delete it again after the restore). In such a
+# backup, blobs.tar.gz holds the engagement's wrapped key and its encrypted evidence: rotating
+# the master key and destroying the old one makes them unreadable. postgres.dump is not
+# encrypted and rotation does nothing to it: it holds in plaintext what deletion removes from
+# the database (recon results, job logs and targets, the request log's URLs and reasons,
+# imported entries' URLs and labels, proposed writes' URLs and reasons). Only deleting the
+# backup removes those, so keep backups no longer than the retention you promise
+# (docs/ENCRYPTION.md, "Retention and deletion"; docs/security-review/RETENTION.md).
+#
 # What is NOT in the backup, on purpose: .env (the secrets) and the encryption master key.
 # Keep the key separately (docs/INSTALL.md, sections 7 and 14). info.txt names the key's id
 # (a hash, not the key), so a restore can tell before it changes anything whether the

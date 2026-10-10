@@ -410,11 +410,13 @@ REASONS = ("owner", "retention", "operator")
 def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     """Delete an engagement's content: record it, null the summaries, drop recon results,
     then delete the key and the blobs. Commits. Idempotent: a second call only finishes the
-    file step. Returns what was done."""
+    file step. Returns what was done. Every place the content is kept, and what stays, is in
+    docs/security-review/RETENTION.md."""
     from sqlalchemy import delete as sa_delete, select, update
 
     from . import auditlog
-    from .models import Endpoint, Engagement, Evidence, GatewayRequest, Job, Lead, Observation
+    from .models import (AgentExchange, Endpoint, Engagement, Evidence, GatewayRequest, Job, JobStatus, Lead,
+                         Observation)
 
     if reason not in REASONS:
         raise ValueError(f"unknown reason {reason!r}")
@@ -437,18 +439,35 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     from . import approvals, testaccounts   # test accounts and proposed writes (D-040, D-041)
     counts.update(testaccounts.wipe(session, eng.id))
     counts.update(approvals.wipe(session, eng.id))
-    # The gateway log keeps what it proves (method, host, port, status, verdict, reason, bytes);
-    # its URLs are the paths and query strings the tools and agents requested, which go.
+    # The gateway log keeps what it proves (method, host, port, status, verdict, bytes). Its URLs
+    # are the paths and query strings the tools and agents requested, and its reasons are free text
+    # built from the request and the target's answer (an approved write's URL, a target's malformed
+    # reply): both go. The gateway's quarantine file is purged by the gateway (gateway.py).
     counts["gateway_urls"] = session.execute(update(GatewayRequest).where(
-        GatewayRequest.engagement_id == eng.id, GatewayRequest.url != "").values(url="")).rowcount or 0
+        GatewayRequest.engagement_id == eng.id, (GatewayRequest.url != "") | (GatewayRequest.reason != ""))
+        .values(url="", reason="")).rowcount or 0
     now = datetime.now(timezone.utc)
     by = "the retention policy" if reason == "retention" else auditlog.actor_label(actor)
     note = f"Log deleted with the engagement's content on {now.date().isoformat()}.\n"
     jobs = session.scalars(select(Job).where(Job.engagement_id == eng.id)).all()
+    stopped = 0
     for j in jobs:
+        # A run still going would add to what is deleted here: it is cancelled (the worker stops it
+        # at its next heartbeat, the gateway refuses its traffic at once), and what it reports
+        # afterwards is not kept (workerapi.py).
+        if j.status in (JobStatus.queued, JobStatus.running):
+            j.status, j.finished_at = JobStatus.cancelled, j.finished_at or now
+            stopped += 1
         j.log = note
-        if j.result and "summary" in j.result:
-            j.result = {k: v for k, v in j.result.items() if k != "summary"}
+        # Targets can be URLs recon found (paths, query strings): the hosts they name stay.
+        j.targets = _hosts_only(j.targets)
+        j.remaining_targets = _hosts_only(j.remaining_targets) if j.remaining_targets is not None else None
+        if j.result and ("summary" in j.result or "detail" in j.result):
+            j.result = {k: v for k, v in j.result.items() if k not in ("summary", "detail")}
+    counts["jobs_stopped"] = stopped
+    ids = [j.id for j in jobs]
+    counts["agent_exchanges"] = session.execute(sa_delete(AgentExchange).where(
+        AgentExchange.job_id.in_(ids))).rowcount or 0 if ids else 0
     eng.content_deleted_at, eng.content_deleted_by, eng.content_deleted_reason = now, by, reason
     change = {"after": {"deleted_at": now.isoformat(), "reason": reason,
                         "retain_until": eng.retain_until.isoformat() if eng.retain_until else None},
@@ -459,6 +478,19 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     files = finish_deletion(session, eng)
     return {"already_deleted": False, **deleted_info(eng), "summaries_removed": len(sealed),
             "v1_summaries_kept": kept, **counts, **files}
+
+
+def _hosts_only(targets) -> list:
+    """A job's targets without what recon found in them: a URL becomes its host, in order, once."""
+    from . import urls
+
+    out = []
+    for t in targets or []:
+        t = str(t)
+        host = (urls.host_of(t) or "") if "://" in t else t
+        if host and host not in out:
+            out.append(host)
+    return out
 
 
 def finish_deletion(session, eng) -> dict:
@@ -626,6 +658,10 @@ def _status(s, args) -> int:
               f"{sum(1 for e in rows if e.summary is not None)} plaintext (chain v1) summaries; "
               f"{enc} encrypted blobs, {plain} plaintext blobs; key {'present' if has_key(eng.id) else 'none'}"
               + (f"; keep until {eng.retain_until.isoformat()}" if eng.retain_until else ""))
+    orphans = uncited_plaintext(s)
+    if orphans:
+        print(f"{len(orphans)} plaintext blobs from before encryption that no evidence cites (an agent run's "
+              "exchanges it did not add as evidence): `encrypt-existing` removes them")
     return 0
 
 
@@ -663,7 +699,27 @@ def encrypt_existing(s, eng_ids: list[int] | None = None) -> dict:
         if blobs.plain_path(digest).is_file() and all(blobs.encrypted_path(digest, i).is_file()
                                                        for i in ids & live):
             removed += int(blobs.remove_plain(digest))
-    return {"encrypted": copied, "already_encrypted": already, "plaintext_removed": removed}
+    # Plaintext blobs no evidence cites: before encryption an agent run stored every exchange it
+    # sent, and only those it added as evidence are cited. Nothing opens them (GET /blobs opens an
+    # engagement's own v1 evidence only), and no engagement can be told to own them, so deleting
+    # an engagement's content never reached them. Only a run over every engagement removes them.
+    orphans = 0
+    if eng_ids is None:
+        for digest in uncited_plaintext(s):
+            orphans += int(blobs.remove_plain(digest))
+    return {"encrypted": copied, "already_encrypted": already, "plaintext_removed": removed,
+            "uncited_removed": orphans}
+
+
+def uncited_plaintext(s) -> list[str]:
+    """The blobs of the plaintext store (from before 0017) that no chain v1 evidence cites."""
+    from sqlalchemy import select
+
+    from . import blobs
+    from .models import Evidence
+
+    cited = set(s.scalars(select(Evidence.sha256).where(Evidence.record_version == 1)))
+    return [d for d in blobs.plain_digests() if d not in cited]
 
 
 def rotate_master(old: bytes) -> dict:
@@ -733,7 +789,9 @@ def main(argv: list[str] | None = None) -> int:
                 check_store(s)
                 res = encrypt_existing(s, args.engagement)
                 print(f"encrypted {res['encrypted']} blobs ({res['already_encrypted']} were already); "
-                      f"removed {res['plaintext_removed']} plaintext copies")
+                      f"removed {res['plaintext_removed']} plaintext copies"
+                      + (f" and {res['uncited_removed']} plaintext blobs no evidence cites"
+                         if res["uncited_removed"] else ""))
                 return 0
             eng = s.get(Engagement, args.engagement)
             if eng is None:

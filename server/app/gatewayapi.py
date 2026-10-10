@@ -15,6 +15,8 @@ stay in the customer's network and talk to a hosted API the same way.
                                add (D-040). The material leaves the API only here, to the gateway
   POST /gateway/approval       a job credential and an approved write -> the request to send, once
                                (D-041); the approval is used by this call
+  POST /gateway/content-deleted  engagement and job ids -> those whose engagement's content was
+                               deleted, so the gateway removes their rows from its quarantine file
 
 And for people:
 
@@ -148,6 +150,7 @@ def gateway_dns_scopes(session: Session = Depends(get_session)):
 
 
 INT4_MAX, INT8_MAX = gatewaylog.INT4_MAX, gatewaylog.INT8_MAX
+PURGE_IDS = 5000          # ids per /gateway/content-deleted call (the gateway asks in chunks)
 
 
 class LogRow(BaseModel):
@@ -256,21 +259,55 @@ def gateway_log(body: LogIn, session: Session = Depends(get_session)):
     engs = {r.engagement_id for r, _ in rows if r.engagement_id is not None}
     jobs = {r.job_id for r, _ in rows if r.job_id is not None}
     known_engs = set(session.scalars(select(Engagement.id).where(Engagement.id.in_(engs)))) if engs else set()
-    # Rows that arrive after an engagement's content was deleted keep no URL either (vault.delete_content).
-    deleted = set(session.scalars(select(Engagement.id).where(Engagement.id.in_(engs),
-                                                               Engagement.content_deleted_at.is_not(None)))) if engs else set()
+    # Rows that arrive after an engagement's content was deleted keep no URL or reason either
+    # (vault.delete_content): those of its engagement, or of one of its jobs.
+    deleted = _deleted_engagements(session, engs)
     known_jobs = set(session.scalars(select(Job.id).where(Job.id.in_(jobs)))) if jobs else set()
+    deleted_jobs = _jobs_of_deleted(session, jobs)
     for r, at in rows:
+        gone = r.engagement_id in deleted or r.job_id in deleted_jobs
         session.add(GatewayRequest(
             at=at, engagement_id=r.engagement_id if r.engagement_id in known_engs else None,
             job_id=r.job_id if r.job_id in known_jobs else None, tool=r.tool, kind=r.kind, method=r.method,
-            url="" if r.engagement_id in deleted else r.url, host=r.host, port=r.port, status=r.status, verdict=r.verdict, reason=r.reason,
+            url="" if gone else r.url, host=r.host, port=r.port, status=r.status, verdict=r.verdict,
+            reason="" if gone else r.reason,
             bytes_sent=r.bytes_sent, bytes_received=r.bytes_received, duration_ms=r.duration_ms,
             account=r.account, approval_id=r.approval_id))
         if r.approval_id is not None and r.verdict != gatewaylog.UNLOGGED:
-            approvals.gateway_outcome(session, r.approval_id, r.verdict, r.status, r.reason)
+            approvals.gateway_outcome(session, r.approval_id, r.verdict, r.status, "" if gone else r.reason)
     session.commit()
     return {"written": len(rows) - len(unlogged), "unlogged": unlogged}
+
+
+def _ids(values) -> list[int]:
+    return sorted({v for v in values if type(v) is int and 1 <= v <= INT4_MAX})
+
+
+def _deleted_engagements(session, ids) -> set[int]:
+    ids = _ids(ids)
+    return set(session.scalars(select(Engagement.id).where(
+        Engagement.id.in_(ids), Engagement.content_deleted_at.is_not(None)))) if ids else set()
+
+
+def _jobs_of_deleted(session, ids) -> set[int]:
+    ids = _ids(ids)
+    return set(session.scalars(select(Job.id).join(Engagement, Job.engagement_id == Engagement.id).where(
+        Job.id.in_(ids), Engagement.content_deleted_at.is_not(None)))) if ids else set()
+
+
+class DeletedIn(BaseModel):
+    engagements: list[int] = Field(default_factory=list, max_length=PURGE_IDS)
+    jobs: list[int] = Field(default_factory=list, max_length=PURGE_IDS)
+
+
+@router.post("/gateway/content-deleted")
+def gateway_content_deleted(body: DeletedIn, session: Session = Depends(get_session)):
+    """Which of these engagements had their content deleted, and which of these jobs belong to
+    one that had. The gateway asks about the rows of its quarantine file and removes theirs
+    (gateway.Gateway.purge_quarantine): the API cannot reach that file, which is in the gateway's
+    private volume, and the gateway holds no database credentials."""
+    return {"engagements": sorted(_deleted_engagements(session, body.engagements)),
+            "jobs": sorted(_jobs_of_deleted(session, body.jobs))}
 
 
 def _row_view(g: GatewayRequest) -> dict:
