@@ -102,7 +102,7 @@ def parse(data: bytes) -> Parsed:
     if len(entries) > MAX_ENTRIES:
         raise ImportRefused(f"the file has {len(entries)} entries; the limit is {MAX_ENTRIES} per file")
     creator = log.get("creator") if isinstance(log.get("creator"), dict) else {}
-    name = " ".join(str(creator.get(k, "")).strip() for k in ("name", "version")).strip()
+    name = " ".join(str(creator.get(k, "")).strip() for k in ("name", "version")).replace("\x00", "\ufffd").strip()
     out = Parsed(creator=name[:200] or None)
     for n, e in enumerate(entries, start=1):
         try:

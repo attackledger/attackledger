@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from alembic import command
-from sqlalchemy import create_engine, select, text
+import testdb
+from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
 from app import auditlog, db, migrate, people, signing
@@ -449,18 +450,18 @@ def test_old_reports_and_v2_receipts_still_verify(env, tmp_path):
 # ---- the migration records what exists ------------------------------------------------
 
 def test_migration_backfills_people_engagements_and_roles(tmp_path, monkeypatch):
-    eng = create_engine(f"sqlite:///{tmp_path / 'al.db'}")
+    eng = testdb.file_engine(tmp_path / 'al.db')
     monkeypatch.setattr(db, "engine", eng)
     monkeypatch.setattr(migrate, "engine", eng)
     command.upgrade(migrate._config(), "0014")
     with eng.begin() as conn:
         conn.execute(text("INSERT INTO users (id, email, name, password_hash, is_owner, disabled, password_chosen, created_at) "
-                          "VALUES (1, 'o@lab.test', 'Olive', 'x', 1, 0, 0, '2026-10-01 09:00:00'),"
-                          "       (2, 'r@lab.test', 'Rita', 'x', 0, 1, 0, '2026-10-01 09:00:00')"))
+                          "VALUES (1, 'o@lab.test', 'Olive', 'x', TRUE, FALSE, FALSE, '2026-10-01 09:00:00'),"
+                          "       (2, 'r@lab.test', 'Rita', 'x', FALSE, TRUE, FALSE, '2026-10-01 09:00:00')"))
         conn.execute(text("INSERT INTO engagements (id, name, pack_id, engagement_type, created_at, scope_include, "
                           "scope_exclude, rate_limit_rps, enabled_modules, crawl_depth, separation_of_duties, "
                           "require_signatures, authorized_by, authorized_at, policy_url) VALUES (7, 'Old', 'bug-bounty', "
-                          "'bug_bounty', '2026-10-01 09:00:00', '[\"*.lab.test\"]', '[]', 4, '[]', 3, 1, 0, 'Olive', "
+                          "'bug_bounty', '2026-10-01 09:00:00', '[\"*.lab.test\"]', '[]', 4, '[]', 3, TRUE, FALSE, 'Olive', "
                           "'2026-10-02 10:00:00', 'https://example.com/p')"))
         conn.execute(text("INSERT INTO memberships (engagement_id, user_id, roles) VALUES (7, 2, '[\"reviewer\"]')"))
     migrate.upgrade_head()

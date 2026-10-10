@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, select
+import testdb
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from harness import stack  # noqa: F401
 
@@ -32,7 +32,7 @@ LISTING = (b"<html><head><title>listing directory /ftp</title><style>" + b"a{col
 
 @pytest.fixture()
 def session():
-    eng_ = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng_ = testdb.memory_engine()
     db.Base.metadata.create_all(eng_)
     s = sessionmaker(bind=eng_, expire_on_commit=False)()
     yield s

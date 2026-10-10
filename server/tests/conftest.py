@@ -1,6 +1,12 @@
+import os
 import socket
 
 import pytest
+
+import testdb
+
+if testdb.on_postgres():
+    os.environ.setdefault("DATABASE_URL", "sqlite://")      # replaced by a Postgres database per test
 
 _real_gethostbyname = socket.gethostbyname
 _real_getaddrinfo = socket.getaddrinfo
@@ -66,3 +72,31 @@ def _worker_settings(tmp_path, monkeypatch):
     monkeypatch.setenv("ATTACKLEDGER_WORKER_TOKEN_FILE", str(tmp_path / "worker-token"))
     monkeypatch.delenv("ATTACKLEDGER_WORKER_TOKEN", raising=False)
     monkeypatch.setenv("ATTACKLEDGER_MAINTENANCE_SECONDS", "0")
+
+
+@pytest.fixture(autouse=True)
+def _database(monkeypatch):
+    """On Postgres (ATTACKLEDGER_TEST_PG, tests/testdb.py): the application's own engine is a
+    fresh database at head for each test, and every database the test made is dropped after
+    it. On SQLite nothing changes."""
+    if not testdb.on_postgres():
+        yield
+        return
+    from app import db, migrate
+    testdb.drop_released()
+    eng = testdb.head_engine()
+    old_bind = db.SessionLocal.kw["bind"]
+    monkeypatch.setattr(db, "engine", eng)
+    monkeypatch.setattr(migrate, "engine", eng)
+    db.SessionLocal.configure(bind=eng)
+    try:
+        yield
+    finally:
+        db.SessionLocal.configure(bind=old_bind)
+        testdb.release()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if testdb.on_postgres():
+        testdb.drop_released()
+        testdb.drop_template()

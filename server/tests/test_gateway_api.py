@@ -4,9 +4,8 @@ import hashlib
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import create_engine
+import testdb
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app import db
 from app.models import Engagement, Job, JobStatus
@@ -20,7 +19,7 @@ def api(monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
     monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", TOKEN)
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 

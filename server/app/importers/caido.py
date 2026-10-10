@@ -74,7 +74,7 @@ def _entry(row: int, r) -> Entry:
     if r.get("edited") is True:
         label.append("edited")
     if isinstance(r.get("alteration"), str) and r["alteration"] not in ("", "none"):
-        label.append(f"alteration {r['alteration'][:40]}")
+        label.append(f"alteration {r['alteration'][:40]}".replace("\x00", "\ufffd"))
     return Entry(row=row, url=url, method=verb, status=code, request=request, response=response,
                  tool_id=text(r.get("id"), 100), time=_time(r.get("created_at")),
                  label=", ".join(x for x in label if x) or None, truncated=tuple(truncated))

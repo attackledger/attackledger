@@ -6,8 +6,12 @@ key and the report that API issued. Every table has rows. The test upgrades it, 
 every row went to the default organization, that the chains and the old report still verify
 and continue, that the API scopes the upgraded data, then downgrades and upgrades again.
 
-On Postgres: set ATTACKLEDGER_TEST_PG_URL to a database at 0021 filled by make_fixture.py and
-ATTACKLEDGER_TEST_PG_FIXTURE to the folder it wrote (docs/ORGANIZATIONS.md, "Upgrading").
+On Postgres, two ways (tools/test_postgres.sh runs both):
+  - with ATTACKLEDGER_TEST_PG (tests/testdb.py), a new database is migrated from empty to 0021
+    and given the fixture's rows, copied from fixture.sql;
+  - with ATTACKLEDGER_TEST_PG_URL, a database at 0021 filled by make_fixture.py with the 0.7.1
+    code, and ATTACKLEDGER_TEST_PG_FIXTURE, the folder it wrote (docs/ORGANIZATIONS.md,
+    "Upgrading"). This one is used when both are set.
 """
 import json
 import os
@@ -15,12 +19,14 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from alembic import command
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, text
+import testdb
+from sqlalchemy import JSON, Boolean, DateTime, MetaData, create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from harness import ROOT
@@ -151,7 +157,52 @@ def test_upgrade_with_data_on_sqlite(tmp_path, monkeypatch):
     upgrade_and_check(create_engine(f"sqlite:///{path}"), monkeypatch, tmp_path, FIXTURE)
 
 
-@pytest.mark.skipif(not os.environ.get("ATTACKLEDGER_TEST_PG_URL"), reason="needs a Postgres database at 0021")
+def postgres_at_0021(tmp_path, monkeypatch):
+    """A new Postgres database migrated from empty to 0021, with the fixture's rows: each
+    table's rows are read from fixture.sql (SQLite) and written with their own ids, then the
+    id sequences continue after them, as on a database that made those rows itself."""
+    eng = testdb.file_engine(tmp_path / "al.db")
+    monkeypatch.setattr(db, "engine", eng)
+    monkeypatch.setattr(migrate, "engine", eng)
+    command.upgrade(migrate._config(), "0021")
+    src = sqlite3.connect(":memory:")
+    src.executescript((FIXTURE / "fixture.sql").read_text())
+    meta = MetaData()
+    meta.reflect(eng)
+    with eng.begin() as c:
+        c.execute(text("SET LOCAL session_replication_role = replica"))   # rows in any order
+        for table in meta.sorted_tables:
+            if table.name == "alembic_version":
+                continue
+            cur = src.execute(f'SELECT * FROM "{table.name}"')
+            names = [d[0] for d in cur.description]
+            rows = []
+            for raw in cur.fetchall():
+                row = {}
+                for name, value in zip(names, raw):
+                    kind = table.c[name].type
+                    if value is not None and isinstance(kind, Boolean):
+                        value = bool(value)
+                    elif value is not None and isinstance(kind, JSON):
+                        value = json.loads(value)
+                    elif isinstance(value, str) and isinstance(kind, DateTime):
+                        value = datetime.fromisoformat(value)
+                    row[name] = value
+                rows.append(row)
+            if rows:
+                c.execute(table.insert(), rows)
+            if "id" in table.c and table.c.id.autoincrement and rows:
+                c.execute(text(f"SELECT setval(pg_get_serial_sequence('{table.name}', 'id'), "
+                               f"(SELECT max(id) FROM {table.name}))"))
+    src.close()
+    return eng
+
+
+@pytest.mark.skipif(not (testdb.on_postgres() or os.environ.get("ATTACKLEDGER_TEST_PG_URL")),
+                    reason="needs Postgres: ATTACKLEDGER_TEST_PG or ATTACKLEDGER_TEST_PG_URL (tools/test_postgres.sh)")
 def test_upgrade_with_data_on_postgres(tmp_path, monkeypatch):
-    upgrade_and_check(create_engine(os.environ["ATTACKLEDGER_TEST_PG_URL"]), monkeypatch, tmp_path,
-                      Path(os.environ["ATTACKLEDGER_TEST_PG_FIXTURE"]))
+    if os.environ.get("ATTACKLEDGER_TEST_PG_URL"):          # made by make_fixture.py with the 0.7.1 code
+        upgrade_and_check(db.make_engine(os.environ["ATTACKLEDGER_TEST_PG_URL"]), monkeypatch, tmp_path,
+                          Path(os.environ["ATTACKLEDGER_TEST_PG_FIXTURE"]))
+    else:
+        upgrade_and_check(postgres_at_0021(tmp_path, monkeypatch), monkeypatch, tmp_path, FIXTURE)

@@ -24,7 +24,7 @@ import hmac
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -144,6 +144,9 @@ def gateway_dns_scopes(session: Session = Depends(get_session)):
     return out
 
 
+INT4_MAX = 2**31 - 1
+
+
 class LogRow(BaseModel):
     at: datetime
     engagement_id: int | None = None
@@ -162,6 +165,29 @@ class LogRow(BaseModel):
     duration_ms: int | None = None
     account: str | None = Field(default=None, max_length=16)
     approval_id: int | None = None
+
+    # Every row the gateway sends is written: a value the database cannot hold must not make
+    # the API refuse the batch, which the gateway would keep sending (its log stops, and then
+    # its traffic: it fails closed). Postgres INTEGER is 32 bits; SQLite took any of these.
+    @field_validator("bytes_sent", "bytes_received", "duration_ms")
+    @classmethod
+    def _at_most_int4(cls, v):
+        return None if v is None else min(v, INT4_MAX)     # a count past 2 GiB is kept as the maximum
+
+    @field_validator("engagement_id", "job_id", "approval_id")
+    @classmethod
+    def _an_id(cls, v):
+        return v if v is not None and 1 <= v <= INT4_MAX else None     # no row has such an id
+
+    @field_validator("port")
+    @classmethod
+    def _a_port(cls, v):
+        return v if v is not None and 0 <= v <= 65535 else None
+
+    @field_validator("status")
+    @classmethod
+    def _a_status(cls, v):
+        return v if v is not None and 0 <= v <= 999 else None
 
 
 class LogIn(BaseModel):

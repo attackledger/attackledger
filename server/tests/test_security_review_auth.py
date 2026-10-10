@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
+import testdb
 from app import auth, blobs, vault
 from app.models import Lane
 from test_agent import api  # noqa: F401  (fixture)
@@ -182,15 +183,13 @@ def test_auth7_a_payload_with_fields_of_the_wrong_type_is_refused_with_422(monke
 
     import test_signing as ts
     from fastapi.testclient import TestClient
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
 
     from app import db
     from app.main import app
     monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
     auth._failures.clear()
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 
@@ -325,10 +324,13 @@ def test_auth6_token_sessions_work_and_end_in_people_mode_too(api, monkeypatch):
 
 # ---- AUTH-5 and the other single-use steps: atomic on every database ----------------------------
 #
-# Each race runs in two threads with their own sessions on one SQLite file (separate connections,
-# as two API workers have). Both read the row before either writes; then the first finishes and
-# commits before the second goes on, the interleaving a row lock on Postgres prevented and SQLite
-# did not. The step must still succeed exactly once.
+# Each race runs in two threads with their own sessions on one database (separate connections,
+# as two API workers have): an SQLite file, or a Postgres database with ATTACKLEDGER_TEST_PG
+# (tests/testdb.py). Both read the row before either writes; then the first finishes and commits
+# before the second goes on: the interleaving SQLite allowed. On Postgres a step that takes a
+# row lock (the claim's SKIP LOCKED) prevents it: the second never reads the row and finishes
+# without reaching that point, and the first then goes on alone. Either way the step must
+# succeed exactly once.
 
 import threading  # noqa: E402
 
@@ -336,34 +338,43 @@ RACE_HOST = "race.lab.test"
 
 
 def _file_sessions(tmp_path):
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     from app import db
-    eng = create_engine(f"sqlite:///{tmp_path / 'race.db'}", connect_args={"check_same_thread": False, "timeout": 30})
+    eng = testdb.file_engine(tmp_path / "race.db", check_same_thread=False, timeout=30)
     db.Base.metadata.create_all(eng)
     return eng, sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 
 
 class Interleave:
-    """Called by both threads where the code under test has read and not yet written: the first
-    to arrive goes on once both are there; the second waits until the first has finished."""
+    """Called by the threads where the code under test has read and not yet written: the first
+    to arrive goes on once every thread has arrived there or finished without it; the others
+    wait until the first has finished."""
 
-    def __init__(self):
-        self.both_read = threading.Barrier(2, timeout=20)
+    def __init__(self, n=2):
+        self.n, self.arrived, self.reached = n, 0, set()
+        self.cond = threading.Condition()
         self.first_done = threading.Event()
-        self.lock, self.first = threading.Lock(), None
+        self.first = None
+
+    def _arrive(self):
+        with self.cond:
+            self.arrived += 1
+            self.cond.notify_all()
 
     def point(self):
-        self.both_read.wait()
-        with self.lock:
+        me = threading.get_ident()
+        self.reached.add(me)
+        self._arrive()
+        with self.cond:
+            assert self.cond.wait_for(lambda: self.arrived >= self.n, 20), "the other thread did not arrive"
             if self.first is None:
-                self.first = threading.get_ident()
-        if self.first != threading.get_ident():
+                self.first = me
+        if self.first != me:
             assert self.first_done.wait(20), "the first thread did not finish"
 
-    def run(self, fn, n=2):
-        results = [None] * n
+    def run(self, fn):
+        results = [None] * self.n
 
         def go(i):
             try:
@@ -371,9 +382,12 @@ class Interleave:
             except Exception as e:  # noqa: BLE001 - the outcome is what is checked
                 results[i] = ("refused", e)
             finally:
-                if self.first == threading.get_ident():
+                me = threading.get_ident()
+                if me not in self.reached:
+                    self._arrive()          # finished without reading the row (it was locked)
+                if self.first == me:
                     self.first_done.set()
-        threads = [threading.Thread(target=go, args=(i,)) for i in range(n)]
+        threads = [threading.Thread(target=go, args=(i,)) for i in range(self.n)]
         for t in threads:
             t.start()
         for t in threads:
@@ -421,6 +435,7 @@ def test_auth5_two_concurrent_uses_of_one_approval_send_it_once(tmp_path, monkey
     race, real = Interleave(), approvals.unsendable
     monkeypatch.setattr(approvals, "unsendable", lambda headers: (race.point(), real(headers))[1])
     results = race.run(lambda: _consume(Session, job_id, pid))
+    assert len(race.reached) == 2                       # both read "approved", on every database
     ok = [r for kind, r in results if kind == "ok"]
     refused = [r for kind, r in results if kind == "refused"]
     assert len(ok) == 1 and ok[0]["approval_id"] == pid, results
@@ -515,10 +530,7 @@ def test_an_approval_racing_a_rejection_does_not_make_a_rejected_write_sendable(
         assert "rejected" in str(e)
 
 
-def test_two_workers_claiming_at_once_never_take_the_same_job(tmp_path, monkeypatch):
-    """workerapi._take locked the queued job (SKIP LOCKED) on Postgres only. On SQLite two workers
-    both took the oldest queued job: it ran twice, and the second claim replaced the first one's
-    job token and gateway secret."""
+def _claim_race(tmp_path, monkeypatch):
     from app import egress, workerapi
     from app.models import Engagement, Job, JobStatus
     _, Session = _file_sessions(tmp_path)
@@ -546,3 +558,23 @@ def test_two_workers_claiming_at_once_never_take_the_same_job(tmp_path, monkeypa
         assert j.status == JobStatus.running
         assert j.worker_token_sha256 == workerapi._sha(taken[0][1])       # the winner's token opens it
         assert j.gateway_secret_sha256 == hashlib.sha256(taken[0][2].encode()).hexdigest()
+    return race
+
+
+def test_two_workers_claiming_at_once_never_take_the_same_job(tmp_path, monkeypatch):
+    """workerapi._take locked the queued job (SKIP LOCKED) on Postgres only. On SQLite two workers
+    both took the oldest queued job: it ran twice, and the second claim replaced the first one's
+    job token and gateway secret."""
+    race = _claim_race(tmp_path, monkeypatch)
+    # Postgres: the row lock kept the second worker from reading the job at all; SQLite: both read it.
+    assert len(race.reached) == (1 if testdb.on_postgres() else 2)
+
+
+def test_without_the_row_lock_the_conditional_claim_alone_takes_a_job_once(tmp_path, monkeypatch):
+    """The conditional UPDATE holds by itself on Postgres too: with FOR UPDATE SKIP LOCKED taken
+    away, both workers read the queued job, and the second one's UPDATE (still queued?), made
+    after the first committed, changes nothing; that worker finds no other job."""
+    from sqlalchemy.sql.selectable import Select
+    monkeypatch.setattr(Select, "with_for_update", lambda self, **_kw: self)
+    race = _claim_race(tmp_path, monkeypatch)
+    assert len(race.reached) == 2                       # both read it, on every database

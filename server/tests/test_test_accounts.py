@@ -18,7 +18,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select, text
+import testdb
+from sqlalchemy import inspect as sa_inspect, select, text
 
 from harness import stack  # noqa: F401
 
@@ -651,7 +652,7 @@ def test_the_raw_credentials_appear_nowhere_that_is_stored_or_shown(stack, gw, t
     with stack.Session() as s:
         for ev in s.scalars(select(Evidence)):
             shown.append(blobs.get(ev.sha256, engagement_id=e).decode("utf-8", "replace"))
-        tables = [r[0] for r in s.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))]
+        tables = sa_inspect(s.connection()).get_table_names()
         for t in tables:
             shown += [str(row) for row in s.execute(text(f"SELECT * FROM {t}")).all()]
     for path in Path(os.environ["ATTACKLEDGER_BLOBS"]).rglob("*"):
@@ -710,11 +711,9 @@ def test_in_one_process_an_approved_write_is_sent_once_with_the_account(tmp_path
     """agenttools.Toolbox with a transport (tests, and anything with a database): the gateway's
     part, using the approval, is played by the toolbox itself."""
     from test_agent import Clock, FakeTransport, make_lane
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
     from app import db
-    eng_ = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng_ = testdb.memory_engine()
     db.Base.metadata.create_all(eng_)
     s = sessionmaker(bind=eng_, autoflush=False, expire_on_commit=False)()
     lane, job = make_lane(s)

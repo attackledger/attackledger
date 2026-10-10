@@ -10,9 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+import testdb
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app import auth, authz, db
 from app.main import app
@@ -24,7 +23,7 @@ PW = "correct horse battery"   # test passwords for this suite only
 def client(monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
     auth._failures.clear()
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 
