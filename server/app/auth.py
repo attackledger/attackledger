@@ -14,7 +14,8 @@ Four modes, chosen by what exists:
 
 Passwords are hashed with scrypt (standard library). A session cookie holds a random
 value; only its SHA-256 is stored, so a database leak does not leak sessions. Cookies
-are HttpOnly and SameSite=Strict. Failed sign-ins are counted per email and address,
+are HttpOnly and SameSite=Strict, and a change that a page of another origin sends (a sibling
+subdomain is the same site) is refused (from_another_site). Failed sign-ins are counted per email and address,
 and further attempts are refused for a while after too many.
 
 Each person belongs to one organization (D-042, docs/ORGANIZATIONS.md), and so does the
@@ -33,6 +34,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -78,6 +80,28 @@ def require_sign_in() -> bool:
 
 SETUP_HINT = ("nobody can sign in yet: create the first owner on the server with "
               "python -m app.people create --owner")
+
+
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+def from_another_site(request: Request) -> bool:
+    """Whether a browser sent this request from a page of another origin: a form or a script on
+    another site, or on a sibling subdomain, which is the same site and so gets the SameSite=Strict
+    cookie. Browsers say where a request comes from in Sec-Fetch-Site, older ones in Origin; other
+    clients (the worker, the gateway, scripts) send neither, and are not affected."""
+    site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if site:
+        return site not in ("same-origin", "none")
+    origin = request.headers.get("origin")
+    if origin is None:
+        return False
+    try:
+        theirs = urlsplit(origin.strip()).hostname
+        ours = urlsplit("//" + request.headers.get("host", "")).hostname
+    except ValueError:
+        return True
+    return not theirs or theirs != ours      # "null" (a sandboxed page) has no host: refused
 
 
 def token_session_value(tok: str) -> str:

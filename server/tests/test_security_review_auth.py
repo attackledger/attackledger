@@ -1,11 +1,15 @@
 """Regression tests from the security review of authentication, authorization and tenant
 isolation (docs/security-review/AUTH.md). Each test names the finding it closes."""
+import base64
 import hashlib
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from app import auth, blobs, vault
 from app.models import Lane
@@ -66,3 +70,47 @@ def test_auth1_citing_a_hash_does_not_open_another_engagements_plaintext_blob(ap
     assert not blobs.plain_path(sha(secret)).exists()
     sign_in(api, "tess@lab.test")
     assert api.get(f"/blobs/{sha(secret)}").status_code == 404
+
+
+# ---- AUTH-2: requests a page of another site sends ----------------------------------------------
+
+def _key(api) -> dict:
+    pub = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    r = api.post("/auth/keys", json={"algorithm": "Ed25519", "public_key": base64.b64encode(pub).decode()})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_auth2_a_page_of_another_site_cannot_change_anything(api, monkeypatch):
+    """SameSite=Strict keeps the cookie from cross-site requests, but a sibling subdomain is the
+    same site, and routes without a JSON body (revoking a key, cancelling a job, deleting a test
+    account, an import's raw body) need no preflight. The browser says where a request came from."""
+    _people(api, monkeypatch)
+    for headers in ({"Sec-Fetch-Site": "same-site", "Origin": "https://evil.lab.test"},
+                    {"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"},
+                    {"Origin": "https://evil.lab.test"},                # a browser without Fetch Metadata
+                    {"Origin": "null"}):
+        key = _key(api)
+        r = api.post(f"/auth/keys/{key['id']}/revoke", headers=headers)
+        assert r.status_code == 403, (headers, r.text)
+        assert not next(k for k in api.get("/auth/keys").json() if k["id"] == key["id"])["revoked"]
+        e = api.post("/engagements", json={"name": "made from elsewhere"}, headers=headers)
+        assert e.status_code == 403
+    assert all(x["name"] != "made from elsewhere" for x in api.get("/engagements").json())
+    # The app itself, and clients that are not browsers, are not affected.
+    for headers in ({"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"},
+                    {"Origin": "http://testserver"}, {}):
+        key = _key(api)
+        r = api.post(f"/auth/keys/{key['id']}/revoke", headers=headers)
+        assert r.status_code == 200 and r.json()["revoked"], (headers, r.text)
+    # Reading is not refused: a page of another site cannot read the answer (no CORS).
+    assert api.get("/auth/keys", headers={"Sec-Fetch-Site": "same-site"}).status_code == 200
+
+
+def test_auth2_open_mode_refuses_another_sites_page_too(api, monkeypatch):
+    """Open mode answers anyone on the machine; a web page the operator visits is not anyone."""
+    monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
+    r = api.post("/engagements", json={"name": "lab"}, headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    assert api.post("/engagements", json={"name": "lab"}).status_code == 201

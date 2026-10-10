@@ -195,6 +195,10 @@ def authorize(request: Request, session=Depends(get_session)) -> None:
     path = getattr(route, "path", request.url.path)
     rule = RULES.get((request.method, path))
     orgscope.pend(session)              # no query until the caller's organization is known
+    # A change sent by a page of another site (CSRF), whoever the browser is signed in as; in open
+    # mode too, where a web page the operator visits would otherwise act as the local operator.
+    if request.method not in auth.SAFE_METHODS and auth.from_another_site(request):
+        raise HTTPException(403, "refused: a page of another site sent this request; use AttackLedger itself")
     if rule and rule[0] == "public":
         return
     if rule and rule[0] == "gateway":
