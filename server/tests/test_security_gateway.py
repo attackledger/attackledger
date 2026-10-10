@@ -137,3 +137,83 @@ def test_gw2_a_request_refused_for_the_rate_opens_no_connection(stack, monkeypat
         t.join(30)
     assert sorted(results) == [200, 429, 429, 429, 429]
     assert len(opened) == 1 and len(stack.up.requests) == 1
+
+
+# ---- GW-3 / GW-4: a test account's session in an encoded response ---------------------------------
+
+COOKIE_VALUE = "eyJpdiI6IlpYaGhiWEJzWlE9PSIsInZhbHVlIjoic2VjcmV0In0%3D"
+ACCOUNT = {"label": "alice", "headers": [["Cookie", f"laravel_session={COOKIE_VALUE}"]]}
+
+
+def account_stack(stack, respond):
+    """The agent job 6 may send as test account alice; the upstream answers with respond(request head)."""
+    stack.api.add(6, kind="agent", traffic="agent")
+
+    async def account(job_id, secret, label, host):
+        return 200, ACCOUNT
+    stack.api.account = account
+
+    async def handle(reader, writer):
+        head = await reader.readuntil(b"\r\n\r\n")
+        writer.write(respond(head))
+        await writer.drain()
+        writer.close()
+
+    async def start():
+        return await asyncio.start_server(handle, "127.0.0.1", 0)
+    server = stack.run(start())
+    stack.servers.append(server)
+    port = server.sockets[0].getsockname()[1]
+
+    async def connector(ip, p, ssl=None, server_hostname=None):
+        return await asyncio.open_connection("127.0.0.1", port)
+    stack.gw.open_connection = connector
+
+
+def http_response(body: bytes, *headers: str) -> bytes:
+    return (b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n" + "".join(h + "\r\n" for h in headers).encode()
+            + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
+
+
+def cookie_of(head: bytes) -> str:
+    return next(l.split(":", 1)[1].strip() for l in head.decode("latin-1").split("\r\n") if l.lower().startswith("cookie:"))
+
+
+@pytest.mark.parametrize("encoding,encode", [
+    ("gzip", gzip.compress),
+    ("deflate", zlib.compress),
+])
+def test_gw3_a_compressed_response_is_scrubbed_too(stack, encoding, encode):
+    """The gateway asks for Accept-Encoding: identity, but a target may compress anyway."""
+    account_stack(stack, lambda head: http_response(encode(f"<pre>{cookie_of(head)}</pre>".encode()),
+                                                    f"Content-Encoding: {encoding}"))
+    status, headers, body = stack.get("http://app.example.com/debug", auth=stack.auth(job=6, tool="agent"),
+                                      headers={"X-AttackLedger-As": "alice"})
+    assert status == 200
+    if headers.get("content-encoding") == encoding:
+        body = gzip.decompress(body) if encoding == "gzip" else zlib.decompress(body)
+    assert COOKIE_VALUE.encode() not in body and b"[redacted:sha256:" in body
+    assert "content-encoding" not in headers
+
+
+def test_gw3_an_encoding_the_gateway_cannot_read_is_not_passed_on(stack):
+    account_stack(stack, lambda head: http_response(cookie_of(head).encode()[::-1], "Content-Encoding: br"))
+    status, headers, body = stack.get("http://app.example.com/debug", auth=stack.auth(job=6, tool="agent"),
+                                      headers={"X-AttackLedger-As": "alice"})
+    assert status == 200 and body == b"" and "content-encoding" not in headers
+    assert "withheld" in stack.rows(1)[-1]["reason"]
+
+
+def test_gw4_a_reflected_session_is_scrubbed_in_its_decoded_and_escaped_forms():
+    """phpinfo() and framework debug pages show $_COOKIE decoded; JSON and HTML escape it."""
+    decoded = COOKIE_VALUE.replace("%3D", "=")
+    slashed = "abc/def+ghi/jkl=mno&pqr"
+    page = (f"<td>$_COOKIE['laravel_session']</td><td>{decoded}</td>"
+            f"<script>var c = \"{slashed.replace('/', chr(92) + '/')}\";</script>"
+            f"<a href=\"/x?s={slashed.replace('&', '&amp;')}\">").encode()
+    account = {"label": "a", "headers": [["Cookie", f"laravel_session={COOKIE_VALUE}"], ["X-Session", slashed]]}
+    _, body = gateway.scrub_response(account, [], page)
+    assert decoded.encode() not in body
+    assert slashed.replace("/", "\\/").encode() not in body
+    assert slashed.replace("&", "&amp;").encode() not in body
+    assert b"abc" not in body

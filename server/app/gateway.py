@@ -55,6 +55,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import html
 import ipaddress
 import json
 import os
@@ -66,12 +67,13 @@ import struct
 import sys
 import tempfile
 import time
+import zlib
 import urllib.error
 import urllib.request
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, unquote_plus, urlsplit
 
 import h11
 
@@ -622,7 +624,9 @@ class Policy:
 
 def account_values(account: dict) -> list[str]:
     """The secret values an account's headers carry: each header value, each cookie's value and a
-    bearer token on its own, longest first, so a response that echoes them can be scrubbed."""
+    bearer token on its own, longest first, so a response that echoes them can be scrubbed. Each
+    also in the forms a page shows it in (security review GW-4): URL-decoded (phpinfo's $_COOKIE,
+    debug pages) and URL-encoded, HTML-escaped and with escaped slashes (JSON)."""
     out = set()
     for name, value in account.get("headers") or []:
         value = str(value)
@@ -633,7 +637,12 @@ def account_values(account: dict) -> list[str]:
         scheme, _, rest = value.partition(" ")
         if rest and scheme.isalpha():
             out.add(rest.strip())
-    return sorted((v for v in out if len(v) >= MIN_SCRUB), key=len, reverse=True)
+    forms = set()
+    for v in out:
+        for form in (v, unquote(v), unquote_plus(v)):
+            forms |= {form, quote(form, safe=""), html.escape(form), html.escape(form, quote=False),
+                      form.replace("/", "\\/")}
+    return sorted((v for v in forms if len(v) >= MIN_SCRUB), key=len, reverse=True)
 
 
 def scrub_response(account: dict, headers: list, body: bytes) -> tuple[list, bytes]:
@@ -1175,7 +1184,18 @@ class Gateway:
                 reason = "the response ended early"
                 break
         head = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in HOP_BY_HOP]
-        head, body = scrub_response(account, head, b"".join(chunks))
+        body = b"".join(chunks)
+        # Accept-Encoding: identity was asked for, but a target may compress anyway, and the
+        # account's values cannot be found in compressed bytes (security review GW-3): the body
+        # is decoded here, or withheld when it cannot be.
+        coding = ",".join(v.decode("latin-1") for k, v in head if k == b"content-encoding").strip().lower()
+        if coding and coding != "identity":
+            head = [(k, v) for k, v in head if k != b"content-encoding"]
+            try:
+                body = _decode(coding, body, MAX_SCRUBBED_BODY)
+            except (ValueError, zlib.error) as e:
+                body, reason = b"", reason or f"the response body was withheld: {str(e)[:100]}"
+        head, body = scrub_response(account, head, body)
         if method == "HEAD":
             length = _header(resp.headers, b"content-length")
             head += [(b"Content-Length", length.encode())] if length else []
@@ -1341,6 +1361,21 @@ async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
         if ev is h11.PAUSED:
             return h11.ConnectionClosed()
         return ev
+
+
+def _decode(coding: str, body: bytes, limit: int) -> bytes:
+    """A body in Content-Encoding gzip or deflate, decoded (at most `limit` bytes). ValueError for
+    any other encoding, or a body that decodes to more."""
+    if coding in ("gzip", "x-gzip"):
+        d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    elif coding == "deflate":
+        d = zlib.decompressobj(zlib.MAX_WBITS if body[:1] == b"\x78" else -zlib.MAX_WBITS)
+    else:
+        raise ValueError(f"it is encoded as {coding[:40]}, which the gateway cannot read to scrub it")
+    out = d.decompress(body, limit + 1)
+    if len(out) > limit or d.unconsumed_tail:
+        raise ValueError(f"it decodes to more than {limit} bytes")
+    return out
 
 
 async def _read_body(conn, reader, limit: int) -> bytes:
