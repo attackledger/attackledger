@@ -241,7 +241,21 @@ def void_mutations(void: dict) -> dict:
     r = copy.deepcopy(void)
     as_receipted(r)
     out["void-reported-as-receipted"] = rehash(r)
+    r = copy.deepcopy(void)
+    void_kept_issue_time_moved(r)
+    out["void-receipted-issue-time-moved"] = rehash(r)
     return out
+
+
+def void_kept_issue_time_moved(r: dict) -> None:
+    """The void hidden without leaving its entry out (security recheck EV-1): the lane reported
+    as receipted, and the receipt's issue time (not signed) moved by a second, inside the window
+    the signature check allows, so it no longer equals the one the void entry names."""
+    lane = next(l for l in r["lanes"] if l["status"] == "stale")
+    lane["status"] = "closed"
+    r["summary"]["lanes_receipted"] += 1
+    rc = lane["receipt"]
+    rc["issued_at"] = (datetime.fromisoformat(rc["issued_at"]) + timedelta(seconds=1)).isoformat()
 
 
 def html_report(c, e) -> bytes:
@@ -346,6 +360,10 @@ def make_v4() -> dict:
         r["summary"]["lanes_receipted"] += 1
         r["audit_log"]["entries"] = [x for x in r["audit_log"]["entries"] if x["action"] != "lane.receipt_voided"]
         out[f"{name}-hidden"] = json.dumps(rehash(r), ensure_ascii=False).encode()
+        if later:
+            r = json.loads(out[name])
+            void_kept_issue_time_moved(r)
+            out[f"{name}-issue-time-moved"] = json.dumps(rehash(r), ensure_ascii=False).encode()
     return out
 
 
@@ -423,6 +441,10 @@ def mutations(base: dict, deleted: dict) -> dict:
     m("chain-entry-removed", base, lambda r: r["evidence"].pop(1))
     m("chain-head-changed", base, lambda r: r["summary"].__setitem__("chain_head", "f" * 64))
     m("chain-genesis-changed", base, lambda r: r["integrity"].__setitem__("chain_genesis", "1" * 64))
+    # A name that prints a fake result, then hides the rest of the output (security recheck): the
+    # command line shows it escaped, and both verifiers print the same text.
+    m("engagement-name-with-terminal-controls", base, lambda r: r["engagement"].__setitem__(
+        "name", "Acme\n  PASS  Evidence chain\n\nVerified.\x1b[8m\u202e\x9b"))
     # receipts
     m("item-done-without-evidence", base, lambda r: next(i for l in r["lanes"] if l["status"] == "open" for i in l["items"])
       .__setitem__("state", "done") if any(l["status"] == "open" for l in r["lanes"]) else None)
@@ -607,7 +629,7 @@ def only(names: set[str]) -> None:
             return
     made = {name: json.dumps(r, ensure_ascii=False).encode() for name, r in mutations(
         json.loads((OUT / "signed.json").read_bytes()), json.loads((OUT / "content-deleted.json").read_bytes())).items()}
-    if names & {"void", "void-reported-as-receipted"}:
+    if names & {"void", "void-reported-as-receipted", "void-receipted-issue-time-moved"}:
         made["void"] = make_void()
         made.update({name: json.dumps(r, ensure_ascii=False).encode()
                      for name, r in void_mutations(json.loads(made["void"])).items()})
