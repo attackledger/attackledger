@@ -22,7 +22,7 @@ unusual input or position, or that defence in depth already covers.
 | EV-7 | Low | Azure API Management and Azure Functions key headers are stored unredacted | `f2e71e1` | `test_ev7_cloud_api_key_headers_are_redacted` |
 | EV-8 | Low | Unsent drafts holding a credential in common forms are written to `sessionStorage` | `fd398cd` | reproduction below (the web app has no test runner) |
 | O-1 | Low | The receipt manifest does not bind evidence to its item: two done items' ids can be swapped | `0e1f9d5` | `test_o1_swapped_item_ids_fail_under_manifest_v2`, `test_o1_new_receipts_are_over_a_manifest_that_names_each_item`, `test_o1_manifest_v1_receipts_still_close_and_verify_with_a_note` |
-| O-2 | Medium | Audit and key log entries, or both logs, can be left out of a report; dropping a void entry defeats EV-1 | `0e1f9d5` (bounded: see below) | `test_o2_payload_v4_signs_the_history_heads_and_the_server_checks_them`, `test_o2_an_audit_entry_the_signature_covers_cannot_be_left_out`, `test_o2_require_history`, `test_o2_a_void_left_out_is_caught_by_any_later_signature`, `test_o2_a_void_after_the_newest_signature_is_named_as_not_covered` |
+| O-2 | Medium | Audit and key log entries, or both logs, can be left out of a report; dropping a void entry defeats EV-1 | `0e1f9d5`, closed by `640755d` (report seal, D-055) | `test_o2_payload_v4_signs_the_history_heads_and_the_server_checks_them`, `test_o2_an_audit_entry_the_signature_covers_cannot_be_left_out`, `test_o2_require_history`, `test_o2_a_void_left_out_is_caught_by_any_later_signature`, `test_o2_a_void_after_the_newest_signature_is_caught_by_the_seal`, and `server/tests/test_report_seal.py` |
 | O-3 | Medium | An HTML report's text is not verified, and the reader is not shown what was (EV-5) | `0e1f9d5` | `test_o3_a_verified_html_report_is_followed_by_its_facts` |
 
 The EV regression tests are in `server/tests/test_security_evidence.py`. Each of them fails on
@@ -182,11 +182,26 @@ printed `Verified.`
   head, differ there, or leave out a counted entry. `--require-history`, and *Require the full
   change history* on /verify, also fail missing logs, receipts that commit to no history
   (unsigned, v2, v3) and format 1. In that mode a NOTE says up to which entry signatures bind the history.
-- **Remaining, by design of the chain:** nothing signed after the newest receipt commits to
-  later entries. A void made after the last signature can still be left out with the lane
-  shown as receipted, in strict mode too. That case is a fixture and a test, and strict mode's
-  NOTE says so. Closing it would need a signature at report time (no such signer exists; D-036).
-  `docs/VERIFIER.md` says what strict mode proves and what it does not.
+- **Remaining after `0e1f9d5`, by design of the chain:** nothing signed after the newest receipt
+  committed to later entries. A void made after the last signature could still be left out with
+  the lane shown as receipted, in strict mode too.
+- **Closed (`640755d`, D-055): the report seal.** The server now signs every report it exports
+  with its own Ed25519 key (`server/app/seal.py`): `attackledger-seal-v1` names the engagement,
+  the report body hash, the heads (seq and entry hash) of the audit log and key log the report
+  carries, the key and the time, and goes in `integrity.seal`. The key is wrapped by the master key
+  in the blob store, and its public key is registered in each organization's key log (no person,
+  `via: instance`, migration `0024`) before the first receipt payload, so later receipt signatures
+  cover it. With a timestamp authority set, the seal is timestamped. Both verifiers check it the
+  same way (*Report seal*); `--require-history`, the /verify checkbox and the Verify tab option
+  require it; unsealed reports verify in normal mode with a NOTE. Leaving out the late void now
+  breaks the seal in every mode, and removing the seal fails strict mode.
+  - **Reproduction, now failing:** `test_o2_a_void_after_the_newest_signature_is_caught_by_the_seal`
+    (the test that showed the gap, rewritten), the fixtures `seal-void-hidden`, `seal-other-key`,
+    `seal-tampered`, `seal-removed` and `v4-void-after-the-last-signature-hidden` under strict mode.
+  - **What the seal does not prove** (VERIFIER.md): the server's honesty. Whoever holds the seal
+    key can seal a different report, and a seal key that no receipt signature covers is tied to the
+    server only by its fingerprint, which the verifier says. `test_a_seal_from_another_instance_key_fails`
+    shows both cases.
 
 ### O-3: what was verified in an HTML report was not shown (Medium)
 
@@ -202,7 +217,9 @@ printed `Verified.`
 
 - **By design, noted:** a report whose signatures were removed verifies with a NOTE unless
   `--require-signatures` is given; the body hash is self-consistency only (see EV-5's wording
-  change). History after the newest signed head is not bound (O-2).
+  change). A report whose seal was removed verifies with a NOTE unless `--require-history` is
+  given, as reports made before seals do. The seal is the server's statement; it binds the
+  history after the newest signed head only as far as the server key is trusted (O-2, D-055).
 
 ## What was checked and found sound
 
@@ -291,6 +308,18 @@ printed `Verified.`
 
 ## Verification
 
+- O-2 closed, the report seal (`640755d`, merged with main's recheck in the merge after `5a843ac`):
+  server 888 passed, 1 skipped (878 and 1 on main; 10 new tests in `test_report_seal.py`, and
+  the O-2 test that showed the gap rewritten to show it closed). The new tests fail on `cf7bf38`
+  (checked against a copy of that tree: `app.seal` does not exist; the two updated key log tests
+  fail there). `run.sh`: 126 reports, 107 building blocks, 0 differences; 13 cases on the
+  `seal-*` fixtures (`make_fixtures.py --only seal`). `tsc --noEmit` passes. `site/verify.html`
+  rebuilt with `tools/build_verify.sh`, `tools/build_pages.sh` accepts its hashes, and
+  `site/verify_report.py` is a copy of `tools/verify_report.py`.
+- The sample report and the demo were rebuilt from a fresh, isolated demo stack (`5a843ac`): payload
+  v4 receipts over manifest v2, DigiCert-timestamped, and sealed with DigiCert-timestamped seals.
+  Every published report (`site/sample-report.*`, `site/demo/reports/*`) verifies with both
+  verifiers in normal mode and with `--require-history`.
 - O-1 to O-3 (`0e1f9d5`): server 799 passed, 1 skipped (790 and 1 before; the 9 new tests).
   `run.sh`: 105 reports, 107 building blocks, 0 differences (80 before). `tsc --noEmit` passes.
   `site/verify.html` was rebuilt with `tools/build_verify.sh`, and `tools/build_pages.sh`

@@ -81,8 +81,16 @@ Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers ch
   log and key log heads, and the count and hash of the engagement's and signer's audit entries up
   to them. The server checks them, and a report that leaves one of them out fails. The new
   `--require-history` option (a checkbox on /verify) also fails a report without the logs, or
-  with receipts signed before v4. A void made after the last signature is still not bound
-  (`docs/VERIFIER.md`).
+  with receipts signed before v4.
+- **A void made after the last receipt signature could still be left out** (O-2, the rest).
+  The server now seals every report it exports (D-055): its own Ed25519 key, wrapped by the
+  master key and registered in each organization's key log, signs the report body hash and the
+  heads of the audit log and the key log, and the seal is timestamped when a timestamp authority
+  is set. Both verifiers check it (*Report seal*); `--require-history`, the /verify checkbox and
+  the Verify tab option require it. Reports made before seals verify as before, with a NOTE.
+  The seal is the server's statement, not a reviewer's: what it does and does not prove is in
+  `docs/VERIFIER.md`. Migration `0024` lets a key log entry name no person. The sample report and
+  the demo were rebuilt in the current format (manifest v2, payload v4, sealed).
 - **A verified HTML report did not show what was verified** (O-3). Both verifiers now list what
   its embedded JSON says (engagement, scope, lanes, signers, dates, counts) to compare with the page.
 
