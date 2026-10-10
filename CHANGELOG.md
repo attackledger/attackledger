@@ -12,8 +12,53 @@ database or the API. Backup, wiping every volume and restoring without `--force`
 evidence chain identical, and the encrypted note stayed readable.
 
 ### Security
-From a review of authentication, authorization and organization isolation
-(`docs/security-review/AUTH.md`).
+From an internal security review of the whole product, in three parts; each report lists
+what was checked, every finding with its reproduction, and what was found sound
+(`docs/security-review/`). Every fix has a regression test that failed before it.
+
+Gateway and worker isolation (`GATEWAY.md`):
+- **An agent job could make Anthropic's servers fetch any URL** (GW-1). The gateway forwarded
+  any `/v1/messages` body, so server tools (web fetch, web search), the MCP connector and URL
+  image or document sources reached hosts outside the scope, the rate ceiling and the request
+  log. The body is now parsed strictly and sent only with the agent's own keys and tools.
+- **Connections to targets were not paced** (GW-2). The rate token was taken after the TCP
+  connection and TLS handshake, so concurrency opened connections at any rate. Connections now
+  wait for a token of their own.
+- **A compressed response leaked a test account's session** (GW-3). A target that compressed
+  despite `Accept-Encoding: identity` passed the scrub and the redaction. The body is now
+  decoded before it is scrubbed, or withheld.
+- **A reflected session in another encoding was not scrubbed** (GW-4): URL-decoded (phpinfo's
+  `$_COOKIE`), URL-encoded, HTML-escaped or with JSON-escaped slashes.
+- **Cloud metadata services outside link-local were reachable** (GW-5): Alibaba Cloud, AWS over
+  IPv6, Azure's WireServer and Oracle Cloud Classic addresses are now refused.
+- **One address of the API was not refused** (GW-6). Docker resolves a service name to one
+  network only; the API, on two networks with the gateway, now has an alias per network in the
+  deny list (and the production API trusts `X-Forwarded-For` from any peer).
+- **A job target could carry a second target line to the tools** (GW-7): the URL parser drops
+  newlines, the tools do not. Targets with whitespace or control characters are refused.
+
+Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers changed the same way:
+- **The verifier missed a voided receipt reported as receipted** (EV-1). Setting a void lane's
+  unsigned status back to `closed` hid the void (D-052). The change history check now fails a
+  receipt that an audit entry records as voided.
+- **A receipt's issue time could be moved** (EV-2). The role check read the unsigned time, and
+  moving it before the audit log began skipped the check. It must now lie within the window
+  the server allows after the signed payload's issue time.
+- **The signed engagement was not compared with the report's** (EV-3). Another engagement id
+  fails; a rename since signing is a NOTE.
+- **The counts the verifier prints were not checked** (EV-4). Receipted lanes and evidence
+  entries in the summary must be the report's own.
+- **An HTML report with edited page text still verified** (EV-5). The verifier now says that
+  only the embedded JSON is checked, and "How to verify" says the body hash can be recomputed
+  by anyone.
+- **Deleting an engagement's content left its traffic log URLs** (EV-6). The gateway log's
+  URLs are now blanked; method, host, status and verdict stay.
+- **Azure key headers were stored unredacted** (EV-7): `Ocp-Apim-Subscription-Key`,
+  `X-Functions-Key` and `X-Master-Key`, also as parameters and JSON keys.
+- **Drafts with a credential reached sessionStorage** (EV-8) when written as a JSON field, a key
+  header, `password: ...`, a private key or an AWS key id.
+
+Authentication, authorization and organization isolation (`AUTH.md`):
 - **A cited hash opened another engagement's blob from before encryption** (AUTH-1, Low).
   A tester could cite the SHA-256 of another engagement's plaintext blob as evidence and read
   it. `encrypt-existing` then copied it, and deleting the other engagement's content kept it.
@@ -38,29 +83,6 @@ From a review of authentication, authorization and organization isolation
   self-hosted install answered `/favicon.svg` with the app's HTML. Found by capturing the
   local app through Caido.
 
-### Security
-Found in a review of evidence integrity, encryption, imports and the web front end
-(`docs/security-review/EVIDENCE.md`). Both verifiers changed the same way.
-- **The verifier missed a voided receipt reported as receipted** (EV-1). Setting a void lane's
-  unsigned status back to `closed` hid the void (D-052). The change history check now fails a
-  receipt that an audit entry records as voided.
-- **A receipt's issue time could be moved** (EV-2). The role check read the unsigned time, and
-  moving it before the audit log began skipped the check. It must now lie within the window
-  the server allows after the signed payload's issue time.
-- **The signed engagement was not compared with the report's** (EV-3). Another engagement id
-  fails; a rename since signing is a NOTE.
-- **The counts the verifier prints were not checked** (EV-4). Receipted lanes and evidence
-  entries in the summary must be the report's own.
-- **An HTML report with edited page text still verified** (EV-5). The verifier now says that
-  only the embedded JSON is checked, and "How to verify" says the body hash can be recomputed
-  by anyone.
-- **Deleting an engagement's content left its traffic log URLs** (EV-6). The gateway log's
-  URLs are now blanked; method, host, status and verdict stay.
-- **Azure key headers were stored unredacted** (EV-7): `Ocp-Apim-Subscription-Key`,
-  `X-Functions-Key` and `X-Master-Key`, also as parameters and JSON keys.
-- **Drafts with a credential reached sessionStorage** (EV-8) when written as a JSON field, a key
-  header, `password: ...`, a private key or an AWS key id.
-
 ### Changed
 - **Recon workflow, redesigned** (ideas from the ars0n framework; no code taken).
   - A summary line ("6 steps, 13 tools; 13 done, last finished …") and one clear Run all
@@ -72,28 +94,6 @@ Found in a review of evidence integrity, encryption, imports and the web front e
     finished.
   - Tool cards sit in a grid, each led by its result count, with Run, Results and Log in
     the same place on every card.
-
-### Security
-Gateway and worker-isolation review, `docs/security-review/GATEWAY.md` (findings GW-1 to GW-7).
-- **An agent job could make Anthropic's servers fetch any URL** (GW-1). The gateway forwarded
-  any `/v1/messages` body, so server tools (web fetch, web search), the MCP connector and URL
-  image or document sources reached hosts outside the scope, the rate ceiling and the request
-  log. The body is now parsed strictly and sent only with the agent's own keys and tools.
-- **Connections to targets were not paced** (GW-2). The rate token was taken after the TCP
-  connection and TLS handshake, so concurrency opened connections at any rate. Connections now
-  wait for a token of their own.
-- **A compressed response leaked a test account's session** (GW-3). A target that compressed
-  despite `Accept-Encoding: identity` passed the scrub and the redaction. The body is now
-  decoded before it is scrubbed, or withheld.
-- **A reflected session in another encoding was not scrubbed** (GW-4): URL-decoded (phpinfo's
-  `$_COOKIE`), URL-encoded, HTML-escaped or with JSON-escaped slashes.
-- **Cloud metadata services outside link-local were reachable** (GW-5): Alibaba Cloud, AWS over
-  IPv6, Azure's WireServer and Oracle Cloud Classic addresses are now refused.
-- **One address of the API was not refused** (GW-6). Docker resolves a service name to one
-  network only; the API, on two networks with the gateway, now has an alias per network in the
-  deny list (and the production API trusts `X-Forwarded-For` from any peer).
-- **A job target could carry a second target line to the tools** (GW-7): the URL parser drops
-  newlines, the tools do not. Targets with whitespace or control characters are refused.
 
 ## [0.8.0] - 2026-10-10
 
