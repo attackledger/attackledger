@@ -106,6 +106,11 @@ Authentication, authorization and organization isolation (`AUTH.md`):
   list as the chain position. A string chain position was even accepted. The field types are
   checked first: 422.
 
+### Upgrade note
+The internal Docker networks changed (the host gets no address on them). Upgrade with
+`docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
+database without a name on its recreated network, and the API failed to start (INSTALL §15).
+
 ### Fixed
 - **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of
   `gateway.invalid`; a resolver that answered inconsistently made them differ. The tests now

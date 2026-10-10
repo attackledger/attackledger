@@ -967,9 +967,16 @@ before it takes jobs. Migrations can change the data, so always back up first.
 
 **Upgrading past the second security pass (after 0.8.0).** The internal networks give the
 Docker host no address now, so Compose recreates them on the next `docker compose up -d` and
-restarts the containers on them (measured with Compose 5.6 on Docker 29.5; volumes are kept). If
-your Compose refuses because a network's configuration changed, run `docker compose down`
-(without `-v`) and `docker compose up -d` again.
+restarts the containers on them (Compose 5.6 on Docker 29.5; volumes are kept). A container that
+Compose reconnects instead of recreating can be left without a name on the new network: on the
+author's Mac the database stayed up, but the API then failed to start with `Name or service not
+known`. So upgrade past this release with a recreate, which keeps every volume:
+
+```sh
+docker compose build
+docker compose down          # without -v: the volumes and so the data stay
+docker compose up -d --wait
+```
 
 **Upgrading to migration 0022 (organizations, after 0.7.1).** Nothing to do beyond the steps
 above. The migration makes the default organization and puts every existing row in it; the
