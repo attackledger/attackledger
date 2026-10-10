@@ -8,18 +8,21 @@ import { TSA_ROOTS } from "./tsa_roots";
 
 // What each check means, in the words of the report's own "How to verify" section.
 const EXPLAIN: [string, string][] = [
-  ["Report body hash", "The report has not been edited since it was generated: its SHA-256 matches the recorded value."],
+  ["Report body hash", "The report's SHA-256 matches the value recorded in it. Anyone who edits a report can recompute "
+    + "it, so also compare it with the value the tester gave you."],
   ["Evidence chain", "Every evidence entry links to the one before it, from the genesis value to the chain head: none was "
     + "removed, reordered or changed. Where a summary was deleted with its engagement's key, the chain is still checked "
     + "over the hash it commits to."],
   ["Lane receipts", "For every receipted lane, a manifest rebuilt from the report's own items and evidence has the receipt's "
     + "hash, every item marked done has evidence, and every not-applicable item has a reason."],
   ["Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its fingerprint, and "
-    + "the signed text names this lane, this manifest and a chain head in the report."],
+    + "the signed text names this engagement, this lane, this manifest, a chain head in the report and the receipt's "
+    + "issue time."],
   ["Signing key history", "Each signing key's entries in the key log hash correctly and link into the log in order, and the key "
     + "was registered to the signer before the receipt was issued and not revoked before it."],
   ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held "
-    + "the reviewer role (or was an owner) and had the name in the receipt when it was issued."],
+    + "the reviewer role (or was an owner) and had the name in the receipt when it was issued, and no entry records that "
+    + "the receipt was voided."],
   ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature "
     + "verifies, and its certificate chain reaches a root you trust and was valid at the token's time."],
 ];

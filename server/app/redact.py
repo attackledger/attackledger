@@ -46,12 +46,14 @@ from . import jsanalysis
 # Names whose values are secret wherever they appear: a header, a query or form parameter,
 # a JSON key. Compared in lower case with "-", "_" and "." removed, so api_key, api-key and
 # apiKey are the same name. Exact names first, then parts: a name containing a part is
-# secret too (access_token, X-Auth-Token, db_password, sessionid, X-Amz-Signature).
+# secret too (access_token, X-Auth-Token, db_password, sessionid, X-Amz-Signature, and the
+# key headers of Azure API Management and Azure Functions: Ocp-Apim-Subscription-Key, X-Functions-Key).
 SECRET_NAMES = frozenset({
     "key", "pwd", "pass", "sid", "sig", "code", "auth", "jwt", "otp",
     "cookie", "setcookie", "authorization", "proxyauthorization",
 })
-SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey")
+SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey",
+                "subscriptionkey", "functionskey", "masterkey")
 # In JSON, "code" is nearly always a status or error code; it stays secret in query strings
 # and form bodies, where it is the OAuth authorization code.
 JSON_NOT_SECRET = frozenset({"code"})

@@ -16,8 +16,15 @@ const PREFIX = "attackledger-draft:";
 const OWNER = "attackledger-draft-owner";
 const mem = new Map<string, string>();
 
-// A credential pasted in (a header, a JWT, "password=..."), not a sentence such as "a wrong password: 401".
-const SECRETISH = /(authorization\s*:|bearer\s+[\w.~+/-]{8,}|(^|\s)(set-)?cookie\s*:|eyJ[\w-]{8,}\.|(api[_-]?key|passw(or)?d|secret|token|session(id)?)\s*=\s*\S)/i;
+// A credential pasted in (a header, a JWT, "password=...", a JSON field or a header such as
+// "access_token": "..." or X-Api-Key: ..., a private key, an AWS key id), not a sentence such as
+// "a wrong password: 401": after a colon, only a value of eight or more characters counts.
+const SECRETISH = new RegExp([
+  /authorization\s*:|bearer\s+[\w.~+/-]{8,}|(^|\s)(set-)?cookie\s*:|eyJ[\w-]{8,}\./.source,
+  /(api[_-]?key|passw(or)?d|secret|token|session(id)?)\s*=\s*\S/.source,
+  /(api[_-]?key|passw(or)?d|secret|token|session(id)?|subscription[_-]?key|functions[_-]?key)[\w-]*["']?\s*:\s*["']?[^\s"',]{8,}/.source,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b/.source,
+].join("|"), "i");
 
 function storage(): Storage | null {
   try { return window.sessionStorage; } catch { return null; }

@@ -495,7 +495,8 @@ class Vendored:
 
     SECRET_NAMES = frozenset({"key", "pwd", "pass", "sid", "sig", "code", "auth", "jwt", "otp",
                               "cookie", "setcookie", "authorization", "proxyauthorization"})
-    SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey")
+    SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey",
+                    "subscriptionkey", "functionskey", "masterkey")
     MARKER_PREFIX = "[redacted:sha256:"
     MARKER_RE = re.compile(r"\[redacted:sha256:[0-9a-f]{12}\]")
     _COOKIE_PAIR = re.compile(r"(^|;)(\s*[^=;\s][^=;]*=)([^;]*)")

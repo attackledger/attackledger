@@ -29,6 +29,13 @@ const CHAIN_FIELDS_V2 = ["v", "seq", "lane_id", "host", "role", "item_id", "kind
 const KEY_LOG_FIELDS = ["seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"];
 const AUDIT_FIELDS = ["seq", "at", "actor", "action", "engagement_id", "subject_id", "change"];
 const PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3"];
+const VOID_ACTION = "lane.receipt_voided";     // D-052: a voided receipt stays void
+// How long after its signed payload was issued the server may issue a receipt, in microseconds: the
+// payload is valid for ten minutes (and may be dated up to a minute ahead), then the timestamp authority answers.
+const PAYLOAD_WINDOW: [bigint, bigint] = [-60_000_000n, 900_000_000n];
+// The checks read the JSON report embedded in an HTML report, not the text the page shows.
+const HTML_NOTE = "this is an HTML report: the checks cover the JSON report embedded in it, not the text the page "
+  + "displays, so an edit to the page's text alone would not be detected; what was verified is the JSON";
 const KEY_VIA: Record<string, string> = {
   own_session: "from their own session",
   assigned_password: "from a session signed in with a password someone else set",
@@ -743,6 +750,9 @@ async function checkChain(r: Dict): Promise<Problems> {
   }
   const head = at(at(r, "summary"), "chain_head");
   if (!pyEq(head, prev)) problems.push("summary chain head does not match the last evidence entry");
+  // The count printed at the top of the output: it must be the report's own, not a claim.
+  const count = getk(at(r, "summary"), "evidence_entries"), entries = iter(at(r, "evidence")).length;
+  if (!pyEq(count, entries)) problems.push(`the summary counts ${pyStr(count)} evidence entries, but the report has ${entries}`);
   return problems;
 }
 
@@ -819,6 +829,18 @@ async function checkReceipts(r: Dict): Promise<[Problems, Notes]> {
     } else if (pyEq(at(lane, "status"), "stale")) {
       notes.push(`${name}: receipt is void (the ledger changed after it was issued)`);
     }
+  }
+  // The count printed at the top of the output, as the server counts it: receipted lanes on
+  // in-scope hosts. It must be the report's own, not a claim.
+  const inScope = new PyMap<true>();
+  for (const h of iter(or(getk(r, "hosts"), []))) if (truthy(at(h, "in_scope"))) inScope.set(at(h, "host"), true);
+  let receipted = 0;
+  for (const lane of iter(at(r, "lanes"))) {
+    if (pyEq(at(lane, "status"), "closed") && inScope.has(at(lane, "host"))) receipted += 1;
+  }
+  const claimed = getk(at(r, "summary"), "lanes_receipted");
+  if (!pyEq(claimed, receipted)) {
+    problems.push(`the summary says ${pyStr(claimed)} lanes are receipted, but ${receipted} in-scope lanes are`);
   }
   return [problems, notes];
 }
@@ -1082,9 +1104,26 @@ async function checkSignatures(r: Dict, require: boolean, mode: Ed25519Mode): Pr
     if (!(pyEq(getk(c, "seq"), 0) && pyEq(getk(c, "head"), GENESIS)) && !pyEq(chain.get(getk(c, "seq")) ?? null, getk(c, "head"))) {
       problems.push(`${name}: the signed evidence chain head is not in this report`);
     }
+    // The engagement and the issue time are in the signed text; the report's own copies are not
+    // signed, so they must agree with it (PAYLOAD_WINDOW).
+    const eng = or(getk(r, "engagement"), dict()), signedEng = or(getk(payload, "engagement"), dict());
+    if (!pyEq(getk(signedEng, "id"), getk(eng, "id"))) problems.push(`${name}: the signature names another engagement`);
+    let gap: bigint | null;
+    try {
+      gap = utc(at(rc, "issued_at")).us - utc(at(payload, "issued_at")).us;
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      gap = null;
+    }
+    if (gap === null || gap < PAYLOAD_WINDOW[0] || gap > PAYLOAD_WINDOW[1]) {
+      problems.push(`${name}: the receipt's issue time is not the time its signed payload was issued`);
+    }
     if (!problems.length) {
       notes.push(`${name}: signed by ${signerText(getk(payload, "signer"))} with key `
                  + `${head(getk(sig, "key_fingerprint", ""), 16)} (${pyStr(getk(sig, "algorithm"))})`);
+      if (!pyEq(getk(signedEng, "name"), getk(eng, "name"))) {
+        notes.push(`${name}: signed when the engagement was named "${pyStr(getk(signedEng, "name"))}"`);
+      }
     }
   }
   if (receipted && signed < receipted) {
@@ -1299,6 +1338,22 @@ function stateAt(records: Rec[], engId: unknown, when: Time): State {
   return st;
 }
 
+/** Whether an audit entry voiding a receipt names this one. The entry has the server's receipt
+ * id, which a report does not; it is matched by lane, manifest hash and issue time. */
+function voidsReceipt(e: unknown, lane: unknown, rc: unknown, issued: Time): boolean {
+  const ch = or(getk(e, "change"), dict());
+  const laneRef = or(getk(ch, "lane"), dict()), receipt = or(getk(ch, "receipt"), dict());
+  if (!pyEq(getk(laneRef, "id"), at(lane, "lane_id")) || !pyEq(getk(receipt, "manifest_sha256"), at(rc, "manifest_sha256"))) {
+    return false;
+  }
+  try {
+    return utc(at(receipt, "issued_at")).us === issued.us;
+  } catch (err) {
+    caught(err, "ValueError", "KeyError", "TypeError");
+    return false;
+  }
+}
+
 async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
   const notes: Notes = [];
   const receipted = closedLanes(r);
@@ -1314,6 +1369,7 @@ async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
   if (records === null) return [problems, notes];
   const engId = at(at(r, "engagement"), "id");
   const start = records.find(([, e]) => pyEq(getk(e, "engagement_id"), engId))?.[0] ?? null;
+  const voids = records.filter(([, e]) => pyEq(getk(e, "engagement_id"), engId) && pyEq(getk(e, "action"), VOID_ACTION));
   for (const lane of receipted) {
     const name = label(lane), rc = at(lane, "receipt");
     const sig = getk(rc, "signature");
@@ -1330,6 +1386,11 @@ async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
       caught(e, "ValueError", "KeyError", "TypeError");
       problems.push(`${name}: the receipt's signer or issue time cannot be read`);
       continue;
+    }
+    const voided = voids.find(([, e]) => voidsReceipt(e, lane, rc, issued));
+    if (voided) {     // a void is for good (D-052): the lane's status in the report is not signed
+      problems.push(`${name}: reported as receipted, but the change history records that this receipt was `
+                    + `voided ${stamp(voided[0])}`);
     }
     if (start === null || issued.us < start.us) {
       notes.push(`${name}: issued before the audit log covered this engagement, so the roles and scope `
@@ -1840,13 +1901,13 @@ export async function verifyReport(text: string, fileName: string, opts: VerifyO
     return failure("error", `the file is not a report that can be read: ${(e as Error).message}`, 1);
   }
   try {
-    return await verifyParsed(r, roots, opts);
+    return await verifyParsed(r, roots, opts, /\.html?$/.test(fileName));
   } catch (e) {
     return failure("error", `the report cannot be checked: ${(e as Error).message}`, 1);
   }
 }
 
-async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions): Promise<Outcome> {
+async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html = false): Promise<Outcome> {
   const format = getk(r, "format");
   if (!pyIn(format, FORMATS)) return failure("unusable", `unsupported report format: ${pyStr(format)}`, 2);
   const report = r as Dict;
@@ -1857,6 +1918,7 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions): Pro
   const notes: Note[] = [];
   const add = (check: string, more: Notes) => notes.push(...more.map((text) => ({ check, text })));
   results.push(["Report body hash", await checkBody(report), null]);
+  if (html) notes.push({ check: "Report body hash", text: HTML_NOTE });
   results.push(["Evidence chain", await checkChain(report), null]);
   const [receiptProblems, receiptNotes] = await checkReceipts(report);
   add("Lane receipts", receiptNotes);

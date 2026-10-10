@@ -51,6 +51,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import timedelta
 
 GENESIS = "0" * 64
 FORMATS = ("attackledger-report/1", "attackledger-report/2")
@@ -60,6 +61,10 @@ CHAIN_FIELDS_V2 = ("v", "seq", "lane_id", "host", "role", "item_id", "kind", "sh
 KEY_LOG_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
 AUDIT_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
 PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3")   # v3 adds the signer's email
+VOID_ACTION = "lane.receipt_voided"     # D-052: a voided receipt stays void
+# How long after its signed payload was issued the server may issue a receipt: the payload is
+# valid for ten minutes (and may be dated up to a minute ahead), then the timestamp authority answers.
+PAYLOAD_WINDOW = (timedelta(seconds=-60), timedelta(minutes=15))
 KEY_VIA = {
     "own_session": "from their own session",
     "assigned_password": "from a session signed in with a password someone else set",
@@ -85,6 +90,11 @@ def load(path: str) -> dict:
             raise SystemExit("no embedded report found in the HTML file")
         text = m.group(1)
     return json.loads(text)
+
+
+# The checks read the JSON report embedded in an HTML report, not the text the page shows.
+HTML_NOTE = ("this is an HTML report: the checks cover the JSON report embedded in it, not the text the page "
+             "displays, so an edit to the page's text alone would not be detected; what was verified is the JSON")
 
 
 def check_body(r: dict) -> list[str]:
@@ -123,6 +133,10 @@ def check_chain(r: dict) -> list[str]:
     head = r["summary"]["chain_head"]
     if head != prev:
         problems.append("summary chain head does not match the last evidence entry")
+    # The count printed at the top of the output: it must be the report's own, not a claim.
+    count = r["summary"].get("evidence_entries")
+    if count != len(r["evidence"]):
+        problems.append(f"the summary counts {count} evidence entries, but the report has {len(r['evidence'])}")
     return problems
 
 
@@ -181,6 +195,13 @@ def check_receipts(r: dict) -> tuple[list[str], list[str]]:
                 notes.append(f"{label}: receipt has no signer (issued before signatures were required)")
         elif lane["status"] == "stale":
             notes.append(f"{label}: receipt is void (the ledger changed after it was issued)")
+    # The count printed at the top of the output, as the server counts it: receipted lanes on
+    # in-scope hosts. It must be the report's own, not a claim.
+    in_scope = {h["host"] for h in r.get("hosts") or [] if h["in_scope"]}
+    receipted = sum(1 for lane in r["lanes"] if lane["status"] == "closed" and lane["host"] in in_scope)
+    claimed = r["summary"].get("lanes_receipted")
+    if claimed != receipted:
+        problems.append(f"the summary says {claimed} lanes are receipted, but {receipted} in-scope lanes are")
     return problems, notes
 
 
@@ -399,9 +420,23 @@ def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[st
         c = payload.get("chain") or {}
         if not (c.get("seq") == 0 and c.get("head") == GENESIS) and chain.get(c.get("seq")) != c.get("head"):
             problems.append(f"{label}: the signed evidence chain head is not in this report")
+        # The engagement and the issue time are in the signed text; the report's own copies are not
+        # signed, so they must agree with it. The server issues a receipt at most PAYLOAD_WINDOW
+        # after the payload (ten minutes to sign, then the timestamp authority's answer).
+        eng, signed_eng = r.get("engagement") or {}, payload.get("engagement") or {}
+        if signed_eng.get("id") != eng.get("id"):
+            problems.append(f"{label}: the signature names another engagement")
+        try:
+            gap = _utc(rc["issued_at"]) - _utc(payload["issued_at"])
+        except (ValueError, KeyError, TypeError):
+            gap = None
+        if gap is None or not PAYLOAD_WINDOW[0] <= gap <= PAYLOAD_WINDOW[1]:
+            problems.append(f"{label}: the receipt's issue time is not the time its signed payload was issued")
         if not problems:
             notes.append(f"{label}: signed by {_signer(payload.get('signer'))} with key "
                          f"{sig.get('key_fingerprint', '')[:16]} ({sig.get('algorithm')})")
+            if signed_eng.get("name") != eng.get("name"):
+                notes.append(f"{label}: signed when the engagement was named \"{signed_eng.get('name')}\"")
     if receipted and signed < receipted:
         notes.append(f"{receipted - signed} of {_receipts(receipted)} {'is' if receipted - signed == 1 else 'are'} "
                      "not signed (a name only)")
@@ -581,6 +616,19 @@ def _state_at(records: list[tuple], eng_id, when) -> dict:
     return st
 
 
+def _voids(e: dict, lane: dict, rc: dict, issued) -> bool:
+    """Whether an audit entry voiding a receipt names this one. The entry has the server's
+    receipt id, which a report does not; it is matched by lane, manifest hash and issue time."""
+    ch = e.get("change") or {}
+    lane_ref, receipt = ch.get("lane") or {}, ch.get("receipt") or {}
+    if lane_ref.get("id") != lane["lane_id"] or receipt.get("manifest_sha256") != rc["manifest_sha256"]:
+        return False
+    try:
+        return _utc(receipt["issued_at"]) == issued
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
 def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
     notes = []
     receipted = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed"]
@@ -595,6 +643,7 @@ def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
         return problems, notes
     eng_id = r["engagement"]["id"]
     start = next((at for at, e in records if e.get("engagement_id") == eng_id), None)
+    voids = [(at, e) for at, e in records if e.get("engagement_id") == eng_id and e.get("action") == VOID_ACTION]
     for lane in receipted:
         label, rc = f"{lane['host']} / {lane['name']}", lane["receipt"]
         sig, payload = rc.get("signature"), None
@@ -608,6 +657,10 @@ def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
         except (ValueError, KeyError, TypeError):
             problems.append(f"{label}: the receipt's signer or issue time cannot be read")
             continue
+        void = next((v for v in voids if _voids(v[1], lane, rc, issued)), None)
+        if void is not None:     # a void is for good (D-052): the lane's status in the report is not signed
+            problems.append(f"{label}: reported as receipted, but the change history records that this receipt was "
+                            f"voided {void[0].strftime('%Y-%m-%d %H:%M UTC')}")
         if start is None or issued < start:
             notes.append(f"{label}: issued before the audit log covered this engagement, so the roles and scope "
                          "at that time are not recorded")
@@ -969,6 +1022,8 @@ def main(argv: list[str]) -> int:
     # (name, problems, skip): a check with a skip reason found nothing to check.
     results = [("Report body hash", check_body(r), None), ("Evidence chain", check_chain(r), None)]
     receipt_problems, notes = check_receipts(r)
+    if args[0].endswith((".html", ".htm")):
+        notes.insert(0, HTML_NOTE)
     notes += content_notes(r)
     results.append(("Lane receipts", receipt_problems, None))
     if r["format"] != "attackledger-report/1":

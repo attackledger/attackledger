@@ -496,7 +496,9 @@ options considered and who decided.
   receipts verify as before. A History tab shows the log in plain language.
 - **Boundary:** whoever has database access is still the root of trust; rewriting the log
   breaks the head that reports already carry. Not yet: the role check uses the close time,
-  and a report could omit an entry unnoticed.
+  and a report could omit an entry unnoticed. (Since the 2026-10-10 security review the close
+  time must lie within the window the server allows after the signed payload's issue time, so it
+  can no longer be moved freely; see docs/security-review/EVIDENCE.md.)
 - **Proposed and built by:** Claude, at Murat's request (from the product critique).
 
 ### D-038 · Raw evidence is redacted before it is stored (2026-10-09)

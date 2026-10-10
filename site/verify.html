@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Sot8gDT9N6sdzvpLqn2EeHiRWI0n0JlFGAc24qPnszU='; style-src 'sha256-xV/22ns6SUj4Gi9JkzwvZEuo11QeHYLGxEQFdC3cMjg='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-jEy3xXTGI8gtZul1f/vEcS5emlCmX4KgE8Q5ut0FtQ4='; style-src 'sha256-xV/22ns6SUj4Gi9JkzwvZEuo11QeHYLGxEQFdC3cMjg='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Verify a report · AttackLedger</title>
 <meta name="description" content="Check an AttackLedger report in your browser, with the same checks as verify_report.py. The file is not uploaded.">
@@ -259,7 +259,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             report, or save this page and open it offline.</p>
           <details class="cli">
             <summary>The policy this page is served with</summary>
-            <p class="csp">default-src 'none'; script-src 'sha256-Sot8gDT9N6sdzvpLqn2EeHiRWI0n0JlFGAc24qPnszU='; style-src 'sha256-xV/22ns6SUj4Gi9JkzwvZEuo11QeHYLGxEQFdC3cMjg='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
+            <p class="csp">default-src 'none'; script-src 'sha256-jEy3xXTGI8gtZul1f/vEcS5emlCmX4KgE8Q5ut0FtQ4='; style-src 'sha256-xV/22ns6SUj4Gi9JkzwvZEuo11QeHYLGxEQFdC3cMjg='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
           </details>
           <h3>The same checks as the command line</h3>
           <p>The checks are a line-for-line port of <a href="/verify_report.py"><code>verify_report.py</code></a>, the
@@ -322,6 +322,9 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
   var KEY_LOG_FIELDS = ["seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"];
   var AUDIT_FIELDS = ["seq", "at", "actor", "action", "engagement_id", "subject_id", "change"];
   var PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3"];
+  var VOID_ACTION = "lane.receipt_voided";
+  var PAYLOAD_WINDOW = [-60000000n, 900000000n];
+  var HTML_NOTE = "this is an HTML report: the checks cover the JSON report embedded in it, not the text the page displays, so an edit to the page's text alone would not be detected; what was verified is the JSON";
   var KEY_VIA = {
     own_session: "from their own session",
     assigned_password: "from a session signed in with a password someone else set",
@@ -961,6 +964,8 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     }
     const head2 = at(at(r, "summary"), "chain_head");
     if (!pyEq(head2, prev)) problems.push("summary chain head does not match the last evidence entry");
+    const count = getk(at(r, "summary"), "evidence_entries"), entries = iter(at(r, "evidence")).length;
+    if (!pyEq(count, entries)) problems.push(`the summary counts ${pyStr(count)} evidence entries, but the report has ${entries}`);
     return problems;
   }
   function contentNotes(r) {
@@ -1032,6 +1037,16 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       } else if (pyEq(at(lane, "status"), "stale")) {
         notes.push(`${name}: receipt is void (the ledger changed after it was issued)`);
       }
+    }
+    const inScope = new PyMap();
+    for (const h of iter(or(getk(r, "hosts"), []))) if (truthy(at(h, "in_scope"))) inScope.set(at(h, "host"), true);
+    let receipted = 0;
+    for (const lane of iter(at(r, "lanes"))) {
+      if (pyEq(at(lane, "status"), "closed") && inScope.has(at(lane, "host"))) receipted += 1;
+    }
+    const claimed = getk(at(r, "summary"), "lanes_receipted");
+    if (!pyEq(claimed, receipted)) {
+      problems.push(`the summary says ${pyStr(claimed)} lanes are receipted, but ${receipted} in-scope lanes are`);
     }
     return [problems, notes];
   }
@@ -1243,8 +1258,23 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       if (!(pyEq(getk(c, "seq"), 0) && pyEq(getk(c, "head"), GENESIS)) && !pyEq(chain.get(getk(c, "seq")) ?? null, getk(c, "head"))) {
         problems.push(`${name}: the signed evidence chain head is not in this report`);
       }
+      const eng = or(getk(r, "engagement"), dict()), signedEng = or(getk(payload, "engagement"), dict());
+      if (!pyEq(getk(signedEng, "id"), getk(eng, "id"))) problems.push(`${name}: the signature names another engagement`);
+      let gap;
+      try {
+        gap = utc(at(rc, "issued_at")).us - utc(at(payload, "issued_at")).us;
+      } catch (e) {
+        caught(e, "ValueError", "KeyError", "TypeError");
+        gap = null;
+      }
+      if (gap === null || gap < PAYLOAD_WINDOW[0] || gap > PAYLOAD_WINDOW[1]) {
+        problems.push(`${name}: the receipt's issue time is not the time its signed payload was issued`);
+      }
       if (!problems.length) {
         notes.push(`${name}: signed by ${signerText(getk(payload, "signer"))} with key ${head(getk(sig, "key_fingerprint", ""), 16)} (${pyStr(getk(sig, "algorithm"))})`);
+        if (!pyEq(getk(signedEng, "name"), getk(eng, "name"))) {
+          notes.push(`${name}: signed when the engagement was named "${pyStr(getk(signedEng, "name"))}"`);
+        }
       }
     }
     if (receipted && signed < receipted) {
@@ -1439,6 +1469,19 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     }
     return st;
   }
+  function voidsReceipt(e, lane, rc, issued) {
+    const ch = or(getk(e, "change"), dict());
+    const laneRef = or(getk(ch, "lane"), dict()), receipt = or(getk(ch, "receipt"), dict());
+    if (!pyEq(getk(laneRef, "id"), at(lane, "lane_id")) || !pyEq(getk(receipt, "manifest_sha256"), at(rc, "manifest_sha256"))) {
+      return false;
+    }
+    try {
+      return utc(at(receipt, "issued_at")).us === issued.us;
+    } catch (err) {
+      caught(err, "ValueError", "KeyError", "TypeError");
+      return false;
+    }
+  }
   async function checkAuditLog(r) {
     const notes = [];
     const receipted = closedLanes(r);
@@ -1453,6 +1496,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     if (records === null) return [problems, notes];
     const engId = at(at(r, "engagement"), "id");
     const start = records.find(([, e]) => pyEq(getk(e, "engagement_id"), engId))?.[0] ?? null;
+    const voids = records.filter(([, e]) => pyEq(getk(e, "engagement_id"), engId) && pyEq(getk(e, "action"), VOID_ACTION));
     for (const lane of receipted) {
       const name = label(lane), rc = at(lane, "receipt");
       const sig = getk(rc, "signature");
@@ -1469,6 +1513,10 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
         caught(e, "ValueError", "KeyError", "TypeError");
         problems.push(`${name}: the receipt's signer or issue time cannot be read`);
         continue;
+      }
+      const voided = voids.find(([, e]) => voidsReceipt(e, lane, rc, issued));
+      if (voided) {
+        problems.push(`${name}: reported as receipted, but the change history records that this receipt was voided ${stamp(voided[0])}`);
       }
       if (start === null || issued.us < start.us) {
         notes.push(`${name}: issued before the audit log covered this engagement, so the roles and scope at that time are not recorded`);
@@ -1894,12 +1942,12 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
       return failure("error", `the file is not a report that can be read: ${e.message}`, 1);
     }
     try {
-      return await verifyParsed(r, roots, opts);
+      return await verifyParsed(r, roots, opts, /\.html?$/.test(fileName));
     } catch (e) {
       return failure("error", `the report cannot be checked: ${e.message}`, 1);
     }
   }
-  async function verifyParsed(r, roots, opts) {
+  async function verifyParsed(r, roots, opts, html = false) {
     const format = getk(r, "format");
     if (!pyIn(format, FORMATS)) return failure("unusable", `unsupported report format: ${pyStr(format)}`, 2);
     const report = r;
@@ -1908,6 +1956,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     const notes = [];
     const add = (check2, more) => notes.push(...more.map((text) => ({ check: check2, text })));
     results.push(["Report body hash", await checkBody(report), null]);
+    if (html) notes.push({ check: "Report body hash", text: HTML_NOTE });
     results.push(["Evidence chain", await checkChain(report), null]);
     const [receiptProblems, receiptNotes] = await checkReceipts(report);
     add("Lane receipts", receiptNotes);
@@ -1983,12 +2032,12 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
 
   // web/src/verify_page.ts
   var EXPLAIN = [
-    ["Report body hash", "The report has not been edited since it was generated: its SHA-256 matches the recorded value."],
+    ["Report body hash", "The report's SHA-256 matches the value recorded in it. Anyone who edits a report can recompute it, so also compare it with the value the tester gave you."],
     ["Evidence chain", "Every evidence entry links to the one before it, from the genesis value to the chain head: none was removed, reordered or changed. Where a summary was deleted with its engagement's key, the chain is still checked over the hash it commits to."],
     ["Lane receipts", "For every receipted lane, a manifest rebuilt from the report's own items and evidence has the receipt's hash, every item marked done has evidence, and every not-applicable item has a reason."],
-    ["Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its fingerprint, and the signed text names this lane, this manifest and a chain head in the report."],
+    ["Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its fingerprint, and the signed text names this engagement, this lane, this manifest, a chain head in the report and the receipt's issue time."],
     ["Signing key history", "Each signing key's entries in the key log hash correctly and link into the log in order, and the key was registered to the signer before the receipt was issued and not revoked before it."],
-    ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held the reviewer role (or was an owner) and had the name in the receipt when it was issued."],
+    ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held the reviewer role (or was an owner) and had the name in the receipt when it was issued, and no entry records that the receipt was voided."],
     ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature verifies, and its certificate chain reaches a root you trust and was valid at the token's time."]
   ];
   var MEANS = new Map(EXPLAIN);
