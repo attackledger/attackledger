@@ -1,4 +1,32 @@
+import socket
+
 import pytest
+
+_real_gethostbyname = socket.gethostbyname
+_real_getaddrinfo = socket.getaddrinfo
+
+
+@pytest.fixture(autouse=True)
+def _no_dns_for_invalid_names(monkeypatch):
+    """Names under .invalid never resolve (RFC 6761), so they are answered here, at once, and
+    never asked of the machine's resolver: the gateway address the tests configure
+    (gateway.invalid) must not depend on DNS timing or a resolver's search domains, which made
+    test_worker's gateway test flaky."""
+    def invalid(host) -> bool:
+        name = host.decode() if isinstance(host, bytes) else str(host or "")
+        return name.lower().rstrip(".").endswith(".invalid") or name.lower() == "invalid"
+
+    def gethostbyname(host):
+        if invalid(host):
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return _real_gethostbyname(host)
+
+    def getaddrinfo(host, *args, **kwargs):
+        if invalid(host):
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+        return _real_getaddrinfo(host, *args, **kwargs)
+    monkeypatch.setattr(socket, "gethostbyname", gethostbyname)
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
 
 
 @pytest.fixture(autouse=True)

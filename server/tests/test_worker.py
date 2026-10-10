@@ -99,7 +99,11 @@ def test_tool_runs_get_the_gateway_and_never_log_the_secret_or_the_tokens(stack)
     job = claim(stack, ["a.example.com"])
     r = worker.Run(job)
     out = list(r.tool_lines("env", ["/usr/bin/env"], []))
-    assert f"HTTPS_PROXY={r.gw.proxy_url('env')}" in out
+    # Spelled out, not recomputed: gateway.invalid never resolves (conftest), so the tool gets the
+    # configured address as it is, with this job's own credential.
+    proxy = f"http://job-{job.id}.env:{job.gateway_secret}@gateway.invalid:8080"
+    assert r.gw.proxy_url("env") == proxy
+    assert f"HTTPS_PROXY={proxy}" in out and f"HTTP_PROXY={proxy}" in out and f"ALL_PROXY={proxy}" in out
     # The tool gets the gateway secret (its proxy credential) and nothing else of the worker's.
     assert not any(job.token in line or "worker-token" in line or line.startswith("DATABASE_URL") for line in out)
     r.log(f"proxy {r.gw.proxy_url('x')}")
