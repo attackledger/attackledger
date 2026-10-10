@@ -3,7 +3,9 @@
 Four modes, chosen by what exists:
 
   open    no people and no ATTACKLEDGER_API_TOKEN: local use only, everyone is an owner.
-          /health says so; do not expose an open API beyond localhost.
+          /health says so; do not expose an open API beyond localhost. Requests that name the
+          host by a public DNS name are refused (local_request), so a page that rebinds its
+          name to 127.0.0.1 cannot act as the operator.
   setup   the same, but ATTACKLEDGER_REQUIRE_SIGN_IN=1 (production): nobody gets in until
           the first owner is created on the server (python -m app.people create --owner).
           Whoever reaches the server first over the network cannot make themselves owner.
@@ -29,6 +31,7 @@ the API, so an owner cannot sign in as someone else and register a key in their 
 """
 import hashlib
 import hmac
+import ipaddress
 import os
 import secrets
 import time
@@ -102,6 +105,33 @@ def from_another_site(request: Request) -> bool:
     except ValueError:
         return True
     return not theirs or theirs != ours      # "null" (a sandboxed page) has no host: refused
+
+
+# Names a web page of another site cannot take by DNS rebinding: a public DNS name can be pointed
+# at 127.0.0.1, these cannot be registered (RFC 6761, RFC 8375, ICANN's .internal).
+LOCAL_SUFFIXES = ("localhost", "local", "internal", "home.arpa", "test")
+
+
+def local_request(request: Request) -> bool:
+    """Whether the request names this machine the way only a local client does: an IP address, a
+    name without a dot (localhost, a compose service such as api) or a special-use name, or no Host
+    at all. Open mode acts as the local operator for whoever reaches it, and a page on a public
+    name that its owner then points at 127.0.0.1 (DNS rebinding) reaches it with same-origin
+    requests, Sec-Fetch-Site and Origin included, and can read the answers (security recheck)."""
+    raw = request.headers.get("host", "")
+    try:
+        host = urlsplit("//" + raw).hostname
+    except ValueError:
+        return False
+    if not host:
+        return not raw
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    host = host.rstrip(".")
+    return "." not in host or any(host == s or host.endswith("." + s) for s in LOCAL_SUFFIXES)
 
 
 def same_secret(presented: str, expected: str) -> bool:

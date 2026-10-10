@@ -151,7 +151,8 @@ requests reach the target.
 
 ### Authentication and permissions
 
-Three modes (`auth.py`): open (no people, no token: localhost only), token
+Three modes (`auth.py`): open (no people, no token: localhost only, and it answers only requests
+that name the machine locally, so DNS rebinding cannot reach it), token
 (`ATTACKLEDGER_API_TOKEN`) and people (email and password, sessions stored as hashes).
 Every route passes `authz.authorize`, which looks the route up in one permission table:
 public, signed in, owner, or a role on the route's engagement (viewer, tester,

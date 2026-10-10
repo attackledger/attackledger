@@ -673,6 +673,8 @@ def _payload_problem(p: dict) -> str | None:
     ids = (p["engagement"]["id"], p["lane"]["id"], p["chain"]["seq"], p["signer"]["id"])
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in ids):
         return "an id or the chain position is not a whole number"
+    if not all(0 <= v < 2 ** 62 for v in ids):     # the database's integers (10**30 was a 500: security recheck)
+        return "an id or the chain position is out of range"
     texts = (p["engagement"]["name"], p["lane"]["host"], p["lane"]["role"], p["manifest_sha256"], p["chain"]["head"],
              p["signer"]["name"], p["key_fingerprint"], p["issued_at"])
     if not all(isinstance(v, str) for v in texts) or not isinstance(p["signer"]["email"], (str, type(None))):
