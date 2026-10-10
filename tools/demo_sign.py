@@ -6,7 +6,8 @@ Runs inside the demo API container (it needs httpx and cryptography, which the i
     docker exec -i -e DEMO_TOKEN=... attackledger-demo-api-1 python - < tools/demo_sign.py
 
 DEMO_TOKEN is the demo API's ATTACKLEDGER_API_TOKEN; DEMO_LANES=12,13 signs only those
-lanes. The script adds a demo owner and a
+lanes. DEMO_KEY (32 bytes, base64) is the reviewer's Ed25519 seed when a demo rebuilt in parts
+must show one reviewer key across them; without it a new key is made. The script adds a demo owner and a
 "Demo Reviewer" (fictional, random passwords that are thrown away), makes the reviewer a
 reviewer on every engagement, signs in as the reviewer, who chooses their own password,
 creates an Ed25519 key in memory as a browser would, and signs every lane that is closed
@@ -19,6 +20,7 @@ The private key exists only while the script runs. In the product it lives in th
 reviewer's browser (D-033); here a script stands in for the browser.
 """
 import base64
+import hashlib
 import os
 import secrets
 import subprocess
@@ -64,10 +66,13 @@ for e in engagements:
 rev = httpx.Client(base_url=BASE, timeout=60)
 ok(rev.post("/auth/login", json={"email": "reviewer@demo.test", "password": password}))
 ok(rev.post("/auth/password", json={"current_password": password, "new_password": secrets.token_urlsafe(18)}))
-key = ed25519.Ed25519PrivateKey.generate()
+seed = os.environ.get("DEMO_KEY")
+key = ed25519.Ed25519PrivateKey.from_private_bytes(base64.b64decode(seed)) if seed else ed25519.Ed25519PrivateKey.generate()
 spki = base64.b64encode(key.public_key().public_bytes(serialization.Encoding.DER,
                                                       serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
-fp = ok(rev.post("/auth/keys", json={"algorithm": "Ed25519", "public_key": spki}))["fingerprint"]
+fp = hashlib.sha256(base64.b64decode(spki)).hexdigest()
+if not any(k["fingerprint"] == fp and not k["revoked"] for k in ok(rev.get("/auth/keys"))):   # a rerun with DEMO_KEY
+    fp = ok(rev.post("/auth/keys", json={"algorithm": "Ed25519", "public_key": spki}))["fingerprint"]
 print(f"Demo Reviewer key {fp[:16]} (Ed25519)")
 
 for e in engagements:

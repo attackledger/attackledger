@@ -37,15 +37,21 @@ purpose: it re-derives every hash itself. Checks:
      the time it was issued. A NOTE gives the scope in force and who gave the role.
      A receipt signed as format v4 names the heads of both logs when it was signed, and
      how many audit entries of the engagement and its signer led up to it: the logs must
-     reach those heads, and none of those entries may be missing.
+     reach those heads, and none of those entries may be missing,
+  8. (format 2, sealed reports) the report's seal: the server that exported the report signed
+     its body hash and the heads of its audit log and key log with its own Ed25519 key. The
+     signature verifies, the key is registered in the report's key log as the instance's
+     key, the body is the one sealed, and the logs end at the sealed heads. A timestamp on
+     the seal is checked like a receipt's and must be from when it was sealed.
 
 Checks 4 and 5 print SKIP, which is neither a pass nor a failure, when no receipt in
 the report is signed or timestamped: there is nothing for them to check. With
 --require-signatures, every receipt must be signed, and an unsigned one fails check 4.
-With --require-history, a report must carry the key log and the audit log, and every
-receipt must be signed as format v4, so that its history is bound to its signature; a
-report without them, or a receipt signed before v4, unsigned or issued before the audit
-log, fails. What strict mode can and cannot prove is in docs/VERIFIER.md.
+With --require-history, a report must carry the key log and the audit log, every
+receipt must be signed as format v4, so that its history is bound to its signature, and
+the report must be sealed, so that the history after the newest signature is bound too; a
+report without them, a receipt signed before v4, unsigned or issued before the audit log,
+or an unsealed report, fails. What strict mode can and cannot prove is in docs/VERIFIER.md.
 
 An HTML report that verifies is followed by what its embedded JSON says (engagement,
 scope, receipted lanes, signers, dates and counts), to compare with the text the page shows.
@@ -85,7 +91,13 @@ KEY_VIA = {
     "assigned_password": "from a session signed in with a password someone else set",
     "operator_cli": "by the operator on the server",
     "backfill": "before the key log existed (recorded when it was added)",
+    "instance": "as the server's report seal key",
 }
+# The report seal (D-055): the exporting instance signs the body hash and the logs' heads.
+SEAL_FORMAT = "attackledger-seal-v1"
+SEAL_TS_STATEMENT = "attackledger-seal-timestamp-v1"
+# A seal is made right after the report is built, and timestamped right after it is signed.
+SEAL_WINDOW = (timedelta(seconds=-60), timedelta(minutes=10))
 
 
 def sha(text: str) -> str:
@@ -706,9 +718,10 @@ def _voids(e: dict, lane: dict, rc: dict, issued) -> bool:
         return False
 
 
-def check_audit_log(r: dict, strict: bool = False) -> tuple[list[str], list[str]]:
+def check_audit_log(r: dict, strict: bool = False, sealed=None) -> tuple[list[str], list[str]]:
     """With strict (--require-history), the report must carry the audit log and every receipt
-    must commit to it (format v4); see docs/VERIFIER.md for what that proves."""
+    must commit to it (format v4); see docs/VERIFIER.md for what that proves. sealed is the
+    audit log entry up to which a valid seal binds the history (check_seal), or None."""
     notes = []
     receipted = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed"]
     log = r.get("audit_log")
@@ -804,11 +817,136 @@ def check_audit_log(r: dict, strict: bool = False) -> tuple[list[str], list[str]
                     if held and since else "was an owner, who may sign any receipt")
             who = f"{name} ({person.get('email')})" if person.get("email") else name
             notes.append(f"{label}: issued {issued.strftime('%Y-%m-%d %H:%M UTC')}; {who} {role}; {scope}")
-    if strict and covered is not None:
+    if strict and covered is not None and sealed is not None:
+        notes.append(f"the change history is complete, as far as receipt signatures show, up to audit log entry "
+                     f"#{covered[0]} (the receipt issued {covered[1].strftime('%Y-%m-%d %H:%M UTC')}), and as far as "
+                     f"the report's seal shows, up to entry #{sealed}, when the report was made")
+    elif strict and covered is not None:
         notes.append(f"the change history is complete, as far as signatures show, up to audit log entry #{covered[0]} "
                      f"(the receipt issued {covered[1].strftime('%Y-%m-%d %H:%M UTC')}); entries after it are as the "
                      "report gives them, so one left out, such as a later void of a receipt, would not be detected")
     return problems, notes
+
+
+# ---- the report seal ------------------------------------------------------------------
+#
+# When the server exports a report it signs, with its own Ed25519 key, a text naming the body
+# hash and the heads of the audit log and the key log the report carries (D-055). Its public
+# key is registered in the key log like a reviewer's. What the seal proves and what it does
+# not is in docs/VERIFIER.md: it is the server's statement, not a reviewer's.
+
+def _sealed_head(want, log, what: str) -> list[str]:
+    """A log as the seal names it: the report's log must end at that head and reach it."""
+    if want is None and log is None:
+        return []
+    if log is None:
+        return [f"the seal names the {what} up to entry #{(want or {}).get('seq')}, which this report leaves out"]
+    if not isinstance(want, dict):
+        return [f"this report carries a {what} the seal does not name"]
+    head = log.get("head") or {}
+    if want.get("seq") != head.get("seq") or want.get("head") != head.get("entry_hash"):
+        return [f"the {what} in this report ends at entry #{head.get('seq')}, not at entry #{want.get('seq')}, "
+                "where the seal says it ended when the report was made"]
+    if _upto(log, want.get("seq"), want.get("head")) in (None, False):
+        return [f"the {what} in this report does not reach entry #{want.get('seq')}, which the seal names"]
+    return []
+
+
+def check_seal(r: dict, roots: list[dict], strict: bool = False) -> tuple[list[str], list[str], object]:
+    """The report's seal. Returns the problems, the notes, and the audit log entry up to which the
+    seal binds the history when it holds (None otherwise). With strict, a report must be sealed."""
+    import base64
+    seal = r.get("integrity", {}).get("seal")
+    if seal is None:
+        if strict:
+            return ["this report is not sealed, which --require-history requires"], [], None
+        return [], ["this report is not sealed (made before report seals), so nothing the server signed when it "
+                    "exported the report says its change history was complete then"], None
+    try:
+        spki = base64.b64decode(seal["public_key"], validate=True)
+        value = base64.b64decode(seal["value"], validate=True)
+        p = json.loads(seal["payload"])
+        if not isinstance(p, dict):
+            raise TypeError("the payload is not an object")
+    except (ValueError, KeyError, TypeError):
+        return ["the seal's fields cannot be read"], [], None
+    problems, fp = [], seal.get("key_fingerprint")
+    if hashlib.sha256(spki).hexdigest() != fp:
+        problems.append("the seal's public key does not match its fingerprint")
+    if seal.get("algorithm") != "Ed25519" or not verify_signature("Ed25519", spki, seal["payload"].encode(), value):
+        problems.append("the seal's signature does not verify")
+    if p.get("format") != SEAL_FORMAT:
+        problems.append("unknown seal format")
+    if p.get("key_fingerprint") != fp:
+        problems.append("the sealed text names another key")
+    if p.get("report_sha256") != sha(canonical({k: v for k, v in r.items() if k != "integrity"})):
+        problems.append("the report is not the one that was sealed: its body was changed after the seal was made")
+    if (p.get("engagement") or {}).get("id") != (r.get("engagement") or {}).get("id"):
+        problems.append("the seal names another engagement")
+    try:
+        sealed_at = _utc(p["sealed_at"])
+        gap = sealed_at - _utc(r["generated_at"])
+    except (ValueError, KeyError, TypeError):
+        sealed_at = gap = None
+    if gap is None or not SEAL_WINDOW[0] <= gap <= SEAL_WINDOW[1]:
+        problems.append("the seal was not made when the report was generated")
+    h = p.get("history") if isinstance(p.get("history"), dict) else {}
+    problems += _sealed_head(h.get("audit"), r.get("audit_log"), "change history")
+    problems += _sealed_head(h.get("key_log"), r.get("key_log"), "key log")
+    # The seal key must be registered in the key log, as the instance's, up to the sealed head.
+    entries = [e for e in (r.get("key_log") or {}).get("entries") or [] if e.get("key_fingerprint") == fp]
+    reg = next((e for e in entries if e.get("event") == "registered"), None)
+    k = h.get("key_log") if isinstance(h.get("key_log"), dict) else {}
+    try:
+        if reg is None or reg.get("via") != "instance" or reg.get("user_id") is not None:
+            problems.append(f"the key log in this report does not register the seal's key {str(fp)[:16]} as the "
+                            "server's seal key")
+        elif reg["seq"] > k.get("seq") or (sealed_at is not None and _utc(reg["at"]) > sealed_at):
+            problems.append(f"the seal's key {str(fp)[:16]} was registered after the report was sealed")
+        elif sealed_at is not None and any(e.get("event") == "revoked" and _utc(e["at"]) < sealed_at for e in entries):
+            problems.append(f"the seal's key {str(fp)[:16]} was revoked before the report was sealed")
+    except (ValueError, KeyError, TypeError):
+        problems.append(f"the key log entries for the seal's key {str(fp)[:16]} cannot be read")
+    ts, when = seal.get("timestamp"), None
+    if ts:
+        try:
+            t = read_token(base64.b64decode(ts["token"], validate=True))
+        except (ValueError, IndexError, KeyError, TypeError):
+            problems.append("the seal's timestamp token cannot be read")
+        else:
+            statement = f"{SEAL_TS_STATEMENT}\n{p.get('report_sha256')}\n{seal.get('value')}\n"
+            if t["imprint_alg"] not in _HASH or _HASH[t["imprint_alg"]](statement.encode()).digest() != t["imprint"]:
+                problems.append("the seal's timestamp covers something else")
+            found, tsa = token_problems(t, roots)
+            problems += [f"the seal's timestamp: {x}" for x in found]
+            try:
+                shown = _utc(ts.get("time") or "")
+            except ValueError:
+                shown = None
+            if shown != t["time"]:
+                problems.append("the time shown for the seal's timestamp is not the token's time")
+            if sealed_at is None or not SEAL_WINDOW[0] <= t["time"] - sealed_at <= SEAL_WINDOW[1]:
+                problems.append("the seal's timestamp is not from when the report was sealed")
+            when = (t["time"], tsa)
+    if problems:
+        return problems, [], None
+    a = h.get("audit")
+    upto = " and ".join(f"{what} entry #{x['seq']}" for what, x in (("audit log", a), ("key log", k)) if x)
+    # A receipt signed over a key log head that includes the seal key's registration ties the key to
+    # the server the reviewer signed on; a key registered after every signature has only its fingerprint.
+    heads = [_history(v4)[1].get("seq") for v4 in (_payload(l["receipt"]) for l in r["lanes"]
+                                                   if l["receipt"] and l["status"] == "closed") if v4 is not None]
+    bound = any(type(x) is int and x >= reg["seq"] for x in heads)
+    notes = [f"sealed {sealed_at.strftime('%Y-%m-%d %H:%M UTC')} with the server's seal key {fp[:16]} (Ed25519): the "
+             f"server that made this report says it was complete, up to {upto or 'no log entry'}, when it was exported",
+             f"the seal key was registered in the key log {_utc(reg['at']).strftime('%Y-%m-%d %H:%M UTC')} (entry "
+             f"#{reg['seq']}), " + ("and a receipt signature covers that entry, so it was the key of the server the "
+                                    "reviewer signed on; whoever holds it could still seal another report" if bound else
+                                    "and no receipt signature covers that entry, so only its fingerprint, compared with "
+                                    "the one the tester gives you, ties it to the server")]
+    notes.append(f"the seal was timestamped {when[0].isoformat()} by {when[1]}" if when
+                 else "the seal is not timestamped, so its time is the server's clock")
+    return [], notes, (a["seq"] if a else 0)
 
 
 # ---- what a verified HTML report says -----------------------------------------------------
@@ -873,6 +1011,15 @@ def facts(r: dict) -> list[str]:
     out.append(f"Evidence: {len(r['evidence'])} entr{'y' if len(r['evidence']) == 1 else 'ies'}, "
                f"chain head {s.get('chain_head')}")
     out.append(f"Report generated: {_day(r.get('generated_at'))}")
+    seal = (r.get("integrity") or {}).get("seal")
+    if isinstance(seal, dict):
+        try:
+            p = json.loads(seal["payload"])
+        except (ValueError, KeyError, TypeError):
+            p = {}
+        ts = seal.get("timestamp")
+        out.append(f"Sealed: {_day(p.get('sealed_at'))} by the server's key {str(seal.get('key_fingerprint'))[:16]}"
+                   + (f"; timestamped {_day(ts.get('time'))}" if isinstance(ts, dict) else ""))
     return out
 
 
@@ -1205,6 +1352,7 @@ def main(argv: list[str]) -> int:
     notes += content_notes(r)
     results.append(("Lane receipts", receipt_problems, None))
     if r["format"] != "attackledger-report/1":
+        seal_problems, seal_notes, sealed = check_seal(r, roots, strict)
         for name, field, check in (("Receipt signatures", "signature", lambda: check_signatures(r, require)),
                                    ("Receipt timestamps", "timestamp", lambda: check_timestamps(r, roots))):
             problems, more = check()
@@ -1218,15 +1366,19 @@ def main(argv: list[str]) -> int:
                 if "key_log" in r or key_problems:
                     results.append(("Signing key history", key_problems, None))
                 notes += key_notes
-                audit_problems, audit_notes = check_audit_log(r, strict)
+                audit_problems, audit_notes = check_audit_log(r, strict, sealed)
                 if "audit_log" in r or audit_problems:
                     results.append(("Change history", audit_problems, None))
                 notes += audit_notes
+        if "seal" in r.get("integrity", {}) or seal_problems:
+            results.append(("Report seal", seal_problems, None))
+        notes += seal_notes
     else:
         if require:
             results.append(("Receipt signatures", ["this report format carries no signatures"], None))
         if strict:
             results.append(("Change history", ["this report format carries no change history"], None))
+            results.append(("Report seal", ["this report format carries no seal"], None))
 
     eng, s = r["engagement"], r["summary"]
     lanes, entries = s["lanes_receipted"], s["evidence_entries"]

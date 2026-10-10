@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-uANKh/oXAuwwmJKEC+vkM011790WnAiQ+0LTErMToKU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-p+QXb0GnsEZy2w7RD6FlrQWh2qXpujjkYF4ilnFqKmA='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Verify a report · AttackLedger</title>
 <meta name="description" content="Check an AttackLedger report in your browser, with the same checks as verify_report.py. The file is not uploaded.">
@@ -236,9 +236,9 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             <input type="checkbox" id="require-history" aria-describedby="require-history-hint">
             <label for="require-history">Require the full change history</label>
             <p class="hint" id="require-history-hint">As <code>--require-history</code>: the report must carry its key log
-              and audit log, and every receipt must be signed in the current format, which binds that history to the
-              signature. Older reports fail. Changes after the newest signature are still only as the report gives
-              them.</p>
+              and audit log, every receipt must be signed in the current format, which binds that history to the
+              signature, and the report must be sealed by the server that exported it, which binds the history after the
+              newest signature too. Older reports fail.</p>
           </div>
           <h3 id="roots-title">Trusted roots</h3>
           <p class="hint">Timestamps must chain to a root you trust. This page trusts the roots that
@@ -272,7 +272,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             report, or save this page and open it offline.</p>
           <details class="cli">
             <summary>The policy this page is served with</summary>
-            <p class="csp">default-src 'none'; script-src 'sha256-uANKh/oXAuwwmJKEC+vkM011790WnAiQ+0LTErMToKU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
+            <p class="csp">default-src 'none'; script-src 'sha256-p+QXb0GnsEZy2w7RD6FlrQWh2qXpujjkYF4ilnFqKmA='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
           </details>
           <h3>The same checks as the command line</h3>
           <p>The checks are a line-for-line port of <a href="/verify_report.py"><code>verify_report.py</code></a>, the
@@ -343,8 +343,12 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     own_session: "from their own session",
     assigned_password: "from a session signed in with a password someone else set",
     operator_cli: "by the operator on the server",
-    backfill: "before the key log existed (recorded when it was added)"
+    backfill: "before the key log existed (recorded when it was added)",
+    instance: "as the server's report seal key"
   };
+  var SEAL_FORMAT = "attackledger-seal-v1";
+  var SEAL_TS_STATEMENT = "attackledger-seal-timestamp-v1";
+  var SEAL_WINDOW = [-60000000n, 600000000n];
   var PyError = class extends Error {
     constructor(kind, message) {
       super(`${kind}: ${message}`);
@@ -1548,7 +1552,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       return false;
     }
   }
-  async function checkAuditLog(r, strict = false) {
+  async function checkAuditLog(r, strict = false, sealed = null) {
     const notes = [];
     const receipted = closedLanes(r);
     const log = getk(r, "audit_log");
@@ -1640,10 +1644,130 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
         notes.push(`${name}: issued ${stamp(issued)}; ${whoText} ${role}; ${scope}`);
       }
     }
-    if (strict && covered !== null) {
+    if (strict && covered !== null && sealed !== null) {
+      notes.push(`the change history is complete, as far as receipt signatures show, up to audit log entry #${pyStr(covered[0])} (the receipt issued ${stamp(covered[1])}), and as far as the report's seal shows, up to entry #${pyStr(sealed)}, when the report was made`);
+    } else if (strict && covered !== null) {
       notes.push(`the change history is complete, as far as signatures show, up to audit log entry #${pyStr(covered[0])} (the receipt issued ${stamp(covered[1])}); entries after it are as the report gives them, so one left out, such as a later void of a receipt, would not be detected`);
     }
     return [problems, notes];
+  }
+  function sealedHead(want, log, what) {
+    if (want === null && log === null) return [];
+    if (log === null) return [`the seal names the ${what} up to entry #${pyStr(getk(or(want, dict()), "seq"))}, which this report leaves out`];
+    if (!isDict(want)) return [`this report carries a ${what} the seal does not name`];
+    const h = or(getk(log, "head"), dict());
+    if (!pyEq(getk(want, "seq"), getk(h, "seq")) || !pyEq(getk(want, "head"), getk(h, "entry_hash"))) {
+      return [`the ${what} in this report ends at entry #${pyStr(getk(h, "seq"))}, not at entry #${pyStr(getk(want, "seq"))}, where the seal says it ended when the report was made`];
+    }
+    const u = upTo(log, getk(want, "seq"), getk(want, "head"));
+    if (u === null || u === false) return [`the ${what} in this report does not reach entry #${pyStr(getk(want, "seq"))}, which the seal names`];
+    return [];
+  }
+  async function checkSeal(r, roots, strict, mode) {
+    const seal = getk(getk(r, "integrity", dict()), "seal");
+    if (seal === null) {
+      if (strict) return [["this report is not sealed, which --require-history requires"], [], null];
+      return [[], ["this report is not sealed (made before report seals), so nothing the server signed when it exported the report says its change history was complete then"], null];
+    }
+    let spki, value, p;
+    try {
+      spki = b64decode(at(seal, "public_key"));
+      value = b64decode(at(seal, "value"));
+      p = loadsStr(at(seal, "payload"));
+      if (!isDict(p)) raise("TypeError", "the payload is not an object");
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      return [["the seal's fields cannot be read"], [], null];
+    }
+    const problems = [], fp = getk(seal, "key_fingerprint");
+    if (!pyEq(hex(await digest("SHA-256", spki)), fp)) problems.push("the seal's public key does not match its fingerprint");
+    if (!pyEq(getk(seal, "algorithm"), "Ed25519") || !await verifySignature("Ed25519", spki, encode(at(seal, "payload")), value, mode)) {
+      problems.push("the seal's signature does not verify");
+    }
+    if (!pyEq(getk(p, "format"), SEAL_FORMAT)) problems.push("unknown seal format");
+    if (!pyEq(getk(p, "key_fingerprint"), fp)) problems.push("the sealed text names another key");
+    const body = dict();
+    for (const k2 of Object.keys(r)) if (k2 !== "integrity") body[k2] = r[k2];
+    if (!pyEq(getk(p, "report_sha256"), await sha(canonical(body)))) {
+      problems.push("the report is not the one that was sealed: its body was changed after the seal was made");
+    }
+    if (!pyEq(getk(or(getk(p, "engagement"), dict()), "id"), getk(or(getk(r, "engagement"), dict()), "id"))) {
+      problems.push("the seal names another engagement");
+    }
+    let sealedAt, gap;
+    try {
+      sealedAt = utc(at(p, "sealed_at"));
+      gap = sealedAt.us - utc(at(r, "generated_at")).us;
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      sealedAt = gap = null;
+    }
+    if (gap === null || gap < SEAL_WINDOW[0] || gap > SEAL_WINDOW[1]) problems.push("the seal was not made when the report was generated");
+    const h = isDict(getk(p, "history")) ? at(p, "history") : dict();
+    problems.push(...sealedHead(getk(h, "audit"), getk(r, "audit_log"), "change history"));
+    problems.push(...sealedHead(getk(h, "key_log"), getk(r, "key_log"), "key log"));
+    const entries = iter(or(getk(or(getk(r, "key_log"), dict()), "entries"), [])).filter((e) => pyEq(getk(e, "key_fingerprint"), fp));
+    const reg = entries.find((e) => pyEq(getk(e, "event"), "registered")) ?? null;
+    const k = isDict(getk(h, "key_log")) ? at(h, "key_log") : dict();
+    const short = head(pyStr(fp), 16);
+    try {
+      if (reg === null || !pyEq(getk(reg, "via"), "instance") || getk(reg, "user_id") !== null) {
+        problems.push(`the key log in this report does not register the seal's key ${short} as the server's seal key`);
+      } else if (pyLt(getk(k, "seq"), at(reg, "seq")) || sealedAt !== null && utc(at(reg, "at")).us > sealedAt.us) {
+        problems.push(`the seal's key ${short} was registered after the report was sealed`);
+      } else if (sealedAt !== null && entries.some((e) => pyEq(getk(e, "event"), "revoked") && utc(at(e, "at")).us < sealedAt.us)) {
+        problems.push(`the seal's key ${short} was revoked before the report was sealed`);
+      }
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      problems.push(`the key log entries for the seal's key ${short} cannot be read`);
+    }
+    const ts = getk(seal, "timestamp");
+    let when = null;
+    if (truthy(ts)) {
+      let t;
+      try {
+        t = readToken(b64decode(at(ts, "token")));
+      } catch (e) {
+        caught(e, "ValueError", "IndexError", "KeyError", "TypeError");
+        problems.push("the seal's timestamp token cannot be read");
+        t = null;
+      }
+      if (t !== null) {
+        const statement = `${SEAL_TS_STATEMENT}
+${pyStr(getk(p, "report_sha256"))}
+${pyStr(getk(seal, "value"))}
+`;
+        const hh = hashOf(t.imprintAlg);
+        if (hh === null || !bytesEq(await digest(hh, encode(statement)), t.imprint)) problems.push("the seal's timestamp covers something else");
+        const [found, tsa] = await tokenProblems(t, roots);
+        problems.push(...found.map((x) => `the seal's timestamp: ${x}`));
+        let shown;
+        try {
+          shown = utc(or(getk(ts, "time"), ""));
+        } catch (e) {
+          caught(e, "ValueError");
+          shown = null;
+        }
+        if (shown === null || shown.us !== t.time.us) problems.push("the time shown for the seal's timestamp is not the token's time");
+        const lag = sealedAt === null ? null : t.time.us - sealedAt.us;
+        if (lag === null || lag < SEAL_WINDOW[0] || lag > SEAL_WINDOW[1]) {
+          problems.push("the seal's timestamp is not from when the report was sealed");
+        }
+        when = [t.time, tsa];
+      }
+    }
+    if (problems.length) return [problems, [], null];
+    const a = getk(h, "audit");
+    const upto = [["audit log", a], ["key log", k]].filter(([, x]) => truthy(x)).map(([what, x]) => `${what} entry #${pyStr(at(x, "seq"))}`).join(" and ");
+    const heads = closedLanes(r).map((l) => payloadV4(at(l, "receipt"))).filter((v4) => v4 !== null).map((v4) => getk(historyOf(v4)[1], "seq"));
+    const bound = heads.some((x) => (typeof x === "number" || typeof x === "bigint") && !pyLt(x, at(reg, "seq")));
+    const notes = [
+      `sealed ${stamp(sealedAt)} with the server's seal key ${head(fp, 16)} (Ed25519): the server that made this report says it was complete, up to ${upto || "no log entry"}, when it was exported`,
+      `the seal key was registered in the key log ${stamp(utc(at(reg, "at")))} (entry #${pyStr(at(reg, "seq"))}), ` + (bound ? "and a receipt signature covers that entry, so it was the key of the server the reviewer signed on; whoever holds it could still seal another report" : "and no receipt signature covers that entry, so only its fingerprint, compared with the one the tester gives you, ties it to the server")
+    ];
+    notes.push(when ? `the seal was timestamped ${isoformat(when[0])} by ${when[1]}` : "the seal is not timestamped, so its time is the server's clock");
+    return [[], notes, truthy(a) ? at(a, "seq") : 0];
   }
   var FACTS_TITLE = "What the verified JSON in this HTML report says (compare it with the text the page shows):";
   function day(text) {
@@ -1698,6 +1822,18 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     const n = iter(at(r, "evidence")).length;
     out.push(`Evidence: ${n} entr${n === 1 ? "y" : "ies"}, chain head ${pyStr(getk(s, "chain_head"))}`);
     out.push(`Report generated: ${day(getk(r, "generated_at"))}`);
+    const seal = getk(or(getk(r, "integrity"), dict()), "seal");
+    if (isDict(seal)) {
+      let p;
+      try {
+        p = loadsStr(at(seal, "payload"));
+      } catch (e) {
+        caught(e, "ValueError", "KeyError", "TypeError");
+        p = dict();
+      }
+      const ts = getk(seal, "timestamp");
+      out.push(`Sealed: ${day(getk(p, "sealed_at"))} by the server's key ${head(pyStr(getk(seal, "key_fingerprint")), 16)}` + (isDict(ts) ? `; timestamped ${day(getk(ts, "time"))}` : ""));
+    }
     return out;
   }
   var TS_STATEMENT = "attackledger-timestamp-v1";
@@ -2108,6 +2244,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     add("Evidence chain", contentNotes(report));
     results.push(["Lane receipts", receiptProblems, null]);
     if (!pyEq(at(report, "format"), "attackledger-report/1")) {
+      const [sealProblems, sealNotes, sealed] = await checkSeal(report, roots, strict, mode);
       for (const [name, field] of [["Receipt signatures", "signature"], ["Receipt timestamps", "timestamp"]]) {
         const [problems, more] = field === "signature" ? await checkSignatures(report, require2, mode) : await checkTimestamps(report, roots);
         const [have, receipted] = countReceipts(report, field);
@@ -2119,14 +2256,19 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
           const [keyProblems, keyNotes] = await checkKeyLog(report, strict);
           if (own(report, "key_log") || keyProblems.length) results.push(["Signing key history", keyProblems, null]);
           add("Signing key history", keyNotes);
-          const [auditProblems, auditNotes] = await checkAuditLog(report, strict);
+          const [auditProblems, auditNotes] = await checkAuditLog(report, strict, sealed);
           if (own(report, "audit_log") || auditProblems.length) results.push(["Change history", auditProblems, null]);
           add("Change history", auditNotes);
         }
       }
+      if (pyIn("seal", getk(report, "integrity", dict())) || sealProblems.length) results.push(["Report seal", sealProblems, null]);
+      add("Report seal", sealNotes);
     } else {
       if (require2) results.push(["Receipt signatures", ["this report format carries no signatures"], null]);
-      if (strict) results.push(["Change history", ["this report format carries no change history"], null]);
+      if (strict) {
+        results.push(["Change history", ["this report format carries no change history"], null]);
+        results.push(["Report seal", ["this report format carries no seal"], null]);
+      }
     }
     const eng = at(report, "engagement"), s = at(report, "summary");
     const lanes = at(s, "lanes_receipted"), entries = at(s, "evidence_entries");
@@ -2186,7 +2328,8 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     ["Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its fingerprint, and the signed text names this engagement, this lane, this manifest, a chain head in the report and the receipt's issue time."],
     ["Signing key history", "Each signing key's entries in the key log hash correctly and link into the log in order, and the key was registered to the signer before the receipt was issued and not revoked before it."],
     ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held the reviewer role (or was an owner) and had the name in the receipt when it was issued, and no entry records that the receipt was voided. A receipt signed in the current format names the log's head when it was signed and how many entries of this engagement and its signer led up to it: none of them may be missing."],
-    ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature verifies, and its certificate chain reaches a root you trust and was valid at the token's time."]
+    ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature verifies, and its certificate chain reaches a root you trust and was valid at the token's time."],
+    ["Report seal", "The server that made the report sealed it when it was exported: its own key signed the report's body hash and the heads of the change history and the key log. The signature verifies, the key is registered in the key log as the server's, the report is the one sealed, and its logs end at those heads. It is the server's statement, not a reviewer's: compare the seal key's fingerprint with the one the tester gives you."]
   ];
   var MEANS = new Map(EXPLAIN);
   var state = {
