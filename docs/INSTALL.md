@@ -242,6 +242,10 @@ chmod 600 deploy/certs/key.pem
 sed -i "s|^ATTACKLEDGER_TLS=.*|ATTACKLEDGER_TLS=/certs/fullchain.pem /certs/key.pem|" .env
 ```
 
+Keep both files owned by root, as these commands (run as root) leave them. Caddy runs as root
+but without the capability that lets root read other users' files (`docs/security-review/SUPPLY_CHAIN.md`),
+so a key owned by another user with mode 600 cannot be read.
+
 When you renew it, replace the two files and run `docker compose restart caddy`.
 
 **Option C: Caddy's internal CA, for a test install.** Caddy creates its own certificate
@@ -575,7 +579,7 @@ that user once, then encrypt the evidence stored before (new evidence is always
 encrypted; old evidence stays as it was until you do this):
 
 ```sh
-docker compose run --rm --user 0 --no-deps api chown -R 10001 /data/blobs
+docker compose run --rm --user 0 --cap-add CHOWN --cap-add DAC_READ_SEARCH --no-deps api chown -R 10001 /data/blobs
 docker compose up -d --wait
 docker compose exec api python -m app.vault encrypt-existing
 ```
@@ -977,6 +981,14 @@ docker compose build
 docker compose down          # without -v: the volumes and so the data stay
 docker compose up -d --wait
 ```
+
+**Upgrading past the container hardening (after 0.8.0).** The steps above are enough: the build
+pulls the new base images (pinned by digest), and `up -d` recreates every container with no
+capabilities, a read-only root filesystem and a non-root user; the volumes are kept. Postgres runs
+as its own user (uid 70) from the start, which already owns a data volume made before. Check the
+certificate key's owner if you use option B (section 5). What each container may do, and how the
+images are built and checked, is in `docs/security-review/SUPPLY_CHAIN.md`; to list what is inside
+them (an SBOM), run `tools/sbom.sh` (`docs/SUPPLY_CHAIN.md`).
 
 **Upgrading to migration 0022 (organizations, after 0.7.1).** Nothing to do beyond the steps
 above. The migration makes the default organization and puts every existing row in it; the
