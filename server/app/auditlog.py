@@ -222,6 +222,30 @@ def head(session, organization_id: int | None = None) -> dict:
     return {"seq": last.seq if last else 0, "entry_hash": last.entry_hash if last else GENESIS}
 
 
+def commitment(session, eng_id: int, signer_id: int | None, upto: int | None = None) -> dict | None:
+    """What a receipt payload (format v4, D-054) commits to about the change history: the head of
+    the engagement's organization's chain at seq upto (the current head by default), and how many
+    of the entries up to it are the engagement's or person events of the signer, with the SHA-256
+    of their sequence numbers (canonical JSON). These are the entries a report must carry for the
+    verifier to judge the receipt, so a report that leaves one out no longer matches the signature.
+    None when the chain has no entry upto."""
+    org = session.get(Engagement, eng_id).organization_id
+    if upto is None:
+        top = head(session, org)
+    else:
+        row = session.scalar(select(AuditEntry).where(AuditEntry.organization_id == org, AuditEntry.seq == upto))
+        if row is None and upto != 0:
+            return None
+        top = {"seq": upto, "entry_hash": row.entry_hash if row else GENESIS}
+    mine = or_(AuditEntry.engagement_id == eng_id,
+               and_(AuditEntry.action.like("person.%"), AuditEntry.subject_id == signer_id))
+    seqs = list(session.scalars(select(AuditEntry.seq).where(AuditEntry.organization_id == org,
+                                                             AuditEntry.seq <= top["seq"], mine)
+                                .order_by(AuditEntry.seq)))
+    return {"seq": top["seq"], "head": top["entry_hash"], "entries": len(seqs),
+            "sha256": ledger.sha256(ledger.canonical(seqs))}
+
+
 def for_report(session, eng_id: int, people: set[int]) -> dict | None:
     """The engagement's entries and its people's, with the links from the first of them to
     the head of its organization's chain (hashes only), so a reader can check that they are in

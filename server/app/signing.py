@@ -6,8 +6,12 @@ non-extractable). The server stores the public key and checks every signature.
 What is signed is the receipt payload: canonical JSON naming the engagement, the lane,
 its manifest hash, the head of the evidence chain, the signer, the key and the time.
 Format v3 (D-037) names the signer by id, name and email, so a name alone cannot pass for
-someone else's: v2 named only the id and the name. The server issues and accepts v3 for
-new receipts; receipts signed as v2 keep their payload and verify as before.
+someone else's: v2 named only the id and the name. Format v4 (D-054) adds the change
+history the receipt was signed against: the heads of the audit log and the key log, and
+how many audit entries of the engagement and its signer led up to it, with a hash of their
+sequence numbers, so a report cannot leave those entries out unnoticed. It goes with
+manifest version 2 (gates.py). The server issues and accepts v4 for new receipts; receipts
+signed as v2 or v3 keep their payload and verify as before.
 The report carries the payload, the signature and the public key, so anyone can check
 the signature offline (tools/verify_report.py, standard library only).
 
@@ -25,8 +29,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
 
 ALGORITHMS = ("Ed25519", "ECDSA-P256")
-PAYLOAD_FORMAT = "attackledger-receipt-v3"
-PAYLOAD_FORMATS = ("attackledger-receipt-v2", PAYLOAD_FORMAT)   # what a verifier reads
+PAYLOAD_FORMAT = "attackledger-receipt-v4"
+PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3", PAYLOAD_FORMAT)   # what a verifier reads
 PAYLOAD_MAX_AGE_SECONDS = 600
 
 
@@ -80,8 +84,9 @@ def verify(algorithm: str, spki_b64: str, payload: str, signature_b64: str) -> b
 
 def payload_for(*, engagement_id: int, engagement_name: str, lane_id: int, host: str, role: str,
                 manifest_sha256: str, chain_seq: int, chain_head: str, signer_id: int, signer_name: str,
-                signer_email: str, key_fingerprint: str, issued_at: str) -> str:
-    """The exact text a reviewer signs. Canonical JSON, so the verifier can rebuild it."""
+                signer_email: str, key_fingerprint: str, issued_at: str, audit: dict, key_log: dict) -> str:
+    """The exact text a reviewer signs. Canonical JSON, so the verifier can rebuild it. audit is
+    auditlog.commitment(...) and key_log keylog.head_at(...), at the time the payload is issued."""
     return json.dumps({
         "format": PAYLOAD_FORMAT,
         "engagement": {"id": engagement_id, "name": engagement_name},
@@ -91,4 +96,9 @@ def payload_for(*, engagement_id: int, engagement_name: str, lane_id: int, host:
         "signer": {"id": signer_id, "name": signer_name, "email": signer_email},
         "key_fingerprint": key_fingerprint,
         "issued_at": issued_at,
+        "history": {
+            "audit": {"seq": audit["seq"], "head": audit["head"], "entries": audit["entries"],
+                      "sha256": audit["sha256"]},
+            "key_log": {"seq": key_log["seq"], "head": key_log["head"]},
+        },
     }, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

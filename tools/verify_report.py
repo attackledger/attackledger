@@ -5,6 +5,7 @@
     python3 tools/verify_report.py report.html
     python3 tools/verify_report.py report.json --tsa-root authority-root.pem
     python3 tools/verify_report.py report.json --require-signatures
+    python3 tools/verify_report.py report.json --require-history
 
 Standard library only, and independent of the AttackLedger code base on
 purpose: it re-derives every hash itself. Checks:
@@ -14,7 +15,9 @@ purpose: it re-derives every hash itself. Checks:
      hash a chain record v2 commits to (a summary deleted with its engagement's key is
      reported as unavailable, and the chain is still checked),
   3. every lane reported as receipted has a receipt that matches a manifest
-     rebuilt from the report's own items and evidence,
+     rebuilt from the report's own items and evidence (manifest version 2 names each item's
+     id and text, so it binds every piece of evidence to its item; a receipt made with
+     version 1 does not, and a NOTE says so),
   4. (format 2) every signed receipt: the signature verifies with the public key in the
      report, the key matches its fingerprint, and the signed payload names this lane,
      this manifest and an evidence chain head that is in the report,
@@ -32,10 +35,20 @@ purpose: it re-derives every hash itself. Checks:
      while the log covered the engagement, the signer held the reviewer role on it (or was
      an owner), had an active account, and had the name and email the receipt names, at
      the time it was issued. A NOTE gives the scope in force and who gave the role.
+     A receipt signed as format v4 names the heads of both logs when it was signed, and
+     how many audit entries of the engagement and its signer led up to it: the logs must
+     reach those heads, and none of those entries may be missing.
 
 Checks 4 and 5 print SKIP, which is neither a pass nor a failure, when no receipt in
 the report is signed or timestamped: there is nothing for them to check. With
 --require-signatures, every receipt must be signed, and an unsigned one fails check 4.
+With --require-history, a report must carry the key log and the audit log, and every
+receipt must be signed as format v4, so that its history is bound to its signature; a
+report without them, or a receipt signed before v4, unsigned or issued before the audit
+log, fails. What strict mode can and cannot prove is in docs/VERIFIER.md.
+
+An HTML report that verifies is followed by what its embedded JSON says (engagement,
+scope, receipted lanes, signers, dates and counts), to compare with the text the page shows.
 
 Signatures are Ed25519 or ECDSA P-256 with SHA-256, checked with the pure-Python
 code below (RFC 8032 and SEC 1), so no third-party package is needed; timestamp
@@ -60,7 +73,9 @@ CHAIN_FIELDS = ("seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "
 CHAIN_FIELDS_V2 = ("v", "seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary_sha256", "source")
 KEY_LOG_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
 AUDIT_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
-PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3")   # v3 adds the signer's email
+# v3 adds the signer's email; v4 the change history heads it was signed against (D-054).
+PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3", "attackledger-receipt-v4")
+HISTORY_FORMAT = PAYLOAD_FORMATS[2]
 VOID_ACTION = "lane.receipt_voided"     # D-052: a voided receipt stays void
 # How long after its signed payload was issued the server may issue a receipt: the payload is
 # valid for ten minutes (and may be dated up to a minute ahead), then the timestamp authority answers.
@@ -153,17 +168,28 @@ def content_notes(r: dict) -> list[str]:
             "the chain and the receipts were still checked"]
 
 
-def manifest(lane: dict, evidence: list[dict]) -> dict:
-    # Mirrors the ledger's receipt manifest: items in order, the lane's evidence by id.
+def manifest(lane: dict, evidence: list[dict], version: int = 2) -> dict:
+    # Mirrors the ledger's receipt manifest: items in order, the lane's evidence by id. Version 2
+    # (D-054) also names each item's id and text, so the item id each piece of evidence names is
+    # bound to the item it supports; version 1 did not.
     evs = sorted((e for e in evidence if e["lane_id"] == lane["lane_id"]), key=lambda e: e["id"])
-    return {
+    m = {
         "lane": lane["lane_id"],
         "role": lane["role"],
         "host": lane["host"],
-        "items": [{"idx": i["idx"], "key": i["key"], "state": i["state"], "na_reason": i["na_reason"]}
+        "items": [{"idx": i["idx"], "key": i["key"], "state": i["state"], "na_reason": i["na_reason"],
+                   **({"id": i["item_id"], "text": i["text"]} if version == 2 else {})}
                   for i in sorted(lane["items"], key=lambda i: i["idx"])],
         "evidence": [{"id": e["id"], "item": e["item_id"], "kind": e["kind"], "sha256": e["sha256"]} for e in evs],
     }
+    if version == 2:
+        m["v"] = 2
+    return m
+
+
+def manifest_sha256(lane: dict, evidence: list[dict], version: int) -> str:
+    # The ledger hashes the manifest with ASCII-escaped JSON.
+    return sha(json.dumps(manifest(lane, evidence, version), sort_keys=True, separators=(",", ":")))
 
 
 def check_receipts(r: dict) -> tuple[list[str], list[str]]:
@@ -185,9 +211,14 @@ def check_receipts(r: dict) -> tuple[list[str], list[str]]:
             if not rc:
                 problems.append(f"{label}: reported as receipted but has no receipt")
                 continue
-            # The ledger hashes the manifest with ASCII-escaped JSON.
-            got = sha(json.dumps(manifest(lane, r["evidence"]), sort_keys=True, separators=(",", ":")))
-            if got != rc["manifest_sha256"]:
+            # A receipt is over manifest version 2, or version 1 if it was issued before it. The
+            # version is inside what is hashed, so one cannot pass for the other.
+            if manifest_sha256(lane, r["evidence"], 2) == rc["manifest_sha256"]:
+                pass
+            elif manifest_sha256(lane, r["evidence"], 1) == rc["manifest_sha256"]:
+                notes.append(f"{label}: the receipt's manifest is version 1, which does not name each item's id and "
+                             "text, so which item each piece of evidence supports is not covered by it")
+            else:
                 problems.append(f"{label}: receipt does not match its items and evidence")
             if any(i["state"] == "open" for i in lane["items"]):
                 problems.append(f"{label}: reported as receipted with open items")
@@ -373,6 +404,36 @@ def count_receipts(r: dict, field: str) -> tuple[int, int]:
     return sum(1 for rc in rcs if rc.get(field)), len(rcs)
 
 
+def _history(payload: dict) -> tuple[dict, dict] | None:
+    """The audit log and key log heads a v4 payload names, or None if it names none."""
+    h = payload.get("history")
+    if not isinstance(h, dict) or not isinstance(h.get("audit"), dict) or not isinstance(h.get("key_log"), dict):
+        return None
+    return h["audit"], h["key_log"]
+
+
+def _payload(rc: dict) -> dict | None:
+    """A signed receipt's payload, if it is format v4 and can be read; None otherwise."""
+    try:
+        p = json.loads((rc.get("signature") or {})["payload"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    return p if isinstance(p, dict) and p.get("format") == HISTORY_FORMAT and _history(p) else None
+
+
+def _upto(log: dict, seq, head):
+    """The sequence numbers of a log's links up to and including the one at seq, if that link
+    has entry hash head; None if the log's links do not include seq, False if the link there
+    has another hash."""
+    links = log.get("links") or []
+    if seq == 0 and head == GENESIS:
+        return []
+    for n, ln in enumerate(links):
+        if ln["seq"] == seq:
+            return [x["seq"] for x in links[:n + 1]] if ln["entry_hash"] == head else False
+    return None
+
+
 def _signer(s) -> str:
     """A payload's signer as "Name (email)"; v2 payloads have no email."""
     s = s if isinstance(s, dict) else {}
@@ -411,6 +472,8 @@ def check_signatures(r: dict, require: bool = False) -> tuple[list[str], list[st
             problems.append(f"{label}: unknown signed payload format")
         elif payload["format"] != PAYLOAD_FORMATS[0] and not isinstance((payload.get("signer") or {}).get("email"), str):
             problems.append(f"{label}: the signed payload does not name the signer's email")
+        elif payload["format"] == HISTORY_FORMAT and not _history(payload):
+            problems.append(f"{label}: the signed payload does not name the change history heads")
         if payload.get("manifest_sha256") != rc["manifest_sha256"]:
             problems.append(f"{label}: the signature covers a different manifest")
         if (payload.get("lane") or {}).get("id") != lane["lane_id"]:
@@ -503,11 +566,14 @@ def check_log(log: dict, what: str, fields: tuple) -> tuple[list[str], list[tupl
     return problems, records
 
 
-def check_key_log(r: dict) -> tuple[list[str], list[str]]:
+def check_key_log(r: dict, strict: bool = False) -> tuple[list[str], list[str]]:
+    """With strict (--require-history), a report with signed receipts must carry the key log."""
     notes = []
     signed = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed" and l["receipt"].get("signature")]
     log = r.get("key_log")
     if log is None:
+        if signed and strict:
+            return ["this report has no key history, which --require-history requires"], notes
         if signed:
             notes.append("this report has no key history (made before the key log); compare each signer's key "
                          "fingerprint with the one they give you")
@@ -551,6 +617,17 @@ def check_key_log(r: dict) -> tuple[list[str], list[str]]:
         except (ValueError, KeyError, TypeError, AttributeError):
             mine.append(f"{label}: the key log entries for key {fp[:16]} cannot be read")
             revoked = []
+        v4 = _payload(lane["receipt"])
+        if v4 is not None:          # the key log head when it was signed (D-054)
+            k = _history(v4)[1]
+            upto = _upto(log, k.get("seq"), k.get("head"))
+            if upto is None:
+                mine.append(f"{label}: the key log in this report does not reach the head the signature names "
+                            f"(#{k.get('seq')})")
+            elif upto is False:
+                mine.append(f"{label}: the key log entry #{k.get('seq')} the signature names is not the one in this report")
+            elif reg.get("seq") not in upto:
+                mine.append(f"{label}: key {fp[:16]} is not registered in the key log up to the head the signature names")
         problems += mine
         if not mine and fp not in described:
             described.add(fp)
@@ -629,11 +706,15 @@ def _voids(e: dict, lane: dict, rc: dict, issued) -> bool:
         return False
 
 
-def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
+def check_audit_log(r: dict, strict: bool = False) -> tuple[list[str], list[str]]:
+    """With strict (--require-history), the report must carry the audit log and every receipt
+    must commit to it (format v4); see docs/VERIFIER.md for what that proves."""
     notes = []
     receipted = [l for l in r["lanes"] if l["receipt"] and l["status"] == "closed"]
     log = r.get("audit_log")
     if log is None:
+        if receipted and strict:
+            return ["this report has no change history, which --require-history requires"], notes
         if receipted:
             notes.append("this report has no change history (made before the audit log); who held the reviewer "
                          "role and which scope was in force when each receipt was issued are not shown")
@@ -644,6 +725,7 @@ def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
     eng_id = r["engagement"]["id"]
     start = next((at for at, e in records if e.get("engagement_id") == eng_id), None)
     voids = [(at, e) for at, e in records if e.get("engagement_id") == eng_id and e.get("action") == VOID_ACTION]
+    covered = None          # the newest audit log head a v4 signature names: (seq, the receipt's issue time)
     for lane in receipted:
         label, rc = f"{lane['host']} / {lane['name']}", lane["receipt"]
         sig, payload = rc.get("signature"), None
@@ -661,9 +743,34 @@ def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
         if void is not None:     # a void is for good (D-052): the lane's status in the report is not signed
             problems.append(f"{label}: reported as receipted, but the change history records that this receipt was "
                             f"voided {void[0].strftime('%Y-%m-%d %H:%M UTC')}")
+        v4 = _payload(rc)
+        if v4 is not None:          # the history it was signed against must all be here (D-054)
+            a = _history(v4)[0]
+            upto = _upto(log, a.get("seq"), a.get("head"))
+            if upto is None:
+                problems.append(f"{label}: the change history in this report does not reach the audit log head the "
+                                f"signature names (#{a.get('seq')})")
+            elif upto is False:
+                problems.append(f"{label}: the audit log entry #{a.get('seq')} the signature names is not the one in "
+                                "this report")
+            else:
+                seqs = [e.get("seq") for _, e in records if e.get("seq") in upto and (
+                    e.get("engagement_id") == eng_id
+                    or (str(e.get("action") or "").startswith("person.") and e.get("subject_id") == uid))]
+                if len(seqs) != a.get("entries") or sha(canonical(seqs)) != a.get("sha256"):
+                    problems.append(f"{label}: the change history leaves out entries the signature covers: it names "
+                                    f"{a.get('entries')} entries of this engagement and its signer up to audit log "
+                                    f"entry #{a.get('seq')}, and the report has {len(seqs)} such entries")
+                elif covered is None or a["seq"] > covered[0]:
+                    covered = (a["seq"], issued)
+        elif strict:
+            problems.append(f"{label}: {'its signed payload is not format v4' if sig else 'the receipt is not signed'}, "
+                            "so nothing binds its change history, and an entry left out of this report would not be "
+                            "detected")
         if start is None or issued < start:
-            notes.append(f"{label}: issued before the audit log covered this engagement, so the roles and scope "
-                         "at that time are not recorded")
+            (problems if strict else notes).append(
+                f"{label}: issued before the audit log covered this engagement, so the roles and scope "
+                "at that time are not recorded")
             continue
         st = _state_at(records, eng_id, issued)
         scope = (f"scope set {st['scope'][0].strftime('%Y-%m-%d %H:%M UTC')} by {_actor(st['scope'][1].get('actor'))}: "
@@ -697,7 +804,76 @@ def check_audit_log(r: dict) -> tuple[list[str], list[str]]:
                     if held and since else "was an owner, who may sign any receipt")
             who = f"{name} ({person.get('email')})" if person.get("email") else name
             notes.append(f"{label}: issued {issued.strftime('%Y-%m-%d %H:%M UTC')}; {who} {role}; {scope}")
+    if strict and covered is not None:
+        notes.append(f"the change history is complete, as far as signatures show, up to audit log entry #{covered[0]} "
+                     f"(the receipt issued {covered[1].strftime('%Y-%m-%d %H:%M UTC')}); entries after it are as the "
+                     "report gives them, so one left out, such as a later void of a receipt, would not be detected")
     return problems, notes
+
+
+# ---- what a verified HTML report says -----------------------------------------------------
+#
+# The checks cover the JSON an HTML report embeds, not the text the page shows (EV-5). After an
+# HTML report verifies, its JSON's own facts are printed, so a reader can compare them with the page.
+
+FACTS_TITLE = "What the verified JSON in this HTML report says (compare it with the text the page shows):"
+
+
+def _day(text) -> str:
+    try:
+        return _utc(text).strftime("%Y-%m-%d %H:%M UTC")
+    except (ValueError, TypeError):
+        return str(text)
+
+
+def _words(v) -> str:
+    if isinstance(v, list):
+        return ", ".join(str(x) for x in v) if v else "none"
+    return str(v) if v else "none"
+
+
+def facts(r: dict) -> list[str]:
+    eng, s = r.get("engagement") or {}, r.get("summary") or {}
+    pack = eng.get("pack") or {}
+    scope = eng["scope"] if isinstance(eng.get("scope"), dict) else {}
+    out = [f"Engagement: {eng.get('name')} (id {eng.get('id')}), pack {pack.get('name')} {pack.get('version')}"]
+    if eng.get("authorized_by"):
+        out.append(f"Authorized by {eng['authorized_by']}"
+                   + (f" on {_day(eng['authorized_at'])}" if eng.get("authorized_at") else "")
+                   + (f", under {eng['policy_url']}" if eng.get("policy_url") else ""))
+    else:
+        out.append("Authorization: not recorded")
+    out.append(f"Scope: in scope {_words(scope.get('include'))}; out of scope {_words(scope.get('exclude'))}")
+    hosts = [h for h in r.get("hosts") or [] if isinstance(h, dict)]
+    out.append(f"Hosts: {sum(1 for h in hosts if h.get('in_scope'))} in scope, "
+               f"{sum(1 for h in hosts if not h.get('in_scope'))} out of scope")
+    lanes = r["lanes"]
+    out.append(f"Lanes: {sum(1 for l in lanes if l['status'] == 'closed')} receipted, "
+               f"{sum(1 for l in lanes if l['status'] == 'stale')} with a void receipt, "
+               f"{sum(1 for l in lanes if l['status'] == 'open')} open")
+    for lane in lanes:
+        rc = lane["receipt"]
+        if not rc or lane["status"] not in ("closed", "stale"):
+            continue
+        label = f"{lane['host']} / {lane['name']}"
+        if lane["status"] == "stale":
+            out.append(f"Void: {label}: receipt issued {_day(rc.get('issued_at'))}, no longer valid")
+            continue
+        done = sum(1 for i in lane["items"] if i["state"] == "done")
+        na = sum(1 for i in lane["items"] if i["state"] == "na")
+        try:
+            payload = json.loads(rc["signature"]["payload"]) if rc.get("signature") else None
+        except (ValueError, KeyError, TypeError):
+            payload = None
+        who = (f"signed by {_signer(payload.get('signer'))}" if isinstance(payload, dict)
+               else f"closed by {rc.get('closed_by')}, not signed")
+        ts = rc.get("timestamp")
+        out.append(f"Receipted: {label}: {done} done, {na} not applicable; {who}, {_day(rc.get('issued_at'))}"
+                   + (f"; timestamped {_day(ts.get('time'))}" if isinstance(ts, dict) else ""))
+    out.append(f"Evidence: {len(r['evidence'])} entr{'y' if len(r['evidence']) == 1 else 'ies'}, "
+               f"chain head {s.get('chain_head')}")
+    out.append(f"Report generated: {_day(r.get('generated_at'))}")
+    return out
 
 
 # ---- RFC 3161 timestamps ---------------------------------------------------------------
@@ -998,12 +1174,14 @@ def check_timestamps(r: dict, roots: list[dict]) -> tuple[list[str], list[str]]:
 
 
 def main(argv: list[str]) -> int:
-    args, root_files, require, rest = [], [], False, iter(argv[1:])
+    args, root_files, require, strict, rest = [], [], False, False, iter(argv[1:])
     for a in rest:
         if a == "--tsa-root":
             root_files.append(next(rest, None))
         elif a == "--require-signatures":
             require = True
+        elif a == "--require-history":
+            strict = True
         else:
             args.append(a)
     if len(args) != 1 or None in root_files:
@@ -1036,16 +1214,19 @@ def main(argv: list[str]) -> int:
             results.append((name, problems, skip))
             notes += more
             if field == "signature":
-                key_problems, key_notes = check_key_log(r)
-                if "key_log" in r:
+                key_problems, key_notes = check_key_log(r, strict)
+                if "key_log" in r or key_problems:
                     results.append(("Signing key history", key_problems, None))
                 notes += key_notes
-                audit_problems, audit_notes = check_audit_log(r)
-                if "audit_log" in r:
+                audit_problems, audit_notes = check_audit_log(r, strict)
+                if "audit_log" in r or audit_problems:
                     results.append(("Change history", audit_problems, None))
                 notes += audit_notes
-    elif require:
-        results.append(("Receipt signatures", ["this report format carries no signatures"], None))
+    else:
+        if require:
+            results.append(("Receipt signatures", ["this report format carries no signatures"], None))
+        if strict:
+            results.append(("Change history", ["this report format carries no change history"], None))
 
     eng, s = r["engagement"], r["summary"]
     lanes, entries = s["lanes_receipted"], s["evidence_entries"]
@@ -1064,6 +1245,10 @@ def main(argv: list[str]) -> int:
     for n in notes:
         print(f"  NOTE  {n}")
     print("\nVerified." if ok else "\nVerification FAILED.")
+    if ok and args[0].endswith((".html", ".htm")):
+        print(f"\n{FACTS_TITLE}")
+        for line in facts(r):
+            print(f"  {line}")
     return 0 if ok else 1
 
 

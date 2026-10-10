@@ -411,7 +411,8 @@ def _coverage(r: dict, hosts: list) -> str:
 def _receipts(r: dict) -> str:
     with_rc = [l for l in r["lanes"] if l["receipt"]]
     out = ["""<section id="receipts" class="pb"><h2>Receipts</h2>
-<p>A receipt is the SHA-256 of the lane’s manifest: its items, their states and reasons, and the hashes of its evidence.
+<p>A receipt is the SHA-256 of the lane’s manifest: its items, their states and reasons, and the hashes of its evidence
+and the item each piece supports. Receipts issued since manifest version 2 also name each item’s id and text.
 A person issues it when they close the lane. A signature ties it to the reviewer’s key; a timestamp from an independent
 authority shows it existed at that time.</p>"""]
     if not with_rc:
@@ -542,8 +543,10 @@ any other authority. Running <code>python3 -I</code> keeps Python from loading m
 <p>Each check prints <code>PASS</code> or <code>FAIL</code>, or <code>SKIP</code> when there was nothing for it to check,
 such as signatures in a report whose receipts carry only a name. A skipped check neither passes nor fails. The last line
 says <code>Verified.</code> and the exit code is 0 only if no check failed. Add <code>--require-signatures</code> to fail
-any receipt that is not signed. <code>NOTE</code> lines are information, such as who signed and which receipts are not
-timestamped.</p>
+any receipt that is not signed, and <code>--require-history</code> to fail a report whose key log or change history is
+missing or not bound to every receipt’s signature. <code>NOTE</code> lines are information, such as who signed and which
+receipts are not timestamped. For this HTML file, a verified result is followed by what its embedded data says: the
+engagement, scope, receipted lanes, signers and dates. Compare them with this page, whose text the checks do not cover.</p>
 {_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks])}
 <h3>Where the timestamp root comes from</h3>
 <p><code>tsa-roots/{_e(file)}</code> is {_e(name)}, the root of DigiCert’s public timestamp service

@@ -42,7 +42,8 @@ function fromModule(o) {
 
 function runPython(c) {
   const roots = (c.roots ?? []).flatMap((r) => ["--tsa-root", path.join(here, "fixtures", r)]);
-  const p = spawnSync("python3", ["-I", python, c.file, ...roots, ...(c.require ? ["--require-signatures"] : [])],
+  const p = spawnSync("python3", ["-I", python, c.file, ...roots, ...(c.require ? ["--require-signatures"] : []),
+                                  ...(c.history ? ["--require-history"] : [])],
                       { cwd: repo, encoding: "utf8" });
   return fromCli(p.stdout, p.status);
 }
@@ -57,7 +58,8 @@ async function runModule(c, mode) {
   } catch {
     return { status: "error", verdicts: {}, text: "" };
   }
-  return fromModule(await v.verifyReport(text, c.file, { roots, requireSignatures: !!c.require, ed25519: mode }));
+  return fromModule(await v.verifyReport(text, c.file, { roots, requireSignatures: !!c.require, requireHistory: !!c.history,
+                                                         ed25519: mode }));
 }
 
 function firstDiff(a, b) {
@@ -115,7 +117,8 @@ const lines = [
   "|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 rows.forEach((r, i) => {
-  const flags = [r.c.roots?.length ? `+${r.c.roots.join(", ")}` : "", r.c.require ? "--require-signatures" : ""].filter(Boolean).join(" ");
+  const flags = [r.c.roots?.length ? `+${r.c.roots.join(", ")}` : "", r.c.require ? "--require-signatures" : "",
+                 r.c.history ? "--require-history" : ""].filter(Boolean).join(" ");
   const same = r.deferred ? `pending: verify_report.py has no v2 yet (Python says ${r.py.status})`
     : r.problems.length ? `NO: ${r.problems.join("; ")}` : "yes";
   const result = { verified: "Verified", failed: "FAILED", unusable: "unusable (exit 2)", error: "cannot be checked" }[r.js.webcrypto.status];

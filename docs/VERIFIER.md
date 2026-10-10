@@ -42,6 +42,71 @@ site-wide one, which makes two policies that the browser both enforces. CSP cann
 navigation, so the script never navigates. That can be checked by reading it: it is about
 2,000 lines, unminified, in the page.
 
+## What the format binds
+
+A receipt is the SHA-256 of its lane's manifest. **Manifest version 2** (D-054) also names each
+item's database id and text, and carries `"v": 2`. Evidence names its item by that id, both in
+the evidence chain and in the manifest. So a version 2 receipt ties each piece of evidence to
+the item it supports, and swapping two items' ids makes the receipt fail. Receipts made before
+version 2 still verify, with a NOTE that this tie is not covered. The version is inside what is
+hashed, so neither version can be made to look like the other.
+
+A receipt signed as **payload v4** also names the history it was signed against:
+
+```
+"history": {"audit":   {"seq": 41, "head": "<entry hash>", "entries": 9, "sha256": "<sha256>"},
+            "key_log": {"seq": 3,  "head": "<entry hash>"}}
+```
+
+`audit.seq` and `audit.head` are the audit log's head when the payload was issued. `entries` counts
+the entries up to it that the verifier reads to judge this receipt: those of the engagement, and
+the person events (`person.*`) of the signer. `sha256` is the SHA-256 of their sequence numbers,
+as canonical JSON (`[1,4,5,...]`). The server issues only v4 payloads and checks each field when
+the receipt is closed. In every mode, both verifiers fail a v4 receipt when the report's log does
+not reach the signed head, has another entry there, or leaves out a counted entry. The same goes
+for the key log head and the signer's key registration.
+
+## Strict history mode
+
+`--require-history` (on the page: *Require the full change history*, off by default) fails:
+
+- a report with receipts but no `audit_log`, or with signed receipts but no `key_log`;
+- a receipt that does not commit to its history: unsigned, or signed as v2 or v3;
+- a receipt issued before the audit log covered the engagement;
+- format 1 reports;
+- everything the normal mode fails, including a broken, reordered or cut chain.
+
+**What a pass proves.** Each receipt was signed with its key over a payload that names the heads
+of both logs. The report's logs reach those heads unchanged. No audit entry of the engagement or
+person event of the signer, up to the newest such head, was left out or altered. A NOTE names
+that newest entry.
+
+**What it does not prove.**
+
+- **Entries after the newest signed head.** A void is recorded after the receipt it voids. Only a
+  later v4 signature on any lane of the engagement commits to it. A report made after the last
+  signature can leave out a later void, or any later entry, and still pass. Its lane's status is
+  unsigned. Closing this would need someone to sign at report time, and today nobody does (D-036
+  keeps trust in the reviewers' keys).
+- **Entries of other engagements and of other people.** The report carries them as links only (hashes).
+- **The changes between the payload and the close.** The role check uses the close time, which
+  can be up to 15 minutes after the signed head.
+- **That the server did not lie when the payload was issued.** Whoever runs the database is
+  still the root of trust (D-036, D-037). A rewrite after a report has been sent breaks the heads
+  that report carries.
+
+Evidence works the same way: a receipt binds the evidence chain up to its signed chain head, and
+evidence after the newest signed head is bound by nothing.
+
+## What a verified HTML report says
+
+The checks cover the JSON an HTML report embeds, not the text the page shows (EV-5). Once an
+HTML report verifies, `verify_report.py` prints what that JSON says, and the page shows the same
+list under the result: the engagement, its authorization and scope, the hosts and lanes, each
+receipted lane with its items, signer and dates, void receipts, the number of evidence entries
+and the chain head, and when the report was made. The reader compares them with the page's text.
+Nothing is shown for a JSON report or for one that fails.
+
 ## Equivalence tests
 
 ```bash
@@ -64,5 +129,9 @@ docker run --rm --user 1000:1000 -e HOME=/tmp -v "$PWD":/w -w /w/server \
   --entrypoint python attackledger-api:latest /w/tools/verifier_equivalence/make_fixtures.py
 ```
 
+To remake only the current-format reports and keep every older fixture in its format, pass
+`--only v4` to the same command. A case with `"history": true` runs with `--require-history`.
+
 When `verify_report.py` changes, change `web/src/verify_report.ts` the same way, add a case to
-`cases.json`, then run `tools/build_verify.sh` and `run.sh`.
+`cases.json`, then run `tools/build_verify.sh` and `run.sh`, and copy the script to
+`site/verify_report.py`.

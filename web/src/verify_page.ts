@@ -14,7 +14,8 @@ const EXPLAIN: [string, string][] = [
     + "removed, reordered or changed. Where a summary was deleted with its engagement's key, the chain is still checked "
     + "over the hash it commits to."],
   ["Lane receipts", "For every receipted lane, a manifest rebuilt from the report's own items and evidence has the receipt's "
-    + "hash, every item marked done has evidence, and every not-applicable item has a reason."],
+    + "hash, every item marked done has evidence, and every not-applicable item has a reason. A current manifest also names "
+    + "each item's id and text, so evidence cannot be moved to another item; an older one does not, and a note says so."],
   ["Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its fingerprint, and "
     + "the signed text names this engagement, this lane, this manifest, a chain head in the report and the receipt's "
     + "issue time."],
@@ -22,7 +23,8 @@ const EXPLAIN: [string, string][] = [
     + "was registered to the signer before the receipt was issued and not revoked before it."],
   ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held "
     + "the reviewer role (or was an owner) and had the name in the receipt when it was issued, and no entry records that "
-    + "the receipt was voided."],
+    + "the receipt was voided. A receipt signed in the current format names the log's head when it was signed and how many "
+    + "entries of this engagement and its signer led up to it: none of them may be missing."],
   ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature "
     + "verifies, and its certificate chain reaches a root you trust and was valid at the token's time."],
 ];
@@ -122,7 +124,8 @@ async function rerun(): Promise<void> {
     result.replaceChildren();
     return;
   }
-  const opts = { roots: state.roots.map((r) => ({ name: r.name, text: r.text })), requireSignatures: ($("require") as HTMLInputElement).checked };
+  const opts = { roots: state.roots.map((r) => ({ name: r.name, text: r.text })), requireSignatures: ($("require") as HTMLInputElement).checked,
+                 requireHistory: ($("require-history") as HTMLInputElement).checked };
   let o: Outcome;
   try {
     o = await verifyReport(decodeFile(bytes), name, opts);
@@ -175,6 +178,15 @@ function render(o: Outcome, name: string, bytes: number, digest: string): void {
     if (orphans.length) parts.push(el("ul", "notes", ...orphans.map((n) => el("li", null, n.text))));
   }
 
+  // An HTML report that verified: what its embedded JSON says, to hold against the page's own text.
+  if (o.status === "verified" && o.facts?.length) {
+    parts.push(el("section", "facts",
+      el("h3", null, "What the verified report says"),
+      el("p", null, "The checks cover the JSON inside the HTML file, not the text the page shows. Compare these facts, "
+        + "taken from that JSON, with the page."),
+      el("ul", null, ...o.facts.map((f) => el("li", null, f)))));
+  }
+
   const text = cliText(o);
   if (text) {
     const copy = el("button", "btn small", "Copy the result as text");
@@ -211,6 +223,7 @@ function init(): void {
   pick($("report-file") as HTMLInputElement, (f) => void readFile(f));
   pick($("root-file") as HTMLInputElement, (f) => void addRoot(f));
   $("require").addEventListener("change", () => void rerun());
+  $("require-history").addEventListener("change", () => void rerun());
   $("paste-check").addEventListener("click", () => {
     const text = ($("paste-text") as HTMLTextAreaElement).value;
     if (!text.trim()) return;

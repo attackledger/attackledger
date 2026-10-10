@@ -13,7 +13,7 @@ from app import redact
 from app.gatewayapi import LogIn, gateway_log
 from app.models import GatewayRequest
 from test_agent import HOST, api  # noqa: F401  (fixture)
-from test_auditlog import rechain, signed_report
+from test_auditlog import but_the_signed_head, rechain, signed_report
 from test_encryption import delete, engagement
 from test_import import verify
 from test_keytrust import env  # noqa: F401  (fixture)
@@ -98,7 +98,8 @@ def test_ev2_the_receipt_issue_time_must_match_the_signed_payload(env, tmp_path,
                                                   - timedelta(days=30)).isoformat()
     rehash(moved)
     found, notes = verify.check_audit_log(moved)
-    assert found == [] and any("before the audit log covered" in n for n in notes)   # the check alone is blind
+    # The check alone is blind to the move (the rewrite before the signed head is caught, D-054).
+    assert but_the_signed_head(found) == [] and any("before the audit log covered" in n for n in notes)
     assert any("issue time is not the time its signed payload was issued" in p
                for p in verify.check_signatures(moved)[0])
     assert run(tmp_path, moved, capsys)[0] == 1

@@ -115,6 +115,19 @@ def since(session, user_id: int, when: datetime | None) -> list[KeyLogEntry]:
     return [e for e in rows if datetime.fromisoformat(e.at) >= cut]
 
 
+def head_at(session, organization_id: int, upto: int | None = None) -> dict | None:
+    """The head of an organization's key log at seq upto (the current head by default), as a
+    receipt payload (format v4, D-054) names it. None when the chain has no entry upto."""
+    if upto is None:
+        last = _last(session, organization_id)
+        return {"seq": last.seq if last else 0, "head": last.entry_hash if last else GENESIS}
+    if upto == 0:
+        return {"seq": 0, "head": GENESIS}
+    row = session.scalar(select(KeyLogEntry).where(KeyLogEntry.organization_id == organization_id,
+                                                   KeyLogEntry.seq == upto))
+    return {"seq": upto, "head": row.entry_hash} if row else None
+
+
 def for_report(session, fingerprints: set[str], organization_id: int) -> dict | None:
     """The history of the keys that signed a report, and the links from its first entry to
     the head of the organization's chain, so a reader can check that the entries are in the

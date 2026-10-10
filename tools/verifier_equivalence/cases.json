@@ -1,5 +1,5 @@
 {
-  "_about": "Reports run through verify_report.py and web/src/verify_report.ts by run.sh. file is relative to the repository; roots are extra trusted roots (--tsa-root), on top of tools/tsa-roots/; expect is what the case is made to show (B body, C chain, R receipts, S signatures, K key log, H change history, T timestamps; '-' means the check is not shown). v2 marks reports with evidence chain record v2 entries.",
+  "_about": "Reports run through verify_report.py and web/src/verify_report.ts by run.sh. file is relative to the repository; roots are extra trusted roots (--tsa-root), on top of tools/tsa-roots/; expect is what the case is made to show (B body, C chain, R receipts, S signatures, K key log, H change history, T timestamps; '-' means the check is not shown). history runs with --require-history. v2 marks reports with evidence chain record v2 entries.",
   "cases": [
     {"name": "sample report (JSON)", "file": "site/sample-report.json", "expect": {"status": "verified"}},
     {"name": "sample report (HTML)", "file": "site/sample-report.html", "expect": {"status": "verified"}},
@@ -88,6 +88,32 @@
     {"name": "security review: engagement id changed", "file": "tools/verifier_equivalence/fixtures/engagement-id-changed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "S": "FAIL"}},
     {"name": "security review: engagement renamed", "file": "tools/verifier_equivalence/fixtures/engagement-renamed.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "verified"}},
     {"name": "security review: summary claims more receipted lanes", "file": "tools/verifier_equivalence/fixtures/summary-lanes-inflated.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "R": "FAIL"}},
-    {"name": "security review: summary claims more evidence entries", "file": "tools/verifier_equivalence/fixtures/summary-evidence-inflated.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}}
+    {"name": "security review: summary claims more evidence entries", "file": "tools/verifier_equivalence/fixtures/summary-evidence-inflated.json", "roots": ["ec-root.pem"], "v2": true, "expect": {"status": "failed", "C": "FAIL"}},
+
+    {"name": "current format (manifest v2, payload v4): two signers", "file": "tools/verifier_equivalence/fixtures/v4-signed.json", "v2": true, "expect": {"status": "verified", "S": "PASS", "K": "PASS", "H": "PASS", "T": "SKIP"}},
+    {"name": "current format, --require-history", "file": "tools/verifier_equivalence/fixtures/v4-signed.json", "history": true, "v2": true, "expect": {"status": "verified", "H": "PASS"}},
+    {"name": "current format, as HTML: the verified facts follow", "file": "tools/verifier_equivalence/fixtures/v4-signed.html", "v2": true, "expect": {"status": "verified"}},
+    {"name": "O-1: item ids of two done items swapped", "file": "tools/verifier_equivalence/fixtures/v4-item-ids-swapped.json", "v2": true, "expect": {"status": "failed", "R": "FAIL", "S": "PASS", "H": "PASS"}},
+    {"name": "O-1: the same swap under manifest version 1 (a NOTE)", "file": "tools/verifier_equivalence/fixtures/v1-item-ids-swapped.json", "roots": ["ec-root.pem"], "expect": {"status": "verified", "R": "PASS"}},
+    {"name": "O-2: an audit entry the signature counts left out", "file": "tools/verifier_equivalence/fixtures/v4-audit-entry-left-out.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: audit log links cut before the signed head", "file": "tools/verifier_equivalence/fixtures/v4-audit-truncated.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: key log rewritten from its first link", "file": "tools/verifier_equivalence/fixtures/v4-keylog-rewritten.json", "v2": true, "expect": {"status": "failed", "K": "FAIL"}},
+    {"name": "O-2: v4 payload without the history heads, signed again", "file": "tools/verifier_equivalence/fixtures/v4-payload-without-history.json", "v2": true, "expect": {"status": "failed", "S": "FAIL"}},
+    {"name": "O-2: no audit log (a NOTE)", "file": "tools/verifier_equivalence/fixtures/v4-audit-removed.json", "v2": true, "expect": {"status": "verified", "H": "-"}},
+    {"name": "O-2: no audit log, --require-history", "file": "tools/verifier_equivalence/fixtures/v4-audit-removed.json", "history": true, "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: no key log (a NOTE)", "file": "tools/verifier_equivalence/fixtures/v4-keylog-removed.json", "v2": true, "expect": {"status": "verified", "K": "-"}},
+    {"name": "O-2: no key log, --require-history", "file": "tools/verifier_equivalence/fixtures/v4-keylog-removed.json", "history": true, "v2": true, "expect": {"status": "failed", "K": "FAIL", "H": "PASS"}},
+    {"name": "O-2: one receipt signed again as v3", "file": "tools/verifier_equivalence/fixtures/v4-resigned-as-v3.json", "v2": true, "expect": {"status": "verified"}},
+    {"name": "O-2: one receipt signed again as v3, --require-history", "file": "tools/verifier_equivalence/fixtures/v4-resigned-as-v3.json", "history": true, "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: v3 receipts, --require-history", "file": "tools/verifier_equivalence/fixtures/signed.json", "roots": ["ec-root.pem"], "history": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: unsigned receipt, --require-history", "file": "tools/verifier_equivalence/fixtures/unsigned.json", "history": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: format 1, --require-history", "file": "tools/verifier_equivalence/fixtures/format-1.json", "history": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: no receipts, --require-history", "file": "site/demo/reports/2.json", "history": true, "expect": {"status": "verified"}},
+    {"name": "O-2: sample report (payload v3), --require-history", "file": "site/sample-report.json", "history": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: a void, then another lane signed", "file": "tools/verifier_equivalence/fixtures/v4-void.json", "v2": true, "expect": {"status": "verified"}},
+    {"name": "O-2: that void as HTML: the facts name it", "file": "tools/verifier_equivalence/fixtures/v4-void.html", "v2": true, "expect": {"status": "verified"}},
+    {"name": "O-2: that void hidden (status and entry): the later signature counts it", "file": "tools/verifier_equivalence/fixtures/v4-void-hidden.json", "v2": true, "expect": {"status": "failed", "H": "FAIL"}},
+    {"name": "O-2: a void after the last signature", "file": "tools/verifier_equivalence/fixtures/v4-void-after-the-last-signature.json", "history": true, "v2": true, "expect": {"status": "verified"}},
+    {"name": "O-2: that void hidden: not detectable, strict mode says so", "file": "tools/verifier_equivalence/fixtures/v4-void-after-the-last-signature-hidden.json", "history": true, "v2": true, "expect": {"status": "verified", "H": "PASS"}}
   ]
 }

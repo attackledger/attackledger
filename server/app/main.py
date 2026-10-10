@@ -631,6 +631,14 @@ def _check_signed(session, lane: Lane, who, body: "CloseIn") -> SigningKey:
          and p["signer"]["email"] == who.email, "it names another signer, or your name or email changed"),
         (p["key_fingerprint"] == key.fingerprint, "it names another key"),
     ]
+    # The history the payload was issued against (format v4, D-054): the heads it names must be
+    # this server's chains at those positions, and the audit entries it counts this engagement's.
+    fields = _payload_fields(p)
+    a, k = fields["audit"], fields["key_log"]
+    whole = all(isinstance(x, int) and not isinstance(x, bool) and 0 <= x < 2 ** 62 for x in (a["seq"], k["seq"]))
+    checks.append((whole and a == auditlog.commitment(session, eng.id, who.user_id, upto=a["seq"])
+                   and k == keylog.head_at(session, eng.organization_id, upto=k["seq"]),
+                   "its change history heads are not this server's"))
     head = session.scalar(select(Evidence).where(Evidence.engagement_id == eng.id,
                                                   Evidence.seq == p["chain"]["seq"]))
     checks.append((p["chain"]["seq"] == 0 and p["chain"]["head"] == ledger.GENESIS
@@ -663,7 +671,9 @@ def _payload_fields(p: dict) -> dict:
                 "chain_head": p["chain"]["head"], "signer_id": p["signer"]["id"],
                 "signer_name": p["signer"]["name"], "signer_email": p["signer"]["email"],
                 "key_fingerprint": p["key_fingerprint"],
-                "issued_at": p["issued_at"]}
+                "issued_at": p["issued_at"],
+                "audit": {f: p["history"]["audit"][f] for f in ("seq", "head", "entries", "sha256")},
+                "key_log": {f: p["history"]["key_log"][f] for f in ("seq", "head")}}
     except (KeyError, TypeError):
         raise HTTPException(422, "the signed payload is missing fields")
 
@@ -685,7 +695,8 @@ def receipt_payload(lane_id: int, key: str, request: Request, session: Session =
         engagement_id=eng.id, engagement_name=eng.name, lane_id=lane.id, host=lane.asset.host, role=lane.role,
         manifest_sha256=gates.manifest_hash(lane), chain_seq=seq, chain_head=head, signer_id=who.user_id,
         signer_name=who.name, signer_email=who.email, key_fingerprint=k.fingerprint,
-        issued_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))}
+        issued_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        audit=auditlog.commitment(session, eng.id, who.user_id), key_log=keylog.head_at(session, eng.organization_id))}
 
 
 def _sign_refusal(lane: Lane, who) -> tuple[int, object, str] | None:

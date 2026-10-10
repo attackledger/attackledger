@@ -156,6 +156,11 @@ section { padding-block: 2.5rem; border-top: 1px solid var(--rule); }
 .after { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; margin-top: 1.25rem; }
 .selftest { margin: 1rem 0 0; color: var(--text-soft); font-size: var(--step--1); }
 details.cli { margin-top: 1rem; }
+.facts { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--rule-strong); }
+.facts h3 { margin: 0; }
+.facts p { margin: 0.35rem 0 0; color: var(--text-soft); font-size: var(--step--1); }
+.facts ul { margin: 0.6rem 0 0; padding-left: 1.1rem; font-size: var(--step--1); overflow-wrap: anywhere; }
+.facts li + li { margin-top: 0.25rem; }
 details.cli summary { cursor: pointer; color: var(--ink); font-size: var(--step--1); }
 pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border-radius: var(--radius); overflow-x: auto; font: 0.8rem / 1.55 var(--mono); }
 
@@ -224,6 +229,14 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             <label for="require">Require every receipt to be signed</label>
             <p class="hint" id="require-hint">As <code>--require-signatures</code>: a receipt that carries only a name fails the
               signature check.</p>
+          </div>
+          <div class="option">
+            <input type="checkbox" id="require-history" aria-describedby="require-history-hint">
+            <label for="require-history">Require the full change history</label>
+            <p class="hint" id="require-history-hint">As <code>--require-history</code>: the report must carry its key log
+              and audit log, and every receipt must be signed in the current format, which binds that history to the
+              signature. Older reports fail. Changes after the newest signature are still only as the report gives
+              them.</p>
           </div>
           <h3 id="roots-title">Trusted roots</h3>
           <p class="hint">Timestamps must chain to a root you trust. This page trusts the roots that

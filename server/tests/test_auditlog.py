@@ -226,21 +226,26 @@ def test_engagement_history_is_readable_by_every_role_and_the_whole_log_by_owner
 
 # ---- payload v3 ------------------------------------------------------------------
 
-def test_payload_v3_names_the_email_and_old_formats_are_refused(env):
+def test_payload_names_the_email_and_old_formats_are_refused(env):
     c, _ = env
     e, lane, ids = setup(c)
     sign_in(c, "rita@lab.test")
     k = register(c)
     payload = c.get(f"/lanes/{lane}/receipt-payload", params={"key": k.fingerprint}).json()["payload"]
     p = json.loads(payload)
-    assert p["format"] == "attackledger-receipt-v3"
+    assert p["format"] == "attackledger-receipt-v4"          # v3 plus the history heads (D-054)
     assert p["signer"] == {"id": ids["rita"], "name": "Rita Reviewer", "email": "rita@lab.test"}
 
     def close(text_):
         return c.post(f"/lanes/{lane}/close", json={"reviewed": True, "payload": text_, "signature": k.sign(text_),
                                                     "key_fingerprint": k.fingerprint})
     v2 = {**p, "format": "attackledger-receipt-v2", "signer": {"id": p["signer"]["id"], "name": p["signer"]["name"]}}
+    del v2["history"]
     r = close(json.dumps(v2, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    assert r.status_code == 422 and "another format" in r.json()["detail"]
+    v3 = {k_: v for k_, v in p.items() if k_ != "history"}
+    v3["format"] = "attackledger-receipt-v3"
+    r = close(json.dumps(v3, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
     assert r.status_code == 422 and "another format" in r.json()["detail"]
     other = {**p, "signer": {**p["signer"], "email": "olive@lab.test"}}
     r = close(signing.payload_for(**{**_fields(other)}))
@@ -260,7 +265,8 @@ def _fields(p):
             "lane_id": p["lane"]["id"], "host": p["lane"]["host"], "role": p["lane"]["role"],
             "manifest_sha256": p["manifest_sha256"], "chain_seq": p["chain"]["seq"], "chain_head": p["chain"]["head"],
             "signer_id": p["signer"]["id"], "signer_name": p["signer"]["name"], "signer_email": p["signer"]["email"],
-            "key_fingerprint": p["key_fingerprint"], "issued_at": p["issued_at"]}
+            "key_fingerprint": p["key_fingerprint"], "issued_at": p["issued_at"],
+            "audit": p["history"]["audit"], "key_log": p["history"]["key_log"]}
 
 
 # ---- reports and the verifier -------------------------------------------------------
@@ -277,6 +283,17 @@ def rechain(report):
         ln["entry_hash"] = prev = verifier.sha(prev + ln["record_sha256"])
     log["head"] = {"seq": log["links"][-1]["seq"], "entry_hash": prev}
     return report
+
+
+SIGNED_HEAD = "the signature names is not the one in this report"
+
+
+def but_the_signed_head(problems: list[str]) -> list[str]:
+    """The problems other than the one a v4 receipt adds when the audit log was rewritten before
+    the head it signed (D-054). Tests of the role check rewrite the log, as a forger would; the
+    signed head catches every such rewrite, and the role check must still judge the content."""
+    assert any(SIGNED_HEAD in p for p in problems), problems
+    return [p for p in problems if SIGNED_HEAD not in p]
 
 
 def signed_report(c):
@@ -347,7 +364,7 @@ def test_verifier_flags_a_signer_without_the_role_or_with_another_name(env):
     demote(owner["audit_log"])
     first(owner["audit_log"], "person.created", subject_id=rita)["change"]["after"]["is_owner"] = True
     found, notes = verifier.check_audit_log(rechain(owner))
-    assert found == [] and any("was an owner" in n for n in notes)
+    assert but_the_signed_head(found) == [] and any("was an owner" in n for n in notes)
     # Another name, or another email, in the log at that time.
     assert any("names them Ray at that time" in p for p in problems(
         lambda log: first(log, "person.created", subject_id=rita)["change"]["after"].update(name="Ray")))

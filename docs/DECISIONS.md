@@ -498,7 +498,9 @@ options considered and who decided.
   breaks the head that reports already carry. Not yet: the role check uses the close time,
   and a report could omit an entry unnoticed. (Since the 2026-10-10 security review the close
   time must lie within the window the server allows after the signed payload's issue time, so it
-  can no longer be moved freely; see docs/security-review/EVIDENCE.md.)
+  can no longer be moved freely; see docs/security-review/EVIDENCE.md. Since D-054 a receipt
+  signed as payload v4 commits to the entries up to its signing, so leaving one of those out
+  fails, and `--require-history` fails a report without the logs.)
 - **Proposed and built by:** Claude, at Murat's request (from the product critique).
 
 ### D-038 · Raw evidence is redacted before it is stored (2026-10-09)
@@ -799,6 +801,54 @@ options considered and who decided.
   - Drafts are cleared on sign-out, or when another person signs in.
 - **Made by:** Claude, from the second design-partner review, under Murat's overnight
   permission.
+
+### D-054 · Receipts bind evidence to items and sign the history they were issued against (2026-10-10, made autonomously)
+- **Problem** (security review open items O-1 and O-2, docs/security-review/EVIDENCE.md):
+  - A receipt's manifest named items by position, key, state and reason, and evidence by the
+    database id of its item. The item's own id was in no manifest, so in a signed report the
+    item ids of two items marked done could be swapped and every check still passed.
+  - A report could leave out audit or key log entries, or both logs, and get only a NOTE
+    (D-037). Dropping the `lane.receipt_voided` entry then hid a void (EV-1).
+- **Decision:**
+  - **Manifest version 2.** Each item also names its database `id` and its `text`, and the
+    manifest carries `"v": 2`. New receipts use it. A receipt made with version 1 keeps its
+    hash. The server and both verifiers accept either. The version is inside what is hashed,
+    so one cannot pass for the other. The verifier adds a NOTE for version 1: it does not cover
+    which item a piece of evidence supports.
+  - **Why the id and the text.** Evidence already names its item by `item_id`, in the
+    evidence chain and in the manifest. Naming the same id on the item ties the two
+    together, and both are in every report. The position (`idx`) alone cannot do that.
+    The text is fixed when the lane opens, so it never voids a receipt, and binding it covers
+    the wording the report shows for each item. A hash of the text was not used: it proves no
+    more than the text itself.
+  - **Receipt payload v4.** It adds `history`, which records the audit log head (`seq`,
+    `head`) when the payload was issued. It also counts the entries up to that head that are
+    this engagement's or person events of the signer (`entries`), with the SHA-256 of their
+    sequence numbers as canonical JSON (`sha256`). The key log head (`seq`, `head`) is
+    recorded too. The server issues v4 only and checks every field at close. Both verifiers fail a
+    report whose logs do not reach those heads, have another entry there, or lack a counted
+    entry, in normal mode too: that would contradict what was signed. v2 and v3 receipts verify as
+    before.
+  - **Why those entries.** They are exactly the ones the verifier reads to judge a receipt:
+    scope, roles and voids of the engagement, and the signer's name, email, owner flag and
+    account state. The verifier can rebuild the set from the report alone. Committing to the
+    head alone would not be enough. A left-out entry still looks like a link of another
+    engagement, because links carry hashes only.
+  - **`--require-history`**, and a checkbox on the /verify page (off by default). The report
+    must carry both logs. Every receipt must be signed as v4, and must have been issued while the
+    audit log covered the engagement. Otherwise the check fails.
+- **What strict mode cannot prove:** the history after the newest signed head. A void is
+  recorded after the receipt it voids, so only a later v4 signature (on any lane of the
+  engagement) commits to it. A void made after the last signature can still be left out. The
+  verifier then says, in strict mode, up to which entry the history is bound. Closing that gap
+  would need a party that signs at report time, such as a server key or a timestamp of
+  the report. Neither exists today (D-036 keeps trust in the reviewers' keys). The role
+  check still uses the close time, which can be up to 15 minutes after the signed head.
+- **Considered:** a tag per audit link naming its engagement, salted so that other
+  engagements stay unreadable. It would show every left-out entry, the later ones too, but
+  it changes the audit chain's construction, needs a migration and a salt per engagement,
+  and still says nothing about entries after the report was made. Rejected for now.
+- **Made by:** Claude, from the security review's open items, at Murat's request to close them.
 
 ## Adding entries
 

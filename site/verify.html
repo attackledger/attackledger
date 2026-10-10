@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-jEy3xXTGI8gtZul1f/vEcS5emlCmX4KgE8Q5ut0FtQ4='; style-src 'sha256-xV/22ns6SUj4Gi9JkzwvZEuo11QeHYLGxEQFdC3cMjg='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-uANKh/oXAuwwmJKEC+vkM011790WnAiQ+0LTErMToKU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Verify a report · AttackLedger</title>
 <meta name="description" content="Check an AttackLedger report in your browser, with the same checks as verify_report.py. The file is not uploaded.">
@@ -158,6 +158,11 @@ section { padding-block: 2.5rem; border-top: 1px solid var(--rule); }
 .after { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; align-items: center; margin-top: 1.25rem; }
 .selftest { margin: 1rem 0 0; color: var(--text-soft); font-size: var(--step--1); }
 details.cli { margin-top: 1rem; }
+.facts { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--rule-strong); }
+.facts h3 { margin: 0; }
+.facts p { margin: 0.35rem 0 0; color: var(--text-soft); font-size: var(--step--1); }
+.facts ul { margin: 0.6rem 0 0; padding-left: 1.1rem; font-size: var(--step--1); overflow-wrap: anywhere; }
+.facts li + li { margin-top: 0.25rem; }
 details.cli summary { cursor: pointer; color: var(--ink); font-size: var(--step--1); }
 pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border-radius: var(--radius); overflow-x: auto; font: 0.8rem / 1.55 var(--mono); }
 
@@ -227,6 +232,14 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             <p class="hint" id="require-hint">As <code>--require-signatures</code>: a receipt that carries only a name fails the
               signature check.</p>
           </div>
+          <div class="option">
+            <input type="checkbox" id="require-history" aria-describedby="require-history-hint">
+            <label for="require-history">Require the full change history</label>
+            <p class="hint" id="require-history-hint">As <code>--require-history</code>: the report must carry its key log
+              and audit log, and every receipt must be signed in the current format, which binds that history to the
+              signature. Older reports fail. Changes after the newest signature are still only as the report gives
+              them.</p>
+          </div>
           <h3 id="roots-title">Trusted roots</h3>
           <p class="hint">Timestamps must chain to a root you trust. This page trusts the roots that
             <code>verify_report.py</code> trusts by default:</p>
@@ -259,7 +272,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             report, or save this page and open it offline.</p>
           <details class="cli">
             <summary>The policy this page is served with</summary>
-            <p class="csp">default-src 'none'; script-src 'sha256-jEy3xXTGI8gtZul1f/vEcS5emlCmX4KgE8Q5ut0FtQ4='; style-src 'sha256-xV/22ns6SUj4Gi9JkzwvZEuo11QeHYLGxEQFdC3cMjg='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
+            <p class="csp">default-src 'none'; script-src 'sha256-uANKh/oXAuwwmJKEC+vkM011790WnAiQ+0LTErMToKU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
           </details>
           <h3>The same checks as the command line</h3>
           <p>The checks are a line-for-line port of <a href="/verify_report.py"><code>verify_report.py</code></a>, the
@@ -321,7 +334,8 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
   ];
   var KEY_LOG_FIELDS = ["seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"];
   var AUDIT_FIELDS = ["seq", "at", "actor", "action", "engagement_id", "subject_id", "change"];
-  var PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3"];
+  var PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3", "attackledger-receipt-v4"];
+  var HISTORY_FORMAT = PAYLOAD_FORMATS[2];
   var VOID_ACTION = "lane.receipt_voided";
   var PAYLOAD_WINDOW = [-60000000n, 900000000n];
   var HTML_NOTE = "this is an HTML report: the checks cover the JSON report embedded in it, not the text the page displays, so an edit to the page's text alone would not be detected; what was verified is the JSON";
@@ -975,7 +989,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     const why = truthy(d) ? `key deleted on ${pyStr(or(slice(or(getk(d, "at"), ""), 10), "an unknown date"))} by ${pyStr(or(getk(d, "by"), "someone"))}` : "the report does not say it was deleted";
     return [`${gone} evidence entr${gone === 1 ? "y" : "ies"}: content unavailable (${why}); the chain and the receipts were still checked`];
   }
-  function manifest(lane, evidence) {
+  function manifest(lane, evidence, version) {
     const evs = sortedBy(iter(evidence).filter((e) => pyEq(at(e, "lane_id"), at(lane, "lane_id"))), (e) => at(e, "id"));
     const m = dict();
     m.lane = at(lane, "lane_id");
@@ -987,6 +1001,10 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       o.key = at(i, "key");
       o.state = at(i, "state");
       o.na_reason = at(i, "na_reason");
+      if (version === 2) {
+        o.id = getk(i, "item_id");
+        o.text = getk(i, "text");
+      }
       return o;
     });
     m.evidence = evs.map((e) => {
@@ -997,7 +1015,11 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       o.sha256 = at(e, "sha256");
       return o;
     });
+    if (version === 2) m.v = 2;
     return m;
+  }
+  function manifestSha256(lane, evidence, version) {
+    return sha(canonical(manifest(lane, evidence, version), true));
   }
   function label(lane) {
     return `${pyStr(at(lane, "host"))} / ${pyStr(at(lane, "name"))}`;
@@ -1026,8 +1048,12 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
           problems.push(`${name}: reported as receipted but has no receipt`);
           continue;
         }
-        const got = await sha(canonical(manifest(lane, at(r, "evidence")), true));
-        if (!pyEq(got, at(rc, "manifest_sha256"))) problems.push(`${name}: receipt does not match its items and evidence`);
+        if (pyEq(await manifestSha256(lane, at(r, "evidence"), 2), at(rc, "manifest_sha256"))) {
+        } else if (pyEq(await manifestSha256(lane, at(r, "evidence"), 1), at(rc, "manifest_sha256"))) {
+          notes.push(`${name}: the receipt's manifest is version 1, which does not name each item's id and text, so which item each piece of evidence supports is not covered by it`);
+        } else {
+          problems.push(`${name}: receipt does not match its items and evidence`);
+        }
         if (iter(at(lane, "items")).some((i) => pyEq(at(i, "state"), "open"))) {
           problems.push(`${name}: reported as receipted with open items`);
         }
@@ -1201,6 +1227,31 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     const rcs = closedLanes(r).map((l) => at(l, "receipt"));
     return [rcs.filter((rc) => truthy(getk(rc, field))).length, rcs.length];
   }
+  function historyOf(payload) {
+    const h = getk(payload, "history");
+    if (!isDict(h) || !isDict(getk(h, "audit")) || !isDict(getk(h, "key_log"))) return null;
+    return [at(h, "audit"), at(h, "key_log")];
+  }
+  function payloadV4(rc) {
+    let p;
+    try {
+      p = loadsStr(at(or(getk(rc, "signature"), dict()), "payload"));
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      return null;
+    }
+    return isDict(p) && pyEq(getk(p, "format"), HISTORY_FORMAT) && historyOf(p) ? p : null;
+  }
+  function upTo(log, seq, headHash) {
+    const links = iter(or(getk(log, "links"), []));
+    if (pyEq(seq, 0) && pyEq(headHash, GENESIS)) return [];
+    for (let n = 0; n < links.length; n++) {
+      if (pyEq(at(links[n], "seq"), seq)) {
+        return pyEq(at(links[n], "entry_hash"), headHash) ? links.slice(0, n + 1).map((x) => at(x, "seq")) : false;
+      }
+    }
+    return null;
+  }
   function signerText(s) {
     const d = isDict(s) ? s : dict();
     return truthy(getk(d, "email")) ? `${pyStr(getk(d, "name"))} (${pyStr(at(d, "email"))})` : pyStr(getk(d, "name"));
@@ -1244,6 +1295,8 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       if (!pyIn(getk(payload, "format"), PAYLOAD_FORMATS)) problems.push(`${name}: unknown signed payload format`);
       else if (!pyEq(at(payload, "format"), PAYLOAD_FORMATS[0]) && typeof getk(or(getk(payload, "signer"), dict()), "email") !== "string") {
         problems.push(`${name}: the signed payload does not name the signer's email`);
+      } else if (pyEq(at(payload, "format"), HISTORY_FORMAT) && !historyOf(payload)) {
+        problems.push(`${name}: the signed payload does not name the change history heads`);
       }
       if (!pyEq(getk(payload, "manifest_sha256"), at(rc, "manifest_sha256"))) {
         problems.push(`${name}: the signature covers a different manifest`);
@@ -1341,11 +1394,12 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     }
     return [problems, records];
   }
-  async function checkKeyLog(r) {
+  async function checkKeyLog(r, strict = false) {
     const notes = [];
     const signed = closedLanes(r).filter((l) => truthy(getk(at(l, "receipt"), "signature")));
     const log = getk(r, "key_log");
     if (log === null) {
+      if (signed.length && strict) return [["this report has no key history, which --require-history requires"], notes];
       if (signed.length) {
         notes.push("this report has no key history (made before the key log); compare each signer's key fingerprint with the one they give you");
       }
@@ -1397,6 +1451,18 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
         mine.push(`${name}: the key log entries for key ${short()} cannot be read`);
         revoked = [];
       }
+      const v4 = payloadV4(at(lane, "receipt"));
+      if (v4 !== null) {
+        const k = historyOf(v4)[1];
+        const upto = upTo(log, getk(k, "seq"), getk(k, "head"));
+        if (upto === null) {
+          mine.push(`${name}: the key log in this report does not reach the head the signature names (#${pyStr(getk(k, "seq"))})`);
+        } else if (upto === false) {
+          mine.push(`${name}: the key log entry #${pyStr(getk(k, "seq"))} the signature names is not the one in this report`);
+        } else if (!pyIn(getk(reg, "seq"), upto)) {
+          mine.push(`${name}: key ${short()} is not registered in the key log up to the head the signature names`);
+        }
+      }
       problems.push(...mine);
       if (!mine.length && !described.has(fp)) {
         described.set(fp, true);
@@ -1425,15 +1491,15 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     return typeof kind === "string" && own(ACTORS, kind) ? ACTORS[kind] : pyStr(kind);
   }
   function scopeText(s) {
-    const words = (v) => truthy(v) ? join(", ", v) : "none";
+    const words2 = (v) => truthy(v) ? join(", ", v) : "none";
     const out = [
-      `in scope ${words(getk(s, "include"))}`,
-      `out of scope ${words(getk(s, "exclude"))}`,
+      `in scope ${words2(getk(s, "include"))}`,
+      `out of scope ${words2(getk(s, "exclude"))}`,
       `${pyStr(getk(s, "rate_limit_rps"))} requests per second`
     ];
     if (truthy(getk(s, "research_header"))) out.push(`header ${pyStr(at(s, "research_header"))}`);
     if (truthy(getk(s, "research_user_agent"))) out.push(`user agent ${pyStr(at(s, "research_user_agent"))}`);
-    if (truthy(getk(s, "enabled_modules"))) out.push(`opt-in modules ${words(at(s, "enabled_modules"))}`);
+    if (truthy(getk(s, "enabled_modules"))) out.push(`opt-in modules ${words2(at(s, "enabled_modules"))}`);
     return out.join("; ");
   }
   function update(target, src) {
@@ -1482,11 +1548,12 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       return false;
     }
   }
-  async function checkAuditLog(r) {
+  async function checkAuditLog(r, strict = false) {
     const notes = [];
     const receipted = closedLanes(r);
     const log = getk(r, "audit_log");
     if (log === null) {
+      if (receipted.length && strict) return [["this report has no change history, which --require-history requires"], notes];
       if (receipted.length) {
         notes.push("this report has no change history (made before the audit log); who held the reviewer role and which scope was in force when each receipt was issued are not shown");
       }
@@ -1497,6 +1564,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     const engId = at(at(r, "engagement"), "id");
     const start = records.find(([, e]) => pyEq(getk(e, "engagement_id"), engId))?.[0] ?? null;
     const voids = records.filter(([, e]) => pyEq(getk(e, "engagement_id"), engId) && pyEq(getk(e, "action"), VOID_ACTION));
+    let covered = null;
     for (const lane of receipted) {
       const name = label(lane), rc = at(lane, "receipt");
       const sig = getk(rc, "signature");
@@ -1518,8 +1586,27 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
       if (voided) {
         problems.push(`${name}: reported as receipted, but the change history records that this receipt was voided ${stamp(voided[0])}`);
       }
+      const v4 = payloadV4(rc);
+      if (v4 !== null) {
+        const a = historyOf(v4)[0];
+        const upto = upTo(log, getk(a, "seq"), getk(a, "head"));
+        if (upto === null) {
+          problems.push(`${name}: the change history in this report does not reach the audit log head the signature names (#${pyStr(getk(a, "seq"))})`);
+        } else if (upto === false) {
+          problems.push(`${name}: the audit log entry #${pyStr(getk(a, "seq"))} the signature names is not the one in this report`);
+        } else {
+          const seqs = records.filter(([, e]) => pyIn(getk(e, "seq"), upto) && (pyEq(getk(e, "engagement_id"), engId) || pyStr(or(getk(e, "action"), "")).startsWith("person.") && pyEq(getk(e, "subject_id"), uid))).map(([, e]) => getk(e, "seq"));
+          if (!pyEq(seqs.length, getk(a, "entries")) || !pyEq(await sha(canonical(seqs)), getk(a, "sha256"))) {
+            problems.push(`${name}: the change history leaves out entries the signature covers: it names ${pyStr(getk(a, "entries"))} entries of this engagement and its signer up to audit log entry #${pyStr(getk(a, "seq"))}, and the report has ${seqs.length} such entries`);
+          } else if (covered === null || pyLt(covered[0], at(a, "seq"))) {
+            covered = [at(a, "seq"), issued];
+          }
+        }
+      } else if (strict) {
+        problems.push(`${name}: ${truthy(sig) ? "its signed payload is not format v4" : "the receipt is not signed"}, so nothing binds its change history, and an entry left out of this report would not be detected`);
+      }
       if (start === null || issued.us < start.us) {
-        notes.push(`${name}: issued before the audit log covered this engagement, so the roles and scope at that time are not recorded`);
+        (strict ? problems : notes).push(`${name}: issued before the audit log covered this engagement, so the roles and scope at that time are not recorded`);
         continue;
       }
       const st = stateAt(records, engId, issued);
@@ -1553,7 +1640,65 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
         notes.push(`${name}: issued ${stamp(issued)}; ${whoText} ${role}; ${scope}`);
       }
     }
+    if (strict && covered !== null) {
+      notes.push(`the change history is complete, as far as signatures show, up to audit log entry #${pyStr(covered[0])} (the receipt issued ${stamp(covered[1])}); entries after it are as the report gives them, so one left out, such as a later void of a receipt, would not be detected`);
+    }
     return [problems, notes];
+  }
+  var FACTS_TITLE = "What the verified JSON in this HTML report says (compare it with the text the page shows):";
+  function day(text) {
+    try {
+      return stamp(utc(text));
+    } catch (e) {
+      caught(e, "ValueError", "TypeError");
+      return pyStr(text);
+    }
+  }
+  function words(v) {
+    if (Array.isArray(v)) return v.length ? v.map(pyStr).join(", ") : "none";
+    return truthy(v) ? pyStr(v) : "none";
+  }
+  function factsOf(r) {
+    const eng = or(getk(r, "engagement"), dict()), s = or(getk(r, "summary"), dict());
+    const pack = or(getk(eng, "pack"), dict());
+    const scope = isDict(getk(eng, "scope")) ? at(eng, "scope") : dict();
+    const out = [`Engagement: ${pyStr(getk(eng, "name"))} (id ${pyStr(getk(eng, "id"))}), pack ${pyStr(getk(pack, "name"))} ` + pyStr(getk(pack, "version"))];
+    if (truthy(getk(eng, "authorized_by"))) {
+      out.push(`Authorized by ${pyStr(at(eng, "authorized_by"))}` + (truthy(getk(eng, "authorized_at")) ? ` on ${day(at(eng, "authorized_at"))}` : "") + (truthy(getk(eng, "policy_url")) ? `, under ${pyStr(at(eng, "policy_url"))}` : ""));
+    } else {
+      out.push("Authorization: not recorded");
+    }
+    out.push(`Scope: in scope ${words(getk(scope, "include"))}; out of scope ${words(getk(scope, "exclude"))}`);
+    const hosts = iter(or(getk(r, "hosts"), [])).filter(isDict);
+    out.push(`Hosts: ${hosts.filter((h) => truthy(getk(h, "in_scope"))).length} in scope, ${hosts.filter((h) => !truthy(getk(h, "in_scope"))).length} out of scope`);
+    const lanes = iter(at(r, "lanes"));
+    const count = (st) => lanes.filter((l) => pyEq(at(l, "status"), st)).length;
+    out.push(`Lanes: ${count("closed")} receipted, ${count("stale")} with a void receipt, ${count("open")} open`);
+    for (const lane of lanes) {
+      const rc = at(lane, "receipt");
+      if (!truthy(rc) || !pyIn(at(lane, "status"), ["closed", "stale"])) continue;
+      const name = label(lane);
+      if (pyEq(at(lane, "status"), "stale")) {
+        out.push(`Void: ${name}: receipt issued ${day(getk(rc, "issued_at"))}, no longer valid`);
+        continue;
+      }
+      const done = iter(at(lane, "items")).filter((i) => pyEq(at(i, "state"), "done")).length;
+      const na = iter(at(lane, "items")).filter((i) => pyEq(at(i, "state"), "na")).length;
+      let payload;
+      try {
+        payload = truthy(getk(rc, "signature")) ? loadsStr(at(at(rc, "signature"), "payload")) : null;
+      } catch (e) {
+        caught(e, "ValueError", "KeyError", "TypeError");
+        payload = null;
+      }
+      const who = isDict(payload) ? `signed by ${signerText(getk(payload, "signer"))}` : `closed by ${pyStr(getk(rc, "closed_by"))}, not signed`;
+      const ts = getk(rc, "timestamp");
+      out.push(`Receipted: ${name}: ${done} done, ${na} not applicable; ${who}, ${day(getk(rc, "issued_at"))}` + (isDict(ts) ? `; timestamped ${day(getk(ts, "time"))}` : ""));
+    }
+    const n = iter(at(r, "evidence")).length;
+    out.push(`Evidence: ${n} entr${n === 1 ? "y" : "ies"}, chain head ${pyStr(getk(s, "chain_head"))}`);
+    out.push(`Report generated: ${day(getk(r, "generated_at"))}`);
+    return out;
   }
   var TS_STATEMENT = "attackledger-timestamp-v1";
   var HASH = {
@@ -1951,7 +2096,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     const format = getk(r, "format");
     if (!pyIn(format, FORMATS)) return failure("unusable", `unsupported report format: ${pyStr(format)}`, 2);
     const report = r;
-    const require2 = !!opts.requireSignatures, mode = opts.ed25519 ?? "auto";
+    const require2 = !!opts.requireSignatures, strict = !!opts.requireHistory, mode = opts.ed25519 ?? "auto";
     const results = [];
     const notes = [];
     const add = (check2, more) => notes.push(...more.map((text) => ({ check: check2, text })));
@@ -1971,16 +2116,17 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
         results.push([name, problems, skip]);
         add(name, more);
         if (field === "signature") {
-          const [keyProblems, keyNotes] = await checkKeyLog(report);
-          if (own(report, "key_log")) results.push(["Signing key history", keyProblems, null]);
+          const [keyProblems, keyNotes] = await checkKeyLog(report, strict);
+          if (own(report, "key_log") || keyProblems.length) results.push(["Signing key history", keyProblems, null]);
           add("Signing key history", keyNotes);
-          const [auditProblems, auditNotes] = await checkAuditLog(report);
-          if (own(report, "audit_log")) results.push(["Change history", auditProblems, null]);
+          const [auditProblems, auditNotes] = await checkAuditLog(report, strict);
+          if (own(report, "audit_log") || auditProblems.length) results.push(["Change history", auditProblems, null]);
           add("Change history", auditNotes);
         }
       }
-    } else if (require2) {
-      results.push(["Receipt signatures", ["this report format carries no signatures"], null]);
+    } else {
+      if (require2) results.push(["Receipt signatures", ["this report format carries no signatures"], null]);
+      if (strict) results.push(["Change history", ["this report format carries no change history"], null]);
     }
     const eng = at(report, "engagement"), s = at(report, "summary");
     const lanes = at(s, "lanes_receipted"), entries = at(s, "evidence_entries");
@@ -1995,7 +2141,8 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
       verdict: skip && !problems.length ? "SKIP" : problems.length ? "FAIL" : "PASS"
     }));
     const ok = checks.every((c) => c.verdict !== "FAIL");
-    return { status: ok ? "verified" : "failed", title, results: checks, notes, message: null, exitCode: ok ? 0 : 1 };
+    const facts = ok && html ? factsOf(report) : [];
+    return { status: ok ? "verified" : "failed", title, results: checks, notes, message: null, exitCode: ok ? 0 : 1, facts };
   }
   function cliText(o) {
     if (o.status === "unusable") return `${o.message}
@@ -2012,6 +2159,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     }
     for (const n of o.notes) out.push(`  NOTE  ${n.text}`);
     out.push("", o.status === "verified" ? "Verified." : "Verification FAILED.");
+    if (o.facts?.length) out.push("", FACTS_TITLE, ...o.facts.map((f) => `  ${f}`));
     return out.join("\n") + "\n";
   }
   function pageWording(text) {
@@ -2034,10 +2182,10 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
   var EXPLAIN = [
     ["Report body hash", "The report's SHA-256 matches the value recorded in it. Anyone who edits a report can recompute it, so also compare it with the value the tester gave you."],
     ["Evidence chain", "Every evidence entry links to the one before it, from the genesis value to the chain head: none was removed, reordered or changed. Where a summary was deleted with its engagement's key, the chain is still checked over the hash it commits to."],
-    ["Lane receipts", "For every receipted lane, a manifest rebuilt from the report's own items and evidence has the receipt's hash, every item marked done has evidence, and every not-applicable item has a reason."],
+    ["Lane receipts", "For every receipted lane, a manifest rebuilt from the report's own items and evidence has the receipt's hash, every item marked done has evidence, and every not-applicable item has a reason. A current manifest also names each item's id and text, so evidence cannot be moved to another item; an older one does not, and a note says so."],
     ["Receipt signatures", "Each signed receipt verifies with the public key in the report, the key matches its fingerprint, and the signed text names this engagement, this lane, this manifest, a chain head in the report and the receipt's issue time."],
     ["Signing key history", "Each signing key's entries in the key log hash correctly and link into the log in order, and the key was registered to the signer before the receipt was issued and not revoked before it."],
-    ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held the reviewer role (or was an owner) and had the name in the receipt when it was issued, and no entry records that the receipt was voided."],
+    ["Change history", "The audit log entries hash correctly and link into the log in order. For each receipt, the signer held the reviewer role (or was an owner) and had the name in the receipt when it was issued, and no entry records that the receipt was voided. A receipt signed in the current format names the log's head when it was signed and how many entries of this engagement and its signer led up to it: none of them may be missing."],
     ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature verifies, and its certificate chain reaches a root you trust and was valid at the token's time."]
   ];
   var MEANS = new Map(EXPLAIN);
@@ -2125,7 +2273,11 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
       result.replaceChildren();
       return;
     }
-    const opts = { roots: state.roots.map((r) => ({ name: r.name, text: r.text })), requireSignatures: $("require").checked };
+    const opts = {
+      roots: state.roots.map((r) => ({ name: r.name, text: r.text })),
+      requireSignatures: $("require").checked,
+      requireHistory: $("require-history").checked
+    };
     let o;
     try {
       o = await verifyReport(decodeFile(bytes), name, opts);
@@ -2177,6 +2329,15 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
       const orphans = o.notes.filter((n) => !o.results.some((c) => c.name === n.check));
       if (orphans.length) parts2.push(el("ul", "notes", ...orphans.map((n) => el("li", null, n.text))));
     }
+    if (o.status === "verified" && o.facts?.length) {
+      parts2.push(el(
+        "section",
+        "facts",
+        el("h3", null, "What the verified report says"),
+        el("p", null, "The checks cover the JSON inside the HTML file, not the text the page shows. Compare these facts, taken from that JSON, with the page."),
+        el("ul", null, ...o.facts.map((f) => el("li", null, f)))
+      ));
+    }
     const text = cliText(o);
     if (text) {
       const copy = el("button", "btn small", "Copy the result as text");
@@ -2216,6 +2377,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     pick($("report-file"), (f) => void readFile(f));
     pick($("root-file"), (f) => void addRoot(f));
     $("require").addEventListener("change", () => void rerun());
+    $("require-history").addEventListener("change", () => void rerun());
     $("paste-check").addEventListener("click", () => {
       const text = $("paste-text").value;
       if (!text.trim()) return;

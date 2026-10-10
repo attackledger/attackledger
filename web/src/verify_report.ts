@@ -28,7 +28,9 @@ const CHAIN_FIELDS_V2 = ["v", "seq", "lane_id", "host", "role", "item_id", "kind
                          "source"];
 const KEY_LOG_FIELDS = ["seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"];
 const AUDIT_FIELDS = ["seq", "at", "actor", "action", "engagement_id", "subject_id", "change"];
-const PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3"];
+// v3 adds the signer's email; v4 the change history heads it was signed against (D-054).
+const PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3", "attackledger-receipt-v4"];
+const HISTORY_FORMAT = PAYLOAD_FORMATS[2];
 const VOID_ACTION = "lane.receipt_voided";     // D-052: a voided receipt stays void
 // How long after its signed payload was issued the server may issue a receipt, in microseconds: the
 // payload is valid for ten minutes (and may be dated up to a minute ahead), then the timestamp authority answers.
@@ -769,8 +771,10 @@ function contentNotes(r: Dict): Notes {
           + "the chain and the receipts were still checked"];
 }
 
-function manifest(lane: unknown, evidence: unknown): Dict {
-  // Mirrors the ledger's receipt manifest: items in order, the lane's evidence by id.
+function manifest(lane: unknown, evidence: unknown, version: number): Dict {
+  // Mirrors the ledger's receipt manifest: items in order, the lane's evidence by id. Version 2
+  // (D-054) also names each item's id and text, so the item id each piece of evidence names is
+  // bound to the item it supports; version 1 did not.
   const evs = sortedBy(iter(evidence).filter((e) => pyEq(at(e, "lane_id"), at(lane, "lane_id"))), (e) => at(e, "id"));
   const m = dict();
   m.lane = at(lane, "lane_id");
@@ -779,6 +783,7 @@ function manifest(lane: unknown, evidence: unknown): Dict {
   m.items = sortedBy(iter(at(lane, "items")), (i) => at(i, "idx")).map((i) => {
     const o = dict();
     o.idx = at(i, "idx"); o.key = at(i, "key"); o.state = at(i, "state"); o.na_reason = at(i, "na_reason");
+    if (version === 2) { o.id = getk(i, "item_id"); o.text = getk(i, "text"); }
     return o;
   });
   m.evidence = evs.map((e) => {
@@ -786,7 +791,13 @@ function manifest(lane: unknown, evidence: unknown): Dict {
     o.id = at(e, "id"); o.item = at(e, "item_id"); o.kind = at(e, "kind"); o.sha256 = at(e, "sha256");
     return o;
   });
+  if (version === 2) m.v = 2;
   return m;
+}
+
+function manifestSha256(lane: unknown, evidence: unknown, version: number): Promise<string> {
+  // The ledger hashes the manifest with ASCII-escaped JSON.
+  return sha(canonical(manifest(lane, evidence, version), true));
 }
 
 function label(lane: unknown): string {
@@ -817,9 +828,16 @@ async function checkReceipts(r: Dict): Promise<[Problems, Notes]> {
         problems.push(`${name}: reported as receipted but has no receipt`);
         continue;
       }
-      // The ledger hashes the manifest with ASCII-escaped JSON.
-      const got = await sha(canonical(manifest(lane, at(r, "evidence")), true));
-      if (!pyEq(got, at(rc, "manifest_sha256"))) problems.push(`${name}: receipt does not match its items and evidence`);
+      // A receipt is over manifest version 2, or version 1 if it was issued before it. The version
+      // is inside what is hashed, so one cannot pass for the other.
+      if (pyEq(await manifestSha256(lane, at(r, "evidence"), 2), at(rc, "manifest_sha256"))) {
+        // bound to each item
+      } else if (pyEq(await manifestSha256(lane, at(r, "evidence"), 1), at(rc, "manifest_sha256"))) {
+        notes.push(`${name}: the receipt's manifest is version 1, which does not name each item's id and `
+                   + "text, so which item each piece of evidence supports is not covered by it");
+      } else {
+        problems.push(`${name}: receipt does not match its items and evidence`);
+      }
       if (iter(at(lane, "items")).some((i) => pyEq(at(i, "state"), "open"))) {
         problems.push(`${name}: reported as receipted with open items`);
       }
@@ -1043,6 +1061,38 @@ function countReceipts(r: Dict, field: string): [number, number] {
   return [rcs.filter((rc) => truthy(getk(rc, field))).length, rcs.length];
 }
 
+/** The audit log and key log heads a v4 payload names, or null if it names none. */
+function historyOf(payload: unknown): [unknown, unknown] | null {
+  const h = getk(payload, "history");
+  if (!isDict(h) || !isDict(getk(h, "audit")) || !isDict(getk(h, "key_log"))) return null;
+  return [at(h, "audit"), at(h, "key_log")];
+}
+
+/** A signed receipt's payload, if it is format v4 and can be read; null otherwise. */
+function payloadV4(rc: unknown): unknown {
+  let p: unknown;
+  try {
+    p = loadsStr(at(or(getk(rc, "signature"), dict()), "payload"));
+  } catch (e) {
+    caught(e, "ValueError", "KeyError", "TypeError");
+    return null;
+  }
+  return isDict(p) && pyEq(getk(p, "format"), HISTORY_FORMAT) && historyOf(p) ? p : null;
+}
+
+/** The sequence numbers of a log's links up to and including the one at seq, if that link has
+ * entry hash head; null if the log's links do not include seq, false if the link there has another hash. */
+function upTo(log: unknown, seq: unknown, headHash: unknown): unknown[] | null | false {
+  const links = iter(or(getk(log, "links"), []));
+  if (pyEq(seq, 0) && pyEq(headHash, GENESIS)) return [];
+  for (let n = 0; n < links.length; n++) {
+    if (pyEq(at(links[n], "seq"), seq)) {
+      return pyEq(at(links[n], "entry_hash"), headHash) ? links.slice(0, n + 1).map((x) => at(x, "seq")) : false;
+    }
+  }
+  return null;
+}
+
 function signerText(s: unknown): string {
   // A payload's signer as "Name (email)"; v2 payloads have no email.
   const d = isDict(s) ? s : dict();
@@ -1090,6 +1140,8 @@ async function checkSignatures(r: Dict, require: boolean, mode: Ed25519Mode): Pr
     else if (!pyEq(at(payload, "format"), PAYLOAD_FORMATS[0])
              && typeof getk(or(getk(payload, "signer"), dict()), "email") !== "string") {
       problems.push(`${name}: the signed payload does not name the signer's email`);
+    } else if (pyEq(at(payload, "format"), HISTORY_FORMAT) && !historyOf(payload)) {
+      problems.push(`${name}: the signed payload does not name the change history heads`);
     }
     if (!pyEq(getk(payload, "manifest_sha256"), at(rc, "manifest_sha256"))) {
       problems.push(`${name}: the signature covers a different manifest`);
@@ -1199,11 +1251,13 @@ async function checkLog(log: unknown, what: string, fields: string[]): Promise<[
   return [problems, records];
 }
 
-async function checkKeyLog(r: Dict): Promise<[Problems, Notes]> {
+/** With strict (--require-history), a report with signed receipts must carry the key log. */
+async function checkKeyLog(r: Dict, strict = false): Promise<[Problems, Notes]> {
   const notes: Notes = [];
   const signed = closedLanes(r).filter((l) => truthy(getk(at(l, "receipt"), "signature")));
   const log = getk(r, "key_log");
   if (log === null) {
+    if (signed.length && strict) return [["this report has no key history, which --require-history requires"], notes];
     if (signed.length) {
       notes.push("this report has no key history (made before the key log); compare each signer's key "
                  + "fingerprint with the one they give you");
@@ -1256,6 +1310,19 @@ async function checkKeyLog(r: Dict): Promise<[Problems, Notes]> {
       caught(e, "ValueError", "KeyError", "TypeError", "AttributeError");
       mine.push(`${name}: the key log entries for key ${short()} cannot be read`);
       revoked = [];
+    }
+    const v4 = payloadV4(at(lane, "receipt"));
+    if (v4 !== null) {          // the key log head when it was signed (D-054)
+      const k = historyOf(v4)![1];
+      const upto = upTo(log, getk(k, "seq"), getk(k, "head"));
+      if (upto === null) {
+        mine.push(`${name}: the key log in this report does not reach the head the signature names `
+                  + `(#${pyStr(getk(k, "seq"))})`);
+      } else if (upto === false) {
+        mine.push(`${name}: the key log entry #${pyStr(getk(k, "seq"))} the signature names is not the one in this report`);
+      } else if (!pyIn(getk(reg, "seq"), upto)) {
+        mine.push(`${name}: key ${short()} is not registered in the key log up to the head the signature names`);
+      }
     }
     problems.push(...mine);
     if (!mine.length && !described.has(fp)) {
@@ -1354,11 +1421,14 @@ function voidsReceipt(e: unknown, lane: unknown, rc: unknown, issued: Time): boo
   }
 }
 
-async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
+/** With strict (--require-history), the report must carry the audit log and every receipt must
+ * commit to it (format v4); see docs/VERIFIER.md for what that proves. */
+async function checkAuditLog(r: Dict, strict = false): Promise<[Problems, Notes]> {
   const notes: Notes = [];
   const receipted = closedLanes(r);
   const log = getk(r, "audit_log");
   if (log === null) {
+    if (receipted.length && strict) return [["this report has no change history, which --require-history requires"], notes];
     if (receipted.length) {
       notes.push("this report has no change history (made before the audit log); who held the reviewer "
                  + "role and which scope was in force when each receipt was issued are not shown");
@@ -1370,6 +1440,7 @@ async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
   const engId = at(at(r, "engagement"), "id");
   const start = records.find(([, e]) => pyEq(getk(e, "engagement_id"), engId))?.[0] ?? null;
   const voids = records.filter(([, e]) => pyEq(getk(e, "engagement_id"), engId) && pyEq(getk(e, "action"), VOID_ACTION));
+  let covered: [unknown, Time] | null = null;   // the newest audit log head a v4 signature names, and the receipt's issue time
   for (const lane of receipted) {
     const name = label(lane), rc = at(lane, "receipt");
     const sig = getk(rc, "signature");
@@ -1392,9 +1463,37 @@ async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
       problems.push(`${name}: reported as receipted, but the change history records that this receipt was `
                     + `voided ${stamp(voided[0])}`);
     }
+    const v4 = payloadV4(rc);
+    if (v4 !== null) {          // the history it was signed against must all be here (D-054)
+      const a = historyOf(v4)![0];
+      const upto = upTo(log, getk(a, "seq"), getk(a, "head"));
+      if (upto === null) {
+        problems.push(`${name}: the change history in this report does not reach the audit log head the `
+                      + `signature names (#${pyStr(getk(a, "seq"))})`);
+      } else if (upto === false) {
+        problems.push(`${name}: the audit log entry #${pyStr(getk(a, "seq"))} the signature names is not the one in `
+                      + "this report");
+      } else {
+        const seqs = records.filter(([, e]) => pyIn(getk(e, "seq"), upto) && (
+          pyEq(getk(e, "engagement_id"), engId)
+          || (pyStr(or(getk(e, "action"), "")).startsWith("person.") && pyEq(getk(e, "subject_id"), uid))))
+          .map(([, e]) => getk(e, "seq"));
+        if (!pyEq(seqs.length, getk(a, "entries")) || !pyEq(await sha(canonical(seqs)), getk(a, "sha256"))) {
+          problems.push(`${name}: the change history leaves out entries the signature covers: it names `
+                        + `${pyStr(getk(a, "entries"))} entries of this engagement and its signer up to audit log `
+                        + `entry #${pyStr(getk(a, "seq"))}, and the report has ${seqs.length} such entries`);
+        } else if (covered === null || pyLt(covered[0], at(a, "seq"))) {
+          covered = [at(a, "seq"), issued];
+        }
+      }
+    } else if (strict) {
+      problems.push(`${name}: ${truthy(sig) ? "its signed payload is not format v4" : "the receipt is not signed"}, `
+                    + "so nothing binds its change history, and an entry left out of this report would not be "
+                    + "detected");
+    }
     if (start === null || issued.us < start.us) {
-      notes.push(`${name}: issued before the audit log covered this engagement, so the roles and scope `
-                 + "at that time are not recorded");
+      (strict ? problems : notes).push(`${name}: issued before the audit log covered this engagement, so the roles and scope `
+                                       + "at that time are not recorded");
       continue;
     }
     const st = stateAt(records, engId, issued);
@@ -1437,7 +1536,82 @@ async function checkAuditLog(r: Dict): Promise<[Problems, Notes]> {
       notes.push(`${name}: issued ${stamp(issued)}; ${whoText} ${role}; ${scope}`);
     }
   }
+  if (strict && covered !== null) {
+    notes.push(`the change history is complete, as far as signatures show, up to audit log entry #${pyStr(covered[0])} `
+               + `(the receipt issued ${stamp(covered[1])}); entries after it are as the `
+               + "report gives them, so one left out, such as a later void of a receipt, would not be detected");
+  }
   return [problems, notes];
+}
+
+// ---- what a verified HTML report says -----------------------------------------------------------
+//
+// The checks cover the JSON an HTML report embeds, not the text the page shows (EV-5). After an
+// HTML report verifies, its JSON's own facts are given, so a reader can compare them with the page.
+
+export const FACTS_TITLE = "What the verified JSON in this HTML report says (compare it with the text the page shows):";
+
+function day(text: unknown): string {
+  try {
+    return stamp(utc(text));
+  } catch (e) {
+    caught(e, "ValueError", "TypeError");
+    return pyStr(text);
+  }
+}
+
+function words(v: unknown): string {
+  if (Array.isArray(v)) return v.length ? v.map(pyStr).join(", ") : "none";
+  return truthy(v) ? pyStr(v) : "none";
+}
+
+function factsOf(r: Dict): string[] {
+  const eng = or(getk(r, "engagement"), dict()), s = or(getk(r, "summary"), dict());
+  const pack = or(getk(eng, "pack"), dict());
+  const scope = isDict(getk(eng, "scope")) ? at(eng, "scope") : dict();
+  const out = [`Engagement: ${pyStr(getk(eng, "name"))} (id ${pyStr(getk(eng, "id"))}), pack ${pyStr(getk(pack, "name"))} `
+               + pyStr(getk(pack, "version"))];
+  if (truthy(getk(eng, "authorized_by"))) {
+    out.push(`Authorized by ${pyStr(at(eng, "authorized_by"))}`
+             + (truthy(getk(eng, "authorized_at")) ? ` on ${day(at(eng, "authorized_at"))}` : "")
+             + (truthy(getk(eng, "policy_url")) ? `, under ${pyStr(at(eng, "policy_url"))}` : ""));
+  } else {
+    out.push("Authorization: not recorded");
+  }
+  out.push(`Scope: in scope ${words(getk(scope, "include"))}; out of scope ${words(getk(scope, "exclude"))}`);
+  const hosts = iter(or(getk(r, "hosts"), [])).filter(isDict);
+  out.push(`Hosts: ${hosts.filter((h) => truthy(getk(h, "in_scope"))).length} in scope, `
+           + `${hosts.filter((h) => !truthy(getk(h, "in_scope"))).length} out of scope`);
+  const lanes = iter(at(r, "lanes"));
+  const count = (st: string) => lanes.filter((l) => pyEq(at(l, "status"), st)).length;
+  out.push(`Lanes: ${count("closed")} receipted, ${count("stale")} with a void receipt, ${count("open")} open`);
+  for (const lane of lanes) {
+    const rc = at(lane, "receipt");
+    if (!truthy(rc) || !pyIn(at(lane, "status"), ["closed", "stale"])) continue;
+    const name = label(lane);
+    if (pyEq(at(lane, "status"), "stale")) {
+      out.push(`Void: ${name}: receipt issued ${day(getk(rc, "issued_at"))}, no longer valid`);
+      continue;
+    }
+    const done = iter(at(lane, "items")).filter((i) => pyEq(at(i, "state"), "done")).length;
+    const na = iter(at(lane, "items")).filter((i) => pyEq(at(i, "state"), "na")).length;
+    let payload: unknown;
+    try {
+      payload = truthy(getk(rc, "signature")) ? loadsStr(at(at(rc, "signature"), "payload")) : null;
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      payload = null;
+    }
+    const who = isDict(payload) ? `signed by ${signerText(getk(payload, "signer"))}`
+      : `closed by ${pyStr(getk(rc, "closed_by"))}, not signed`;
+    const ts = getk(rc, "timestamp");
+    out.push(`Receipted: ${name}: ${done} done, ${na} not applicable; ${who}, ${day(getk(rc, "issued_at"))}`
+             + (isDict(ts) ? `; timestamped ${day(getk(ts, "time"))}` : ""));
+  }
+  const n = iter(at(r, "evidence")).length;
+  out.push(`Evidence: ${n} entr${n === 1 ? "y" : "ies"}, chain head ${pyStr(getk(s, "chain_head"))}`);
+  out.push(`Report generated: ${day(getk(r, "generated_at"))}`);
+  return out;
 }
 
 // ---- RFC 3161 timestamps -----------------------------------------------------------------------
@@ -1849,12 +2023,16 @@ export interface Outcome {
   notes: Note[];
   message: string | null;       // for unusable and error
   exitCode: 0 | 1 | 2;
+  /** For an HTML report that verified: what its embedded JSON says, to compare with the page. */
+  facts?: string[];
 }
 
 export interface VerifyOptions {
   /** Extra trusted roots (PEM text), as with --tsa-root. The pinned roots are always trusted. */
   roots?: { name: string; text: string }[];
   requireSignatures?: boolean;
+  /** As --require-history: the key log and the audit log must be there and bound to every receipt. */
+  requireHistory?: boolean;
   ed25519?: Ed25519Mode;
 }
 
@@ -1884,7 +2062,7 @@ function failure(status: "unusable" | "error", message: string, exitCode: 1 | 2)
   return { status, title: [], results: [], notes: [], message, exitCode };
 }
 
-/** Run every check, as `verify_report.py FILE [--tsa-root ...] [--require-signatures]` does. */
+/** Run every check, as `verify_report.py FILE [--tsa-root ...] [--require-signatures] [--require-history]` does. */
 export async function verifyReport(text: string, fileName: string, opts: VerifyOptions = {}): Promise<Outcome> {
   let roots: Cert[];
   try {
@@ -1911,7 +2089,7 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
   const format = getk(r, "format");
   if (!pyIn(format, FORMATS)) return failure("unusable", `unsupported report format: ${pyStr(format)}`, 2);
   const report = r as Dict;
-  const require = !!opts.requireSignatures, mode = opts.ed25519 ?? "auto";
+  const require = !!opts.requireSignatures, strict = !!opts.requireHistory, mode = opts.ed25519 ?? "auto";
 
   // (name, problems, skip): a check with a skip reason found nothing to check.
   const results: [string, Problems, string | null][] = [];
@@ -1934,16 +2112,17 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
       results.push([name, problems, skip]);
       add(name, more);
       if (field === "signature") {
-        const [keyProblems, keyNotes] = await checkKeyLog(report);
-        if (own(report, "key_log")) results.push(["Signing key history", keyProblems, null]);
+        const [keyProblems, keyNotes] = await checkKeyLog(report, strict);
+        if (own(report, "key_log") || keyProblems.length) results.push(["Signing key history", keyProblems, null]);
         add("Signing key history", keyNotes);
-        const [auditProblems, auditNotes] = await checkAuditLog(report);
-        if (own(report, "audit_log")) results.push(["Change history", auditProblems, null]);
+        const [auditProblems, auditNotes] = await checkAuditLog(report, strict);
+        if (own(report, "audit_log") || auditProblems.length) results.push(["Change history", auditProblems, null]);
         add("Change history", auditNotes);
       }
     }
-  } else if (require) {
-    results.push(["Receipt signatures", ["this report format carries no signatures"], null]);
+  } else {
+    if (require) results.push(["Receipt signatures", ["this report format carries no signatures"], null]);
+    if (strict) results.push(["Change history", ["this report format carries no change history"], null]);
   }
 
   const eng = at(report, "engagement"), s = at(report, "summary");
@@ -1957,7 +2136,8 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
     verdict: skip && !problems.length ? "SKIP" : problems.length ? "FAIL" : "PASS",
   }));
   const ok = checks.every((c) => c.verdict !== "FAIL");
-  return { status: ok ? "verified" : "failed", title, results: checks, notes, message: null, exitCode: ok ? 0 : 1 };
+  const facts = ok && html ? factsOf(report) : [];
+  return { status: ok ? "verified" : "failed", title, results: checks, notes, message: null, exitCode: ok ? 0 : 1, facts };
 }
 
 /** The verifier's output, line for line as verify_report.py prints it. */
@@ -1972,6 +2152,7 @@ export function cliText(o: Outcome): string {
   }
   for (const n of o.notes) out.push(`  NOTE  ${n.text}`);
   out.push("", o.status === "verified" ? "Verified." : "Verification FAILED.");
+  if (o.facts?.length) out.push("", FACTS_TITLE, ...o.facts.map((f) => `  ${f}`));
   return out.join("\n") + "\n";
 }
 

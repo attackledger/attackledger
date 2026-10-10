@@ -244,6 +244,116 @@ def void_mutations(void: dict) -> dict:
     return out
 
 
+def html_report(c, e) -> bytes:
+    r = c.get(f"/engagements/{e}/report.html")
+    assert r.status_code == 200, r.text
+    return r.content
+
+
+def lane_of(r: dict, host: str, role: str = "recon") -> dict:
+    return next(l for l in r["lanes"] if l["host"] == host and l["role"] == role)
+
+
+def resign(lane: dict, key, change) -> None:
+    """Change a receipt's signed payload and sign it again with the signer's own key."""
+    sig = lane["receipt"]["signature"]
+    p = json.loads(sig["payload"])
+    change(p)
+    sig["payload"] = json.dumps(p, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    sig["value"] = key.sign(sig["payload"])
+
+
+def make_v4() -> dict:
+    """Reports in the current format, manifest version 2 and receipt payload v4 (D-054), and
+    copies made to break what they bind: the items' ids, the audit entries the signature counts,
+    the logs' heads. Also a void hidden in two ways, and HTML reports for the facts the verifier
+    prints after one verifies. Returns {name: bytes}; a name without .html is a .json fixture."""
+    use_tsa(None)
+    out = {}
+    with fresh_client() as c:
+        e, assets = people_engagement(c, "Equivalence: v4")
+        a = lane_with_items(c, assets["shop.lab.test"], "recon", {1: "scope confirmed", 2: "passive sources listed"})
+        b = lane_with_items(c, assets["api.lab.test"], "recon", {1: "api scope confirmed"})
+        lane_with_items(c, assets["shop.lab.test"], "mapper", {})        # left open
+        sign_in(c, "riza@lab.test")
+        riza = register(c, "ECDSA-P256")
+        signed_close(c, a, riza)
+        sign_in(c, "ray@lab.test")
+        signed_close(c, b, register(c, "Ed25519"))
+        out["v4-signed"] = report(c, e)
+        out["v4-signed.html"] = html_report(c, e)
+    base = json.loads(out["v4-signed"])
+    heads = sorted(json.loads(l["receipt"]["signature"]["payload"])["history"]["audit"]["seq"]
+                   for l in signed_lanes(base))
+
+    def m(name, fn):
+        r = copy.deepcopy(base)
+        fn(r)
+        out[name] = json.dumps(rehash(r), ensure_ascii=False).encode()
+
+    def swap(r):
+        items = lane_of(r, "shop.lab.test")["items"]
+        one, two = (next(i for i in items if i["idx"] == n) for n in (1, 2))
+        one["item_id"], two["item_id"] = two["item_id"], one["item_id"]
+    m("v4-item-ids-swapped", swap)
+    m("v4-audit-entry-left-out", lambda r: r["audit_log"].__setitem__(
+        "entries", [x for x in r["audit_log"]["entries"] if x["action"] != "engagement.created"]))
+
+    def truncate(r):            # the links stop before the first head a signature names
+        log = r["audit_log"]
+        log["links"] = [ln for ln in log["links"] if ln["seq"] < heads[0]]
+        log["entries"] = [x for x in log["entries"] if x["seq"] < heads[0]]
+        log["head"] = {"seq": log["links"][-1]["seq"], "entry_hash": log["links"][-1]["entry_hash"]}
+    m("v4-audit-truncated", truncate)
+    m("v4-audit-removed", lambda r: r.pop("audit_log"))
+    m("v4-keylog-removed", lambda r: r.pop("key_log"))
+
+    def other_key_head(r):      # a consistent rewrite of the key log from its first link
+        r["key_log"]["entries"][0]["via"] = "operator_cli"
+        rewrite_log(r["key_log"], ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"))
+    m("v4-keylog-rewritten", other_key_head)
+
+    def without_history(r):
+        resign(lane_of(r, "shop.lab.test"), riza, lambda p: p.pop("history"))
+    m("v4-payload-without-history", without_history)
+
+    def as_v3(r):
+        resign(lane_of(r, "shop.lab.test"), riza, lambda p: (p.pop("history"), p.__setitem__("format", "attackledger-receipt-v3")))
+    m("v4-resigned-as-v3", as_v3)
+
+    for later in (True, False):
+        with fresh_client() as c:
+            e, assets = people_engagement(c, "Equivalence: v4 void")
+            a = lane_with_items(c, assets["shop.lab.test"], "recon", {1: "scope confirmed"})
+            b = lane_with_items(c, assets["api.lab.test"], "recon", {1: "api scope confirmed"})
+            sign_in(c, "riza@lab.test")
+            k = register(c, "Ed25519")
+            signed_close(c, a, k)
+            if not later:
+                signed_close(c, b, k)
+            sign_in(c, "ray@lab.test")
+            ok(c.patch(f"/lanes/{a}/items/1", json={"state": "open"}))      # voids the receipt
+            ok(c.patch(f"/lanes/{a}/items/1", json={"state": "done"}))      # the manifest matches it again
+            if later:
+                sign_in(c, "riza@lab.test")
+                signed_close(c, b, k)
+            name = "v4-void" if later else "v4-void-after-the-last-signature"
+            out[name] = report(c, e)
+            if later:
+                out["v4-void.html"] = html_report(c, e)
+        r = json.loads(out[name])
+        next(l for l in r["lanes"] if l["status"] == "stale")["status"] = "closed"
+        r["summary"]["lanes_receipted"] += 1
+        r["audit_log"]["entries"] = [x for x in r["audit_log"]["entries"] if x["action"] != "lane.receipt_voided"]
+        out[f"{name}-hidden"] = json.dumps(rehash(r), ensure_ascii=False).encode()
+    return out
+
+
+def write(made: dict) -> None:
+    for name, data in made.items():
+        (OUT / (name if name.endswith(".html") else f"{name}.json")).write_bytes(data)
+
+
 def make_token():
     """Operator-token mode: no people, the close names whoever the operator says."""
     use_tsa(None)
@@ -417,6 +527,13 @@ def mutations(base: dict, deleted: dict) -> dict:
     m("engagement-renamed", base, lambda r: r["engagement"].__setitem__("name", "Another client"))
     m("summary-lanes-inflated", base, lambda r: r["summary"].__setitem__("lanes_receipted", 12))
     m("summary-evidence-inflated", base, lambda r: r["summary"].__setitem__("evidence_entries", 40))
+    # O-1: the receipts here are over manifest version 1, which does not name the items' ids, so
+    # swapping two done items' ids still verifies, with the NOTE that says so.
+    def swap(r):
+        items = next(l for l in r["lanes"] if l["host"] == "api.lab.test" and l["role"] == "recon")["items"]
+        one, two = (next(i for i in items if i["idx"] == n) for n in (1, 2))
+        one["item_id"], two["item_id"] = two["item_id"], one["item_id"]
+    m("v1-item-ids-swapped", base, swap)
     return out
 
 
@@ -453,6 +570,7 @@ def main():
     (OUT / "void.json").write_bytes(void_raw)
     for name, r in void_mutations(json.loads(void_raw)).items():
         (OUT / f"{name}.json").write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
+    write(make_v4())
 
     # The DigiCert token kept with the server tests, in the smallest report that carries it:
     # the timestamp verifies; the made-up receipt around it does not.
@@ -474,10 +592,19 @@ def main():
 
 def only(names: set[str]) -> None:
     """Remake some fixtures and leave the others as they are: the mutations of signed.json and
-    content-deleted.json as they are on disk, and the void report (made anew).
+    content-deleted.json as they are on disk, and the void report (made anew). "v4" makes every
+    report of make_v4 anew (the current format), and keeps the older fixtures in their format.
 
         ... make_fixtures.py --only void,void-reported-as-receipted,receipt-issued-at-moved
+        ... make_fixtures.py --only v4
     """
+    if "v4" in names:
+        made = make_v4()
+        write(made)
+        names = names - {"v4"}
+        print(f"{OUT}: wrote {len(made)} v4 reports")
+        if not names:
+            return
     made = {name: json.dumps(r, ensure_ascii=False).encode() for name, r in mutations(
         json.loads((OUT / "signed.json").read_bytes()), json.loads((OUT / "content-deleted.json").read_bytes())).items()}
     if names & {"void", "void-reported-as-receipted"}:

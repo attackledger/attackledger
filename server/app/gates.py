@@ -36,13 +36,23 @@ class GateError(Exception):
     pass
 
 
-def manifest(lane: Lane) -> dict:
-    return {
+# Manifest version 2 (D-054) names each item's database id and text, so the evidence's item ids,
+# which the chain and the manifest commit to, are bound to the item they support. New receipts
+# use it; receipts issued with version 1 keep their hash and still match (lane_status).
+MANIFEST_VERSION = 2
+MANIFEST_VERSIONS = (2, 1)
+
+
+def manifest(lane: Lane, version: int = MANIFEST_VERSION) -> dict:
+    if version not in MANIFEST_VERSIONS:
+        raise ValueError(f"unknown manifest version {version!r}")
+    m = {
         "lane": lane.id,
         "role": lane.role,
         "host": lane.asset.host,
         "items": [
-            {"idx": i.idx, "key": i.item_key, "state": i.state.value, "na_reason": i.na_reason}
+            {"idx": i.idx, "key": i.item_key, "state": i.state.value, "na_reason": i.na_reason,
+             **({"id": i.id, "text": i.text} if version == 2 else {})}
             for i in lane.items
         ],
         "evidence": [
@@ -50,11 +60,20 @@ def manifest(lane: Lane) -> dict:
             for e in lane.evidence
         ],
     }
+    if version == 2:
+        m["v"] = 2
+    return m
 
 
-def manifest_hash(lane: Lane) -> str:
-    blob = json.dumps(manifest(lane), sort_keys=True, separators=(",", ":"))
+def manifest_hash(lane: Lane, version: int = MANIFEST_VERSION) -> str:
+    blob = json.dumps(manifest(lane, version), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def matches(rc: Receipt, lane: Lane) -> bool:
+    """Whether a receipt's manifest hash is the lane's as it is now, in the receipt's manifest
+    version: the current one, or version 1 for a receipt issued before it."""
+    return any(rc.manifest_sha256 == manifest_hash(lane, v) for v in MANIFEST_VERSIONS)
 
 
 def unresolved(lane: Lane) -> list[str]:
@@ -74,7 +93,7 @@ def lane_status(lane: Lane) -> LaneStatus:
     if not lane.receipts:
         return LaneStatus.open
     rc = lane.receipts[-1]
-    if rc.manifest_sha256 == manifest_hash(lane) and not unresolved(lane) and not is_voided(rc):
+    if matches(rc, lane) and not unresolved(lane) and not is_voided(rc):
         return LaneStatus.closed
     return LaneStatus.stale
 
