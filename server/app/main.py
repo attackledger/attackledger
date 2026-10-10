@@ -38,6 +38,7 @@ async def lifespan(_app: FastAPI):
     migrate.upgrade_head()
     with SessionLocal() as s:
         vault.check_store(s)
+        auth.end_stale_token_sessions(s)    # a changed token ends the old one's browser sessions (D-056)
     # Retention and interrupted jobs, which the worker ran before it lost its database (D-042).
     stop = workerapi.start_maintenance()
     try:
@@ -256,7 +257,9 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
         raise HTTPException(422, "sign in with your email and password")
     if not auth.same_secret((body.token or "").strip(), tok):
         raise HTTPException(401, "wrong token")
-    return _session_cookie(JSONResponse({"ok": True, "mode": m}), auth.token_session_value(tok))
+    with orgscope.unscoped(session):        # a token session names nobody, so no organization yet
+        value = auth.new_token_session(session, tok)
+    return _session_cookie(JSONResponse({"ok": True, "mode": m}), value)
 
 
 @app.post("/auth/logout")

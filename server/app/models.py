@@ -443,11 +443,14 @@ class User(OrgOwned, Base):
 
 
 class UserSession(Base):
-    """A signed-in browser. Only the hash of the cookie value is stored."""
+    """A signed-in browser. Only the hash of the cookie value is stored. A person's session names
+    the person; a browser signed in with the operator token (D-056) names nobody, and is bound
+    instead to that token (auth.token_binding), so it ends when the token changes."""
     __tablename__ = "user_sessions"
     id: Mapped[int] = mapped_column(primary_key=True)
     token_sha256: Mapped[str] = mapped_column(String(64), unique=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    token_binding: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     expires_at: Mapped[datetime]
 

@@ -225,3 +225,100 @@ def test_auth7_a_payload_with_fields_of_the_wrong_type_is_refused_with_422(monke
             assert ts.signed_close(c, lane, k).status_code == 200             # control: the real payload signs
     finally:
         app.dependency_overrides.clear()
+
+
+# ---- AUTH-6: a token-mode cookie was a fixed HMAC of the token -----------------------------------
+
+TOKEN = "operator-token-for-tests-0006"
+
+
+def _token_sign_in(api) -> str:
+    api.cookies.clear()
+    r = api.post("/auth/login", json={"token": TOKEN})
+    assert r.status_code == 200, r.text
+    return api.cookies.get(auth.COOKIE)
+
+
+def _with_cookie(api, value):
+    """/engagements with this cookie only, as a browser holding a copy of it would ask."""
+    api.cookies.clear()
+    api.cookies.set(auth.COOKIE, value)
+    return api.get("/engagements")
+
+
+def test_auth6_signing_out_revokes_a_copied_token_mode_cookie(api, monkeypatch):
+    """The cookie was HMAC(token, constant): signing out deleted it in the browser only, and a
+    copy of it worked until the token changed."""
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)
+    value = _token_sign_in(api)
+    assert _with_cookie(api, value).status_code == 200                 # control: the session works
+    api.cookies.set(auth.COOKIE, value)
+    assert api.post("/auth/logout").status_code == 200
+    assert _with_cookie(api, value).status_code == 401                 # the copy is dead too
+    # The bearer path (scripts, the worker's tools, the gateway) is unchanged.
+    assert api.get("/engagements", headers={"authorization": f"Bearer {TOKEN}"}).status_code == 200
+
+
+def test_auth6_token_mode_sessions_are_random_and_stored_as_hashes(api, monkeypatch):
+    import hmac as _hmac
+
+    from app.models import UserSession
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)
+    one, two = _token_sign_in(api), _token_sign_in(api)
+    assert one != two and TOKEN not in one + two
+    old = _hmac.new(TOKEN.encode(), b"attackledger-session-v1", hashlib.sha256).hexdigest()
+    assert _with_cookie(api, old).status_code == 401                   # the old derived cookie is refused
+    with api.Session() as s:
+        rows = s.query(UserSession).all()
+        stored = {r.token_sha256 for r in rows}
+        assert stored == {sha(one.encode()), sha(two.encode())}
+        assert all(r.user_id is None and TOKEN not in (r.token_binding or "") for r in rows)
+    api.cookies.set(auth.COOKIE, one)                                  # signing out ends that one only
+    api.post("/auth/logout")
+    assert _with_cookie(api, one).status_code == 401 and _with_cookie(api, two).status_code == 200
+
+
+def test_auth6_token_mode_sessions_expire_like_people_sessions(api, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import UserSession
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)
+    value = _token_sign_in(api)
+    with api.Session() as s:
+        row = s.query(UserSession).one()
+        assert abs((auth._aware(row.expires_at) - auth._aware(row.created_at))
+                   - timedelta(hours=auth.SESSION_HOURS)) < timedelta(seconds=5)
+        row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        s.commit()
+    assert _with_cookie(api, value).status_code == 401
+
+
+def test_auth6_changing_the_api_token_ends_every_token_session(api, monkeypatch):
+    """A session belongs to the token it was opened with. Once the API starts with another token
+    (auth.end_stale_token_sessions runs at start-up, and at every token sign-in), the sessions of
+    the old one are deleted, so changing the token back does not bring them back."""
+    from app.models import UserSession
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)
+    value = _token_sign_in(api)
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN + "-new")
+    assert _with_cookie(api, value).status_code == 401                 # bound to the old token
+    with api.Session() as s:
+        assert auth.end_stale_token_sessions(s) == 1
+        assert s.query(UserSession).count() == 0
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)
+    assert _with_cookie(api, value).status_code == 401                 # gone for good
+
+
+def test_auth6_token_sessions_work_and_end_in_people_mode_too(api, monkeypatch):
+    """With people, the token still signs a browser in as the operator (automation, recovery)."""
+    _people(api, monkeypatch)
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)
+    value = _token_sign_in(api)
+    assert api.get("/auth/me").json()["kind"] == "token"
+    assert _with_cookie(api, value).status_code == 200
+    api.cookies.set(auth.COOKIE, value)
+    api.post("/auth/logout")
+    assert _with_cookie(api, value).status_code == 401
+    monkeypatch.delenv("ATTACKLEDGER_API_TOKEN")
+    assert sign_in(api, "owner@lab.test").status_code == 200           # control: people still sign in
+
