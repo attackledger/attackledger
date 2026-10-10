@@ -155,6 +155,11 @@ authenticated channel, so it needs no change then. Since 2026-10-09 the worker d
   are never logged. The API key is the gateway's (`ANTHROPIC_API_KEY` on the gateway): it is
   added as `x-api-key` after any `x-api-key` or `Authorization` the client sent is removed, and
   without it these calls are refused with 503. The worker holds no key (D-042).
+  The body is read and parsed strictly (a key given twice is refused) and sent only if it carries
+  the keys an agent run sends (`gateway.SERVICE_BODY_KEYS`), custom tools only and no `url`
+  source in its messages or system prompt: server tools (web fetch, web search, code execution),
+  the MCP connector and URL image or document sources would make Anthropic's servers reach hosts
+  the gateway never checks (security review GW-1, `docs/security-review/GATEWAY.md`).
 
 ### 5. Rate ceiling
 
@@ -165,8 +170,11 @@ jitter) holds more than *rate* requests. A plain refilling bucket with burst *B*
 *rate* requests into one second; this is the form that makes "peak at or under the limit"
 hold. The token is taken after the upstream connection is open and just before the request
 head is written. Waiting requests queue in order; one that would wait more than 30 seconds
-is refused with 429. Port probes take a token too (D-014). DNS questions have their own
-limiter per engagement at the same rate.
+is refused with 429. The upstream connection itself waits first for a token of a second
+limiter per engagement at the same rate (per host for passive sources), so connections and TLS
+handshakes are paced too, and a request refused for the rate has not connected (security review
+GW-2). Port probes take a token too (D-014). DNS questions have their own limiter per engagement
+at the same rate.
 
 One gateway per deployment. Several gateways would each enforce the ceiling separately; a
 shared limiter comes with them, if ever.
@@ -196,9 +204,14 @@ engagement without either gets no target traffic at all (D-008). Hop-by-hop head
 that follows one sends a new request, which is checked like any other.
 
 Addresses: the gateway resolves the host itself, refuses loopback, link-local (cloud metadata),
-multicast and unspecified addresses and the deployment's own containers
-(`ATTACKLEDGER_GATEWAY_DENY_HOSTS`, default `db,api,web,worker,gateway`), and connects to the
-address it checked, so a DNS answer cannot change between check and use. Private addresses are
+multicast and unspecified addresses, the cloud metadata services outside link-local
+(`gateway.METADATA_ADDRESSES`: Alibaba Cloud, AWS over IPv6, Azure's WireServer, Oracle Cloud
+Classic) and the deployment's own containers (`ATTACKLEDGER_GATEWAY_DENY_HOSTS`, default
+`gateway.DENY_HOSTS`: `db,api,api-control,api-default,web,worker,gateway,caddy,lab-proxy,...`),
+and connects to the address it checked, so a DNS answer cannot change between check and use.
+Docker answers a service name with its address on one shared network only, so a container the
+gateway shares two networks with has a network alias for each in the compose files, and the
+aliases are in the list (security review GW-6; a test checks the compose files). Private addresses are
 allowed: an internal pentest needs them, and the lab is one.
 
 Refusals are answered with status 403 (policy), 407 (credential), 429 (rate wait) or 503
@@ -246,9 +259,12 @@ object) request by request. The gateway then:
   for 2 seconds, so a replaced or deleted account takes effect within 2 seconds. The worker never
   holds it: it is not in the claim, the lane context, the worker's channel or any job token;
 - replaces any header of the same name the tool sent (a tool's own `Cookie` never reaches the
-  target alongside the account's) and sends `Accept-Encoding: identity`;
+  target alongside the account's) and sends `Accept-Encoding: identity`. A target that compresses
+  anyway has its gzip or deflate body decoded before the scrub; a body in another encoding is
+  withheld (security review GW-3);
 - reads the response whole (up to 20 MB) and scrubs it before it goes back: every value the
-  account's headers carry (whole values, each cookie value, a bearer token) becomes a redaction
+  account's headers carry (whole values, each cookie value, a bearer token, each also
+  URL-decoded, URL-encoded, HTML-escaped and with JSON-escaped slashes: GW-4) becomes a redaction
   marker wherever it appears, and cookies, tokens and other credentials are redacted
   (`redact.header_value`, `redact.data`), so a target that echoes the session or rotates it
   (`Set-Cookie`) does not hand it to the worker. Measured in the lab with Juice Shop's 743-character

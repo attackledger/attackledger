@@ -34,6 +34,28 @@ evidence chain identical, and the encrypted note stayed readable.
   - Tool cards sit in a grid, each led by its result count, with Run, Results and Log in
     the same place on every card.
 
+### Security
+Gateway and worker-isolation review, `docs/security-review/GATEWAY.md` (findings GW-1 to GW-7).
+- **An agent job could make Anthropic's servers fetch any URL** (GW-1). The gateway forwarded
+  any `/v1/messages` body, so server tools (web fetch, web search), the MCP connector and URL
+  image or document sources reached hosts outside the scope, the rate ceiling and the request
+  log. The body is now parsed strictly and sent only with the agent's own keys and tools.
+- **Connections to targets were not paced** (GW-2). The rate token was taken after the TCP
+  connection and TLS handshake, so concurrency opened connections at any rate. Connections now
+  wait for a token of their own.
+- **A compressed response leaked a test account's session** (GW-3). A target that compressed
+  despite `Accept-Encoding: identity` passed the scrub and the redaction. The body is now
+  decoded before it is scrubbed, or withheld.
+- **A reflected session in another encoding was not scrubbed** (GW-4): URL-decoded (phpinfo's
+  `$_COOKIE`), URL-encoded, HTML-escaped or with JSON-escaped slashes.
+- **Cloud metadata services outside link-local were reachable** (GW-5): Alibaba Cloud, AWS over
+  IPv6, Azure's WireServer and Oracle Cloud Classic addresses are now refused.
+- **One address of the API was not refused** (GW-6). Docker resolves a service name to one
+  network only; the API, on two networks with the gateway, now has an alias per network in the
+  deny list (and the production API trusts `X-Forwarded-For` from any peer).
+- **A job target could carry a second target line to the tools** (GW-7): the URL parser drops
+  newlines, the tools do not. Targets with whitespace or control characters are refused.
+
 ## [0.8.0] - 2026-10-10
 
 Test accounts and approved writes for agents, and organizations on every record.
