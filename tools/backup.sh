@@ -71,15 +71,18 @@ dc exec -T db pg_dump -U attackledger -d attackledger --format=custom --no-owner
 
 echo "backup: archiving the blob store"
 # Half-written blobs are temporary files named .<hash>.<pid>.tmp; they are not evidence yet.
-# As root, so that files written by an older version (as root) are read too.
-dc exec -T --user 0 api tar -C /data/blobs --exclude='.*.tmp' -czf - . > "$WORK/blobs.tar.gz"
+# As root, so that files written by an older version (as root) are read too. The service has no
+# capabilities (docker-compose.yml), so this one-off container gets back the one that lets root
+# read any file, and nothing else; exec cannot add one, hence run.
+dc run --rm --no-deps -T --user 0 --cap-add DAC_READ_SEARCH --entrypoint tar api \
+  -C /data/blobs --exclude='.*.tmp' -czf - . > "$WORK/blobs.tar.gz"
 [ -s "$WORK/blobs.tar.gz" ] || die "the blob archive is empty"
 
 MASTER_ID=$(dc exec -T api python -c "from app import vault; print(vault.master_key().id)" | tr -d '\r')
 MIGRATION=$(dc exec -T api python -c "from app import migrate; print(migrate.current())" | tr -d '\r')
 ROWS=$(dc exec -T db psql -U attackledger -d attackledger -tA -c \
   "select 'engagements ' || (select count(*) from engagements) || ', evidence entries ' || (select count(*) from evidence) || ', receipts ' || (select count(*) from receipts) || ', people ' || (select count(*) from users)" | tr -d '\r')
-BLOBS=$(dc exec -T --user 0 api sh -c "find /data/blobs -type f ! -name '.*.tmp' | wc -l" | tr -d ' \r')
+BLOBS=$(dc run --rm --no-deps -T --user 0 --cap-add DAC_READ_SEARCH --entrypoint sh api -c "find /data/blobs -type f ! -name '.*.tmp' | wc -l" | tr -d ' \r')
 PG=$(dc exec -T db postgres --version | tr -d '\r')
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 PROJECT=$(dc ps --format '{{.Project}}' db)
