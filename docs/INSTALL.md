@@ -382,7 +382,22 @@ never follows redirects, and logs every request.
 | `lab` | gateway, lab, lab-proxy | the practice target (section 19) |
 | `default` | api, web, gateway, caddy (and lab-proxy, when the lab runs) | the way out: the timestamp authority, targets, Caddy; the published ports |
 
-All but `default` are `internal: true` in Docker: nothing on them has a route out.
+All but `default` are `internal: true` in Docker: nothing on them has a route out. They also
+give the Docker host no address (`com.docker.network.bridge.inhibit_ipv4`), so the worker cannot
+reach a service the host runs, and the gateway refuses every address in the subnets of its own
+networks except the lab's: the host is on `default` too (security review GW-8). The gateway's
+proxy, resolver and relay listen on its `internal` address only (`ATTACKLEDGER_GATEWAY_LISTEN`).
+
+- **The host's other addresses.** The gateway cannot know the addresses the host has on other
+  networks (another compose project's bridge, `docker0`, its LAN address), and through its
+  default route it can reach them if an in-scope name resolves to one. If the host runs services
+  on all interfaces, drop the new connections the project's `default` bridge opens to the host
+  itself, for example with
+  `iptables -I INPUT -i br-$(docker network inspect -f '{{printf "%.12s" .Id}}' attackledger_default) -m conntrack --ctstate NEW -j DROP`
+  (with your `COMPOSE_PROJECT_NAME`, and again after the network is recreated). Containers keep
+  their way out (that traffic is forwarded, not delivered to the host), and answers to the
+  host's own connections (published ports on loopback) are not new. This rule is a suggestion,
+  not measured here: check your published ports and the timestamp authority afterwards.
 
 - **Outbound firewall.** Only the gateway needs to reach targets, passive recon sources and
   the Claude API; it is the only container on both `internal` and the outside network
@@ -422,7 +437,8 @@ All but `default` are `internal: true` in Docker: nothing on them has a route ou
   docker compose exec worker python -c "import socket; socket.create_connection(('db', 5432), 5)"
   # socket.gaierror: ... (no network of the worker has the database on it)
   docker compose logs gateway | head -1
-  # gateway ready: proxy 0.0.0.0:8080, dns 53, control 8081, api http://api:8000, claude key not set
+  # gateway ready: proxy, dns and control on 172.x.0.y (ports 8080, 53, 8081), api http://api:8000,
+  #   claude key not set; own networks refused: ...; target networks: <the lab network's subnet>
   ```
 
   After a recon run, its requests are listed per engagement at
@@ -948,6 +964,12 @@ before it takes jobs. Migrations can change the data, so always back up first.
    docker compose exec -T api python -c "from app import migrate; print(migrate.current(), migrate.head())"
    docker compose ps
    ```
+
+**Upgrading past the second security pass (after 0.8.0).** The internal networks give the
+Docker host no address now, so Compose recreates them on the next `docker compose up -d` and
+restarts the containers on them (measured with Compose 5.6 on Docker 29.5; volumes are kept). If
+your Compose refuses because a network's configuration changed, run `docker compose down`
+(without `-v`) and `docker compose up -d` again.
 
 **Upgrading to migration 0022 (organizations, after 0.7.1).** Nothing to do beyond the steps
 above. The migration makes the default organization and puts every existing row in it; the

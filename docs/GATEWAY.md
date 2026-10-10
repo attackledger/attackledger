@@ -38,13 +38,13 @@ gateway is the second (it makes trying useless). The nuclei template classifier 
 
 | Part | Where | What it does |
 |---|---|---|
-| Proxy | `server/app/gateway.py`, port 8080 | HTTP/1.1 forward proxy. Plain `http://` requests in absolute form; `https://` through CONNECT, always TLS-terminated with a deployment CA. Every request is parsed (h11), checked, re-serialized and sent on a new upstream connection |
+| Proxy | `server/app/gateway.py`, port 8080, on the worker's network only (and loopback, for the healthcheck) | HTTP/1.1 forward proxy. Plain `http://` requests in absolute form; `https://` through CONNECT, always TLS-terminated with a deployment CA. Every request is parsed (h11), checked, re-serialized and sent on a new upstream connection |
 | CA | `/data/gateway` (private volume), `/data/gateway-public/ca.pem` | Created on first start (EC P-256, 5 years). Leaf certificates per host, in memory and in a private temporary folder. Only the worker mounts the public certificate |
-| DNS | same process, UDP 53 | Answers A, AAAA and CNAME questions for names in scope of an engagement that has a running job; refuses everything else |
+| DNS | same process, UDP 53, on the worker's network only | Answers A, AAAA and CNAME questions for names in scope of an engagement that has a running job; refuses everything else |
 | Rules | `GET`/`POST /gateway/*` on the API | The gateway asks the API who a job credential belongs to and what that engagement's rules are; it holds no database credentials |
 | Request log | table `gateway_requests` (migration `0019`) | One row per request, probe and DNS question, allowed or refused, with the reason. Read with `GET /engagements/{id}/gateway-log` |
 | Worker client | `server/app/egress.py` | Builds each job's credential, the proxy URL and environment per tool, the urllib opener, the resolver address and the port prober |
-| Control relay | same process, port 8081 | Forwards the worker's `GET`/`POST /worker/*` calls to the API, with only `Authorization` and `Content-Type`; refuses every other path (D-042, `WORKER_API.md`) |
+| Control relay | same process, port 8081, on the worker's network only | Forwards the worker's `GET`/`POST /worker/*` calls to the API, with only `Authorization` and `Content-Type`; refuses every other path (D-042, `WORKER_API.md`) |
 
 ## Decisions
 
@@ -207,15 +207,24 @@ Addresses: the gateway resolves the host itself, refuses loopback, link-local (c
 multicast and unspecified addresses, the cloud metadata services outside link-local
 (`gateway.METADATA_ADDRESSES`: Alibaba Cloud, AWS over IPv6, Azure's WireServer, Oracle Cloud
 Classic) and the deployment's own containers (`ATTACKLEDGER_GATEWAY_DENY_HOSTS`, default
-`gateway.DENY_HOSTS`: `db,api,api-control,api-default,web,worker,gateway,caddy,lab-proxy,...`),
-and connects to the address it checked, so a DNS answer cannot change between check and use.
+`gateway.DENY_HOSTS`: `db,api,api-control,api-default,web,worker,gateway,gateway-internal,gateway-lab,caddy,lab-proxy,...`),
+and every address in the subnets of the gateway's own networks but the lab's (security review
+GW-8), and connects to the address it checked, so a DNS answer cannot change between check and use.
+The Docker host has an address on each bridge network the gateway is on (172.x.0.1 on `default`),
+and the deployment's containers are there too; a real internal target never is, because a
+destination inside the subnet of one of the gateway's interfaces is routed to Docker, not to a
+customer's network. The gateway reads those subnets from `/proc/net/route` and `/proc/net/if_inet6`
+every minute; `ATTACKLEDGER_GATEWAY_TARGET_NETWORKS` names the networks that hold targets
+(`gateway-lab`, the gateway's own alias on the lab network; an address or a subnet works too, for
+a gateway on a customer's LAN). The internal networks give the host no address at all
+(`com.docker.network.bridge.inhibit_ipv4`), so the worker cannot reach the host either.
 Docker answers a service name with its address on one shared network only, so a container the
 gateway shares two networks with has a network alias for each in the compose files, and the
-aliases are in the list (security review GW-6; a test checks the compose files). Private addresses are
-allowed: an internal pentest needs them, and the lab is one.
+aliases are in the list (security review GW-6; a test checks the compose files). Other private addresses
+are allowed: an internal pentest needs them.
 
-Refusals are answered with status 403 (policy), 407 (credential), 429 (rate wait) or 503
-(gateway cannot check or log), the header `X-AttackLedger-Gateway: refused` and the reason as
+Refusals are answered with status 403 (policy), 400 (a request or header it cannot write), 407
+(credential), 429 (rate wait) or 503 (gateway cannot check or log), the header `X-AttackLedger-Gateway: refused` and the reason as
 plain text. When the target itself cannot be reached (does not resolve, connection refused,
 TLS failure, no response), a scanner gets what the target would have given it: a closed
 connection, never a 502 it could record as the target's answer (measured: httpx recorded a
@@ -271,6 +280,14 @@ object) request by request. The gateway then:
   tokens and with an upstream that echoes them in plain text;
 - logs the request with the label (`gateway_requests.account`), never a header value.
 
+**Headers from people and the API.** A test account's headers and an approved request's are
+checked where they come in (`gateway.header_problem`: a header name is a token; a value has no
+control character, nothing outside Latin-1, no space at either end), and again by the gateway: a
+test account with such a header is refused when its headers arrive, before an approval is used;
+an approved request with one is a `refused` row with its approval id; and every request head is
+built by h11 before anything is connected, so a header it would not write is a refusal in the log,
+never a connection ended by an error (security review GW-10). No message repeats a value.
+
 **Approved writes.** A write is sent only with the header `X-AttackLedger-Approval: <id>`, from an
 agent job, to a target, as POST, PUT, PATCH or DELETE. The gateway reads the body (up to 1 MB),
 fetches the account if one is named, then, last, asks the API to use the approval
@@ -303,7 +320,9 @@ covers the whole worker process too.
   an agent run, and only once (decision 9); or a WebSocket or any non-HTTP protocol at all;
 - get a test account's session: the gateway adds it, and scrubs it from the response;
 - reach a host outside its engagement's scope, port 25, or the deployment's own containers
-  through the gateway;
+  through the gateway, or the Docker host on any network the gateway or the worker is on (the
+  worker's network gives the host no address; the gateway refuses its own networks' subnets but
+  the lab's);
 - go over the engagement's rate ceiling, whatever its concurrency (requests queue or are refused);
 - send target traffic without the engagement's identification, or with a forged one;
 - use a finished or cancelled job's credential, or name another engagement in its credential;
@@ -321,6 +340,10 @@ covers the whole worker process too.
 - put data into URLs of GET requests to the passive sources (an exfiltration channel to a
   fixed list of public services) and into DNS questions for in-scope names. Both are logged.
 - resolve in-scope names of another engagement while that engagement has a running job.
+- reach, through the gateway and within its scope, the Docker host's addresses on networks the
+  gateway is not on (another project's bridge, `docker0`, the host's LAN address), if a scope
+  name resolves to one: the gateway cannot know them from its container. A host firewall rule
+  closes it (`docs/INSTALL.md`, section 6).
 - claim queued jobs with the worker token and run them as the worker would, each held to its
   own engagement's rules and its kind's capability, and write wrong content inside the jobs it
   runs (the API cannot know what a target answered; the gateway's log, written by the gateway,
@@ -338,7 +361,12 @@ passive sources and the Claude API.
   `ATTACKLEDGER_GATEWAY_TOKEN` or `ATTACKLEDGER_GATEWAY_TOKEN_FILE`,
   `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`, `ATTACKLEDGER_GATEWAY_SERVICE_HOSTS`,
   `ATTACKLEDGER_GATEWAY_DENY_HOSTS`, `ATTACKLEDGER_GATEWAY_CONTROL_PORT` (default 8081, 0 turns
-  the relay off), `ANTHROPIC_API_KEY`. Worker: `ATTACKLEDGER_GATEWAY` (proxy address),
+  the relay off), `ANTHROPIC_API_KEY`, `ATTACKLEDGER_GATEWAY_LISTEN` (names or addresses to listen
+  on; the compose files set `gateway-internal`, the gateway's alias on the worker's network; a name
+  that is not one of the container's addresses within 30 seconds stops the gateway; empty: every
+  interface) and `ATTACKLEDGER_GATEWAY_TARGET_NETWORKS` (names, addresses or subnets marking the
+  gateway's networks that hold targets; the compose files set `gateway-lab`; empty: none of its own
+  networks is a target). Worker: `ATTACKLEDGER_GATEWAY` (proxy address),
   `ATTACKLEDGER_GATEWAY_DNS`, `ATTACKLEDGER_GATEWAY_CA`, `ATTACKLEDGER_WORKER_API` (default
   `http://gateway:8081`).
 - The request log: `GET /engagements/{id}/gateway-log` (any role on the engagement), with

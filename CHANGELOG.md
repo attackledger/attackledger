@@ -12,9 +12,10 @@ database or the API. Backup, wiping every volume and restoring without `--force`
 evidence chain identical, and the encrypted note stayed readable.
 
 ### Security
-From an internal security review of the whole product, in three parts; each report lists
-what was checked, every finding with its reproduction, and what was found sound
-(`docs/security-review/`). Every fix has a regression test that failed before it.
+From an internal security review of the whole product, in three parts, and a second pass that
+closed the first's recommendations; each report lists what was checked, every finding with its
+reproduction, and what was found sound (`docs/security-review/`). Every fix has a regression test
+that failed before it.
 
 Gateway and worker isolation (`GATEWAY.md`):
 - **An agent job could make Anthropic's servers fetch any URL** (GW-1). The gateway forwarded
@@ -36,6 +37,22 @@ Gateway and worker isolation (`GATEWAY.md`):
   deny list (and the production API trusts `X-Forwarded-For` from any peer).
 - **A job target could carry a second target line to the tools** (GW-7): the URL parser drops
   newlines, the tools do not. Targets with whitespace or control characters are refused.
+- **The Docker host was reachable** (GW-8, second pass). Through the gateway, an in-scope name
+  resolving to the host's bridge address (172.x.0.1) or anywhere in the gateway's own networks
+  reached host services and the stack; and the worker, alone on the internal network, reached a
+  service the host ran there directly (measured on Docker 29.5). The gateway now refuses the
+  subnets of its own interfaces except the lab's (`ATTACKLEDGER_GATEWAY_TARGET_NETWORKS`, set to
+  the gateway's alias `gateway-lab`), and the internal networks give the host no address
+  (`inhibit_ipv4`). Real internal targets stay allowed: those subnets are routed to Docker, never
+  to a customer's network. On upgrade, Compose recreates the internal networks.
+- **The gateway listened on every network it is on** (GW-9, second pass). The proxy, the
+  resolver and the worker's relay now answer on the worker's network only
+  (`ATTACKLEDGER_GATEWAY_LISTEN=gateway-internal`), the proxy also on loopback for the healthcheck.
+- **A header with a line break ended an approved write without a log row** (GW-10, second pass).
+  Test-account and approved-write headers were checked only when the gateway wrote them, after
+  the approval was used. They are now refused where they come in (422 for test accounts, a tool
+  error for the agent, no approval of such a request), and the gateway logs a refusal instead of
+  dropping the connection.
 
 Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers changed the same way:
 - **The verifier missed a voided receipt reported as receipted** (EV-1). Setting a void lane's
@@ -82,8 +99,17 @@ Authentication, authorization and organization isolation (`AUTH.md`):
 - **Separation of duties counts who imported the evidence** (AUTH-3, Low). The person who
   uploaded an export could sign the receipt of a lane holding its entries, if someone else
   mapped them. They are now refused, as the starter of a recon or agent run is.
+- **A non-ASCII bearer token or cookie gave a 500** (AUTH-4, Info, second pass); so did one for the
+  worker or gateway channel, and an operator token with one at `/auth/login`. Tokens are compared
+  as bytes now: 401.
+- **A malformed signed payload gave a 500** (AUTH-7, Info, second pass): a time without a zone, a
+  list as the chain position. A string chain position was even accepted. The field types are
+  checked first: 422.
 
 ### Fixed
+- **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of
+  `gateway.invalid`; a resolver that answered inconsistently made them differ. The tests now
+  answer `.invalid` names themselves (RFC 6761: they never resolve).
 - **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
   pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
   read the caller's stdin, so nothing after the backup ran. Docker calls no longer read

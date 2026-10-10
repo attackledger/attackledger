@@ -1,7 +1,6 @@
 import base64
 import binascii
 import hashlib
-import hmac
 import html
 import io
 import json
@@ -255,7 +254,7 @@ def login(body: LoginIn, request: Request, session: Session = Depends(get_sessio
         if m == "open":
             return {"ok": True, "mode": m}
         raise HTTPException(422, "sign in with your email and password")
-    if not hmac.compare_digest((body.token or "").strip(), tok):
+    if not auth.same_secret((body.token or "").strip(), tok):
         raise HTTPException(401, "wrong token")
     return _session_cookie(JSONResponse({"ok": True, "mode": m}), auth.token_session_value(tok))
 
@@ -616,12 +615,15 @@ def _check_signed(session, lane: Lane, who, body: "CloseIn") -> SigningKey:
     key = _key_of(session, who, body.key_fingerprint)
     try:
         p = json.loads(body.payload or "")
-    except ValueError:
+    except (ValueError, RecursionError):
         raise HTTPException(422, "the signed payload is not valid JSON")
     if isinstance(p, dict) and p.get("format") != signing.PAYLOAD_FORMAT:
         raise HTTPException(422, "the signed payload is in another format; ask for a new payload")
     if not isinstance(p, dict) or signing.payload_for(**_payload_fields(p)) != body.payload:
         raise HTTPException(422, "the signed payload is not in canonical form")
+    problem = _payload_problem(p)
+    if problem:
+        raise HTTPException(422, f"the signed payload is malformed: {problem}")
     eng = lane.asset.engagement
     checks = [
         (p["engagement"]["id"] == eng.id and p["lane"]["id"] == lane.id
@@ -661,6 +663,27 @@ def _check_signed(session, lane: Lane, who, body: "CloseIn") -> SigningKey:
     if not valid:
         raise HTTPException(422, "the signature does not verify with your key")
     return key
+
+
+def _payload_problem(p: dict) -> str | None:
+    """What is wrong with the types of a canonical payload's fields, or None. The checks below
+    compare them with the lane, query the ledger with the chain position and subtract times, so
+    a string id, a list or a time without a zone raised there: a 500 instead of a 422 (security
+    review AUTH-7). The payload has its fields (_payload_fields ran first)."""
+    ids = (p["engagement"]["id"], p["lane"]["id"], p["chain"]["seq"], p["signer"]["id"])
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in ids):
+        return "an id or the chain position is not a whole number"
+    texts = (p["engagement"]["name"], p["lane"]["host"], p["lane"]["role"], p["manifest_sha256"], p["chain"]["head"],
+             p["signer"]["name"], p["key_fingerprint"], p["issued_at"])
+    if not all(isinstance(v, str) for v in texts) or not isinstance(p["signer"]["email"], (str, type(None))):
+        return "a field that holds text holds something else"
+    try:
+        issued = datetime.fromisoformat(p["issued_at"])
+    except ValueError:
+        return "issued_at is not a time"
+    if issued.tzinfo is None:
+        return "issued_at has no time zone"
+    return None
 
 
 def _payload_fields(p: dict) -> dict:

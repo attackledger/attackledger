@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.orm import Session
 
-from . import auditlog, authz, ledger, redact, vault
+from . import auditlog, authz, gateway, ledger, redact, vault
 from .db import get_session
 from .models import Engagement, Job, JobStatus, Lane, User, WriteProposal, iso_utc
 
@@ -85,6 +85,22 @@ def body_sha(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
 
+def unsendable(headers) -> str | None:
+    """Why the gateway could not send these headers as they are (gateway.header_problem), or None.
+    Checked when a write is proposed, approved and used, so a header with a line break never
+    uses up an approval and then ends the gateway's connection without a log row."""
+    for pair in headers or []:
+        try:
+            name, value = pair
+        except (TypeError, ValueError):
+            return "a header is not a name and a value"
+        problem = gateway.header_problem(name, value)
+        if problem:
+            label = name[:60] if isinstance(name, str) and gateway.HEADER_NAME.fullmatch(name) else "(unnamed)"
+            return f"header {label}: {problem}"
+    return None
+
+
 def request_of(p: WriteProposal) -> dict | None:
     """The exact request, opened; None once the engagement's content was deleted."""
     text = vault.open_secret(p.engagement_id, PURPOSE, p.request_enc, p.request_sha256)
@@ -110,6 +126,9 @@ def propose(session, *, eng: Engagement, lane: Lane, job_id: int | None, method:
                          "requests are sent (an owner can allow agents to propose writes)")
     if method not in WRITE_METHODS:
         raise ValueError(f"propose_write is for {', '.join(WRITE_METHODS)}; send {method} with http_request")
+    problem = unsendable(headers)
+    if problem:
+        raise ValueError(f"this request cannot be sent: {problem}")
     if len(body) > MAX_BODY:
         raise ValueError(f"the body is longer than {MAX_BODY} bytes")
     if job_id is not None:
@@ -209,6 +228,11 @@ def consume(session, *, job: Job, proposal_id: int, method: str, url: str, body_
         raise PermissionError("the body is not the approved one")
     if (account or None) != (req.get("account") or None):
         raise PermissionError("the test account is not the approved one")
+    problem = unsendable(req["headers"])
+    if problem:                 # never used: it could not be sent as approved (an approval from before the check)
+        p.status, p.decision_note = "failed", f"the approved request cannot be sent: {problem}"
+        session.commit()
+        raise PermissionError(p.decision_note)
     p.status, p.sent_at = "sent", now()
     auditlog.append(session, actor=GATEWAY_ACTOR, action="write.sent", engagement_id=p.engagement_id,
                     change={"after": _audit_ref(p)})
@@ -337,8 +361,12 @@ def approve(eng_id: int, pid: int, body: DecideIn, request: Request, session: Se
     _check_decider(session, eng, p, who)
     if body.request_sha256 != p.request_sha256:
         raise HTTPException(409, "the request you read is not the one waiting; reload and read it again")
-    if request_of(p) is None:
+    req = request_of(p)
+    if req is None:
         raise HTTPException(409, "the request can no longer be read")
+    problem = unsendable(req["headers"])
+    if problem:
+        raise HTTPException(422, f"this request cannot be sent as it is ({problem}); reject it instead")
     p.decided_by, p.decided_by_name, p.decided_at = who.user_id, _who_label(who), now()
     p.decision_note, p.approved_sha256 = _note(body.note), p.request_sha256
     p.status = "confirming" if p.method == "DELETE" else "approved"

@@ -743,3 +743,65 @@ def test_in_one_process_an_approved_write_is_sent_once_with_the_account(tmp_path
     json.loads(tb.call("write_status", {"proposal_ids": [], "wait_seconds": 0})[0])
     assert len(tr.calls) == 1
     assert "as test account A" in vault.summary_of(s.get(Evidence, p.evidence_id))
+
+
+# ---- security review, second pass: headers the gateway cannot write (docs/security-review/GATEWAY.md) ----
+
+@pytest.mark.parametrize("kind,value,why", [
+    ("headers", "X-Api-Key: k1\rX-Evil: 1", "line break"),        # a lone CR stayed inside the line
+    ("headers", "X-Api-Key: k\x01ey", "control character"),
+    ("cookie", "sid=caf€", "Latin-1"),
+    ("bearer", "tok\x7fen", "control character"),
+])
+def test_gw10_account_material_the_gateway_cannot_send_is_refused_with_422(stack, kind, value, why):
+    """These were stored, and every request as the account then ended the gateway's connection
+    with no row in the request log."""
+    e = stack.engagement(name="lab", redact=True)
+    r = stack.api.post(f"/engagements/{e}/test-accounts", json={"label": "A", "role": "customer", "hosts": [HOST],
+                                                              "kind": kind, "value": value})
+    assert r.status_code == 422 and why in r.json()["detail"] and "cannot be sent" in r.json()["detail"], r.text
+    assert stack.api.get(f"/engagements/{e}/test-accounts").json() == []
+
+
+def test_gw10_the_agent_cannot_propose_or_send_a_header_the_gateway_cannot_write(stack, gw):
+    e, lane, job = setup(stack)
+    tb = tools(gw, job)
+    for h in ({"name": "X-Note", "value": "caf€"}, {"name": "X(y)", "value": "1"}):
+        text_, err = tb.call("propose_write", {"method": "POST", "url": f"http://{HOST}/api/basket", "body": "{}",
+                                               "headers": [h], "as_account": "A", "item_idx": 1, "reason": "r"})
+        assert err and "cannot be sent" in text_, (h, text_)
+        text_, err = tb.call("http_request", {"method": "GET", "url": f"http://{HOST}/", "headers": [h],
+                                              "view": "raw", "as_account": ""})
+        assert err and "cannot be sent" in text_, (h, text_)
+    assert queue(stack, e)["items"] == [] and gw.up.requests == []
+
+
+def test_gw10_an_approval_of_a_header_the_gateway_cannot_write_is_never_used(stack, gw, monkeypatch):
+    """A proposal stored before the check (or by an older version): it cannot be approved, and an
+    approval given before is not used: the write fails with the reason, nothing is sent, and the
+    gateway's refusal is in the request log."""
+    e, lane, job = setup(stack)
+    tb = tools(gw, job)
+    with monkeypatch.context() as m:
+        m.setattr(approvals, "unsendable", lambda headers: None)
+        with stack.Session() as s:
+            p = approvals.propose(s, eng=s.get(Engagement, e), lane=s.get(Lane, lane), job_id=job.id, method="POST",
+                                  url=f"http://{HOST}/api/basket", body=b'{"item": 1}', account=None, item_idx=1,
+                                  headers=[["Content-Type", "application/json"], ["X-Note", "a\x01b"]],
+                                  reason="stored before the check")
+            s.commit()
+            pid = p.id
+    r = approve(stack, e, pid)
+    assert r.status_code == 422 and "X-Note" in r.json()["detail"] and "cannot be sent" in r.json()["detail"]
+    with monkeypatch.context() as m:
+        m.setattr(approvals, "unsendable", lambda headers: None)
+        assert approve(stack, e, pid).json()["status"] == "approved"
+    w = status(tb)[pid]                       # the run sends it through the gateway, which asks to use it
+    assert w["status"] == "failed" and "X-Note" in w["note"] and "cannot be sent" in w["note"], w
+    assert gw.up.requests == []
+    gw.flush()
+    with stack.Session() as s:
+        assert s.get(WriteProposal, pid).sent_at is None
+        rows = s.scalars(select(GatewayRequest).where(GatewayRequest.approval_id == pid)).all()
+        assert [(g.method, g.verdict, g.status) for g in rows] == [("POST", "refused", 403)]
+    assert "write.sent" not in actions(stack, e)

@@ -25,6 +25,21 @@ is buggy or malicious, and targets are untrusted.
 All tests are in `server/tests/test_security_gateway.py`. Each one failed before its fix and
 passes after it. Test suite: 758 passed and 1 skipped before; 779 passed and 1 skipped after.
 
+A second pass (branch `sec2-hardening`, from `c7a0c25`) closed the recommendations listed under
+"Not changed; worth knowing", and found one more way out to the Docker host while measuring the
+first (GW-8):
+
+| ID | Severity | Finding | Fix | Regression tests |
+|---|---|---|---|---|
+| GW-8 | Medium | The Docker host was reachable: through the gateway at its address on the gateway's networks, and from the worker directly on the internal network | `a86247d` | `test_gw8_*` (4 tests, 6 cases) |
+| GW-9 | Low | The proxy, the resolver and the control relay listened on every network of the gateway | `a86247d` | `test_gw9_*`, `test_gw8_gw9_*` (3 tests, 5 cases) |
+| GW-10 | Low | A test account's or an approved write's header with CR, LF or another character the gateway cannot write ended the connection after the approval was used, with no log row | `52606b4` | `test_gw10_*` (7 tests, 13 cases) |
+| (test) | none | A flaky worker test depended on DNS answers for `gateway.invalid` | `bccdc48` | `test_worker.py` (2 tests, made deterministic) |
+
+GW-8 to GW-10 tests are in `test_security_gateway.py`, the end-to-end ones for GW-10 (real API,
+real gateway) in `test_test_accounts.py`. Test suite: 790 passed and 1 skipped before; 816 passed
+and 1 skipped after, three runs in a row.
+
 ## Findings
 
 ### GW-1 (High): Claude API calls could make Anthropic fetch for the worker
@@ -189,6 +204,141 @@ return, tab, space and NUL inside a URL target were allowed before the fix.
 claim then logs it as skipped, like any target outside scope). Targets are already stripped at
 both ends before this check (`normalize_targets`).
 
+## Second pass: the recommendations, closed
+
+### GW-8 (Medium): the Docker host was reachable through the gateway, and from the worker
+
+**Where.** `Gateway.resolve`, the networks in `docker-compose.yml`.
+
+**What.** Private addresses are allowed (internal pentests need them), so an in-scope name that
+resolved to the Docker host's address on one of the gateway's networks (`172.x.0.1`), or to
+anything else in those subnets, was connected to. Measured on Docker 29.5.2 (compose project
+`al-sec2`, no published ports, torn down): the host holds the first address of *every* bridge
+network, internal ones included, and a listener the host ran on those addresses answered:
+
+- through the gateway's own sockets, on the default network's, the internal network's and the
+  lab network's host address (172.24.0.1, 172.25.0.1, 172.21.0.1 in that run), and on another
+  compose project's bridge (172.20.0.1), which the gateway reaches over its default route;
+- **from the worker itself, without the gateway**, on the internal network's host address
+  (172.25.0.1). The worker has no route out, but it had the host: any service the host runs on
+  all interfaces (SSH, a database, a metrics agent) was one connection away from a compromised
+  tool, with nothing in the request log.
+
+**Reproduction.** `test_gw8_the_gateways_own_networks_are_refused_except_the_labs`: names that
+resolve to the host's bridge address, to a container's address and to an IPv6 address in the
+gateway's networks were allowed before the fix; `test_gw8_the_docker_host_has_no_address_on_the_worker_and_gateway_internal_networks`
+(both compose files and the benchmark override) failed on `internal`.
+
+**Fix.**
+
+- The gateway reads the subnets of its interfaces from `/proc/net/route` (directly connected
+  routes, not the default route) and `/proc/net/if_inet6` (global prefixes), standard library
+  only (`gateway.interface_networks`, refreshed every minute), and refuses every address in
+  them (`Gateway.own_networks`). The exception is a network that holds targets:
+  `ATTACKLEDGER_GATEWAY_TARGET_NETWORKS` names it, in the compose files by `gateway-lab`, the
+  gateway's own alias on the lab network (Docker answers an alias with the address on that
+  network). An address or a subnet works too, for a deployment whose gateway sits on a
+  customer's LAN. A name that does not resolve marks nothing, so its network stays refused
+  (fail closed). `gateway-lab` is in `DENY_HOSTS`, so the gateway's own lab address is refused.
+- Real internal targets stay allowed: a destination inside the subnet of one of the gateway's
+  interfaces is routed to that Docker network, never to a customer's network that happens to
+  use the same range, so refusing it takes nothing away. 10.x, 172.16/12 and 192.168/16
+  addresses outside those subnets are allowed as before (`bank.example.com`, `corp.example.com`
+  in the test).
+- The four internal networks (`internal`, `control`, `database`, `lab`) set
+  `com.docker.network.bridge.inhibit_ipv4`: the host has no address on them. Measured after the
+  change: the host's address list no longer holds them, the host cannot even bind one, the
+  worker reaches nothing but the gateway, and lab recon through the gateway still works (a probe
+  job: `GET http://shop.lab.test/` 200, DNS answered), while a job against `172.25.0.1` (the
+  default network's host address) is refused with "on the gateway's own network".
+  `test_gw8_the_gateway_reads_its_networks_from_proc` covers the parsing (default route,
+  routed and down routes, loopback and link-local left out).
+
+**Left open.** The host is still reachable through the gateway at addresses on networks the
+gateway is not on: another compose project's bridge, `docker0`, the host's LAN address. The
+gateway cannot know them from inside its container, and a customer's network may well be the
+host's LAN. Closing that needs a rule on the host (drop the new connections the project's
+default bridge opens to the host itself, `INPUT -i br-<id> --ctstate NEW`), which
+`docs/INSTALL.md` section 6 now suggests; that rule was not measured in this pass.
+
+### GW-9 (Low): the gateway listened on every network it is on
+
+**Where.** `Gateway.serve`, `main`.
+
+**What.** The proxy (8080), the resolver (53) and the control relay (8081) were bound to
+`0.0.0.0`, so they also answered on the `control`, `default` and `lab` networks. Each still needs
+a job credential or a worker token, so this was defence in depth only.
+
+**Fix.** `ATTACKLEDGER_GATEWAY_LISTEN=gateway-internal` (both compose files, through
+`docker-compose.yml`; the benchmark override keeps the alias): `gateway.listen_addresses`
+resolves the gateway's alias on the worker's network, keeps only this container's own
+addresses (a name another container shares is skipped), and `Gateway.start` binds the three
+there. The proxy is bound to loopback too, so the healthchecks (`127.0.0.1:8080`) keep working.
+Measured in `al-sec2`: the gateway listened on its internal address only; from the API's
+container its control and default addresses refused 8080 and 8081; the worker reached the
+proxy (407 without a credential), the resolver (REFUSED for an unknown name) and the relay
+(it claimed jobs). Empty, the setting keeps the old behaviour (`0.0.0.0`).
+
+Why by address, and what makes it fragile: Docker gives no interface names in a container, so
+the address is the only handle. It is read once, at start: Docker keeps a container's address
+for as long as it is attached, and a restarted gateway reads it again. A gateway disconnected
+and reconnected to the network (`docker network connect`) by hand would keep listening on the
+old address until it is restarted. Docker's resolver may not answer the alias in the first
+instant, so the gateway retries for 30 seconds, then exits with the reason instead of falling
+back to every interface; the restart policy starts it again. The worker and its configuration
+did not change: it resolves `gateway` on its only network, which gives this same address
+(`test_gw8_gw9_the_compose_files_name_the_lab_network_and_the_workers_network` checks that
+both compose files and the benchmark override agree). `test_gw9_the_relay_the_proxy_and_the_resolver_answer_on_the_listen_address_only`
+binds to 127.0.0.2 and finds every part refusing on 127.0.0.3.
+
+### GW-10 (Low): a header the gateway cannot write ended the connection
+
+**Where.** `testaccounts.material`, `agenttools.check_headers`, `approvals.propose`, `approve`,
+`consume`; `Policy.headers`, `Policy.inject_credentials`, `Gateway.account_for`, `_forward`.
+
+**What.** An approved write's headers (D-041) and a test account's (D-040) come from people and
+the API, and were checked by h11 only when the gateway wrote the request. Measured before the
+fix: a test account pasted as header lines kept a lone CR inside a line, and a control character
+or a non-Latin-1 cookie was stored; an approved request with a CR, LF, NUL or a character outside
+Latin-1 in a header was used (`write.sent` in the audit log) and then the gateway's connection
+ended (`UnicodeEncodeError`, or h11's `LocalProtocolError`) with no row in the request log, so
+the approval was spent and nothing said why. An agent could propose a header name that is not a
+token (`X(y)`) or a value with `€`.
+
+**Reproduction.** `test_gw10_an_approved_header_the_gateway_cannot_write_is_a_refused_row` (four
+values) and `test_gw10_a_test_accounts_header_the_gateway_cannot_write_is_refused_before_the_approval`
+got a closed connection (status 0) and no log row; `test_gw10_account_material_the_gateway_cannot_send_is_refused_with_422`
+(four materials) got 201; `test_gw10_the_agent_cannot_propose_or_send_a_header_the_gateway_cannot_write`
+got a stored proposal; `test_gw10_an_approval_of_a_header_the_gateway_cannot_write_is_never_used`
+could approve it.
+
+**Fix.** One rule, `gateway.header_problem`: a header name is a token, a value has no control
+character (a tab inside aside), nothing outside Latin-1 and no space at either end. It is stricter
+than h11, never looser (`test_gw10_what_the_gateway_accepts_h11_can_write` tries every character
+up to U+017F). Where the values come in: test accounts answer 422 with the header's name and the
+reason; the agent's `http_request` and `propose_write` get a tool error; a stored proposal with
+such a header cannot be approved (422, "reject it instead"), and an approval given before it is
+not used: `consume` marks the write failed with the reason, before `write.sent`. In the gateway, a
+test account's headers are checked when they arrive (403, before any approval is used), an
+approved request's when it is built (400, a `refused` row with the approval id), and the whole
+head is built by h11 before anything is connected, so whatever still fails is a `refused` row,
+never a connection ended by an error. No message or log row repeats a value (it may be a session).
+The engagement's research header was already one line (`main.ScopeIn`); one that h11 would still
+refuse (a vertical tab) is now a refusal in the log too
+(`test_gw10_an_identification_h11_would_not_write_is_a_refused_row`, added with this report).
+
+### The flaky worker test
+
+`test_worker.py::test_tool_runs_get_the_gateway_and_never_log_the_secret_or_the_tokens` built the
+tool's environment and its expected proxy URL with two separate lookups of `gateway.invalid`
+(`Egress._proxy_address`). A resolver that answers that name inconsistently (a search domain that
+answers some of the time, a timeout) made the two differ. Reproduced with an injected resolver
+that alternates: it failed every time, and so did `test_every_tool_is_pointed_at_the_gateway`.
+`conftest.py` now answers names under `.invalid` itself, at once, as RFC 6761 says they resolve:
+never (the suite also stops sending those questions to the machine's resolver). The test spells
+out the expected URL (this job's credential, the configured address) instead of recomputing it,
+and checks `HTTP_PROXY` and `ALL_PROXY` too.
+
 ## What was checked and found sound
 
 Files read in full: `server/app/gateway.py`, `gatewayapi.py`, `egress.py`, `scope.py`, `urls.py`,
@@ -279,25 +429,15 @@ gateway proxy, so a classifier miss would still meet the gateway's method and sc
 
 ## Not changed; worth knowing
 
-- **The Docker host is reachable.** Private addresses are allowed (internal pentests need them),
-  so the host's address on a Docker bridge (for example 172.x.0.1) is reachable through an
-  in-scope name that resolves to it, and with it any host service listening on all interfaces.
-  A target is never on an address of the gateway's own Docker networks except the lab's, so
-  refusing those subnets (but the lab network's) would close this; it needs the gateway to know
-  which network is the lab, so it was left as a recommendation.
-- **The gateway listens on every network it is on.** The proxy, the resolver and the control
-  relay also answer on the `default` and `lab` networks. Each still needs a job credential or a
-  worker token, so this is defence in depth only: binding the relay to the internal network's
-  address would be tidier.
-- **Headers with CR or LF from the API.** An approved write's headers or a test account's headers
-  are validated by h11 only when the request is written. A value with CR or LF would end the
-  connection after the approval was used, without a log row. These values come from people and
-  the API, not the worker.
+- ~~**The Docker host is reachable.**~~ Closed for the gateway's own networks and the worker:
+  GW-8. Still open: the host's addresses on networks the gateway is not on (see GW-8, "Left open").
+- ~~**The gateway listens on every network it is on.**~~ Closed: GW-9.
+- ~~**Headers with CR or LF from the API.**~~ Closed: GW-10.
 - **Documented limits stay:** DNS answers in-scope names of any engagement with a running job;
   the gateway does not verify target certificates; a compromised worker can send within its
   engagement's whole scope, not only the agent lane's host; GET URLs to passive sources are a
   fixed exfiltration channel.
-- **A flaky test, not security-related:** `test_worker.py::test_tool_runs_get_the_gateway_and_never_log_the_secret_or_the_tokens`
-  failed once in the baseline run and passed on its own and in every later run. It resolves
-  `gateway.invalid` through the container's resolver in `Egress._proxy_address`, so its outcome
-  can depend on DNS timing.
+- ~~**A flaky test.**~~ Fixed: see "The flaky worker test" above.
+- **IPv6.** The compose networks have no IPv6. If an operator enables it, `inhibit_ipv4` does not
+  keep the host's IPv6 address off the internal networks; the gateway still refuses its own IPv6
+  prefixes (GW-8), but the worker could reach the host's IPv6 address directly.

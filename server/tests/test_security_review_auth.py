@@ -150,3 +150,78 @@ def test_auth3_whoever_imported_a_lanes_evidence_cannot_sign_it(client):  # noqa
     sign_in(client, "owner@lab.test")                      # someone who did neither signs it
     r = client.post(f"/lanes/{athn['id']}/close", json={"reviewed": True})
     assert r.status_code == 200, r.text
+
+
+# ---- AUTH-4: a non-ASCII bearer token or cookie gave a 500 ---------------------------------------
+
+def test_auth4_non_ascii_tokens_and_cookies_are_refused_with_401(api, monkeypatch):
+    """hmac.compare_digest raises TypeError on a str with a non-ASCII character. Starlette decodes
+    headers as Latin-1, so a request could make the API answer 500 instead of 401."""
+    monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", "operator-token-for-tests-0001")
+    monkeypatch.setenv("ATTACKLEDGER_WORKER_TOKEN", "worker-token-for-tests-00001")
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", "gateway-token-for-tests-0001")
+    other = b"caf\xc3\xa9-\xe2\x82\xac"                               # UTF-8 bytes; read back as Latin-1
+    for path, headers in (("/engagements", {"authorization": b"Bearer " + other}),
+                          ("/engagements", {"cookie": b"al_session=" + other}),
+                          ("/worker/ping", {"authorization": b"Bearer " + other}),
+                          ("/gateway/dns-scopes", {"authorization": b"Bearer " + other})):
+        r = api.get(path, headers=headers)
+        assert r.status_code == 401, (path, r.status_code, r.text)
+    r = api.post("/auth/login", json={"token": "café €"})
+    assert r.status_code == 401
+    # Control: the right token still opens them.
+    assert api.get("/engagements", headers={"authorization": "Bearer operator-token-for-tests-0001"}).status_code == 200
+
+
+# ---- AUTH-7: a malformed signed payload gave a 500 -----------------------------------------------
+
+def test_auth7_a_payload_with_fields_of_the_wrong_type_is_refused_with_422(monkeypatch):
+    """A payload in canonical form whose fields have other types (a time without a zone, a list for
+    the chain position, a string id) raised inside the checks."""
+    import json as _json
+
+    import test_signing as ts
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app import db
+    from app.main import app
+    monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
+    auth._failures.clear()
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    db.Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
+
+    def _session():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+    app.dependency_overrides[db.get_session] = _session
+    try:
+        with TestClient(app, raise_server_exceptions=False) as c:
+            e, lane, ids = ts.setup(c)
+            ts.sign_in(c, "rita@lab.test")
+            k = ts.register(c)
+
+            def changed(**change):
+                def mutate(payload):
+                    p = _json.loads(payload)
+                    for path, value in change.items():
+                        node = p
+                        *parents, last = path.split("__")
+                        for n in parents:
+                            node = node[n]
+                        node[last] = value
+                    return _json.dumps(p, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                return mutate
+            for change in ({"issued_at": "2026-10-10T10:00:00"}, {"chain__seq": [1]}, {"chain__seq": "1"},
+                           {"lane__id": str(lane)}, {"signer__name": 7}, {"issued_at": "yesterday"}):
+                r = ts.signed_close(c, lane, k, changed(**change))
+                assert r.status_code == 422 and "malformed" in r.json()["detail"], (change, r.status_code, r.text)
+            assert ts.signed_close(c, lane, k).status_code == 200             # control: the real payload signs
+    finally:
+        app.dependency_overrides.clear()

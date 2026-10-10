@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 
-from . import auditlog, authz, ledger, scope, vault
+from . import auditlog, authz, gateway, ledger, scope, vault
 from .db import get_session
 from .models import Engagement, TestAccount, User, iso_utc
 
@@ -59,6 +59,15 @@ def _bad(value: str) -> bool:
 def material(kind: str, value: str, eng: Engagement) -> list[list[str]]:
     """The headers an account sets, as [name, value] pairs, from what a person pasted.
     Raises ValueError with a sentence for the person."""
+    pairs = _material(kind, value, eng)
+    for name, v in pairs:       # what the gateway can send (a CR left in a line, a control character, ...)
+        problem = gateway.header_problem(name, v)
+        if problem:
+            raise ValueError(f"the {name} header cannot be sent: {problem}")
+    return pairs
+
+
+def _material(kind: str, value: str, eng: Engagement) -> list[list[str]]:
     value = (value or "").strip()
     if kind not in KINDS:
         raise ValueError(f"kind must be one of: {', '.join(KINDS)}")

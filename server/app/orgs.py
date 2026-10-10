@@ -43,7 +43,9 @@ def _by_token(session, column, token: str) -> int | None:
 def channel_org(session, kind: str, deployment_token: str | None, presented: str) -> int | None:
     """The organization a worker or gateway token opens (kind "worker" or "gateway"), or None.
     The deployment's token opens the default organization; an issued one, its own."""
-    if deployment_token and presented and hmac.compare_digest(presented, deployment_token):
+    # As bytes: compare_digest raises on a str with a non-ASCII character (security review AUTH-4).
+    if deployment_token and presented and hmac.compare_digest(presented.encode("utf-8", "surrogatepass"),
+                                                              deployment_token.encode("utf-8", "surrogatepass")):
         return orgscope.default_id(session)
     column = Organization.worker_token_sha256 if kind == "worker" else Organization.gateway_token_sha256
     return _by_token(session, column, presented)

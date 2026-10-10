@@ -104,6 +104,14 @@ def from_another_site(request: Request) -> bool:
     return not theirs or theirs != ours      # "null" (a sandboxed page) has no host: refused
 
 
+def same_secret(presented: str, expected: str) -> bool:
+    """A presented token or cookie against the expected one, in constant time, as UTF-8 bytes.
+    hmac.compare_digest raises TypeError on a str with a non-ASCII character (Starlette decodes
+    headers as Latin-1; a JSON body may hold anything), which was a 500 instead of a 401
+    (security review AUTH-4)."""
+    return hmac.compare_digest(presented.encode("utf-8", "surrogatepass"), expected.encode("utf-8", "surrogatepass"))
+
+
 def token_session_value(tok: str) -> str:
     return hmac.new(tok.encode(), b"attackledger-session-v1", hashlib.sha256).hexdigest()
 
@@ -232,8 +240,8 @@ def _principal(session, request: Request) -> Principal | None:
     tok = token()
     header = request.headers.get("authorization", "")
     cookie = request.cookies.get(COOKIE, "")
-    if tok and ((header.lower().startswith("bearer ") and hmac.compare_digest(header[7:].strip(), tok))
-                or (cookie and hmac.compare_digest(cookie, token_session_value(tok)))):
+    if tok and ((header.lower().startswith("bearer ") and same_secret(header[7:].strip(), tok))
+                or (cookie and same_secret(cookie, token_session_value(tok)))):
         # The deployment's token: an owner of the default organization, as before there were others.
         return Principal(kind="token", organization_id=orgscope.default_id(session), name="operator token",
                          is_owner=True)
