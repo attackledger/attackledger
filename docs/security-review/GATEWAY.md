@@ -427,6 +427,58 @@ URL is checked against the job's own engagement's current scope; the worker cann
 engagement or organization (both come from the job); agent writes go through `agenttools.Toolbox`
 with the lane's gates and `AGENT_CALLS`; the token stops working at `finish`.
 
+A third pass (branch `sec4-resilience`, from `ce5042e`, 2026-10-11) looked at what keeps the
+request log, and so the traffic, moving when a row is bad, and at the suite's flaky test:
+
+| ID | Severity | Finding | Fix | Regression tests |
+|---|---|---|---|---|
+| GW-11 | Low | One request log row the API refused (a test-account label over 16 characters, from any tool) stopped the log for good, and with 5,000 rows waiting all traffic of every engagement | `b01e6b1` | `test_gateway_log.py` (10 tests, 19 cases) |
+| (data) | Info | Byte counts and durations were 32-bit on Postgres: a response past 2 GiB was recorded as 2,147,483,647 bytes | `b01e6b1` (migration 0025) | `test_migrations.py`, `test_postgres_portability.py` |
+| (test) | none | `test_worker.py`'s gateway test was still flaky: a broken pipe to a tool that had already ended, in the worker | `39a8d4a` | `test_a_tool_that_ends_without_reading_its_input_is_a_failed_tool_not_a_crash` |
+
+### GW-11 (Low): one row the API refused stopped the log, then the traffic
+
+The gateway keeps unwritten log rows and refuses every request once 5,000 wait (fail closed,
+decision 8). `POST /gateway/log` validated the batch as a whole, so one row it refused (422) made
+it refuse all of them, and the gateway sent the same batch again every two seconds, for good.
+The earlier Postgres fix had the API keep every *value* it could (NUL, counts, ids) but left the
+pattern: a row the model refuses still refused the batch. One was reachable: the gateway logged
+an `X-AttackLedger-As` label as the tool sent it, the column holds 16 characters, and the label is
+logged for refused requests too, so any tool in the worker could stop the log of every engagement
+with one request, and then, 5,000 requests later, all traffic: an availability attack on the
+whole deployment from inside the worker. Two more rows broke the batch without being reachable from
+the current gateway, which writes URLs as Latin-1 and times as now: a lone surrogate (JSON can
+spell one; the API answered 422, and then failed with a 500 writing that answer) and a time with no
+UTC form (`0001-01-01T00:00:00+01:00`, an exception).
+
+**Fix.** The label is logged as the column holds it. The API checks each row on its own, writes
+every row it can, and answers the others by index; in each one's place it stores a placeholder
+(verdict `unlogged`, no URL, the fields that are valid, and why), so the log counts the traffic it
+could not record. The gateway sets those rows aside in a bounded quarantine file in its private
+volume (the row as sent, so nothing the log would not hold); a batch refused whole with 400, 413 or
+422 is halved until the row is alone, and that row is set aside only once the API has taken its
+placeholder by itself (otherwise it is the API, not the row). No answer, a 5xx, 401, 403, 404 or 429
+keep every row queued: the gateway still fails closed. Lone surrogates are kept as U+FFFD.
+`docs/GATEWAY.md`, decision 10.
+
+**What stays.** A row the database itself refuses after the API's checks is a 500 for the batch and
+stops the log as before: that is the fail-closed path, and the API's checks cover every column's
+type and length. The quarantine file is not blanked when an engagement's content is deleted.
+
+### The flaky worker test, again
+
+`test_tool_runs_get_the_gateway_and_never_log_the_secret_or_the_tokens` was made deterministic once
+(above: two DNS lookups of `gateway.invalid`), and failed again: 0 of 6 full runs one after another,
+then 4 of 9 with three suites running at once, every time with `BrokenPipeError` in
+`worker.Run.tool_lines`. The worker writes a tool's input to its stdin and closes it; `env`, the
+tool the test runs, reads none and had sometimes exited before the close flushed the buffer. That
+is a worker bug, not only a test one: a real tool that exits at once (a refused flag, a missing
+file) ended the job with a `BrokenPipeError` instead of the tool's exit code and stderr. A broken
+pipe to a tool is now ignored, and the outcome is the tool's. The new test gives a tool that quits
+more input than a pipe holds, so the write always meets a closed pipe: it failed every time before
+the fix. No other test failed in those 15 SQLite runs or in a Postgres run (`tools/test_postgres.sh`)
+before the fix; after it, 9 more SQLite runs under load and two Postgres runs passed.
+
 **Job arguments and nuclei** (`nucleisafe.classify`, `worker.nuclei_cmd`, `worker.commands`):
 tools run from argument lists, never a shell. The arguments a job influences are its targets
 (fed on stdin, now one line each) and nuclei's stack tags, which are reduced to `[a-z0-9-]`. The
