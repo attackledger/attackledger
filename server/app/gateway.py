@@ -137,6 +137,13 @@ SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"
 DENY_HOSTS = ("db", "api", "web", "worker", "gateway")
 # Removed from an agent's Claude API call; the gateway's own key goes in their place.
 SERVICE_KEY_HEADERS = frozenset({"x-api-key", "authorization"})
+# What an agent run's Claude API call may carry (agentloop.request_params, and what count_tokens
+# takes). Anything else is refused: server tools (web fetch, web search, code execution), the MCP
+# connector (mcp_servers) and URL sources in content make Anthropic's servers reach hosts the
+# gateway never checks, so they would be a way out of the scope (security review GW-1).
+SERVICE_BODY_KEYS = frozenset({"model", "max_tokens", "system", "tools", "messages", "thinking", "output_config",
+                               "cache_control", "fallbacks", "tool_choice", "stream", "metadata", "temperature",
+                               "top_p", "top_k", "stop_sequences", "service_tier"})
 # The worker's channel (D-042): what the control port relays to the API, and nothing else.
 CONTROL_PATH = re.compile(r"^/worker/[a-z0-9/_-]{0,200}$")
 CONTROL_METHODS = frozenset({"GET", "POST"})
@@ -537,6 +544,44 @@ class Policy:
                 raise Refused(403, f"_method={v[:20]} is refused")
         if kind == "target" and not rules.identification():
             raise Refused(403, "the engagement has no research header or user agent; nothing is sent to targets")
+
+    @staticmethod
+    def check_service_body(body: bytes) -> None:
+        """A Claude API call is sent only if Anthropic will not reach anything on its behalf: no
+        server tools, no MCP servers, no URL sources (SERVICE_BODY_KEYS). The body is forwarded as
+        received, so it is parsed strictly: a key given twice is refused, as another parser might
+        keep the other one."""
+        def unique(pairs):
+            out = {}
+            for k, v in pairs:
+                if k in out:
+                    raise ValueError(f"the key {k[:40]} is given twice")
+                out[k] = v
+            return out
+        try:
+            doc = json.loads(body, object_pairs_hook=unique)
+        except (ValueError, RecursionError) as e:
+            raise Refused(403, f"Claude API call not sent: the body is not one JSON object ({str(e)[:80]})")
+        if not isinstance(doc, dict):
+            raise Refused(403, "Claude API call not sent: the body is not one JSON object")
+        extra = sorted(set(doc) - SERVICE_BODY_KEYS)
+        if extra:
+            raise Refused(403, f"Claude API call not sent: {', '.join(extra)[:100]} is not what an agent run sends")
+        tools = doc.get("tools") or []
+        if not isinstance(tools, list) or any(not isinstance(t, dict) or t.get("type", "custom") != "custom"
+                                              for t in tools):
+            raise Refused(403, "Claude API call not sent: only the agent's own tools are allowed, no server tools "
+                               "(they would reach hosts the gateway does not check)")
+        stack = [doc.get("messages"), doc.get("system")]
+        while stack:
+            v = stack.pop()
+            if isinstance(v, list):
+                stack += v
+            elif isinstance(v, dict):
+                if v.get("type") == "url":
+                    raise Refused(403, "Claude API call not sent: a URL source would be fetched by Anthropic, "
+                                       "not through the gateway")
+                stack += v.values()
 
     def headers(self, rules: Rules, kind: str, headers, host_header: str, *, account: dict | None = None,
                 approved: list | None = None) -> list[tuple[bytes, bytes]]:
@@ -958,6 +1003,7 @@ class Gateway:
             body = b""
             if kind == "service":
                 body = await _read_body(conn, reader, MAX_SERVICE_BODY)
+                self.policy.check_service_body(body)
             elif approval_id is not None:
                 body = await _read_body(conn, reader, MAX_WRITE_BODY)
             else:
