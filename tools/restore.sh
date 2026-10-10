@@ -17,6 +17,10 @@
 #      backup's, and starts the stack again. The API then migrates the restored database
 #      forward to this version, as on any upgrade.
 #
+# A backup made before an engagement's content was deleted holds that content again once
+# restored, and the engagement shows it as never deleted: delete it again afterwards
+# (docs/ENCRYPTION.md, "Retention and deletion").
+#
 # The encryption master key is not in the backup; put the original one in place before
 # restoring (docs/INSTALL.md, sections 7 and 14). The script works on the install folder
 # it lives in (or ATTACKLEDGER_DIR). Compatible with bash 3.2 and later. Stops at the first error.

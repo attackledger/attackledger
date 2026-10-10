@@ -183,6 +183,12 @@ A maintenance thread in the API (`workerapi.maintenance`, started by the API's l
   worker starts") is gone: it would let one worker's token end other workers' jobs. A restarted
   worker's jobs are marked within two minutes instead.
 
+Deleting an engagement's content, by an owner or by retention, cancels its queued and running
+jobs: the worker sees `cancelled` at its next heartbeat and stops the tool, and the gateway refuses
+the job's traffic at once. What such a run reports afterwards (`/log` lines, the error and the
+agent's summary in `/finish`) is answered but not kept, and its exchange ids are deleted with the
+content (`docs/security-review/RETENTION.md`).
+
 `ATTACKLEDGER_MAINTENANCE_SECONDS=0` turns the thread off (tests do; a second API process
 should too, although both passes are safe to run twice).
 

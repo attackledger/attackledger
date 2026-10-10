@@ -106,6 +106,31 @@ Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers ch
   the demo were rebuilt in the current format (manifest v2, payload v4, sealed).
 - **A verified HTML report did not show what was verified** (O-3). Both verifiers now list what
   its embedded JSON says (engagement, scope, lanes, signers, dates, counts) to compare with the page.
+- **Deleting an engagement's content now reaches every place it is kept** (RET-1 to RET-7, an
+  audit of every store, `docs/security-review/RETENTION.md`). A new test seeds a unique string into
+  every store, deletes the content and searches every table row, the SQLite file's bytes, the blob
+  store and the gateway's quarantine file; a second engagement's string is the control. Left behind
+  before, now removed:
+  - the gateway's quarantine file kept the deleted engagement's request log rows (RET-1). The
+    gateway now asks the API at start and every minute (`POST /gateway/content-deleted`) and
+    removes their rows;
+  - a run going on at the deletion kept running and writing: log lines, its error, the agent's
+    summary; its exchanges' URLs stayed until it ended (RET-2). Deletion cancels the engagement's
+    queued and running jobs, deletes their exchanges, and keeps nothing they report afterwards;
+  - job targets kept the URLs recon found, with paths and query strings, and agent runs their
+    outcome text (RET-3). Targets are reduced to their hosts, the text is removed;
+  - the request log's reasons quote the request (an approved write's URL, unredacted) and the
+    target's malformed reply (RET-4). They are blanked with the URLs, also for rows that arrive
+    later, and the gateway redacts them as it redacts URLs;
+  - on a SQLite built without `SECURE_DELETE` (the one in macOS's Python), deleted rows stayed
+    readable in the database file (RET-5). Every SQLite connection now turns `secure_delete` on;
+  - plaintext blobs from before encryption that no evidence cites (a v0.6 agent run stored every
+    exchange) were never removed (RET-6). `encrypt-existing` removes them, `status` counts them;
+  - the docs said that rotating the master key makes a deletion final in old backups (RET-7). It
+    does for their encrypted half only: the database dump in a backup is plaintext. The install
+    guide, `ENCRYPTION.md`, `tools/backup.sh`, `tools/restore.sh` and the deletion screen now say
+    that deletion does not reach backups made before it, and that restoring one brings the content
+    back.
 
 Authentication, authorization and organization isolation (`AUTH.md`):
 - **A cited hash opened another engagement's blob from before encryption** (AUTH-1, Low).
@@ -278,6 +303,15 @@ Chrome 87, Firefox 78, Safari 14).
   finished first was timing: with three suites at once it failed in 4 of 9 runs. A broken pipe to a
   tool is now the tool's outcome; a new test sends more input than a pipe holds to a tool that
   quits, so it fails every time without the fix.
+- **A tool that answers as it reads could hang its job.** The worker wrote all of a tool's input
+  before reading any of its output, so a tool that writes while it reads (`dnsx`, `httpx` and
+  `katana` answer target by target) filled its output pipe, about 64 KiB, and waited for the worker,
+  which still waited to finish writing. The time limit's timer started only after the write, so the
+  job stayed running until someone cancelled it. stderr had the same wait: read only after stdout
+  ended, more than a pipe of warnings before the output stopped the tool until the time limit. The
+  input is now written and stderr read by threads while stdout is read, the timer starts with the
+  tool, and a broken pipe is still the tool's outcome. Two new tests (`cat` echoing 50,000 lines,
+  a tool writing 460 KB of warnings first) hung or timed out before the fix.
 - **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
   pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
   read the caller's stdin, so nothing after the backup ran. Docker calls no longer read

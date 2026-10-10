@@ -464,6 +464,7 @@ keep every row queued: the gateway still fails closed. Lone surrogates are kept 
 **What stays.** A row the database itself refuses after the API's checks is a 500 for the batch and
 stops the log as before: that is the fail-closed path, and the API's checks cover every column's
 type and length. The quarantine file is not blanked when an engagement's content is deleted.
+(Fixed 2026-10-11: the gateway purges a deleted engagement's rows, `RETENTION.md`, RET-1.)
 
 ### The flaky worker test, again
 

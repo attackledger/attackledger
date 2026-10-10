@@ -60,7 +60,7 @@ def test_auth1_citing_a_hash_does_not_open_another_engagements_plaintext_blob(ap
 
     with api.Session() as s:                                           # encrypting copies it to Y only
         res = vault.encrypt_existing(s)
-    assert res == {"encrypted": 1, "already_encrypted": 0, "plaintext_removed": 1}
+    assert res == {"encrypted": 1, "already_encrypted": 0, "plaintext_removed": 1, "uncited_removed": 0}
     assert blobs.get(sha(secret), engagement_id=y) == secret
     assert not blobs.encrypted_path(sha(secret), x).exists()
 

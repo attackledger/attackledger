@@ -1689,6 +1689,8 @@ def _content_terms(rows: list[Evidence]) -> dict:
         "history, so reports still verify.",
         "The names and email addresses of the people in the change history and on the receipts.",
         "For imported entries: the host, method, status and hashes.",
+        "Backups made before the deletion: it does not reach them, and their database part is not encrypted. "
+        "Whoever runs the server deletes them, or keeps them no longer than the retention you promise.",
     ]
     if v1:
         keeps.append(f"{plural(v1, 'evidence summary', 'evidence summaries')} recorded before chain record v2, "
@@ -1697,7 +1699,11 @@ def _content_terms(rows: list[Evidence]) -> dict:
         "The engagement's key, so the raw evidence and the evidence summaries can no longer be read.",
         "Recon results: observations, URLs and leads.",
         "Imported entries' URLs, labels and tool ids, import file names and the hosts of refused rows.",
-        "The URLs in the traffic log (its methods, hosts, statuses and verdicts stay).",
+        "The URLs and reasons in the traffic log (its methods, hosts, statuses and verdicts stay), and the "
+        "gateway's set-aside copies of its rows.",
+        "Job logs and agent run summaries, and the URLs among job targets (the hosts stay). Runs still going "
+        "are cancelled, and what they report afterwards is not kept.",
+        "Test accounts, and the requests, URLs and notes of proposed writes.",
     ]
     return {"evidence_uris": len(uris), "uris_with_query": queries, "keeps": keeps, "removes": removes}
 
@@ -1741,7 +1747,8 @@ def delete_content(eng_id: int, body: DeleteContentIn, request: Request, session
     res = vault.delete_content(session, eng, actor=auditlog.actor(authz.current(request)), reason="owner")
     return {**_content_status(session, eng), "removed": {k: res.get(k, 0) for k in (
         "summaries_removed", "observations", "endpoints", "leads", "inbox_entries", "import_batches",
-        "gateway_urls", "blobs_removed", "plaintext_blobs_removed")}}
+        "gateway_urls", "jobs_stopped", "agent_exchanges", "test_accounts", "write_proposals",
+        "blobs_removed", "plaintext_blobs_removed")}}
 
 
 # ---- scope import ----------------------------------------------------------

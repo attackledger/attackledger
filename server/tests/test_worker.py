@@ -1,4 +1,5 @@
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -124,6 +125,57 @@ def test_a_tool_that_ends_without_reading_its_input_is_a_failed_tool_not_a_crash
     assert out == ["bye"] and r.failed_tools == ["quits"]
     log = stack.job(job.id).log
     assert "refused" in log and "quits exited with code 3" in log
+
+
+def _tool_lines_or_fail(r, name, cmd, lines, wait=60):
+    """r.tool_lines run in a thread, so that a worker and a tool waiting for each other fail the
+    test instead of hanging it (the time limit started only after the input was written)."""
+    import threading
+    out, errs = [], []
+
+    def consume():
+        try:
+            out.extend(r.tool_lines(name, cmd, lines))
+        except BaseException as e:  # noqa: BLE001 - reported below
+            errs.append(e)
+    t = threading.Thread(target=consume, daemon=True)
+    t.start()
+    t.join(wait)
+    if t.is_alive():
+        if r.proc is not None:
+            r.proc.kill()
+        t.join(10)
+        pytest.fail(f"{name}: the worker and the tool waited for each other for {wait} s")
+    if errs:
+        raise errs[0]
+    return out
+
+
+def test_a_tool_that_echoes_its_input_line_by_line_gets_all_of_it(stack):
+    """tool_lines wrote all of a tool's input before reading any of its output. A tool that writes
+    while it reads (cat here; dnsx, httpx and katana answer target by target) fills its output
+    pipe (64 KiB on Linux) and waits for the worker to read it, while the worker still waits to
+    finish writing: both wait for good (the time limit's timer started only after the write). The
+    input is now written from a thread, while the output is read."""
+    r = worker.Run(claim(stack, ["a.example.com"]))
+    lines = [f"t{i}.example.com" for i in range(50_000)]        # about 850 KB each way
+    assert _tool_lines_or_fail(r, "cat", ["/bin/cat"], lines) == lines
+    assert r.failed_tools == []
+
+
+def test_a_tool_that_writes_much_to_stderr_before_its_output_is_not_stuck(stack, monkeypatch):
+    """The same wait on the other pipe: stderr was read only after stdout ended, so a tool that
+    wrote more than a pipe holds to stderr first (a long warning, a progress bar) waited for the
+    worker, which waited for its stdout, until the time limit ended the job. stderr is now read
+    as it comes, and the end of it is logged as before."""
+    monkeypatch.setattr(worker, "JOB_TIMEOUT", 20)
+    job = claim(stack, ["a.example.com"])
+    r = worker.Run(job)
+    noisy = [sys.executable, "-c", "import sys\nfor i in range(4000): sys.stderr.write(f'warning {i}: {0:0100d}\\n')\n"
+                                   "sys.stderr.flush(); print('done', flush=True); sys.stderr.write('last-warning\\n')"]
+    assert _tool_lines_or_fail(r, "noisy", noisy, ["a.example.com"], wait=40) == ["done"]
+    log = stack.job(job.id).log
+    assert "last-warning" in log and "warning 3999" in log and "noisy exited" not in log
 
 
 def test_jobs_that_send_traffic_need_the_gateway(stack, monkeypatch):

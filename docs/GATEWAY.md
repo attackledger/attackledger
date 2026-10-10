@@ -330,11 +330,23 @@ without leaving the log silent:
 - **The gateway sets the row aside** in its quarantine file (`ATTACKLEDGER_GATEWAY_QUARANTINE`,
   default `/data/gateway/log-quarantine.jsonl`, the gateway's private volume, mode 0600): one JSON
   line per row, `{"set_aside_at", "why", "row"}`. The row is what the API was sent, so the file holds
-  nothing the log does not: URLs redacted as in the log, test accounts by label, never a header
+  nothing the log does not: URLs and reasons redacted as in the log, test accounts by label, never a header
   value, a body or a secret. It is bounded (`gateway.QUARANTINE_MAX_BYTES`, 16 MiB): past that a
   row is only counted (the gateway prints how many were not kept), and its placeholder is in the
-  log all the same. Unlike the log, the file is not blanked when an engagement's content is
-  deleted; remove it from the volume then, and after reading it.
+  log all the same. A row cut short (the gateway stopped mid-write) cannot swallow the next one:
+  a row is written on a line of its own.
+- **Deleting an engagement's content reaches the file** (2026-10-11, security review RETENTION.md,
+  RET-1). The API cannot reach the gateway's private volume, so the gateway asks: at start and every
+  minute (`QUARANTINE_PURGE_SECONDS`) it sends the engagement and job ids its file holds to
+  `POST /gateway/content-deleted` (gateway token), which answers those whose engagement's content
+  was deleted, and the gateway rewrites the file without their rows (and without lines that are not
+  a whole row), atomically, mode 0600. A row that names neither an engagement nor a job (a request
+  with no valid job credential) cannot be attributed and stays. Without an answer nothing is
+  removed and the next pass asks again; a gateway that was down at the deletion purges at its next
+  start. Encrypting the rows under the engagement's key instead would shred them with the key, also
+  in copies, but the gateway holds no engagement key by design (D-042) and the file is for an
+  operator to read with `cat`; the gateway's volumes are not in the backups (`tools/backup.sh`),
+  so purging in place leaves no copy behind.
 - **A whole batch refused with 400, 413 or 422** (a body limit in front of the API, or a row that
   breaks the request itself) is halved until the row the API refuses is alone. Before that row is
   set aside, the gateway sends its placeholder by itself: only if the API takes it is the row the
@@ -371,7 +383,8 @@ covers the whole worker process too.
 - send target traffic without the engagement's identification, or with a forged one;
 - use a finished or cancelled job's credential, or name another engagement in its credential;
 - send a request the log does not record (the gateway refuses when the log is not being written;
-  a row the API cannot store is a placeholder in the log and is kept in the gateway's quarantine file);
+  a row the API cannot store is a placeholder in the log and is kept in the gateway's quarantine file
+  until the engagement's content is deleted);
 - read the CA private key or the gateway token (not mounted in the worker);
 - **connect to the database** (it is on no network with it and has no credentials), or read the
   master key, an engagement key, a blob or the Anthropic API key (none is in the worker);
