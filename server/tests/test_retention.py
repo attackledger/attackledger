@@ -185,6 +185,12 @@ def seed(stack, gw, name: str, c: str) -> dict:
     r = api.post("/gateway/log", json={"rows": [log_row(e, running.id, c)]},
                  headers={"authorization": f"Bearer {GATEWAY_TOKEN}"})
     assert r.status_code == 200 and r.json()["unlogged"] == [], r.text
+    # A row that names the job but not its engagement (a placeholder's engagement id was not valid).
+    with stack.Session() as s:
+        s.add(GatewayRequest(at=datetime.now(timezone.utc), engagement_id=None, job_id=running.id, tool="httpx",
+                             kind="target", method="GET", url="", host=HOST, verdict="unlogged",
+                             reason=f"not stored (url: {c})"))
+        s.commit()
     gw.set_aside(log_row(e, running.id, c), "the API stored a placeholder instead: url: refused")
     gw.set_aside(log_row(None, running.id, c), "the API stored a placeholder instead: engagement_id: refused")
     return {"e": e, "lane": lane, "running": running}

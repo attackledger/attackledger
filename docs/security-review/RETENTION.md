@@ -23,7 +23,7 @@ what is left.
 | RET-1 | Low | The gateway's quarantine file keeps a deleted engagement's request log rows (known since GW-11) | `827b56c` | `test_deleting_content_leaves_nothing_readable_in_any_store`, `test_a_row_set_aside_while_the_gateway_asks_is_kept`, `test_the_gateway_keeps_its_quarantine_file_when_the_api_does_not_answer`, `test_the_api_names_only_deleted_engagements_and_their_jobs` |
 | RET-2 | Medium | A run going on at the deletion keeps writing: log lines, its error, the agent's summary; its exchanges' URLs stay until it ends | `827b56c` | `test_deleting_content_leaves_nothing_readable_in_any_store`, `test_what_deletion_keeps_of_the_jobs_and_the_request_log` |
 | RET-3 | Medium | Job targets keep the URLs recon found (paths, query strings), and agent runs their outcome text | `827b56c` | both above |
-| RET-4 | Low | The request log's reasons quote the request and the target's reply, and are kept; one quotes an approved write's URL unredacted | `827b56c` | both above, `test_the_gateway_redacts_a_reason_that_quotes_the_request` |
+| RET-4 | Low | The request log's reasons quote the request and the target's reply, and are kept; one quotes an approved write's URL unredacted | `827b56c`, and the next commit for rows naming only a job | both above, `test_the_gateway_redacts_a_reason_that_quotes_the_request` |
 | RET-5 | Low | On a SQLite built without `SECURE_DELETE` (macOS's Python), deleted rows stay readable in the database file | `827b56c` | `test_the_sqlite_database_overwrites_what_it_deletes` |
 | RET-6 | Low | Plaintext blobs from before encryption that no evidence cites (a v0.6 agent run's exchanges) are never removed | `827b56c` | `test_encrypt_existing_removes_plaintext_blobs_no_evidence_cites` |
 | RET-7 | Medium | The docs say rotating the master key makes a deletion final in old backups; the database half of a backup is not encrypted | `827b56c` (docs) | `test_the_deletion_screen_and_the_backup_tools_say_that_backups_are_not_reached` |
@@ -54,7 +54,7 @@ blanked, or encrypted under the engagement key, which is deleted (crypto-shredde
 | `jobs` status of a queued or running job | | **kept running** | cancelled (RET-2) |
 | `agent_exchanges` | URL, method, status of each request a running agent sent | deleted only when the run ended | deleted with the content (RET-2) |
 | `gateway_requests.url` | every URL a tool or agent requested | blanked (EV-6), also for later rows | gone |
-| `gateway_requests.reason` | why a request was refused or failed: quotes the request (an approved write's URL, unredacted), the target's malformed reply | **kept** | blanked, also for later rows; redacted when written (RET-4) |
+| `gateway_requests.reason` | why a request was refused or failed: quotes the request (an approved write's URL, unredacted), the target's malformed reply | **kept** | blanked, also for later rows and for rows that name only one of its jobs; redacted when written (RET-4) |
 | `gateway_requests` method, host, port, status, verdict, bytes, account label | | kept | **kept by design**: the record of what was sent |
 | `inbox_entries` | URL, label, tool id and time, facts, dismissal reason | blanked (`inbox.wipe`) | gone; host, method, status, hashes stay |
 | `import_batches` | file name, creator, refused rows | blanked | gone; counts and the file's hash stay |
@@ -169,8 +169,10 @@ reads them (the deletion screen, `INSTALL.md`, `ENCRYPTION.md`, `tools/backup.sh
   `write not sent: the request is not the approved one: POST <url> differs` (the URL as the agent
   sent it, not redacted even when the URL column was), and an upstream error with the target's
   malformed reply. An approved write's outcome also copied the reason into the proposal's note.
-- **Fix:** deletion blanks reasons with URLs, also for rows that arrive later and in the outcome
-  written to a proposal. The gateway redacts a row's reason as it redacts its URL.
+- **Fix:** deletion blanks reasons with URLs, also for rows that arrive later, for rows the API
+  kept without their engagement but with one of its jobs (a placeholder whose engagement id was not
+  valid), and in the outcome written to a proposal. The gateway redacts a row's reason as it
+  redacts its URL.
 
 ### RET-5: SQLite's free pages (Low)
 

@@ -443,13 +443,17 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     # are the paths and query strings the tools and agents requested, and its reasons are free text
     # built from the request and the target's answer (an approved write's URL, a target's malformed
     # reply): both go. The gateway's quarantine file is purged by the gateway (gateway.py).
+    # A row the API kept without its engagement (a placeholder whose engagement id was not valid)
+    # still names the job.
+    jobs = session.scalars(select(Job).where(Job.engagement_id == eng.id)).all()
+    ids = [j.id for j in jobs]
+    mine = (GatewayRequest.engagement_id == eng.id) | GatewayRequest.job_id.in_(ids)
     counts["gateway_urls"] = session.execute(update(GatewayRequest).where(
-        GatewayRequest.engagement_id == eng.id, (GatewayRequest.url != "") | (GatewayRequest.reason != ""))
+        mine, (GatewayRequest.url != "") | (GatewayRequest.reason != ""))
         .values(url="", reason="")).rowcount or 0
     now = datetime.now(timezone.utc)
     by = "the retention policy" if reason == "retention" else auditlog.actor_label(actor)
     note = f"Log deleted with the engagement's content on {now.date().isoformat()}.\n"
-    jobs = session.scalars(select(Job).where(Job.engagement_id == eng.id)).all()
     stopped = 0
     for j in jobs:
         # A run still going would add to what is deleted here: it is cancelled (the worker stops it
@@ -465,7 +469,6 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
         if j.result and ("summary" in j.result or "detail" in j.result):
             j.result = {k: v for k, v in j.result.items() if k not in ("summary", "detail")}
     counts["jobs_stopped"] = stopped
-    ids = [j.id for j in jobs]
     counts["agent_exchanges"] = session.execute(sa_delete(AgentExchange).where(
         AgentExchange.job_id.in_(ids))).rowcount or 0 if ids else 0
     eng.content_deleted_at, eng.content_deleted_by, eng.content_deleted_reason = now, by, reason
