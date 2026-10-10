@@ -129,14 +129,15 @@ the Compose version this needs).
 
 ## 3. Get AttackLedger
 
-1. Clone the repository you were given access to, and check out the release you were
-   told to install (here `v0.7.0`):
+1. Clone the repository and check out the newest release (or the one you were told to
+   install, for example `git checkout v0.8.0`):
 
    ```sh
    REPO_URL=https://github.com/attackledger/attackledger.git
    git clone "$REPO_URL" /opt/attackledger
    cd /opt/attackledger
-   git checkout v0.7.0
+   git checkout "$(git tag --sort=-v:refname | head -1)"
+   git log -1 --format='%h %s'      # shows which release you are on
    ```
 
 2. From now on, work in that folder:
@@ -214,6 +215,12 @@ For client work use A or B.
 **Option A: Let's Encrypt.** The DNS name must resolve to this server from the internet,
 and port 80 must be reachable from the internet. The email address receives expiry
 warnings.
+
+Every Let's Encrypt certificate is published in the public Certificate Transparency logs,
+and stays there. Use a name under your own domain. Avoid names built from the server's IP
+address (such as `attackledger.1-2-3-4.sslip.io` or `nip.io`): they would tie that
+address to AttackLedger in a public record for good. This matters if the server also sends
+test traffic.
 
 ```sh
 sed -i "s|^ATTACKLEDGER_TLS=.*|ATTACKLEDGER_TLS=you@example.com|" .env
@@ -326,7 +333,9 @@ with fictional data: everyone who uses it needs SSH access to the server.
    (`ATTACKLEDGER_TLS=internal` is only there because the setting may not be empty; with an
    `http://` name Caddy issues no certificate.)
 
-2. After section 8, each user opens a tunnel from their own machine and leaves it open:
+2. After section 8, each user opens a tunnel from their own machine and leaves it open
+   (any free local port works; use a different one than `8080` if something already
+   listens there, and use the same one every time, because signing keys belong to it):
 
    ```sh
    ssh -N -L 8080:127.0.0.1:80 admin@attackledger.example.com
@@ -949,7 +958,7 @@ return to the previous release and restore the backup from step 2:
 
 ```sh
 cd /opt/attackledger
-git checkout v0.7.0
+git checkout <the previous release, for example v0.7.1>
 docker compose build
 tools/restore.sh --force /var/backups/attackledger/attackledger-<the backup from step 2>
 ```
