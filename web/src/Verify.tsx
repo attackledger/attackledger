@@ -49,6 +49,7 @@ export function Verify({ engId }: { engId: number }) {
   const [edNative, setEdNative] = useState<boolean | null>(null);
   const [self, setSelf] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [strict, setStrict] = useState(false);
 
   // Same origin and no Content-Disposition, so the download takes the name given here: the name the server
   // gives a downloaded report (attackledger-<name>-<id>.json), which the offline command then uses as it is.
@@ -74,7 +75,7 @@ export function Verify({ engId }: { engId: number }) {
         const eng = (JSON.parse(text) as { engagement?: { name?: string } }).engagement;
         if (typeof eng?.name === "string") name = reportFilename(eng.name, engId, "json");
       } catch { /* the verifier reports an unreadable report */ }
-      const o = await verifyReport(text, name);
+      const o = await verifyReport(text, name, { requireHistory: strict });
       if (!live) return;
       setFile(name);
       setOutcome(o);
@@ -90,7 +91,7 @@ export function Verify({ engId }: { engId: number }) {
       }
     })().catch((e) => live && setError((e as Error).message));
     return () => { live = false; };
-  }, [engId, json]);
+  }, [engId, json, strict]);
 
   const failed = outcome?.results.filter((c) => c.verdict === "FAIL") ?? [];
 
@@ -114,6 +115,11 @@ export function Verify({ engId }: { engId: number }) {
             </p>
           )}
           {error && <p className="field-error" role="alert">{error}</p>}
+          <label className="check">
+            <input type="checkbox" checked={strict} onChange={(e) => setStrict(e.target.checked)} />
+            {" "}Require the complete history: fail when the change history or key log is missing, or a receipt
+            does not commit to it (<code>--require-history</code>)
+          </label>
           {!outcome && !error && <p className="muted">Checking the report…</p>}
         </div>
         <div className="report-actions">
