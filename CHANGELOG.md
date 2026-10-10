@@ -220,6 +220,15 @@ in the `gateway-private` volume; a backup of the database does not include them.
   finished first was timing: with three suites at once it failed in 4 of 9 runs. A broken pipe to a
   tool is now the tool's outcome; a new test sends more input than a pipe holds to a tool that
   quits, so it fails every time without the fix.
+- **A tool that answers as it reads could hang its job.** The worker wrote all of a tool's input
+  before reading any of its output, so a tool that writes while it reads (`dnsx`, `httpx` and
+  `katana` answer target by target) filled its output pipe, about 64 KiB, and waited for the worker,
+  which still waited to finish writing. The time limit's timer started only after the write, so the
+  job stayed running until someone cancelled it. stderr had the same wait: read only after stdout
+  ended, more than a pipe of warnings before the output stopped the tool until the time limit. The
+  input is now written and stderr read by threads while stdout is read, the timer starts with the
+  tool, and a broken pipe is still the tool's outcome. Two new tests (`cat` echoing 50,000 lines,
+  a tool writing 460 KB of warnings first) hung or timed out before the fix.
 - **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
   pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
   read the caller's stdin, so nothing after the backup ran. Docker calls no longer read
