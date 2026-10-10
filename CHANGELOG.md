@@ -105,11 +105,29 @@ Authentication, authorization and organization isolation (`AUTH.md`):
 - **A malformed signed payload gave a 500** (AUTH-7, Info, second pass): a time without a zone, a
   list as the chain position. A string chain position was even accepted. The field types are
   checked first: 422.
+- **Signing out did not revoke a browser signed in with the operator token** (AUTH-6, Info, third
+  pass). The cookie was a fixed HMAC of the token, so a copy of it worked until the token changed.
+  Signing in with the token now creates a random session stored as a hash, like a person's: it
+  ends on sign-out or after 12 hours, and when the API starts with another token (D-056,
+  migration 0023). Bearer tokens (scripts, the worker, the gateway) are unchanged.
+- **An approval could be used twice on SQLite** (AUTH-5, Info, third pass). Its single use relied on
+  a row lock taken on Postgres only. Using it, approving, confirming a DELETE, rejecting and
+  expiring are now conditional updates from the status that was read, on every database: of two
+  uses one succeeds, a rejection racing the gateway no longer overwrites a sent write, and an
+  approval racing a rejection no longer makes the rejected write sendable.
+- **Two workers could claim the same job on SQLite** (third pass). The job ran twice and the
+  second claim replaced the first one's job token and gateway secret. Claiming is a conditional
+  update from `queued` now; the worker that loses takes the next job.
 
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
 database without a name on its recreated network, and the API failed to start (INSTALL §15).
+
+A browser signed in with the operator token is signed out once by the upgrade: the old token-mode
+cookie is no longer accepted (AUTH-6). Sign in with the token again. People's sessions, and
+scripts that send the token as a bearer header, are not affected. Migration 0023 runs when the API
+starts.
 
 ### Fixed
 - **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of

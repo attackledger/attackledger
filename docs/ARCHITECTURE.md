@@ -151,8 +151,13 @@ requests reach the target.
 
 ### Authentication and permissions
 
-Three modes (`auth.py`): open (no people, no token: localhost only), token
-(`ATTACKLEDGER_API_TOKEN`) and people (email and password, sessions stored as hashes).
+Four modes (`auth.py`): open (no people, no token: localhost only), setup (production with
+nobody yet, D-045), token (`ATTACKLEDGER_API_TOKEN`) and people (email and password). A browser that signs in, with a password or with the token, gets a random session
+cookie; only its SHA-256 is stored (`user_sessions`), it ends on sign-out or after 12 hours, and
+a person's sessions end when their password is reset or they are disabled. A token session names
+nobody and is bound to the token: it works while the API runs with that token, and the API
+deletes the sessions of any other token when it starts (D-056). Scripts, the worker and the
+gateway send their tokens as bearer headers and hold no session.
 Every route passes `authz.authorize`, which looks the route up in one permission table:
 public, signed in, owner, or a role on the route's engagement (viewer, tester,
 reviewer). Routes without an entry are open to owners only, and a test checks that
@@ -169,6 +174,9 @@ every route has one. See D-032.
   by a module's `max_targets`, is `partial` and lists what it did not reach. Neither
   is ever shown as `done`.
 - Only a person issues a receipt.
+- A step that may happen once (using an approval, a decision on a write, claiming a job) is a
+  conditional UPDATE from the status that was read, and its row count decides who made it; never
+  a read and then a write. It holds on every database, not only where rows are locked.
 - Secrets are evidence, not inventory: masked, hashed and never tested.
 - Raw evidence is redacted before it is stored (agent exchanges, notes, files, recon URLs
   and leads): `[redacted:sha256:<12 hex>]` replaces the value, and the evidence summary,

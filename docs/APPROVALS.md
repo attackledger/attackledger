@@ -81,8 +81,12 @@ agent: propose_write ──► pending ──approve──► approved ──(th
   back and sends it through the gateway with `X-AttackLedger-Approval`. The gateway asks the API to
   use the approval, which checks the method, URL, body and account against the sealed request and
   marks it sent, in one transaction, before anything is sent: a changed body or URL is refused and
-  the approval stays unused; a second use is refused. The gateway sends the approved headers, not
-  the worker's.
+  the approval stays unused; a second use is refused. "Marks it sent" is one conditional UPDATE
+  (`... WHERE id = ? AND status = 'approved'`): of two uses that both read `approved`, only the one
+  whose UPDATE changed the row goes on, on Postgres and SQLite alike. Approving, confirming a
+  DELETE, rejecting and expiring change the status the same way, only from the one they read, so
+  a rejection cannot overwrite a write that was sent, nor an approval a rejection. The gateway
+  sends the approved headers, not the worker's.
 - **Recording.** The exchange (with the request body) is stored like any other, redacted and
   encrypted, and becomes evidence on the proposal's item, source `agent`, with a summary that says
   who approved it and when, the request hash, the DELETE confirmation and the agent's reason. The
