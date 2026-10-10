@@ -322,3 +322,227 @@ def test_auth6_token_sessions_work_and_end_in_people_mode_too(api, monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_API_TOKEN")
     assert sign_in(api, "owner@lab.test").status_code == 200           # control: people still sign in
 
+
+# ---- AUTH-5 and the other single-use steps: atomic on every database ----------------------------
+#
+# Each race runs in two threads with their own sessions on one SQLite file (separate connections,
+# as two API workers have). Both read the row before either writes; then the first finishes and
+# commits before the second goes on, the interleaving a row lock on Postgres prevented and SQLite
+# did not. The step must still succeed exactly once.
+
+import threading  # noqa: E402
+
+RACE_HOST = "race.lab.test"
+
+
+def _file_sessions(tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app import db
+    eng = create_engine(f"sqlite:///{tmp_path / 'race.db'}", connect_args={"check_same_thread": False, "timeout": 30})
+    db.Base.metadata.create_all(eng)
+    return eng, sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
+
+
+class Interleave:
+    """Called by both threads where the code under test has read and not yet written: the first
+    to arrive goes on once both are there; the second waits until the first has finished."""
+
+    def __init__(self):
+        self.both_read = threading.Barrier(2, timeout=20)
+        self.first_done = threading.Event()
+        self.lock, self.first = threading.Lock(), None
+
+    def point(self):
+        self.both_read.wait()
+        with self.lock:
+            if self.first is None:
+                self.first = threading.get_ident()
+        if self.first != threading.get_ident():
+            assert self.first_done.wait(20), "the first thread did not finish"
+
+    def run(self, fn, n=2):
+        results = [None] * n
+
+        def go(i):
+            try:
+                results[i] = ("ok", fn())
+            except Exception as e:  # noqa: BLE001 - the outcome is what is checked
+                results[i] = ("refused", e)
+            finally:
+                if self.first == threading.get_ident():
+                    self.first_done.set()
+        threads = [threading.Thread(target=go, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        return results
+
+
+def _approved_write(Session):
+    """A running agent job on an engagement that allows writes, with one approved POST."""
+    from datetime import datetime, timedelta, timezone
+
+    from app import approvals
+    from app.models import JobStatus
+    from test_agent import make_lane
+    with Session() as s:
+        lane, job = make_lane(s, host=RACE_HOST, include=("*.lab.test",))
+        lane.asset.engagement.allow_writes = True
+        job.status = JobStatus.running
+        p = approvals.propose(s, eng=lane.asset.engagement, lane=lane, job_id=job.id, method="POST",
+                              url=f"https://{RACE_HOST}/api/transfer", headers=[["Content-Type", "application/json"]],
+                              body=b'{"amount": 1}', account=None, item_idx=1, reason="the race")
+        p.status, p.approved_sha256, p.decided_by_name = "approved", p.request_sha256, "operator token"
+        p.decided_at = datetime.now(timezone.utc)
+        p.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        s.commit()
+        return lane.asset.engagement_id, job.id, p.id
+
+
+def _consume(Session, job_id, pid):
+    from app import approvals
+    from app.models import Job
+    with Session() as s:
+        return approvals.consume(s, job=s.get(Job, job_id), proposal_id=pid, method="POST",
+                                 url=f"https://{RACE_HOST}/api/transfer",
+                                 body_sha256=approvals.body_sha(b'{"amount": 1}'), account=None)
+
+
+def test_auth5_two_concurrent_uses_of_one_approval_send_it_once(tmp_path, monkeypatch):
+    """consume locked the proposal with SELECT ... FOR UPDATE on Postgres only. On SQLite both
+    uses read "approved", and both marked it sent: the gateway would send the write twice."""
+    from app import approvals
+    from app.models import AuditEntry, WriteProposal
+    _, Session = _file_sessions(tmp_path)
+    _, job_id, pid = _approved_write(Session)
+    race, real = Interleave(), approvals.unsendable
+    monkeypatch.setattr(approvals, "unsendable", lambda headers: (race.point(), real(headers))[1])
+    results = race.run(lambda: _consume(Session, job_id, pid))
+    ok = [r for kind, r in results if kind == "ok"]
+    refused = [r for kind, r in results if kind == "refused"]
+    assert len(ok) == 1 and ok[0]["approval_id"] == pid, results
+    assert len(refused) == 1 and isinstance(refused[0], PermissionError) and "used once" in str(refused[0]), results
+    with Session() as s:
+        assert s.get(WriteProposal, pid).status == "sent"
+        assert [e.action for e in s.query(AuditEntry)] == ["write.sent"]          # recorded once
+
+
+def test_auth5_one_use_without_a_race_still_works_once(tmp_path):
+    """Control: the same setup, one use after the other."""
+    _, Session = _file_sessions(tmp_path)
+    _, job_id, pid = _approved_write(Session)
+    assert _consume(Session, job_id, pid)["approval_id"] == pid
+    try:
+        _consume(Session, job_id, pid)
+        raise AssertionError("a second use succeeded")
+    except PermissionError as e:
+        assert "used once" in str(e)
+
+
+def test_a_rejection_racing_the_gateway_does_not_overwrite_a_sent_write(tmp_path, monkeypatch):
+    """reject read "approved", the gateway then used the approval, and the rejection was written
+    over "sent": the queue showed a write that was sent as rejected. A decision now changes the
+    status only from the one it read."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app import approvals
+    from app.models import WriteProposal
+    _, Session = _file_sessions(tmp_path)
+    eng_id, job_id, pid = _approved_write(Session)
+    who = auth.Principal(kind="token", organization_id=1, name="operator token", is_owner=True)
+    request = SimpleNamespace(state=SimpleNamespace(principal=who))
+    real = approvals._note
+
+    def gateway_uses_it_meanwhile(text):
+        _consume(Session, job_id, pid)
+        return real(text)
+    monkeypatch.setattr(approvals, "_note", gateway_uses_it_meanwhile)
+    with Session() as s:
+        try:
+            approvals.reject(eng_id, pid, approvals.RejectIn(note="no"), request, s)
+            raise AssertionError("the rejection was recorded over a sent write")
+        except HTTPException as e:
+            assert e.status_code == 409 and "sent" in e.detail
+    with Session() as s:
+        assert s.get(WriteProposal, pid).status == "sent"
+
+
+def test_an_approval_racing_a_rejection_does_not_make_a_rejected_write_sendable(tmp_path, monkeypatch):
+    """approve read "pending", another tester rejected the write meanwhile, and the approval was
+    written over the rejection: the write the second person refused became sendable."""
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app import approvals
+    from app.models import WriteProposal
+    _, Session = _file_sessions(tmp_path)
+    eng_id, job_id, pid = _approved_write(Session)
+    with Session() as s:
+        p = s.get(WriteProposal, pid)
+        p.status, p.approved_sha256, p.expires_at = "pending", None, None
+        s.commit()
+        digest = p.request_sha256
+    who = auth.Principal(kind="token", organization_id=1, name="operator token", is_owner=True)
+    request = SimpleNamespace(state=SimpleNamespace(principal=who))
+    real = approvals._note
+    calls = []
+
+    def rejected_meanwhile(text):
+        if not calls:
+            calls.append(1)
+            with Session() as other:
+                approvals.reject(eng_id, pid, approvals.RejectIn(note="not this one"), request, other)
+        return real(text)
+    monkeypatch.setattr(approvals, "_note", rejected_meanwhile)
+    with Session() as s:
+        try:
+            approvals.approve(eng_id, pid, approvals.DecideIn(request_sha256=digest), request, s)
+            raise AssertionError("the approval was recorded over a rejection")
+        except HTTPException as e:
+            assert e.status_code == 409 and "rejected" in e.detail
+    with Session() as s:
+        assert s.get(WriteProposal, pid).status == "rejected"
+    try:
+        _consume(Session, job_id, pid)
+        raise AssertionError("a rejected write was used")
+    except PermissionError as e:
+        assert "rejected" in str(e)
+
+
+def test_two_workers_claiming_at_once_never_take_the_same_job(tmp_path, monkeypatch):
+    """workerapi._take locked the queued job (SKIP LOCKED) on Postgres only. On SQLite two workers
+    both took the oldest queued job: it ran twice, and the second claim replaced the first one's
+    job token and gateway secret."""
+    from app import egress, workerapi
+    from app.models import Engagement, Job, JobStatus
+    _, Session = _file_sessions(tmp_path)
+    with Session() as s:
+        e = Engagement(name="race", scope_include=["*.lab.test"])
+        s.add(e)
+        s.flush()
+        job = Job(engagement_id=e.id, kind="subdomains", targets=["lab.test"])
+        s.add(job)
+        s.commit()
+        job_id = job.id
+    race, real = Interleave(), egress.issue
+    monkeypatch.setattr(egress, "issue", lambda job: (race.point(), real(job))[1])
+
+    def take():
+        with Session() as s:
+            got = workerapi._take(s, None)
+            return None if got is None else (got[0].id, got[1], got[2])
+    results = race.run(take)
+    taken = [r for kind, r in results if kind == "ok" and r is not None]
+    assert [kind for kind, _ in results] == ["ok", "ok"], results
+    assert len(taken) == 1 and taken[0][0] == job_id, results
+    with Session() as s:
+        j = s.get(Job, job_id)
+        assert j.status == JobStatus.running
+        assert j.worker_token_sha256 == workerapi._sha(taken[0][1])       # the winner's token opens it
+        assert j.gateway_secret_sha256 == hashlib.sha256(taken[0][2].encode()).hexdigest()
