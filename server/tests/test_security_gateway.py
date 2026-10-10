@@ -242,3 +242,44 @@ def test_gw5_metadata_addresses_outside_link_local_are_refused(monkeypatch):
         with pytest.raises(gateway.Refused, match="never contacted"):
             await gw.resolve("100.100.100.200")
     asyncio.run(go())
+
+
+# ---- GW-6: the deployment's containers on two networks -------------------------------------------
+
+class _ComposeLoader(yaml.SafeLoader):
+    """Compose's merge tags (!reset, !override) as plain values."""
+
+
+for _tag in ("!reset", "!override"):
+    _ComposeLoader.add_constructor(_tag, lambda loader, node: (
+        loader.construct_sequence(node) if isinstance(node, yaml.SequenceNode) else
+        loader.construct_mapping(node) if isinstance(node, yaml.MappingNode) else loader.construct_scalar(node)))
+
+
+def _networks(service: dict) -> dict:
+    nets = service.get("networks") or ["default"]
+    return {n: {} for n in nets} if isinstance(nets, list) else {n: (v or {}) for n, v in nets.items()}
+
+
+@pytest.mark.parametrize("files", [["docker-compose.yml"], ["docker-compose.yml", "deploy/compose.prod.yml"]])
+def test_gw6_every_address_of_the_deployments_containers_is_refused(files):
+    """Docker's resolver answers a service name with one address, on one shared network. A
+    container the gateway shares two networks with is reachable at its other address unless that
+    one has a name of its own (a network alias) in the deny list."""
+    services: dict = {}
+    for f in files:
+        for name, svc in (yaml.load((ROOT / f).read_text(), Loader=_ComposeLoader).get("services") or {}).items():
+            merged = services.setdefault(name, {})
+            if "networks" in svc:
+                merged["networks"] = svc["networks"]
+    gw_nets = set(_networks(services.pop("gateway")))
+    deny = set(gateway.DENY_HOSTS)
+    for name, svc in services.items():
+        if name == "lab":                                  # the practice target: a target on purpose
+            continue
+        shared = {n: v for n, v in _networks(svc).items() if n in gw_nets}
+        if len(shared) == 1:
+            assert name in deny, f"{name} is not in gateway.DENY_HOSTS"
+        for net, conf in shared.items() if len(shared) > 1 else ():
+            aliases = set(conf.get("aliases") or [])
+            assert aliases & deny, f"{name} on network {net}: no alias of it is in gateway.DENY_HOSTS"

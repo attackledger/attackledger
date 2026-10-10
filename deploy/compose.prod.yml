@@ -149,7 +149,12 @@ services:
     configs:
       - source: lab-proxy
         target: /etc/nginx/conf.d/default.conf
-    networks: [lab, default]
+    # An alias per network, so the gateway refuses both of its addresses (gateway.DENY_HOSTS).
+    networks:
+      lab:
+        aliases: [lab-proxy-lab]
+      default:
+        aliases: [lab-proxy-default]
     ports:
       - "127.0.0.1:${ATTACKLEDGER_LAB_PROXY_PORT:-3128}:3128"
     depends_on: [lab]

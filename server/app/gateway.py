@@ -136,7 +136,11 @@ PASSIVE_HOSTS = frozenset({
 SERVICE_HOSTS = frozenset({"api.anthropic.com"})
 # The Claude API calls an agent run makes (agentloop: client.beta.messages.create).
 SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"))
-DENY_HOSTS = ("db", "api", "web", "worker", "gateway")
+# The deployment's own containers, by every name that resolves to one of their addresses. Docker
+# answers a service name with its address on one shared network only, so a container the gateway
+# shares two networks with has an alias per network (docker-compose.yml; security review GW-6).
+DENY_HOSTS = ("db", "api", "api-control", "api-default", "web", "worker", "gateway", "caddy",
+              "lab-proxy", "lab-proxy-lab", "lab-proxy-default")
 # Cloud metadata services outside link-local (169.254.0.0/16 is refused as link-local): Alibaba
 # Cloud, AWS over IPv6, Azure's WireServer, Oracle Cloud Classic (security review GW-5).
 METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in (
