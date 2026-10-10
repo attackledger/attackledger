@@ -6,8 +6,9 @@ FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b533
 WORKDIR /web
 COPY package.json package-lock.json ./
 # npm ci installs exactly the lockfile and checks each package against its SHA-512 there.
-# --ignore-scripts: no package runs an install script (esbuild's only checks its binary,
-# which comes from its platform package).
+# --ignore-scripts: no package runs an install script (esbuild's only checks its binary;
+# esbuild, Vite's bundler Rolldown and its CSS minifier Lightning CSS take their binaries from
+# per-platform packages in the lockfile, not from a download at install time).
 RUN npm ci --no-audit --no-fund --ignore-scripts
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src ./src

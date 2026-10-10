@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ESBUILD=web/node_modules/.bin/esbuild
-[ -x "$ESBUILD" ] || { echo "run 'cd web && npm ci' first (esbuild comes with vite)" >&2; exit 1; }
+[ -x "$ESBUILD" ] || { echo "run 'cd web && npm ci' first (esbuild is one of its development dependencies)" >&2; exit 1; }
 
 python3 -I - <<'PY'
 import json, pathlib
