@@ -11,6 +11,22 @@ gateway (22 requests, all GET or DNS). The worker could not reach the internet, 
 database or the API. Backup, wiping every volume and restoring without `--force` kept the
 evidence chain identical, and the encrypted note stayed readable.
 
+### Security
+From a review of authentication, authorization and organization isolation
+(`docs/security-review/AUTH.md`).
+- **A cited hash opened another engagement's blob from before encryption** (AUTH-1, Low).
+  A tester could cite the SHA-256 of another engagement's plaintext blob as evidence and read
+  it. `encrypt-existing` then copied it, and deleting the other engagement's content kept it.
+  Only an engagement's own chain v1 evidence now opens, copies or keeps a plaintext blob.
+- **Changes sent by a page of another origin are refused** (AUTH-2, Low). A sibling subdomain
+  is the same site and got the SameSite=Strict cookie, and in open mode any web page could post
+  to the local API. Routes without a JSON body (revoking a key, cancelling a job, deleting a
+  test account, an import) took such posts. POST, PUT, PATCH and DELETE are now refused when
+  `Sec-Fetch-Site` or `Origin` says another origin sent them.
+- **Separation of duties counts who imported the evidence** (AUTH-3, Low). The person who
+  uploaded an export could sign the receipt of a lane holding its entries, if someone else
+  mapped them. They are now refused, as the starter of a recon or agent run is.
+
 ### Fixed
 - **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
   pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
