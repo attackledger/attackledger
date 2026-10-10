@@ -14,9 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 from alembic import command
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, text
+import testdb
+from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app import auth, db, keylog, migrate, people
 from app.main import app
@@ -31,7 +31,7 @@ NEW = "a different battery staple"
 def env(monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
     auth._failures.clear()
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 
@@ -316,14 +316,14 @@ def test_unsigned_reports_have_no_key_log(env):
 # ---- the migration backfills keys that already exist ------------------------------
 
 def test_migration_backfills_existing_keys(tmp_path, monkeypatch):
-    eng = create_engine(f"sqlite:///{tmp_path / 'al.db'}")
+    eng = testdb.file_engine(tmp_path / 'al.db')
     monkeypatch.setattr(db, "engine", eng)
     monkeypatch.setattr(migrate, "engine", eng)
     command.upgrade(migrate._config(), "0012")
     fp1, fp2 = hashlib.sha256(b"one").hexdigest(), hashlib.sha256(b"two").hexdigest()
     with eng.begin() as conn:
         conn.execute(text("INSERT INTO users (id, email, name, password_hash, is_owner, disabled, created_at) "
-                          "VALUES (1, 'r@lab.test', 'Rita', 'x', 0, 0, '2026-10-01 09:00:00')"))
+                          "VALUES (1, 'r@lab.test', 'Rita', 'x', FALSE, FALSE, '2026-10-01 09:00:00')"))
         conn.execute(text("INSERT INTO signing_keys (user_id, algorithm, public_key, fingerprint, created_at, revoked_at) "
                           "VALUES (1, 'Ed25519', 'AA==', :a, '2026-10-01 10:00:00.250000', '2026-10-03 08:00:00'),"
                           "       (1, 'Ed25519', 'AQ==', :b, '2026-10-02 10:00:00', NULL)"), {"a": fp1, "b": fp2})

@@ -10,9 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+import testdb
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "server"))
@@ -90,7 +89,7 @@ def stack(monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
     monkeypatch.setenv("ATTACKLEDGER_WORKER_TOKEN", WORKER_TOKEN)
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 

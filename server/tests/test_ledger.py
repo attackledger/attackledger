@@ -9,8 +9,7 @@ sys.path.insert(0, str(ROOT))
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import create_engine
+import testdb
 from sqlalchemy.orm import sessionmaker
 
 from app import db
@@ -19,7 +18,7 @@ from app.main import app
 
 @pytest.fixture()
 def client():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 

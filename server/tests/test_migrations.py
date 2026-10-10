@@ -7,14 +7,15 @@ import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, text
+import testdb
+from sqlalchemy import inspect, text
 
 from app import db, migrate, models  # noqa: F401
 
 
 @pytest.fixture()
 def file_db(tmp_path, monkeypatch):
-    eng = create_engine(f"sqlite:///{tmp_path / 'al.db'}")
+    eng = testdb.file_engine(tmp_path / 'al.db')
     monkeypatch.setattr(db, "engine", eng)
     monkeypatch.setattr(migrate, "engine", eng)
     return eng

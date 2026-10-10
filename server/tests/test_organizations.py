@@ -10,7 +10,6 @@ chains, sign-in and the single-organization install are tested after it.
 """
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
@@ -19,9 +18,9 @@ from pathlib import Path
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect as sa_inspect, select, text
+import testdb
+from sqlalchemy import inspect as sa_inspect, select, text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import orgfill
 from harness import ROOT
@@ -39,14 +38,9 @@ NEVER = 987654                             # an id no table uses
 
 
 def _engine():
-    """SQLite in memory; or, with ATTACKLEDGER_TEST_PG_EMPTY_URL, a Postgres database these
-    tests may empty (the claim's SKIP LOCKED and the chains' advisory locks run there)."""
-    url = os.environ.get("ATTACKLEDGER_TEST_PG_EMPTY_URL")
-    if url:
-        eng = create_engine(url)
-        db.Base.metadata.drop_all(eng)
-    else:
-        eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    """SQLite in memory; or, with ATTACKLEDGER_TEST_PG, an empty Postgres database of its own
+    (tests/testdb.py: the claim's SKIP LOCKED and the chains' advisory locks run there)."""
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     return eng
 
@@ -519,7 +513,7 @@ def test_two_organizations_show_their_name(orgs2):
 @pytest.fixture()
 def stack_one(monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 
@@ -538,7 +532,7 @@ def stack_one(monkeypatch):
 
 
 def test_every_tenant_table_has_the_column_in_the_database():
-    eng = create_engine("sqlite://")
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     insp = sa_inspect(eng)
     direct = {m.local_table.name for m in db.Base.registry.mappers if issubclass(m.class_, OrgOwned)}

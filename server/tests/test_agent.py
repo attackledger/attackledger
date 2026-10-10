@@ -16,9 +16,9 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 import pytest
-from sqlalchemy import create_engine, select
+import testdb
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app import agentloop, agenttools, blobs, db, gates, ledger, vault
 from app.models import (Asset, ChecklistItem, Engagement, Evidence, ItemState, Job, JobStatus, Lane, Lead,
@@ -34,7 +34,7 @@ def blob_dir(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def session():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     s = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)()
     yield s
@@ -512,7 +512,7 @@ def test_worker_has_no_anthropic_key_and_the_gateway_adds_it(monkeypatch):
 def api(monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 

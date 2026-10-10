@@ -17,9 +17,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+import testdb
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app import auth, db, signing
 from app.main import app
@@ -88,7 +87,7 @@ def test_pure_python_verifier_agrees_with_cryptography(alg):
 def client(monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
     auth._failures.clear()
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    eng = testdb.memory_engine()
     db.Base.metadata.create_all(eng)
     Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
 

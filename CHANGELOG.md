@@ -144,6 +144,10 @@ starts.
   local app through Caido.
 
 ### Changed
+- **The server tests run on Postgres too**: `tools/test_postgres.sh` starts a throwaway Postgres
+  16 and runs the whole suite on it, each test on new databases (`ATTACKLEDGER_TEST_PG`,
+  `server/tests/testdb.py`), then upgrades a database the 0.7.1 code filled (CONTRIBUTING.md).
+  The race tests prove one winner there as well, and migrations 0001 to 0023 run from empty.
 - **Recon workflow, redesigned** (ideas from the ars0n framework; no code taken).
   - A summary line ("6 steps, 13 tools; 13 done, last finished …") and one clear Run all
     button.

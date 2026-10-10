@@ -197,9 +197,13 @@ must happen at most once, or only from one state, and checked how it is made ato
 | Signed receipt payloads | not single use: valid 10 minutes for the signer named in them, against the lane as it is. Two closes with the same payload make two receipts with the same manifest and signature, by the same person; nothing another person can use | nothing to do (design note) | |
 
 Each new test failed before its fix and passes after it; the thread tests passed 15 runs in a row.
-Not run here: the same races on Postgres (no Postgres was available without fetching an image).
-There the conditional UPDATE waits for the first writer's row lock and then matches no row, which is
-the behaviour the SQLite tests check.
+They also run on Postgres 16 now (`tools/test_postgres.sh`, each test on databases of its own).
+There both uses of an approval read `approved` and exactly one changes it, as on SQLite. A claim
+takes the job with SKIP LOCKED, so the second worker never reads the job and finds none: the test
+checks that only one thread reached the point between read and write there.
+`test_without_the_row_lock_the_conditional_claim_alone_takes_a_job_once` takes the row lock away:
+both workers read the queued job on Postgres too, and the conditional UPDATE alone still lets one
+take it.
 
 ## Scope covered
 

@@ -205,14 +205,18 @@ account in more than one.
     python -m pytest tests/test_org_migration.py
   ```
 
+  `tools/test_postgres.sh` does both steps against a throwaway Postgres. With
+  `ATTACKLEDGER_TEST_PG` alone (the whole suite on Postgres), the same test migrates a new
+  database from empty to 0021 and copies the fixture's rows into it from `fixture.sql`.
+
   A fresh Postgres database also migrated to 0022 with no difference from the models, down to
   the base and up again.
 
 ## Tests (`tests/test_organizations.py`)
 
 Two organizations are filled through the API with the same script; organization 1's names,
-hosts and texts carry a marker. They run on SQLite, and on Postgres with
-`ATTACKLEDGER_TEST_PG_EMPTY_URL` set to a database they may empty (all 16 pass on both).
+hosts and texts carry a marker. They run on SQLite, and on Postgres with the rest of the suite
+(`tools/test_postgres.sh`, or `ATTACKLEDGER_TEST_PG`: each test gets new databases of its own).
 
 - **The walk.** Every route in `authz.RULES` (the test fails if the table and the routes
   differ), called by organization 2's owner and by a member with every role, with organization
