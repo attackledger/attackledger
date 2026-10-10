@@ -51,6 +51,13 @@ def roots(eng: Engagement) -> set[str]:
     return {p[2:] for p in eng.scope_include if p.startswith("*.")}
 
 
+def one_line(target: str) -> bool:
+    """A target is one token on one line: tools read their targets one per line, and the URL
+    parser drops tabs and newlines, so "https://in.scope/\nhttps://elsewhere/" would pass the scope
+    check as its first URL and reach the tool as two (security review GW-7)."""
+    return isinstance(target, str) and bool(target) and not any(c <= " " or c == "\x7f" for c in target)
+
+
 def split_targets(eng: Engagement, m: modules.Module, targets: list[str]) -> tuple[list[str], list[str]]:
     """(allowed, refused) for this module's input type."""
     inc, exc = eng.scope_include, eng.scope_exclude
@@ -61,8 +68,8 @@ def split_targets(eng: Engagement, m: modules.Module, targets: list[str]) -> tup
         test = lambda t: scope.in_scope(urls.host_of(t) or "", inc, exc)  # noqa: E731
     else:
         test = lambda t: scope.in_scope(t, inc, exc)  # noqa: E731
-    allowed = [t for t in targets if test(t)]
-    refused = [t for t in targets if not test(t)]
+    allowed = [t for t in targets if one_line(t) and test(t)]
+    refused = [t for t in targets if not (one_line(t) and test(t))]
     return allowed, refused
 
 

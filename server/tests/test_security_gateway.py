@@ -283,3 +283,25 @@ def test_gw6_every_address_of_the_deployments_containers_is_refused(files):
         for net, conf in shared.items() if len(shared) > 1 else ():
             aliases = set(conf.get("aliases") or [])
             assert aliases & deny, f"{name} on network {net}: no alias of it is in gateway.DENY_HOSTS"
+
+
+# ---- GW-7: job targets with control characters ---------------------------------------------------
+
+class _Eng:
+    scope_include = ["*.example.com"]
+    scope_exclude = []
+
+
+@pytest.mark.parametrize("target", [
+    "https://app.example.com/\nhttps://evil.test/",
+    "https://app.example.com/\rhttps://evil.test/",
+    "https://app.example.com/\thttps://evil.test/",
+    "https://app.example.com/a b",
+    "https://app.example.com/\x00",
+])
+def test_gw7_a_target_cannot_carry_a_second_line_to_the_tools(target):
+    """Targets reach tools one per line on stdin. urlsplit drops tabs and newlines, so the scope
+    check saw only the first URL; the tool was given both."""
+    m = next(m for m in modules.MODULES if m.input == "urls")
+    allowed, refused = jobgates.split_targets(_Eng(), m, [target, "https://app.example.com/ok"])
+    assert allowed == ["https://app.example.com/ok"] and refused == [target]
