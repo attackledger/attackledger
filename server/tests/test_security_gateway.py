@@ -305,3 +305,200 @@ def test_gw7_a_target_cannot_carry_a_second_line_to_the_tools(target):
     m = next(m for m in modules.MODULES if m.input == "urls")
     allowed, refused = jobgates.split_targets(_Eng(), m, [target, "https://app.example.com/ok"])
     assert allowed == ["https://app.example.com/ok"] and refused == [target]
+
+
+# ---- Second pass (2026-10-10): the recommendations of the first review --------------------------
+
+import ipaddress  # noqa: E402
+import struct  # noqa: E402
+
+from test_gateway import FakeApi  # noqa: E402
+
+OWN = [ipaddress.ip_network("172.18.0.0/16"),      # e.g. internal: the worker's network
+       ipaddress.ip_network("172.19.0.0/16"),      # default: the Docker host is 172.19.0.1
+       ipaddress.ip_network("172.20.0.0/16"),      # lab
+       ipaddress.ip_network("fd00:18::/64")]
+
+
+def _resolver(monkeypatch, table: dict):
+    async def getaddrinfo(host, port, type=None):
+        if host not in table:
+            raise socket.gaierror("no such host")
+        return [(None, None, None, "", (a, 0)) for a in ([table[host]] if isinstance(table[host], str)
+                                                           else table[host])]
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+
+
+def test_gw8_the_gateways_own_networks_are_refused_except_the_labs(monkeypatch):
+    """The Docker host has an address on every network the gateway is on (172.x.0.1), and the
+    deployment's containers are there too. A target is never in those subnets (they are routed to
+    Docker, not to a customer's network), except on the lab's network, which holds targets."""
+    gw = gateway.Gateway(FakeApi(), None, deny_hosts=(), networks=OWN, target_networks=("gateway-lab",))
+    table = {"gateway-lab": "172.20.0.2",
+             "host.example.com": "172.19.0.1", "inside.example.com": "172.18.0.7", "v6.example.com": "fd00:18::5",
+             "lab.example.com": "172.20.0.9",                                   # the lab: a target
+             "bank.example.com": "10.4.0.9", "corp.example.com": "172.16.5.5",  # real internal targets
+             "edge.example.com": "172.21.0.1"}                                  # a network the gateway is not on
+
+    async def go():
+        _resolver(monkeypatch, table)
+        for host in ("lab.example.com", "bank.example.com", "corp.example.com", "edge.example.com"):
+            assert await gw.resolve(host) == table[host], host
+        for host in ("host.example.com", "inside.example.com", "v6.example.com", "172.19.0.1"):
+            with pytest.raises(gateway.Refused, match="gateway's own network"):
+                await gw.resolve(host)
+        assert [str(n) for n in (await gw.own_networks())[1]] == ["172.20.0.0/16"]
+    asyncio.run(go())
+
+
+def test_gw8_without_its_lab_alias_every_own_network_is_refused(monkeypatch):
+    """Fail closed: a target network named by an alias that does not resolve (the gateway is not
+    on it) is not a target network. An address or a subnet (a deployment on a customer's LAN)
+    works too."""
+    async def go():
+        _resolver(monkeypatch, {"lab.example.com": "172.20.0.9"})
+        gw = gateway.Gateway(FakeApi(), None, deny_hosts=(), networks=OWN, target_networks=("gateway-lab",))
+        with pytest.raises(gateway.Refused, match="gateway's own network"):
+            await gw.resolve("lab.example.com")
+        for mark in ("172.20.0.2", "172.20.0.0/24"):
+            gw = gateway.Gateway(FakeApi(), None, deny_hosts=(), networks=OWN, target_networks=(mark,))
+            assert await gw.resolve("lab.example.com") == "172.20.0.9"
+    asyncio.run(go())
+
+
+def _hex(addr: str) -> str:
+    """An IPv4 address as Linux prints it in /proc/net/route (a native-order 32-bit number)."""
+    return "%08X" % struct.unpack("=I", socket.inet_aton(addr))[0]
+
+
+def test_gw8_the_gateway_reads_its_networks_from_proc(tmp_path):
+    route = tmp_path / "route"
+    head = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+    rows = [("eth0", "0.0.0.0", "172.19.0.1", 3, "0.0.0.0"),          # the default route: not a subnet
+            ("eth0", "172.19.0.0", "0.0.0.0", 1, "255.255.0.0"),
+            ("eth1", "172.18.0.0", "0.0.0.0", 1, "255.255.0.0"),
+            ("eth2", "192.168.240.0", "0.0.0.0", 1, "255.255.240.0"),
+            ("eth3", "10.50.0.0", "172.19.0.254", 3, "255.255.0.0"),   # through a router: a real network
+            ("eth4", "172.30.0.0", "0.0.0.0", 0, "255.255.0.0"),       # down
+            ("lo", "127.0.0.0", "0.0.0.0", 1, "255.0.0.0")]
+    route.write_text(head + "".join(f"{i}\t{_hex(d)}\t{_hex(g)}\t{f:04X}\t0\t0\t0\t{_hex(m)}\t0\t0\t0\n"
+                                    for i, d, g, f, m in rows))
+    inet6 = tmp_path / "if_inet6"
+    inet6.write_text("00000000000000000000000000000001 01 80 10 80       lo\n"
+                     "fe800000000000000042acfffe120002 02 40 20 80     eth0\n"
+                     "fd000000000000180000000000000002 02 40 00 80     eth0\n")
+    nets = gateway.interface_networks(str(route), str(inet6))
+    assert [str(n) for n in nets] == ["172.19.0.0/16", "172.18.0.0/16", "192.168.240.0/20", "fd00:0:0:18::/64"]
+    assert gateway.interface_networks(str(tmp_path / "none"), str(tmp_path / "none")) == []
+
+
+def _merged(files) -> dict:
+    """services -> {"networks": ..., "environment": {...}} after compose's merge of the files."""
+    services: dict = {}
+    for f in files:
+        for name, svc in (yaml.load((ROOT / f).read_text(), Loader=_ComposeLoader).get("services") or {}).items():
+            merged = services.setdefault(name, {"environment": {}})
+            if "networks" in svc:
+                merged["networks"] = svc["networks"]
+            env = svc.get("environment") or {}
+            if isinstance(env, list):
+                env = dict(e.split("=", 1) for e in env)
+            merged["environment"].update(env)
+    return services
+
+
+@pytest.mark.parametrize("files", [["docker-compose.yml"], ["docker-compose.yml", "deploy/compose.prod.yml"],
+                                   ["docker-compose.yml", "tools/benchmark/compose.override.yml"]])
+def test_gw8_gw9_the_compose_files_name_the_lab_network_and_the_workers_network(files):
+    """The gateway learns which of its networks holds targets (the lab's) and which one the worker
+    is on from aliases of its own, set in the compose files: ATTACKLEDGER_GATEWAY_TARGET_NETWORKS and
+    ATTACKLEDGER_GATEWAY_LISTEN. Docker answers an alias with the address on that network only."""
+    services = _merged(files)
+    gw = services["gateway"]
+    nets = _networks(gw)
+    aliases = {a: net for net, conf in nets.items() for a in (conf.get("aliases") or [])}
+    targets = [t.strip() for t in gw["environment"].get("ATTACKLEDGER_GATEWAY_TARGET_NETWORKS", "").split(",") if t.strip()]
+    listen = [t.strip() for t in gw["environment"].get("ATTACKLEDGER_GATEWAY_LISTEN", "").split(",") if t.strip()]
+    assert targets and all(aliases.get(t) == "lab" for t in targets), "the lab's network is named by an alias on it"
+    assert all(t in gateway.DENY_HOSTS for t in targets), "the gateway's own lab address is never contacted"
+    assert listen and all(aliases.get(t) == "internal" for t in listen), "it listens on the worker's network only"
+    worker = services["worker"]
+    assert set(_networks(worker)) == {"internal"}
+    for key in ("ATTACKLEDGER_GATEWAY", "ATTACKLEDGER_GATEWAY_DNS", "ATTACKLEDGER_WORKER_API"):
+        host = worker["environment"][key].removeprefix("http://").rsplit(":", 1)[0]
+        assert host in ("gateway", *listen), (key, host)       # the worker reaches the address it listens on
+
+
+@pytest.mark.parametrize("files", [["docker-compose.yml"], ["docker-compose.yml", "deploy/compose.prod.yml"],
+                                   ["docker-compose.yml", "tools/benchmark/compose.override.yml"]])
+def test_gw8_the_docker_host_has_no_address_on_the_worker_and_gateway_internal_networks(files):
+    """Measured on Docker 29.5: the host holds the first address of every bridge network, internal
+    ones too, and a container on the internal network (the worker) reached a service the host ran
+    there directly, without the gateway. With inhibit_ipv4 the bridge has no address: nothing
+    of the host's is on those networks. The default network keeps one (it is the way out)."""
+    nets: dict = {}
+    for f in files:
+        for name, conf in (yaml.load((ROOT / f).read_text(), Loader=_ComposeLoader).get("networks") or {}).items():
+            nets.setdefault(name, {}).update(conf or {})
+    services = _merged(files)
+    used = set(_networks(services["gateway"])) | set(_networks(services["worker"]))
+    for name in sorted(used):
+        conf = nets.get(name) or {}
+        if not conf.get("internal"):
+            assert name == "default", f"{name} is not internal"
+            continue
+        assert (conf.get("driver_opts") or {}).get("com.docker.network.bridge.inhibit_ipv4") == "true", name
+
+
+def test_gw9_listen_names_become_this_containers_own_addresses():
+    calls = []
+
+    def resolve(name, port, type=None):
+        calls.append(name)
+        if name == "gateway-internal":         # a second gateway sharing the alias: not this one's
+            return [(None, None, None, "", ("172.18.0.3", 0)), (None, None, None, "", ("172.18.0.9", 0))]
+        raise socket.gaierror("no such host")
+    own = lambda a: a in ("172.18.0.3", "127.0.0.1")      # noqa: E731
+    assert gateway.listen_addresses("gateway-internal", resolve=resolve, bindable=own) == ["172.18.0.3"]
+    assert gateway.listen_addresses("", resolve=resolve, bindable=own) == ["0.0.0.0"]
+    assert gateway.listen_addresses("127.0.0.1, gateway-internal", resolve=resolve, bindable=own) == [
+        "127.0.0.1", "172.18.0.3"]
+    waits = []
+    with pytest.raises(RuntimeError, match="gateway-elsewhere is not an address of this container"):
+        gateway.listen_addresses("gateway-elsewhere", resolve=resolve, bindable=own, wait=2, sleep=waits.append)
+    assert waits                                   # retried: Docker's resolver may not answer at once
+
+
+def _bindable(addr: str) -> bool:
+    with socket.socket() as s:
+        try:
+            s.bind((addr, 0))
+            return True
+        except OSError:
+            return False
+
+
+@pytest.mark.skipif(not _bindable("127.0.0.2"), reason="needs 127.0.0.0/8 on loopback (Linux)")
+def test_gw9_the_relay_the_proxy_and_the_resolver_answer_on_the_listen_address_only(tmp_path):
+    """Before, every part listened on 0.0.0.0, so on the control, default and lab networks too.
+    127.0.0.2 stands for the address on the worker's network, 127.0.0.3 for another network's."""
+    gw = gateway.Gateway(FakeApi(), None, deny_hosts=(), networks=[])
+    loop = asyncio.new_event_loop()
+    try:
+        parts = loop.run_until_complete(gw.start("127.0.0.2", port=0, dns_port=0, control_port=0))
+        proxy, control, dns = parts
+        assert {s.getsockname()[0] for s in proxy.sockets} == {"127.0.0.2", "127.0.0.1"}   # loopback: healthcheck
+        assert {s.getsockname()[0] for s in control.sockets} == {"127.0.0.2"}
+        assert dns.get_extra_info("sockname")[0] == "127.0.0.2"
+        for server in (proxy, control):
+            # Port 0: each address gets its own free port, so take the one bound to 127.0.0.2.
+            port = next(s.getsockname()[1] for s in server.sockets if s.getsockname()[0] == "127.0.0.2")
+            socket.create_connection(("127.0.0.2", port), 2).close()
+            with pytest.raises(ConnectionRefusedError):
+                socket.create_connection(("127.0.0.3", port), 2)
+        for p in parts:
+            p.close()
+        for server in (proxy, control):
+            loop.run_until_complete(server.wait_closed())
+    finally:
+        loop.close()

@@ -83,11 +83,25 @@ services:
       # Optional: enables Claude agents on hunt lanes. Put it in .env, never in this file. The
       # gateway adds it to the agent's Claude API calls; the worker never sees it (D-042).
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # The proxy, the resolver and the worker's relay answer on the worker's network only (the
+      # gateway's alias there), not on the control, default and lab networks.
+      ATTACKLEDGER_GATEWAY_LISTEN: gateway-internal
+      # The subnets of the gateway's own networks are never contacted (the Docker host has an
+      # address on each), except the network that holds targets: the lab's, named by the
+      # gateway's alias on it. A real internal target is never in those subnets: they are routed
+      # to Docker, not to the customer's network.
+      ATTACKLEDGER_GATEWAY_TARGET_NETWORKS: gateway-lab
     volumes:
       - gateway-private:/data/gateway
       - gateway-public:/data/gateway-public
       - gateway-control:/data/gateway-control
-    networks: [internal, control, default, lab]
+    networks:
+      internal:
+        aliases: [gateway-internal]
+      control: {}
+      default: {}
+      lab:
+        aliases: [gateway-lab]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8080), 2)"]
       interval: 3s
@@ -142,12 +156,19 @@ services:
 networks:
   internal:
     internal: true
+    driver_opts: &no-host-address
+      # The Docker host gets no address on this network: a container here (the worker) cannot
+      # reach a service the host runs on all interfaces (security review GW-8).
+      com.docker.network.bridge.inhibit_ipv4: "true"
   control:
     internal: true
+    driver_opts: *no-host-address
   database:
     internal: true
+    driver_opts: *no-host-address
   lab:
     internal: true
+    driver_opts: *no-host-address
   default: {}
 
 volumes:

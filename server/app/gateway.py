@@ -139,8 +139,10 @@ SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"
 # The deployment's own containers, by every name that resolves to one of their addresses. Docker
 # answers a service name with its address on one shared network only, so a container the gateway
 # shares two networks with has an alias per network (docker-compose.yml; security review GW-6).
-DENY_HOSTS = ("db", "api", "api-control", "api-default", "web", "worker", "gateway", "caddy",
-              "lab-proxy", "lab-proxy-lab", "lab-proxy-default")
+# The gateway's own aliases are here too: gateway-lab is its address on the lab's network, which
+# is otherwise a target network (ATTACKLEDGER_GATEWAY_TARGET_NETWORKS).
+DENY_HOSTS = ("db", "api", "api-control", "api-default", "web", "worker", "gateway", "gateway-internal",
+              "gateway-lab", "caddy", "lab-proxy", "lab-proxy-lab", "lab-proxy-default")
 # Cloud metadata services outside link-local (169.254.0.0/16 is refused as link-local): Alibaba
 # Cloud, AWS over IPv6, Azure's WireServer, Oracle Cloud Classic (security review GW-5).
 METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in (
@@ -159,6 +161,7 @@ CONTROL_PATH = re.compile(r"^/worker/[a-z0-9/_-]{0,200}$")
 CONTROL_METHODS = frozenset({"GET", "POST"})
 MAX_CONTROL_BODY = 16 * 1024 * 1024
 DNS_TYPES = {1: "A", 5: "CNAME", 28: "AAAA"}
+NETWORK_REFRESH = 60.0   # the deployment's addresses and the gateway's own networks are re-read this often
 
 
 class Refused(Exception):
@@ -682,9 +685,14 @@ class Tunnel:
 
 class Gateway:
     def __init__(self, api: Api, ca: CA | None, *, policy: Policy | None = None,
-                 deny_hosts=DENY_HOSTS, upstream_dns: str | None = None, clock=time.monotonic):
+                 deny_hosts=DENY_HOSTS, upstream_dns: str | None = None, clock=time.monotonic,
+                 networks=None, target_networks=()):
         self.api, self.ca, self.policy = api, ca, policy or Policy()
         self.deny_hosts = tuple(deny_hosts)
+        # The networks the gateway is attached to (a callable: interface_networks, or a list in
+        # tests), and the names or addresses that mark which of them hold targets (the lab's).
+        self.networks = networks if networks is not None else interface_networks
+        self.target_networks = tuple(t for t in target_networks if t)
         self.upstream_dns = upstream_dns or _resolv_conf_nameserver()
         self.clock = clock
         self.verify_ctx, self.insecure_ctx = _client_contexts()
@@ -700,6 +708,7 @@ class Gateway:
         self._accounts: dict[tuple, tuple[float, dict | Refused]] = {}
         self._dns_scopes: tuple[float, list] = (0.0, [])
         self._denied: tuple[float, set] = (0.0, set())
+        self._own_networks: tuple[float, list, list] = (0.0, [], [])
         self.log_rows: list[dict] = []
         self.dropped = 0
         # Upstream connector, replaced in tests.
@@ -801,8 +810,41 @@ class Gateway:
                     out.add(ipaddress.ip_address(info[4][0]))
             except (OSError, ValueError):
                 pass
-        self._denied = (self.clock() + 60, out)
+        self._denied = (self.clock() + NETWORK_REFRESH, out)
         return out
+
+    async def own_networks(self) -> tuple[list, list]:
+        """(refused, target): the subnets of the gateway's own interfaces, split into those no
+        request may reach and those that hold targets (the lab's network, named by an address of
+        the gateway on it: target_networks). Refreshed every minute.
+
+        Why the gateway's own networks are refused although private addresses are allowed: the
+        Docker host has an address on each of them (the bridge, 172.x.0.1 on the default network),
+        and so do the deployment's containers, so an in-scope name that resolves into one of them
+        reaches the host's services or the stack itself. A real internal target (a bank's 10.x or
+        172.16/12 network) is never there: a destination inside the subnet of one of the gateway's
+        interfaces is routed to that Docker network, never to the customer's network, so refusing
+        it takes nothing away. Other private addresses stay allowed."""
+        if self._own_networks[0] > self.clock():
+            return self._own_networks[1], self._own_networks[2]
+        nets = self.networks() if callable(self.networks) else list(self.networks)
+        marks = []
+        loop = asyncio.get_running_loop()
+        for entry in self.target_networks:
+            try:
+                marks.append(ipaddress.ip_network(entry, strict=False))
+                continue
+            except ValueError:
+                pass
+            try:
+                for info in await loop.getaddrinfo(entry, None, type=socket.SOCK_STREAM):
+                    marks.append(ipaddress.ip_network(info[4][0].split("%")[0]))
+            except (OSError, ValueError):
+                pass                      # not attached (yet): its network stays refused
+        target = [n for n in nets if any(m.version == n.version and m.overlaps(n) for m in marks)]
+        refused = [n for n in nets if n not in target]
+        self._own_networks = (self.clock() + NETWORK_REFRESH, refused, target)
+        return refused, target
 
     async def resolve(self, host: str) -> str:
         """The address to connect to, checked. The connection goes to this address, so a DNS
@@ -827,6 +869,11 @@ class Gateway:
                                f"metadata or special address)")
         if ip in await self._denied_addresses():
             raise Refused(403, f"{host} resolves to an address of this deployment, which is never contacted")
+        refused, _ = await self.own_networks()
+        net = next((n for n in refused if ip.version == n.version and ip in n), None)
+        if net is not None:
+            raise Refused(403, f"{host} resolves to {ip}, on the gateway's own network {net} (the Docker host and "
+                               f"this deployment), which is never contacted; only the lab's network is a target there")
         return str(ip)
 
     def connect_limiter(self, rules: Rules, kind: str, host: str) -> Limiter | None:
@@ -1326,13 +1373,20 @@ class Gateway:
 
     # ---- run ------------------------------------------------------------------------
 
-    async def serve(self, host: str = "0.0.0.0", port: int = 8080, dns_port: int | None = 53,
-                    control_port: int | None = 8081) -> None:
-        server = await asyncio.start_server(self.handle_client, host, port, limit=MAX_HEAD)
-        control = (await asyncio.start_server(self.handle_control, host, control_port, limit=MAX_HEAD)
-                   if control_port else None)
+    async def start(self, host="0.0.0.0", port: int = 8080, dns_port: int | None = 53,
+                    control_port: int | None = 8081) -> list:
+        """Listen: the proxy, the control relay and the resolver on `host` (an address or a list
+        of them: the gateway's address on the worker's network, see listen_addresses), and the
+        proxy also on loopback, for the container's healthcheck. Port 0 picks a free port, None
+        turns the part off. Returns the servers and the DNS transports."""
+        hosts = [host] if isinstance(host, str) else list(host)
+        everywhere = any(h in ("", "0.0.0.0", "::") for h in hosts)
+        proxy_hosts = hosts if everywhere or "127.0.0.1" in hosts else [*hosts, "127.0.0.1"]
+        out = [await asyncio.start_server(self.handle_client, proxy_hosts, port, limit=MAX_HEAD)]
+        if control_port is not None:
+            out.append(await asyncio.start_server(self.handle_control, hosts, control_port, limit=MAX_HEAD))
         loop = asyncio.get_running_loop()
-        if dns_port:
+        if dns_port is not None:
             gw = self
 
             class _Dns(asyncio.DatagramProtocol):
@@ -1345,17 +1399,77 @@ class Gateway:
                         if reply:
                             self.transport.sendto(reply, addr)
                     loop.create_task(answer())
-            await loop.create_datagram_endpoint(_Dns, local_addr=(host, dns_port))
+            for h in hosts:
+                transport, _ = await loop.create_datagram_endpoint(_Dns, local_addr=(h, dns_port))
+                out.append(transport)
+        return out
+
+    async def serve(self, host="0.0.0.0", port: int = 8080, dns_port: int | None = 53,
+                    control_port: int | None = 8081) -> None:
+        parts = await self.start(host, port, dns_port, control_port)
+        server = parts[0]
+        loop = asyncio.get_running_loop()
         flusher = loop.create_task(self.flush_forever())
-        print(f"gateway ready: proxy {host}:{port}, dns {dns_port}, control {control_port}, api {self.api.base}, "
-              f"claude key {'set' if self.policy.service_key else 'not set'}", flush=True)
+        refused, target = await self.own_networks()
+        hosts = [host] if isinstance(host, str) else list(host)
+        print(f"gateway ready: proxy, dns and control on {', '.join(hosts)} (ports {port}, {dns_port}, {control_port}), "
+              f"api {self.api.base}, claude key {'set' if self.policy.service_key else 'not set'}; own networks "
+              f"refused: {', '.join(map(str, refused)) or 'none'}; target networks: "
+              f"{', '.join(map(str, target)) or 'none'}", flush=True)
         try:
             async with server:
                 await server.serve_forever()
         finally:
             flusher.cancel()
-            if control is not None:
-                control.close()
+            for p in parts[1:]:
+                p.close()
+
+
+def listen_addresses(value: str, *, wait: float = 30.0, resolve=socket.getaddrinfo, sleep=time.sleep,
+                     bindable=None) -> list[str]:
+    """The addresses ATTACKLEDGER_GATEWAY_LISTEN names (comma-separated names or addresses):
+    in the compose files, the gateway's alias on the worker's network (gateway-internal), so
+    the proxy, the resolver and the control relay answer there only, not on the control, default
+    and lab networks. Docker's resolver answers a network alias with the address on that network.
+    Only this container's own addresses count (a name another container shares is skipped).
+    Empty: every interface (0.0.0.0), as before. A name that does not resolve within `wait`
+    seconds is an error: the gateway does not start, so nothing is sent."""
+    names = [v.strip() for v in (value or "").split(",") if v.strip()]
+    if not names:
+        return ["0.0.0.0"]
+    bindable = bindable or _bindable
+    deadline = time.monotonic() + wait
+    while True:
+        out, missing = [], []
+        for name in names:
+            try:
+                addrs = [str(ipaddress.ip_address(name))]
+            except ValueError:
+                try:
+                    addrs = sorted({i[4][0] for i in resolve(name, None, type=socket.SOCK_STREAM)})
+                except OSError:
+                    addrs = []
+            own = [a for a in addrs if bindable(a)]
+            if not own:
+                missing.append(name)
+            out += [a for a in own if a not in out]
+        if not missing:
+            return out
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"ATTACKLEDGER_GATEWAY_LISTEN: {', '.join(missing)} is not an address of this "
+                               f"container; the gateway does not start")
+        sleep(1.0)
+
+
+def _bindable(address: str) -> bool:
+    """Whether this machine has the address (a socket can be bound to it)."""
+    ip = ipaddress.ip_address(address)
+    with socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.bind((address, 0))
+            return True
+        except OSError:
+            return False
 
 
 async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
@@ -1439,6 +1553,48 @@ def refused_reply(query: bytes, end: int) -> bytes:
     return struct.pack("!HHHHHH", qid, flags, 1, 0, 0, 0) + query[12:end]
 
 
+def interface_networks(route: str = "/proc/net/route", inet6: str = "/proc/net/if_inet6") -> list:
+    """The subnets of this machine's network interfaces, read from Linux's /proc (the gateway
+    runs in a container): every directly connected IPv4 route (no gateway, not the default
+    route), and the prefix of every global IPv6 address. Loopback and link-local are left out
+    (resolve refuses them anyway). Elsewhere, or without /proc, the list is empty."""
+    out: list = []
+    try:
+        with open(route) as f:
+            next(f, None)
+            for line in f:
+                p = line.split()
+                if len(p) < 8 or p[0] == "lo":
+                    continue
+                try:
+                    dest, gw, flags, mask = (int(p[1], 16), int(p[2], 16), int(p[3], 16), int(p[7], 16))
+                except ValueError:
+                    continue
+                if not flags & 0x1 or flags & 0x2 or gw or not mask:      # up, connected, not the default route
+                    continue
+                net = ipaddress.IPv4Network((socket.inet_ntoa(struct.pack("=I", dest)),
+                                             socket.inet_ntoa(struct.pack("=I", mask))), strict=False)
+                if net not in out:
+                    out.append(net)
+    except OSError:
+        pass
+    try:
+        with open(inet6) as f:
+            for line in f:
+                p = line.split()
+                if len(p) < 6 or len(p[0]) != 32:
+                    continue
+                addr = ipaddress.IPv6Address(int(p[0], 16))
+                if addr.is_loopback or addr.is_link_local:
+                    continue
+                net = ipaddress.IPv6Network((addr, int(p[2], 16)), strict=False)
+                if net not in out:
+                    out.append(net)
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 def _resolv_conf_nameserver() -> str:
     try:
         for line in open("/etc/resolv.conf"):
@@ -1465,11 +1621,14 @@ def main() -> None:
                  policy=Policy(_env_hosts("ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS", PASSIVE_HOSTS),
                                _env_hosts("ATTACKLEDGER_GATEWAY_SERVICE_HOSTS", SERVICE_HOSTS),
                                service_key=os.environ.get("ANTHROPIC_API_KEY")),
-                 deny_hosts=deny, upstream_dns=os.environ.get("ATTACKLEDGER_GATEWAY_UPSTREAM_DNS") or None)
+                 deny_hosts=deny, upstream_dns=os.environ.get("ATTACKLEDGER_GATEWAY_UPSTREAM_DNS") or None,
+                 target_networks=tuple(t.strip() for t in os.environ.get("ATTACKLEDGER_GATEWAY_TARGET_NETWORKS", "")
+                                       .split(",") if t.strip()))
     dns_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_DNS_PORT", "53"))
     control_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_CONTROL_PORT", "8081"))
-    asyncio.run(gw.serve(port=int(os.environ.get("ATTACKLEDGER_GATEWAY_PORT", "8080")), dns_port=dns_port or None,
-                         control_port=control_port or None))
+    hosts = listen_addresses(os.environ.get("ATTACKLEDGER_GATEWAY_LISTEN", ""))
+    asyncio.run(gw.serve(hosts, port=int(os.environ.get("ATTACKLEDGER_GATEWAY_PORT", "8080")),
+                         dns_port=dns_port or None, control_port=control_port or None))
 
 
 if __name__ == "__main__":

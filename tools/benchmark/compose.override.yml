@@ -41,7 +41,13 @@ services:
     image: attackledger-bench-api:latest
     build: !reset null
     pull_policy: never
-    networks: !override [internal, control, lab]
+    # The aliases of docker-compose.yml: where it listens, and which network holds targets.
+    networks: !override
+      internal:
+        aliases: [gateway-internal]
+      control: {}
+      lab:
+        aliases: [gateway-lab]
   worker:
     image: attackledger-bench-worker:latest
     build: !reset null
