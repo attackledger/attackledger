@@ -57,6 +57,17 @@ Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers ch
   `X-Functions-Key` and `X-Master-Key`, also as parameters and JSON keys.
 - **Drafts with a credential reached sessionStorage** (EV-8) when written as a JSON field, a key
   header, `password: ...`, a private key or an AWS key id.
+- **Evidence could be moved to another item in a signed report** (O-1). The manifest did not
+  name the items' ids. Manifest version 2 names each item's id and text (D-054). Older receipts
+  still verify, with a NOTE.
+- **History entries could be left out of a report** (O-2). Receipt payload v4 signs the audit
+  log and key log heads, and the count and hash of the engagement's and signer's audit entries up
+  to them. The server checks them, and a report that leaves one of them out fails. The new
+  `--require-history` option (a checkbox on /verify) also fails a report without the logs, or
+  with receipts signed before v4. A void made after the last signature is still not bound
+  (`docs/VERIFIER.md`).
+- **A verified HTML report did not show what was verified** (O-3). Both verifiers now list what
+  its embedded JSON says (engagement, scope, lanes, signers, dates, counts) to compare with the page.
 
 Authentication, authorization and organization isolation (`AUTH.md`):
 - **A cited hash opened another engagement's blob from before encryption** (AUTH-1, Low).

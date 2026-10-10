@@ -21,10 +21,16 @@ unusual input or position, or that defence in depth already covers.
 | EV-6 | Medium | Deleting an engagement's content leaves every requested URL in the traffic log | `0ec997f` | `test_ev6_deleting_content_removes_the_traffic_log_urls` |
 | EV-7 | Low | Azure API Management and Azure Functions key headers are stored unredacted | `f2e71e1` | `test_ev7_cloud_api_key_headers_are_redacted` |
 | EV-8 | Low | Unsent drafts holding a credential in common forms are written to `sessionStorage` | `fd398cd` | reproduction below (the web app has no test runner) |
+| O-1 | Low | The receipt manifest does not bind evidence to its item: two done items' ids can be swapped | `0e1f9d5` | `test_o1_swapped_item_ids_fail_under_manifest_v2`, `test_o1_new_receipts_are_over_a_manifest_that_names_each_item`, `test_o1_manifest_v1_receipts_still_close_and_verify_with_a_note` |
+| O-2 | Medium | Audit and key log entries, or both logs, can be left out of a report; dropping a void entry defeats EV-1 | `0e1f9d5` (bounded: see below) | `test_o2_payload_v4_signs_the_history_heads_and_the_server_checks_them`, `test_o2_an_audit_entry_the_signature_covers_cannot_be_left_out`, `test_o2_require_history`, `test_o2_a_void_left_out_is_caught_by_any_later_signature`, `test_o2_a_void_after_the_newest_signature_is_named_as_not_covered` |
+| O-3 | Medium | An HTML report's text is not verified, and the reader is not shown what was (EV-5) | `0e1f9d5` | `test_o3_a_verified_html_report_is_followed_by_its_facts` |
 
-All regression tests are in `server/tests/test_security_evidence.py`. Each of them fails on
+The EV regression tests are in `server/tests/test_security_evidence.py`. Each of them fails on
 `c3557a5` (checked by running the file against a copy of that tree: 7 failed) and passes
 after the fixes. EV-1 to EV-5 also have cases in `tools/verifier_equivalence/cases.json`.
+The O-1 to O-3 tests are in `server/tests/test_security_verifier.py`. All 9 fail on `c7a0c25`
+(checked the same way) and pass on `0e1f9d5`. They have 25 cases in `cases.json`, the
+fixtures `v4-*` and `v1-item-ids-swapped`.
 
 ### The verifier threat model (EV-1 to EV-5)
 
@@ -55,8 +61,8 @@ printed `Verified.`
   one, it fails: "reported as receipted, but the change history records that this receipt
   was voided <time>". A later receipt with the same manifest has another issue time and is
   not affected.
-- **Remaining:** a report can omit an audit log entry unnoticed (D-037, "Not yet"), so a
-  forger who also drops the void entry is not caught. See open item O-2.
+- **Remaining:** a forger who also drops the void entry is caught only when a receipt signed
+  after the void commits to it (O-2, D-054).
 
 ### EV-2: the receipt's issue time is not the signed one (Medium)
 
@@ -104,7 +110,8 @@ printed `Verified.`
   "How to verify" texts now say that the body hash can be recomputed by anyone and should be
   compared with the value the tester gave.
 - **Remaining:** the page's text is still not verified. The verifier cannot re-render the
-  page (it must stay independent of the server's code). See open item O-3.
+  page (it must stay independent of the server's code). Since O-3 it shows what the verified
+  JSON says, so the reader can compare.
 
 ### EV-6: deleted content leaves the traffic log's URLs (Medium)
 
@@ -144,26 +151,54 @@ printed `Verified.`
   a Map-backed `sessionStorage`, call `setDraft("k", value)` and check the storage. Before the
   fix all six credential samples were stored; after it none is, and both prose samples are.
 
+### O-1: the manifest did not bind evidence to its item (Low)
+
+- **Where:** `gates.manifest`, and `manifest` in both verifiers.
+- **What:** a manifest listed items by `idx`, `key`, `state` and `na_reason`, and evidence by
+  `id`, `item` (the item's database id), `kind` and `sha256`. The item's database id was not in the
+  manifest. So in a signed report the `item_id` of two items marked done could be swapped. Each
+  piece of evidence then seemed to support the other item, and every check passed.
+- **Fix:** manifest version 2 (D-054). Each item also names its `id` and its `text`, and the
+  manifest carries `"v": 2`. New receipts use it. The server's `lane_status` and both verifiers
+  accept a version 1 hash for receipts made before. The verifiers add a NOTE that such a receipt
+  does not bind evidence to items. The version is inside the hashed text, so neither can pass for
+  the other.
+- **Remaining:** receipts issued before this change keep version 1 and its limit. The NOTE names them.
+
+### O-2: history entries could be left out of a report (Medium, bounded)
+
+- **Where:** `check_key_log` and `check_audit_log` in both verifiers. The signed payload.
+- **What:** links are hashes only, so a left-out audit entry of this engagement looked like
+  another engagement's. Dropping `key_log` or `audit_log` gave only a NOTE (D-037). A forger
+  could also drop the `lane.receipt_voided` entry and get past EV-1.
+- **Fix:** receipt payload v4 (D-054) signs `history`. That is the audit log head when the payload
+  was issued, the number of audit entries up to it that are the engagement's or person events of
+  the signer, the SHA-256 of their sequence numbers, and the key log head. The server checks every
+  field at close. In every mode, both verifiers fail a report whose logs stop before the signed
+  head, differ there, or leave out a counted entry. `--require-history`, and *Require the full
+  change history* on /verify, also fail missing logs, receipts that commit to no history
+  (unsigned, v2, v3) and format 1. In that mode a NOTE says up to which entry signatures bind the history.
+- **Remaining, by design of the chain:** nothing signed after the newest receipt commits to
+  later entries. A void made after the last signature can still be left out with the lane
+  shown as receipted, in strict mode too. That case is a fixture and a test, and strict mode's
+  NOTE says so. Closing it would need a signature at report time (no such signer exists; D-036).
+  `docs/VERIFIER.md` says what strict mode proves and what it does not.
+
+### O-3: what was verified in an HTML report was not shown (Medium)
+
+- **Fix:** after an HTML report verifies, `verify_report.py` prints what its embedded JSON
+  says, and /verify shows the same list under the result. The list gives the engagement, its
+  authorization and scope, the hosts and lanes, each receipted lane with its items, signer and
+  dates, void receipts, the evidence count and chain head, and when the report was made. The
+  page builds it with the DOM API under its CSP and Trusted Types, and has no new inline script.
+  The rebuilt page's hashes are in its meta CSP, and `tools/build_pages.sh` accepts them. The HTML
+  report's "How to verify" mentions the list and `--require-history`.
+
 ## Open items (not fixed)
 
-- **O-1 (Low): the receipt manifest does not bind evidence to item keys.** A manifest lists
-  items by `idx`, `key`, `state` and `na_reason`, and evidence by `id`, `item` (the item's
-  database id), `kind` and `sha256`. The item's database id is not in the manifest, so in a
-  signed report the `item_id` of two items marked done can be swapped: each piece of evidence
-  then appears to support the other item, and every check passes. Closing it needs a new
-  manifest version that names the item id (or key) for each evidence entry, which changes the
-  receipt format, so it is a decision for the maintainer.
-- **O-2 (known, D-037): audit and key log entries can be left out of a report.** Links are
-  hashes only, so an omitted entry of this engagement looks like another engagement's. A
-  report can also drop `key_log` and `audit_log` entirely, which gives only a NOTE. A future
-  format could have the server commit, per link, to the engagement it belongs to, and the
-  verifier could gain a `--require-history` option like `--require-signatures`.
-- **O-3: the HTML page's text is not verified** (EV-5). The Verify page could show the
-  verified JSON's own facts (engagement, scope, receipted lanes) next to the result, so a
-  reader compares them with the page.
 - **By design, noted:** a report whose signatures were removed verifies with a NOTE unless
   `--require-signatures` is given; the body hash is self-consistency only (see EV-5's wording
-  change).
+  change). History after the newest signed head is not bound (O-2).
 
 ## What was checked and found sound
 
@@ -252,6 +287,12 @@ printed `Verified.`
 
 ## Verification
 
+- O-1 to O-3 (`0e1f9d5`): server 799 passed, 1 skipped (790 and 1 before; the 9 new tests).
+  `run.sh`: 105 reports, 107 building blocks, 0 differences (80 before). `tsc --noEmit` passes.
+  `site/verify.html` was rebuilt with `tools/build_verify.sh`, and `tools/build_pages.sh`
+  accepts its hashes. `site/verify_report.py` is a copy of `tools/verify_report.py`. The sample
+  and demo reports still verify, with the manifest version 1 NOTE. With `--require-history`
+  they fail, because they were signed as payload v3, except the demo export without receipts.
 - Server: 765 passed, 1 skipped (758 and 1 before; the 7 new tests).
 - `tools/verifier_equivalence/run.sh`: 80 reports, 107 building-block cases, 0 differences
   or unmet expectations (72 before; 8 new cases). One existing fixture,
