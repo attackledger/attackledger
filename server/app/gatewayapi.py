@@ -56,7 +56,8 @@ def _running_job(session, job_id: int, secret: str) -> Job:
     job = session.get(Job, job_id)
     if job is None or not job.gateway_secret_sha256:
         raise HTTPException(404, f"job {job_id} has no gateway credential")
-    if not hmac.compare_digest(hashlib.sha256(secret.encode()).hexdigest(), job.gateway_secret_sha256):
+    if not hmac.compare_digest(hashlib.sha256(secret.encode("utf-8", "surrogatepass")).hexdigest(),
+                               job.gateway_secret_sha256):
         raise HTTPException(403, f"wrong secret for job {job.id}")
     if job.status != JobStatus.running:
         raise HTTPException(403, f"job {job.id} is {job.status.value}, not running")
