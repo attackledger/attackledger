@@ -111,6 +111,21 @@ def test_tool_runs_get_the_gateway_and_never_log_the_secret_or_the_tokens(stack)
     assert job.gateway_secret not in log and "********" in log
 
 
+def test_a_tool_that_ends_without_reading_its_input_is_a_failed_tool_not_a_crash(stack):
+    """The worker wrote the targets to a tool's stdin and closed it; a tool that had already ended
+    (env, which the test above runs, or a tool refusing a flag) made that a BrokenPipeError out of
+    the worker. With env and one input line it depended on which finished first, so the test above
+    failed now and then (seen 4 times in 9 suite runs, with three suites at once). Here the input
+    is larger than a pipe holds, so the write always meets a tool that is gone."""
+    job = claim(stack, ["a.example.com"])
+    r = worker.Run(job)
+    out = list(r.tool_lines("quits", ["/bin/sh", "-c", "echo bye; echo refused >&2; exit 3"],
+                            [f"t{i}.example.com" for i in range(100_000)]))
+    assert out == ["bye"] and r.failed_tools == ["quits"]
+    log = stack.job(job.id).log
+    assert "refused" in log and "quits exited with code 3" in log
+
+
 def test_jobs_that_send_traffic_need_the_gateway(stack, monkeypatch):
     monkeypatch.delenv("ATTACKLEDGER_GATEWAY")
     job = claim(stack, ["a.example.com"])

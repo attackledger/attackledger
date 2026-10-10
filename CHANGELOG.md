@@ -213,6 +213,13 @@ in the `gateway-private` volume; a backup of the database does not include them.
 - **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of
   `gateway.invalid`; a resolver that answered inconsistently made them differ. The tests now
   answer `.invalid` names themselves (RFC 6761: they never resolve).
+- **The same worker test was still flaky, and the cause was the worker.** The worker wrote a
+  tool's input to its stdin and closed it; a tool that had already ended without reading it (the
+  test runs `env`; a real tool refusing a flag does the same) made that a `BrokenPipeError` that
+  ended the job with the worker's error instead of the tool's exit code and stderr. Whether `env`
+  finished first was timing: with three suites at once it failed in 4 of 9 runs. A broken pipe to a
+  tool is now the tool's outcome; a new test sends more input than a pipe holds to a tool that
+  quits, so it fails every time without the fix.
 - **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
   pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
   read the caller's stdin, so nothing after the backup ran. Docker calls no longer read

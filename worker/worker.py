@@ -280,8 +280,16 @@ class Run:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, env=self.gw.env(name))
         self.proc = proc
-        proc.stdin.write("\n".join(stdin_lines) + "\n")
-        proc.stdin.close()
+        # A tool may end without reading its input (env, a bad flag): writing to it is then a broken
+        # pipe, which is the tool's outcome (its exit code and stderr say why), not the worker's error.
+        try:
+            proc.stdin.write("\n".join(stdin_lines) + "\n")
+        except BrokenPipeError:
+            pass
+        try:
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
         # Enforce the time limit even when a tool prints nothing for a long time.
         timed_out = threading.Event()
 
