@@ -842,13 +842,58 @@ options considered and who decided.
   engagement) commits to it. A void made after the last signature can still be left out. The
   verifier then says, in strict mode, up to which entry the history is bound. Closing that gap
   would need a party that signs at report time, such as a server key or a timestamp of
-  the report. Neither exists today (D-036 keeps trust in the reviewers' keys). The role
+  the report. Neither exists today (D-036 keeps trust in the reviewers' keys). (Closed by D-055:
+  the server seals each report it exports, and strict mode requires the seal.) The role
   check still uses the close time, which can be up to 15 minutes after the signed head.
 - **Considered:** a tag per audit link naming its engagement, salted so that other
   engagements stay unreadable. It would show every left-out entry, the later ones too, but
   it changes the audit chain's construction, needs a migration and a salt per engagement,
   and still says nothing about entries after the report was made. Rejected for now.
 - **Made by:** Claude, from the security review's open items, at Murat's request to close them.
+
+### D-055 · The server seals every report it exports (2026-10-10, made autonomously)
+- **Problem** (security review O-2, the part D-054 left open, docs/security-review/EVIDENCE.md):
+  a void, or any audit or key log entry, recorded after the newest receipt signature could be
+  left out of a report, with the lane shown as receipted, and `--require-history` still passed.
+  Nothing was signed at report time.
+- **Decision:**
+  - **An instance seal key.** Each deployment has one Ed25519 key, made on first use and kept
+    in the blob store wrapped by the master key, like a data key (`vault.seal_key`; startup
+    check and `rotate-master` cover it). Its public key is registered once in each
+    organization's key log as an entry that names no person (`via: instance`, migration `0023`
+    makes `key_log.user_id` optional), before the first receipt payload the server issues there,
+    so later receipt signatures cover the registration.
+  - **The seal.** When a report is exported (JSON, HTML, the app's Verify tab), the server signs
+    `attackledger-seal-v1`: the engagement, the report body hash, the heads (seq and entry hash)
+    of the audit log and the key log the report carries, the key and the time. It goes in
+    `integrity.seal`, outside the body hash. The report's key history includes the seal key.
+  - **A timestamp of the seal** from the configured authority, when timestamps are on, over
+    `attackledger-seal-timestamp-v1`, the body hash and the seal's signature. The seal's time then
+    cannot be backdated. If the authority does not answer, the report is still sealed, without a
+    timestamp.
+  - **Verifiers.** Both check the seal the same way (*Report seal*): signature, key and
+    fingerprint, body hash, engagement, the logs ending at the sealed heads, the key's
+    registration as the instance's, the time and the timestamp. `--require-history`, the /verify
+    checkbox and the Verify tab's option also require a valid seal. Reports without a seal keep
+    verifying in normal mode, with a NOTE. A NOTE says whether a receipt signature covers the
+    seal key's registration.
+- **What it proves and what it does not:** the seal is the server's statement that the report and
+  its history were complete up to those heads at that time. It does not make the server
+  trustworthy: whoever holds the seal key can seal a different report, and a seal key no receipt
+  signature covers is tied to the server only by its fingerprint, which the reader compares out
+  of band (docs/VERIFIER.md). Trust in the review stays with the reviewers' keys (D-036).
+- **Considered:**
+  - A timestamp of the report alone, with no server key. It proves when, not who: anyone can
+    timestamp an edited report. Rejected as the only mechanism, kept as part of the seal.
+  - Asking a reviewer to sign every export. It would bind the history to a person, but exports
+    happen without a reviewer present (a client download, the Verify tab), and a reviewer's
+    browser key cannot sign server-side. Rejected.
+  - Binding the seal key's fingerprint into the receipt payload (a payload v5). Registering the
+    key in the key log before the first payload gives the same binding for new receipts without a
+    new payload format. Rejected for now.
+  - Keeping the key in the database. The blob store already holds the wrapped data keys and is
+    covered by the same checks and rotation; a database row would need its own. Rejected.
+- **Made by:** Claude, from the security review's remaining O-2 gap, at Murat's request to close it.
 
 ## Adding entries
 

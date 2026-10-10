@@ -484,7 +484,8 @@ class KeyLogEntry(OrgOwned, Base):
     __org_index__ = False
     id: Mapped[int] = mapped_column(primary_key=True)
     seq: Mapped[int]
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # None for the instance's own report seal key (seal.py, D-055), which belongs to no person.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     user_name: Mapped[str] = mapped_column(String(200))                  # the name at the time
     key_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     algorithm: Mapped[str] = mapped_column(String(20))

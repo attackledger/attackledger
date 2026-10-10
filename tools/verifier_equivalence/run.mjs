@@ -20,7 +20,7 @@ const python = path.resolve(opt("--python", path.join(repo, "tools/verify_report
 const markdown = opt("--markdown", null);
 const pythonHasV2 = readFileSync(python, "utf8").includes("CHAIN_FIELDS_V2");
 const CHECKS = { "Report body hash": "B", "Evidence chain": "C", "Lane receipts": "R", "Receipt signatures": "S",
-                 "Signing key history": "K", "Change history": "H", "Receipt timestamps": "T" };
+                 "Signing key history": "K", "Change history": "H", "Receipt timestamps": "T", "Report seal": "L" };
 const MODES = ["webcrypto", "fallback"];
 
 function fromCli(stdout, code) {
@@ -113,8 +113,8 @@ const cell = (r, k) => {
   return a === b && b === f ? a : `py ${a}, js ${b}/${f}`;
 };
 const lines = [
-  "| # | Report | B | C | R | S | K | H | T | Result | Same verdicts and output |",
-  "|---|---|---|---|---|---|---|---|---|---|---|",
+  "| # | Report | B | C | R | S | K | H | T | L | Result | Same verdicts and output |",
+  "|---|---|---|---|---|---|---|---|---|---|---|---|",
 ];
 rows.forEach((r, i) => {
   const flags = [r.c.roots?.length ? `+${r.c.roots.join(", ")}` : "", r.c.require ? "--require-signatures" : "",
@@ -306,7 +306,7 @@ compare("b64", vectors.b64.map((t) => `\`${JSON.stringify(t)}\``), jsOut.b64);
 const report = [
   `Reference: ${path.relative(repo, python) || python}${pythonHasV2 ? "" : " (no evidence chain record v2 yet)"}. `
   + `Browser module: web/src/verify_report.ts, Ed25519 with WebCrypto and with its fallback. `
-  + `Columns: B body hash, C evidence chain, R lane receipts, S signatures, K key log, H change history, T timestamps; - not shown.`,
+  + `Columns: B body hash, C evidence chain, R lane receipts, S signatures, K key log, H change history, T timestamps, L report seal; - not shown.`,
   "", ...lines, "", "| Building block | Case | Python | Same in the module |", "|---|---|---|---|", ...prim, "",
   `${rows.length} reports, ${prim.length} building-block cases; ${failures} differences or unmet expectations`
   + (pending ? `; ${pending} v2 reports pending a verify_report.py with v2.` : "."),

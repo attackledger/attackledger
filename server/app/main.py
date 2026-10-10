@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, object_session
 
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
-from . import auditlog, gatewayapi, importers, inbox, keylog, redact, vault, workerapi
+from . import auditlog, gatewayapi, importers, inbox, keylog, redact, seal, vault, workerapi
 from . import approvals, orgs, orgscope, testaccounts
 from . import targets as targeting
 from .db import SessionLocal, get_session
@@ -713,6 +713,9 @@ def receipt_payload(lane_id: int, key: str, request: Request, session: Session =
     if refusal:
         raise HTTPException(refusal[0], refusal[1])
     eng = lane.asset.engagement
+    # The instance's report seal key is registered before the first receipt is signed, so the
+    # key log head this payload names covers it, and a report cannot swap in another seal key (D-055).
+    seal.register(session, eng.organization_id)
     seq, head = ledger.chain_head(session, eng.id)
     return {"payload": signing.payload_for(
         engagement_id=eng.id, engagement_name=eng.name, lane_id=lane.id, host=lane.asset.host, role=lane.role,
@@ -1272,8 +1275,10 @@ def control_coverage(eng_id: int, session: Session = Depends(get_session)):
 # ---- audit report ----------------------------------------------------------
 
 def _report(eng_id: int, session: Session) -> dict:
+    """The report, sealed by this instance as it is exported (D-055)."""
     eng = _get(session, Engagement, eng_id)
-    return report.build(session, eng, control_coverage(eng_id, session))
+    key = seal.register(session, eng.organization_id)       # in the key log before the report is built
+    return seal.seal(report.build(session, eng, control_coverage(eng_id, session), seal_key=key))
 
 
 def _filename(eng: dict, ext: str) -> str:

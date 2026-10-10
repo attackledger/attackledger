@@ -32,7 +32,9 @@ VIA = {
     "assigned_password": "from a session signed in with a password someone else set",   # at creation or a reset
     "operator_cli": "by the operator on the server",               # python -m app.people
     "backfill": "before the key log existed (recorded when it was added)",
+    "instance": "as this AttackLedger instance's report seal key",   # seal.py (D-055): no person
 }
+INSTANCE_NAME = "AttackLedger instance"
 RECORD_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
 
 
@@ -66,6 +68,33 @@ def append(session, *, user: User, key: SigningKey, event: str, via: str, at: st
     session.add(e)
     session.flush()
     return e
+
+
+def append_instance(session, *, organization_id: int, fingerprint: str, algorithm: str) -> KeyLogEntry:
+    """Register the instance's report seal key (seal.py, D-055) in an organization's key log, once.
+    The entry names no person. Returns the registration, the one already there or the new one.
+    The caller commits."""
+    org = organization_id
+    if session.bind.dialect.name == "postgresql":     # the same lock as append: check, then add
+        session.execute(text("SELECT pg_advisory_xact_lock(7036, :org)"), {"org": org})
+    found = instance_registration(session, org, fingerprint)
+    if found is not None:
+        return found
+    last = _last(session, org)
+    e = KeyLogEntry(organization_id=org, seq=(last.seq + 1) if last else 1, user_id=None, user_name=INSTANCE_NAME,
+                    key_fingerprint=fingerprint, algorithm=algorithm, event="registered", at=now_text(),
+                    via="instance", prev_hash=last.entry_hash if last else GENESIS)
+    e.record_sha256 = ledger.sha256(ledger.canonical(record(e)))
+    e.entry_hash = entry_hash(e.prev_hash, e.record_sha256)
+    session.add(e)
+    session.flush()
+    return e
+
+
+def instance_registration(session, organization_id: int, fingerprint: str) -> KeyLogEntry | None:
+    return session.scalars(select(KeyLogEntry).where(
+        KeyLogEntry.organization_id == organization_id, KeyLogEntry.key_fingerprint == fingerprint,
+        KeyLogEntry.via == "instance", KeyLogEntry.event == "registered").order_by(KeyLogEntry.seq).limit(1)).first()
 
 
 def _last(session, org: int) -> KeyLogEntry | None:

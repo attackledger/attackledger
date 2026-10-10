@@ -247,9 +247,12 @@ def test_report_carries_the_signing_keys_history(env, tmp_path):
     c, _ = env
     report, k, payload, rita = signed_report(c)
     log = report["key_log"]
+    # The instance's report seal key (D-055) is registered when the first payload is issued, after
+    # Rita's two keys and before the revocation; the other key goes in as hashes only.
+    seal_key = report["integrity"]["seal"]["key_fingerprint"]
     assert [(x["event"], x["key_fingerprint"]) for x in log["entries"]] == [
-        ("registered", k.fingerprint), ("revoked", k.fingerprint)]
-    assert [x["seq"] for x in log["links"]] == [1, 2, 3] and log["head"]["seq"] == 3
+        ("registered", k.fingerprint), ("registered", seal_key), ("revoked", k.fingerprint)]
+    assert [x["seq"] for x in log["links"]] == [1, 2, 3, 4] and log["head"]["seq"] == 4
     assert verifier.check_body(report) == []
     problems, notes = verifier.check_key_log(report)
     assert problems == []
@@ -305,12 +308,16 @@ def test_verifier_flags_bad_key_history(env):
     assert found == [] and any("no key history" in n for n in notes)
 
 
-def test_unsigned_reports_have_no_key_log(env):
+def test_unsigned_reports_carry_only_the_seal_keys_history(env):
+    """No person's key signed: the key log holds only the instance's seal key (D-055), which the
+    seal check reads; the key history check has no receipt to judge."""
     c, _ = env
     e, lane, _ = setup(c)
     assert c.post(f"/lanes/{lane}/close", json={"reviewed": True}).status_code == 200
     report = c.get(f"/engagements/{e}/report").json()
-    assert "key_log" not in report and verifier.check_key_log(report) == ([], [])
+    assert [(x["key_fingerprint"], x["via"], x["user_id"]) for x in report["key_log"]["entries"]] == [
+        (report["integrity"]["seal"]["key_fingerprint"], "instance", None)]
+    assert verifier.check_key_log(report) == ([], [])
 
 
 # ---- the migration backfills keys that already exist ------------------------------

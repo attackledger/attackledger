@@ -45,6 +45,14 @@ instead; that is not in the MVP.
   key, the engagement id as associated data, so a key file copied to another engagement
   does not open) in the blob store, at `<blobs>/e/<engagement id>/key.json`, next to the
   blobs it protects. The file names the master key's id (a hash of the key, not the key).
+- **Report seal key.** One Ed25519 key per deployment, which seals every exported report
+  (D-055, `docs/VERIFIER.md`). It is made the first time a receipt payload is issued or a
+  report is exported, and kept like a data key: wrapped by the master key (AES-256-GCM, its own
+  associated data), at `<blobs>/instance/seal-key.json`, created with `O_EXCL` and mode 0600.
+  The private key never leaves the API; its public key is registered once in each
+  organization's key log (an entry that names no person) and is in every report. The startup
+  check and `rotate-master` cover it like the data keys. A restore without the blob store makes
+  a new seal key, registered as a second instance key; reports sealed before keep verifying.
 - **Why in the blob store and not the database.** The blob store's interface
   (`put/get(..., engagement_id=)`) has no database session (and until D-042 the API and the
   worker shared the folder; now only the API mounts it). Keeping the key there means the store needs nothing else to encrypt or
@@ -68,7 +76,8 @@ instead; that is not in the MVP.
 3. Re-wrap every data key: `python -m app.vault rotate-master --old-key-file old.key`
    (or `--old-dev-key` when moving off the development key). It re-encrypts each
    `key.json` under the new master key; the content itself is not re-encrypted, because
-   only the data keys depend on the master key. It is safe to run again: files already
+   only the data keys depend on the master key. The report seal key is re-wrapped the same
+   way. It is safe to run again: files already
    under the new key are skipped, files under neither key are reported and fail the command.
 4. Start the API and the worker with the new key. Destroy the old key once backups made
    with it are no longer needed.

@@ -263,11 +263,29 @@ def resign(lane: dict, key, change) -> None:
     sig["value"] = key.sign(sig["payload"])
 
 
+def unsealed(raw: bytes) -> bytes:
+    """A report as the server exported it before report seals (D-055): what the v4 fixtures are."""
+    r = json.loads(raw)
+    r["integrity"].pop("seal", None)
+    return json.dumps(r, ensure_ascii=False).encode()
+
+
+def unsealed_html(raw: bytes) -> bytes:
+    """The HTML report rendered again from its embedded JSON without the seal."""
+    from app import report as reporting
+    page = raw.decode()
+    start = page.index('id="attackledger-report">') + len('id="attackledger-report">')
+    r = json.loads(page[start:page.index("</script>", start)])
+    r["integrity"].pop("seal", None)
+    return reporting.render_html(r).encode()
+
+
 def make_v4() -> dict:
-    """Reports in the current format, manifest version 2 and receipt payload v4 (D-054), and
-    copies made to break what they bind: the items' ids, the audit entries the signature counts,
-    the logs' heads. Also a void hidden in two ways, and HTML reports for the facts the verifier
-    prints after one verifies. Returns {name: bytes}; a name without .html is a .json fixture."""
+    """Reports in manifest version 2 and receipt payload v4 (D-054), as exported before report seals
+    (the seal is taken out; make_seal has sealed ones), and copies made to break what they bind: the
+    items' ids, the audit entries the signature counts, the logs' heads. Also a void hidden in two
+    ways, and HTML reports for the facts the verifier prints after one verifies. Returns {name: bytes};
+    a name without .html is a .json fixture."""
     use_tsa(None)
     out = {}
     with fresh_client() as c:
@@ -280,8 +298,8 @@ def make_v4() -> dict:
         signed_close(c, a, riza)
         sign_in(c, "ray@lab.test")
         signed_close(c, b, register(c, "Ed25519"))
-        out["v4-signed"] = report(c, e)
-        out["v4-signed.html"] = html_report(c, e)
+        out["v4-signed"] = unsealed(report(c, e))
+        out["v4-signed.html"] = unsealed_html(html_report(c, e))
     base = json.loads(out["v4-signed"])
     heads = sorted(json.loads(l["receipt"]["signature"]["payload"])["history"]["audit"]["seq"]
                    for l in signed_lanes(base))
@@ -338,14 +356,69 @@ def make_v4() -> dict:
                 sign_in(c, "riza@lab.test")
                 signed_close(c, b, k)
             name = "v4-void" if later else "v4-void-after-the-last-signature"
-            out[name] = report(c, e)
+            out[name] = unsealed(report(c, e))
             if later:
-                out["v4-void.html"] = html_report(c, e)
+                out["v4-void.html"] = unsealed_html(html_report(c, e))
         r = json.loads(out[name])
         next(l for l in r["lanes"] if l["status"] == "stale")["status"] = "closed"
         r["summary"]["lanes_receipted"] += 1
         r["audit_log"]["entries"] = [x for x in r["audit_log"]["entries"] if x["action"] != "lane.receipt_voided"]
         out[f"{name}-hidden"] = json.dumps(rehash(r), ensure_ascii=False).encode()
+    return out
+
+
+def make_seal(tsa) -> dict:
+    """Reports sealed when exported (D-055): a void recorded after the last receipt signature, which
+    only the seal binds; the same report as HTML and with the seal timestamped (the EC test TSA, its
+    root in seal-ec-root.pem); and copies that hide the void under the seal, break the seal, seal
+    with another key, or drop the seal. Returns {name: bytes}."""
+    use_tsa(None)
+    out = {}
+    with fresh_client() as c:
+        e, assets = people_engagement(c, "Equivalence: seal")
+        a = lane_with_items(c, assets["shop.lab.test"], "recon", {1: "scope confirmed"})
+        b = lane_with_items(c, assets["api.lab.test"], "recon", {1: "api scope confirmed"})
+        sign_in(c, "riza@lab.test")
+        k = register(c, "Ed25519")
+        signed_close(c, a, k)
+        signed_close(c, b, k)
+        sign_in(c, "ray@lab.test")
+        ok(c.patch(f"/lanes/{a}/items/1", json={"state": "open"}))      # voids the receipt, after the last signature
+        ok(c.patch(f"/lanes/{a}/items/1", json={"state": "done"}))      # the manifest matches it again
+        out["seal-valid"] = report(c, e)
+        out["seal-valid.html"] = html_report(c, e)
+        use_tsa(tsa)
+        out["seal-timestamped"] = report(c, e)
+        use_tsa(None)
+    base = json.loads(out["seal-valid"])
+
+    def m(name, fn):
+        r = copy.deepcopy(base)
+        fn(r)
+        out[name] = json.dumps(r, ensure_ascii=False).encode()
+
+    def hide_void(r):           # EV-1 and O-2's open case: status, count and void entry, body rehashed
+        next(l for l in r["lanes"] if l["status"] == "stale")["status"] = "closed"
+        r["summary"]["lanes_receipted"] += 1
+        r["audit_log"]["entries"] = [x for x in r["audit_log"]["entries"] if x["action"] != "lane.receipt_voided"]
+        rehash(r)
+    m("seal-void-hidden", hide_void)
+    m("seal-tampered", lambda r: r["integrity"]["seal"].__setitem__("value", flip_b64(r["integrity"]["seal"]["value"], 7)))
+
+    def other_key(r):           # the void hidden and sealed again with another instance's key
+        hide_void(r)
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from app import seal as sealing
+        key = ed25519.Ed25519PrivateKey.generate()
+        spki = base64.b64encode(key.public_key().public_bytes(serialization.Encoding.DER,
+                                                              serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
+        fp = hashlib.sha256(base64.b64decode(spki)).hexdigest()
+        text = sealing.payload_for(r, fp, json.loads(r["integrity"]["seal"]["payload"])["sealed_at"])
+        r["integrity"]["seal"] = {"algorithm": "Ed25519", "public_key": spki, "key_fingerprint": fp, "payload": text,
+                                  "value": base64.b64encode(key.sign(text.encode())).decode()}
+    m("seal-other-key", other_key)
+    m("seal-removed", lambda r: r["integrity"].pop("seal"))
     return out
 
 
@@ -571,6 +644,7 @@ def main():
     for name, r in void_mutations(json.loads(void_raw)).items():
         (OUT / f"{name}.json").write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
     write(make_v4())
+    write(seal_fixtures())
 
     # The DigiCert token kept with the server tests, in the smallest report that carries it:
     # the timestamp verifies; the made-up receipt around it does not.
@@ -590,14 +664,32 @@ def main():
     print(f"{OUT}: {len(list(OUT.glob('*.json')))} reports")
 
 
+def seal_fixtures() -> dict:
+    """make_seal with its own EC timestamp authority, whose root goes to seal-ec-root.pem."""
+    d = WORK / "seal-ec"
+    d.mkdir()
+    tsa = TSA(d, "ec")
+    (OUT / "seal-ec-root.pem").write_bytes(Path(tsa.root).read_bytes())
+    return make_seal(tsa)
+
+
 def only(names: set[str]) -> None:
     """Remake some fixtures and leave the others as they are: the mutations of signed.json and
     content-deleted.json as they are on disk, and the void report (made anew). "v4" makes every
-    report of make_v4 anew (the current format), and keeps the older fixtures in their format.
+    report of make_v4 anew (payload v4, unsealed), and keeps the older fixtures in their format;
+    "seal" every report of make_seal (sealed, D-055) and seal-ec-root.pem.
 
         ... make_fixtures.py --only void,void-reported-as-receipted,receipt-issued-at-moved
         ... make_fixtures.py --only v4
+        ... make_fixtures.py --only seal
     """
+    if "seal" in names:
+        made = seal_fixtures()
+        write(made)
+        names = names - {"seal"}
+        print(f"{OUT}: wrote {len(made)} sealed reports")
+        if not names:
+            return
     if "v4" in names:
         made = make_v4()
         write(made)

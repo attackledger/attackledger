@@ -9,7 +9,9 @@ The JSON bundle carries everything needed to re-check it offline:
   - (format 2) the key log history of every key that signed a receipt (keylog.py), with
     the chain links from its first entry to the head,
   - (format 2) the audit log entries of the engagement and the person events of its
-    signers and members (auditlog.py), with the chain links from the first to the head.
+    signers and members (auditlog.py), with the chain links from the first to the head,
+  - (format 2) a seal made when the report is exported (seal.py, D-055): the instance's
+    signature over the body hash and the heads of both logs, in integrity.seal.
 tools/verify_report.py checks all of it with the Python standard library only.
 """
 import html
@@ -42,7 +44,10 @@ def _iso(dt):
     return iso_utc(dt)
 
 
-def build(session, eng: Engagement, controls: dict) -> dict:
+def build(session, eng: Engagement, controls: dict, seal_key: str | None = None) -> dict:
+    """The report body and its hash. seal_key is the fingerprint of the instance's seal key
+    (seal.py, D-055): its key log history goes in with the signers' keys, so the report that
+    seal.seal then seals shows where the key was registered."""
     pack = packs.get_pack(eng.pack_id)
     lane_names = {l.key: l.name for l in pack.lanes}
 
@@ -121,7 +126,7 @@ def build(session, eng: Engagement, controls: dict) -> dict:
     }
     signing_keys = {l["receipt"]["signature"]["key_fingerprint"] for l in lanes
                     if l["receipt"] and l["receipt"].get("signature")}
-    history = keylog.for_report(session, signing_keys, eng.organization_id)
+    history = keylog.for_report(session, signing_keys | ({seal_key} if seal_key else set()), eng.organization_id)
     if history is not None:
         body["key_log"] = history
     signers = {rc.closed_by_user for a in eng.assets for l in a.lanes for rc in l.receipts if rc.closed_by_user}
@@ -291,15 +296,33 @@ def render_html(r: dict) -> str:
 {_dl([("Evidence entries", _e(s['evidence_entries'])),
       ("Chain genesis", f"<code>{_e(integ['chain_genesis'])}</code>"),
       ("Chain head", f"<code>{_e(s['chain_head'])}</code>"),
-      ("Report body SHA-256", f"<code>{_e(integ['body_sha256'])}</code>")])}
+      ("Report body SHA-256", f"<code>{_e(integ['body_sha256'])}</code>"), *_seal_rows(integ.get("seal"))])}
 </div>
 <p class="note">Every evidence entry commits to the hash of the entry before it, starting from the genesis value, so
 removing, reordering or editing any entry changes the chain head. The body hash covers everything in the report
-except this section. The full report is embedded in this page as JSON; see <a href="#verify">How to verify</a>.</p>
+except this section. {'The seal signs the body hash and the heads of the change history and the key log, as they were when the report was exported. ' if integ.get('seal') else ''}The full report is embedded in this page as JSON; see <a href="#verify">How to verify</a>.</p>
 <script type="application/json" id="attackledger-report">{_json_for_html(r)}</script>
 </section>
 </main></body></html>""")
     return "".join(parts)
+
+
+def _seal_rows(sl: dict | None) -> list[tuple[str, str]]:
+    """The seal (seal.py, D-055) as Integrity rows: when, with which key, up to which heads."""
+    if not sl:
+        return [("Report seal", "<span class='muted'>Not sealed</span>")]
+    try:
+        p = json.loads(sl["payload"])
+        heads = p.get("history") or {}
+    except (ValueError, KeyError, TypeError):
+        return [("Report seal", "<span class='muted'>Cannot be read</span>")]
+    upto = " and ".join(f"{what} entry #{_e(h['seq'])}" for what, h in (("audit log", heads.get("audit")),
+                                                                       ("key log", heads.get("key_log"))) if h)
+    ts = sl.get("timestamp")
+    return [("Report sealed", f"{_e(_when(p.get('sealed_at')))}, up to {upto or 'no log entry'}"),
+            ("Seal key", f"<code>{_e(sl.get('key_fingerprint'))}</code> ({_e(sl.get('algorithm'))}, this server’s key)"),
+            ("Seal timestamp", f"{_e(_when(ts.get('time')))} by {_e(_host_of(ts.get('tsa')))}" if ts
+             else "<span class='muted'>Not timestamped; the time is the server’s clock</span>")]
 
 
 def _summary(r: dict, lanes: list) -> str:
@@ -514,6 +537,10 @@ def _verify(r: dict) -> str:
         ("Receipt timestamps", "Each timestamp token covers this receipt’s manifest hash and signature, the authority’s "
                                "signature verifies, and its certificate chain reaches a root you trust. SKIP when no receipt "
                                "is timestamped."),
+        ("Report seal", "The server that made this report sealed it when it was exported: its own key signed the report "
+                        "body hash and the heads of the change history and the key log. The signature verifies, the key "
+                        "is registered in the key log as the server’s, the report is the one sealed, and its logs end at "
+                        "those heads; a timestamp, if there is one, shows when. Shown only for a sealed report."),
     ]
     return f"""<section id="verify" class="pb"><h2>How to verify</h2>
 <p>Anyone can check this report without AttackLedger, the tester’s server or a network connection. The verifier is one
@@ -544,7 +571,7 @@ any other authority. Running <code>python3 -I</code> keeps Python from loading m
 such as signatures in a report whose receipts carry only a name. A skipped check neither passes nor fails. The last line
 says <code>Verified.</code> and the exit code is 0 only if no check failed. Add <code>--require-signatures</code> to fail
 any receipt that is not signed, and <code>--require-history</code> to fail a report whose key log or change history is
-missing or not bound to every receipt’s signature. <code>NOTE</code> lines are information, such as who signed and which
+missing or not bound to every receipt’s signature, or that is not sealed. <code>NOTE</code> lines are information, such as who signed and which
 receipts are not timestamped. For this HTML file, a verified result is followed by what its embedded data says: the
 engagement, scope, receipted lanes, signers and dates. Compare them with this page, whose text the checks do not cover.</p>
 {_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks])}
@@ -560,6 +587,12 @@ and how; the server never holds a private key, but whoever runs it could registe
 would appear here with its own registration. For high assurance, ask each signer for their key
 fingerprint through a channel you trust and compare it with the one in <a href="#receipts">Receipts</a>. To make sure
 this is the report you were sent, compare the report body SHA-256 on the cover with the value the tester gave you.</p>
+<h3>What the seal says</h3>
+<p>The seal is the server’s statement, made when this report was exported, that the report and its change history were
+complete up to the heads it names. A later void of a receipt, or any other entry up to those heads, cannot be left out
+without breaking it. It does not replace the reviewers’ signatures: whoever runs the server holds the seal key and could
+seal a different report. Compare the seal key fingerprint in <a href="#integrity">Integrity</a> with the one the tester
+gives you, and check that the seal’s time is when you expect the report to have been made.</p>
 </section>"""
 
 

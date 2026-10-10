@@ -6,6 +6,7 @@ master key (AES-256-GCM) in the blob store, next to the blobs it protects:
     <blobs>/e/<engagement id>/key.json      the wrapped data key
     <blobs>/e/<engagement id>/<dd>/<sha>    encrypted blobs (blobs.py)
     <blobs>/e/<engagement id>/deleted.json  tombstone, once the content was deleted
+    <blobs>/instance/seal-key.json          the instance's report seal key (seal.py, D-055)
 
 The blob store has no database session and is shared by the API and the worker, so the
 key lives where both can reach it without one. Deleting an engagement's folder deletes its
@@ -208,6 +209,61 @@ def data_key(eng_id: int, *, create: bool = False) -> bytes | None:
         return _unwrap(mk.key, eng_id, doc)
     except (InvalidTag, KeyError, ValueError, binascii.Error):
         raise StoreError(f"the key of engagement {eng_id} does not open with the master key")
+
+
+# ---- the instance's report seal key (seal.py, D-055) ----------------------------------------
+
+SEAL_KEY_FORMAT = "attackledger-seal-key/1"
+
+
+def seal_key_path() -> Path:
+    return blob_root() / "instance" / "seal-key.json"
+
+
+_SEAL_AAD = b"attackledger-seal-key\0instance"
+
+
+def _wrap_seal_key(mk: MasterKey, private: bytes, created_at: str) -> dict:
+    nonce = secrets.token_bytes(12)
+    return {"format": SEAL_KEY_FORMAT, "master_key_id": mk.id, "created_at": created_at,
+            "wrapped": base64.b64encode(nonce + AESGCM(mk.key).encrypt(nonce, private, _SEAL_AAD)).decode()}
+
+
+def _unwrap_seal_key(key: bytes, doc: dict) -> bytes:
+    raw = base64.b64decode(doc["wrapped"])
+    return AESGCM(key).decrypt(raw[:12], raw[12:], _SEAL_AAD)
+
+
+def seal_key() -> bytes:
+    """The instance's Ed25519 private key (32 raw bytes) that seals exported reports, made on
+    first use. It is kept like an engagement's data key: wrapped by the master key, in a file
+    created with O_EXCL and mode 0600, so the API's workers agree on one key. Raises StoreError
+    if the file was wrapped by another master key or does not open."""
+    mk = master_key()
+    path = seal_key_path()
+    if not path.is_file():
+        private = secrets.token_bytes(32)
+        doc = _wrap_seal_key(mk, private, datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return seal_key()
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(doc))
+        return private
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise StoreError("the instance's report seal key cannot be read")
+    if doc.get("master_key_id") != mk.id:
+        raise StoreError(f"the instance's report seal key was wrapped by another master key "
+                         f"({doc.get('master_key_id')}, configured {mk.id}); configure that key or rotate "
+                         "(python -m app.vault rotate-master)")
+    try:
+        return _unwrap_seal_key(mk.key, doc)
+    except (InvalidTag, KeyError, ValueError, binascii.Error):
+        raise StoreError("the instance's report seal key does not open with the master key")
 
 
 # ---- sealing ---------------------------------------------------------------------------
@@ -521,6 +577,15 @@ def check_store(session=None) -> MasterKey:
             continue
         if doc.get("master_key_id") != mk.id:
             wrong.append(f"{eng_id} (wrapped by {doc.get('master_key_id')})")
+    if seal_key_path().is_file():
+        try:
+            doc = json.loads(seal_key_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            doc = {"master_key_id": "unreadable"}
+        if doc.get("master_key_id") != mk.id:
+            raise StoreError(f"the configured master key ({mk.id}) did not wrap the instance's report seal key "
+                             f"(wrapped by {doc.get('master_key_id')}); configure the key it was made with, or "
+                             "rotate with python -m app.vault rotate-master")
     if wrong:
         raise StoreError(f"the configured master key ({mk.id}) did not wrap the keys of engagement "
                          f"{', '.join(wrong)}; configure the key they were made with, or rotate with "
@@ -616,7 +681,18 @@ def rotate_master(old: bytes) -> dict:
         key = _unwrap(old, eng_id, doc)
         _write_atomic(path, json.dumps(_wrap(mk, eng_id, key, doc.get("created_at") or "")))
         rewrapped += 1
-    return {"rewrapped": rewrapped, "skipped": skipped, "failed": failed, "master_key_id": mk.id}
+    seal = "none"
+    if seal_key_path().is_file():           # the instance's report seal key (D-055), the same way
+        doc = json.loads(seal_key_path().read_text(encoding="utf-8"))
+        if doc.get("master_key_id") == mk.id:
+            seal = "already"
+        elif doc.get("master_key_id") != old_id:
+            seal = "failed"
+        else:
+            private = _unwrap_seal_key(old, doc)
+            _write_atomic(seal_key_path(), json.dumps(_wrap_seal_key(mk, private, doc.get("created_at") or "")))
+            seal = "rewrapped"
+    return {"rewrapped": rewrapped, "skipped": skipped, "failed": failed, "master_key_id": mk.id, "seal_key": seal}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -643,8 +719,10 @@ def main(argv: list[str] | None = None) -> int:
             old = DEV_KEY if args.old_dev_key else _decode_key(Path(args.old_key_file).read_text(), args.old_key_file)
             res = rotate_master(old)
             print(f"re-wrapped {res['rewrapped']}, already under {res['master_key_id']}: {res['skipped']}"
-                  + (f"; under neither key: engagement {', '.join(map(str, res['failed']))}" if res["failed"] else ""))
-            return 1 if res["failed"] else 0
+                  + (f"; under neither key: engagement {', '.join(map(str, res['failed']))}" if res["failed"] else "")
+                  + {"rewrapped": "; the report seal key re-wrapped", "failed": "; the report seal key is under neither key",
+                     "already": "", "none": ""}[res["seal_key"]])
+            return 1 if res["failed"] or res["seal_key"] == "failed" else 0
         from .db import SessionLocal
         from .models import Engagement
         with SessionLocal() as s:

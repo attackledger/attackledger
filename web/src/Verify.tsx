@@ -102,8 +102,8 @@ export function Verify({ engId }: { engId: number }) {
           <h3 id="verify-title" className="panel-title">Verify the report</h3>
           <p className="report-lede">
             This checks the report in your browser exactly as the offline verifier does: the body hash, the evidence
-            chain, every receipt against its items and evidence, signatures, the key log, the change history and the
-            timestamps, with the same verdicts. A client can run the same check without this app at{" "}
+            chain, every receipt against its items and evidence, signatures, the key log, the change history, the
+            timestamps and the report's seal, with the same verdicts. A client can run the same check without this app at{" "}
             <a href={VERIFY_PAGE} target="_blank" rel="noopener noreferrer">attackledger.com/verify</a>: download the
             report JSON and drop it there. Nothing is uploaded.
           </p>
@@ -117,8 +117,8 @@ export function Verify({ engId }: { engId: number }) {
           {error && <p className="field-error" role="alert">{error}</p>}
           <label className="check">
             <input type="checkbox" checked={strict} onChange={(e) => setStrict(e.target.checked)} />
-            {" "}Require the complete history: fail when the change history or key log is missing, or a receipt
-            does not commit to it (<code>--require-history</code>)
+            {" "}Require the complete history: fail when the change history or key log is missing, a receipt
+            does not commit to it, or the report is not sealed (<code>--require-history</code>)
           </label>
           {!outcome && !error && <p className="muted">Checking the report…</p>}
         </div>

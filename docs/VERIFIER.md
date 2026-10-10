@@ -66,28 +66,91 @@ the receipt is closed. In every mode, both verifiers fail a v4 receipt when the 
 not reach the signed head, has another entry there, or leaves out a counted entry. The same goes
 for the key log head and the signer's key registration.
 
+## The report seal
+
+A receipt can only bind the history up to the moment it was signed. So since D-055 the server
+**seals every report when it is exported**: it signs, with its own Ed25519 key, a short text
+naming the report's body hash and the heads of the two logs the report carries.
+
+```
+"integrity": {..., "seal": {"algorithm": "Ed25519", "public_key": "<SPKI, base64>", "key_fingerprint": "<sha256>",
+                            "payload": "<the text below>", "value": "<signature, base64>",
+                            "timestamp": {"tsa": "...", "time": "...", "token": "..."}}}
+
+{"format": "attackledger-seal-v1", "engagement": {"id": 3, "name": "..."}, "report_sha256": "<body hash>",
+ "history": {"audit": {"seq": 48, "head": "<entry hash>"}, "key_log": {"seq": 4, "head": "<entry hash>"}},
+ "key_fingerprint": "<sha256>", "sealed_at": "<ISO time>"}
+```
+
+The seal is in `integrity`, which the body hash leaves out, so adding it does not change the
+body hash. A log the report does not carry is `null`. The timestamp is there when the server has
+a timestamp authority (the one receipts use): it covers
+`attackledger-seal-timestamp-v1\n<report_sha256>\n<signature>\n`, and only that hash is sent.
+
+The server keeps the key in its blob store, wrapped by the master key (docs/ENCRYPTION.md). It
+registers the public key once in each organization's key log, before the first receipt payload
+it issues there (or at the first export), as an entry that names no person (`via: instance`). Every sealed report carries
+that entry in its key history.
+
+**The seal check** (*Report seal*, shown for a sealed report) fails when:
+
+- the signature does not verify, the key does not match its fingerprint, or the sealed text names
+  another key, another engagement or another format;
+- the report's body is not the one sealed (anything changed or left out, then rehashed);
+- the report's audit log or key log does not end at the sealed head, or does not reach it, or is
+  missing while the seal names it;
+- the key log does not register the seal key as the server's (`via: instance`, no person) at or
+  before the sealed key log head, or records a revocation before the seal;
+- the seal was not made within ten minutes of `generated_at`, or its timestamp fails as a
+  receipt's would (statement, the authority's signature, a root you trust), shows another time
+  than its token, or is not from within ten minutes after `sealed_at`.
+
+A report made before seals has no seal: in normal mode it verifies as before, with a NOTE that it
+is not sealed.
+
+**What a valid seal proves.** The holder of the seal key said, at `sealed_at` (at the
+timestamp's time, if there is one, which cannot be backdated), that this was the report and that
+its change history and key log were complete up to the sealed heads. A void, or any other entry of
+the engagement or its people up to those heads, cannot be left out or changed without breaking the
+seal, including entries after the newest receipt signature, which nothing else binds.
+
+**What it does not prove.**
+
+- **That the server is honest.** Whoever holds the seal key (whoever runs the server, or has its
+  master key and blob store) can seal a different report, for example one made before a void, or
+  one built from an edited database. The seal is the server's statement, not a reviewer's; the
+  reviewers' signatures remain the evidence of the review (D-036, D-037).
+- **That the seal key is the tester's server's.** The verifier says whether a receipt signature
+  covers the key's registration: then the reviewer signed a history in which that key was already
+  the server's, and another key would need a key log that breaks that signature. If no signature
+  covers it (reports with no receipt signed after the key was registered, such as receipts from
+  before seals), a forger could register their own key at the end of the key log. Compare the
+  seal key's fingerprint (in the report's Integrity section) with the one the tester gives you.
+- **That the report is the latest.** A report sealed before a void is a valid report of that
+  time. Check that `sealed_at`, or the timestamp, is when you expect the report to have been made.
+
 ## Strict history mode
 
-`--require-history` (on the page: *Require the full change history*, off by default) fails:
+`--require-history` (on the page: *Require the full change history*, off by default; in the
+app's Verify tab, *Require the complete history*) fails:
 
 - a report with receipts but no `audit_log`, or with signed receipts but no `key_log`;
 - a receipt that does not commit to its history: unsigned, or signed as v2 or v3;
 - a receipt issued before the audit log covered the engagement;
+- a report that is not sealed, or whose seal fails;
 - format 1 reports;
 - everything the normal mode fails, including a broken, reordered or cut chain.
 
 **What a pass proves.** Each receipt was signed with its key over a payload that names the heads
-of both logs. The report's logs reach those heads unchanged. No audit entry of the engagement or
-person event of the signer, up to the newest such head, was left out or altered. A NOTE names
-that newest entry.
+of both logs, and the report's logs reach those heads unchanged: no audit entry of the engagement
+or person event of the signer, up to the newest signed head, was left out or altered. And the
+server sealed the report as it is, with its logs up to the heads it had when it exported it. A
+NOTE names both: up to which entry signatures bind the history, and up to which the seal does.
 
 **What it does not prove.**
 
-- **Entries after the newest signed head.** A void is recorded after the receipt it voids. Only a
-  later v4 signature on any lane of the engagement commits to it. A report made after the last
-  signature can leave out a later void, or any later entry, and still pass. Its lane's status is
-  unsigned. Closing this would need someone to sign at report time, and today nobody does (D-036
-  keeps trust in the reviewers' keys).
+- **The seal's limits, above.** After the newest receipt signature, the history is bound by the
+  server's key only.
 - **Entries of other engagements and of other people.** The report carries them as links only (hashes).
 - **The changes between the payload and the close.** The role check uses the close time, which
   can be up to 15 minutes after the signed head.
@@ -95,8 +158,8 @@ that newest entry.
   still the root of trust (D-036, D-037). A rewrite after a report has been sent breaks the heads
   that report carries.
 
-Evidence works the same way: a receipt binds the evidence chain up to its signed chain head, and
-evidence after the newest signed head is bound by nothing.
+Evidence works the same way: a receipt binds the evidence chain up to its signed chain head. Evidence
+after it is bound by the seal, as the server exported it.
 
 ## What a verified HTML report says
 
@@ -104,7 +167,7 @@ The checks cover the JSON an HTML report embeds, not the text the page shows (EV
 HTML report verifies, `verify_report.py` prints what that JSON says, and the page shows the same
 list under the result: the engagement, its authorization and scope, the hosts and lanes, each
 receipted lane with its items, signer and dates, void receipts, the number of evidence entries
-and the chain head, and when the report was made. The reader compares them with the page's text.
+and the chain head, when the report was made, and when and with which key it was sealed. The reader compares them with the page's text.
 Nothing is shown for a JSON report or for one that fails.
 
 ## Equivalence tests
@@ -129,8 +192,10 @@ docker run --rm --user 1000:1000 -e HOME=/tmp -v "$PWD":/w -w /w/server \
   --entrypoint python attackledger-api:latest /w/tools/verifier_equivalence/make_fixtures.py
 ```
 
-To remake only the current-format reports and keep every older fixture in its format, pass
-`--only v4` to the same command. A case with `"history": true` runs with `--require-history`.
+To remake only the payload v4 reports (unsealed, as exported before D-055) and keep every older
+fixture in its format, pass `--only v4` to the same command; `--only seal` remakes the sealed
+reports (`seal-*`, with their test timestamp root `seal-ec-root.pem`). A case with
+`"history": true` runs with `--require-history`.
 
 When `verify_report.py` changes, change `web/src/verify_report.ts` the same way, add a case to
 `cases.json`, then run `tools/build_verify.sh` and `run.sh`, and copy the script to

@@ -70,7 +70,7 @@ def upgrade_and_check(eng, monkeypatch, tmp_path, fixture: Path):
     assert all(before[t] > 0 for t in before), before          # every table has rows to move
 
     migrate.upgrade_head()
-    assert migrate.current() == "0022"
+    assert migrate.current() == migrate.head()          # 0022, and the migrations after it
     with eng.connect() as c:
         orgs = c.execute(text("SELECT id, name FROM organizations")).all()
         assert len(orgs) == 1 and orgs[0][1] == "Default organization"
@@ -138,7 +138,7 @@ def upgrade_and_check(eng, monkeypatch, tmp_path, fixture: Path):
                    for t in ("engagements", "users", "key_log", "audit_log")}
     assert uniques == {"engagements": [["name"]], "users": [["email"]], "key_log": [["seq"]], "audit_log": [["seq"]]}
     migrate.upgrade_head()
-    assert migrate.current() == "0022" and counts(eng) == after
+    assert migrate.current() == migrate.head() and counts(eng) == after
     with Session() as s:
         assert auditlog.verify(s) == [] and keylog.verify(s) == []
 

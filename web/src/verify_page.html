@@ -234,9 +234,9 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             <input type="checkbox" id="require-history" aria-describedby="require-history-hint">
             <label for="require-history">Require the full change history</label>
             <p class="hint" id="require-history-hint">As <code>--require-history</code>: the report must carry its key log
-              and audit log, and every receipt must be signed in the current format, which binds that history to the
-              signature. Older reports fail. Changes after the newest signature are still only as the report gives
-              them.</p>
+              and audit log, every receipt must be signed in the current format, which binds that history to the
+              signature, and the report must be sealed by the server that exported it, which binds the history after the
+              newest signature too. Older reports fail.</p>
           </div>
           <h3 id="roots-title">Trusted roots</h3>
           <p class="hint">Timestamps must chain to a root you trust. This page trusts the roots that

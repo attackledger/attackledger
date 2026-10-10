@@ -27,6 +27,10 @@ const EXPLAIN: [string, string][] = [
     + "entries of this engagement and its signer led up to it: none of them may be missing."],
   ["Receipt timestamps", "Each RFC 3161 timestamp covers this receipt's manifest hash and signature, the authority's signature "
     + "verifies, and its certificate chain reaches a root you trust and was valid at the token's time."],
+  ["Report seal", "The server that made the report sealed it when it was exported: its own key signed the report's body hash "
+    + "and the heads of the change history and the key log. The signature verifies, the key is registered in the key log as "
+    + "the server's, the report is the one sealed, and its logs end at those heads. It is the server's statement, not a "
+    + "reviewer's: compare the seal key's fingerprint with the one the tester gives you."],
 ];
 const MEANS = new Map(EXPLAIN);
 

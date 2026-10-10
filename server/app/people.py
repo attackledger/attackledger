@@ -142,7 +142,7 @@ def _org_label(s, e) -> str:
 def key_log(s, _args) -> int:
     for e in s.scalars(select(KeyLogEntry).order_by(KeyLogEntry.organization_id, KeyLogEntry.seq)):
         print(f"{_org_label(s, e)}{e.seq:>5}  {e.at}  {e.event:<10} {e.key_fingerprint[:16]}  {e.algorithm:<10} "
-              f"{e.user_name} (id {e.user_id}), {keylog.VIA.get(e.via, e.via)}")
+              f"{e.user_name}{'' if e.user_id is None else f' (id {e.user_id})'}, {keylog.VIA.get(e.via, e.via)}")
     problems = keylog.verify(s)
     for p in problems:
         print(f"FAIL  {p}", file=sys.stderr)

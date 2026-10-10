@@ -18,7 +18,7 @@ import copy
 import io
 import json
 
-from app import auditlog, gates, keylog
+from app import auditlog, gates, keylog, seal
 from app.models import Engagement, Lane, Receipt
 from test_auditlog import setup
 from test_keytrust import env, register, sign_in, signed_close  # noqa: F401  (env is a fixture)
@@ -30,6 +30,14 @@ VOID = "lane.receipt_voided"
 def rehash(r: dict) -> dict:
     r["integrity"]["body_sha256"] = verifier.sha(verifier.canonical({k: v for k, v in r.items() if k != "integrity"}))
     return r
+
+
+def reseal(r: dict) -> dict:
+    """Rehash and seal again with this server's own seal key (D-055): a report as the server
+    would have exported it, or as whoever holds the server's key could make one."""
+    r = rehash(r)
+    r["integrity"].pop("seal", None)
+    return seal.seal(r)
 
 
 def run(tmp_path, report, *flags, name="r.json", text=None) -> tuple[int, str]:
@@ -139,7 +147,8 @@ def test_o2_payload_v4_signs_the_history_heads_and_the_server_checks_them(env):
     with Session() as s:
         assert p["history"]["audit"] == auditlog.commitment(s, e, ids["rita"])
         assert p["history"]["key_log"] == keylog.head_at(s, s.get(Engagement, e).organization_id)
-    assert p["history"]["audit"]["entries"] >= 3 and p["history"]["key_log"]["seq"] == 1
+    # The key log: Rita's key (#1), then the instance's seal key, registered as the payload is issued (D-055).
+    assert p["history"]["audit"]["entries"] >= 3 and p["history"]["key_log"]["seq"] == 2
 
     def close(payload):
         body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -188,9 +197,11 @@ def test_o2_an_audit_entry_the_signature_covers_cannot_be_left_out(env, tmp_path
 
     # The key log, the same way.
     cut = copy.deepcopy(report)
+    signed = payload_of(report, L)["history"]["key_log"]["seq"]
+    assert cut["key_log"]["links"][-1]["seq"] == signed
     cut["key_log"]["links"][-1]["entry_hash"] = "e" * 64
     cut["key_log"]["head"]["entry_hash"] = "e" * 64
-    assert any("the key log entry #1 the signature names is not the one in this report" in p
+    assert any(f"the key log entry #{signed} the signature names is not the one in this report" in p
                for p in verifier.check_key_log(rehash(cut))[0])
 
 
@@ -200,16 +211,19 @@ def test_o2_require_history(env, tmp_path):
     report = report_of(c, e)
     code, out = run(tmp_path, report, "--require-history")
     assert code == 0, out
-    assert "NOTE  the change history is complete, as far as signatures show, up to audit log entry #" in out
+    assert "NOTE  the change history is complete, as far as receipt signatures show, up to audit log entry #" in out
 
+    # A report made before the logs was made before seals too (D-055): no seal either.
     for section, message in (("audit_log", "this report has no change history, which --require-history requires"),
                              ("key_log", "this report has no key history, which --require-history requires")):
         gone = rehash({k_: v for k_, v in copy.deepcopy(report).items() if k_ != section})
+        del gone["integrity"]["seal"]
         assert run(tmp_path, gone)[0] == 0                      # D-037: a NOTE only, without the option
         code, out = run(tmp_path, gone, "--require-history")
         assert code == 1 and message in out, out
 
-    # A receipt signed before v4 commits to no history: it still verifies, but not strictly.
+    # A receipt signed before v4 commits to no history: it still verifies, but not strictly. The report
+    # is sealed again, as the server seals an export that holds an old receipt.
     v3 = copy.deepcopy(report)
     sig = next(l for l in v3["lanes"] if l["lane_id"] == L)["receipt"]["signature"]
     p = json.loads(sig["payload"])
@@ -217,7 +231,7 @@ def test_o2_require_history(env, tmp_path):
     p["format"] = "attackledger-receipt-v3"
     sig["payload"] = json.dumps(p, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     sig["value"] = k.sign(sig["payload"])
-    rehash(v3)
+    v3 = reseal(v3)
     assert run(tmp_path, v3)[0] == 0
     code, out = run(tmp_path, v3, "--require-history")
     assert code == 1 and "its signed payload is not format v4, so nothing binds its change history" in out
@@ -295,15 +309,30 @@ def test_o2_a_void_left_out_is_caught_by_any_later_signature(env, tmp_path):
     assert run(tmp_path, forged)[0] == 1
 
 
-def test_o2_a_void_after_the_newest_signature_is_named_as_not_covered(env, tmp_path):
-    """What strict mode cannot prove, and says: nothing signed after the void commits to it."""
+def test_o2_a_void_after_the_newest_signature_is_caught_by_the_seal(env, tmp_path):
+    """The gap strict mode had (D-054): nothing a reviewer signed after the void commits to it.
+    The seal made at export does (D-055): the hidden void breaks it in every mode, and a report
+    without a seal fails strict mode."""
     c, _ = env
     report, A = void_then_sign_another(c, later=False)
-    forged = hide_the_void(report, A)
-    code, out = run(tmp_path, forged, "--require-history")
+    assert run(tmp_path, report, "--require-history")[0] == 0
+    forged = hide_the_void(report, A)                       # the seal kept as it was
+    assert verifier.check_audit_log(forged, True)[0] == []  # the receipts' signatures cannot see it
+    for flags in ((), ("--require-history",)):
+        code, out = run(tmp_path, forged, *flags)
+        assert code == 1 and "FAIL  Report seal" in out, out
+        assert "the report is not the one that was sealed: its body was changed after the seal was made" in out
+    unsealed = copy.deepcopy(forged)
+    del unsealed["integrity"]["seal"]
+    code, out = run(tmp_path, unsealed, "--require-history")
+    assert code == 1 and "this report is not sealed, which --require-history requires" in out, out
+    code, out = run(tmp_path, unsealed)                     # an old report: a NOTE only, without the option
+    assert code == 0 and "NOTE  this report is not sealed (made before report seals)" in out, out
+    # What the seal cannot prove, and VERIFIER.md says: whoever holds the server's key can seal
+    # another report. The strict NOTE then names the sealed head, not "would not be detected".
+    code, out = run(tmp_path, reseal(copy.deepcopy(forged)), "--require-history")
     assert code == 0, out
-    assert ("entries after it are as the report gives them, so one left out, such as a later void of a receipt, "
-            "would not be detected") in out
+    assert "as far as the report's seal shows, up to entry #" in out and "would not be detected" not in out
 
 
 # ---- O-3: what a verified HTML report says ------------------------------------------------------

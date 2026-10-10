@@ -36,8 +36,9 @@ services:
       ATTACKLEDGER_AGENTS_ENABLED: ${ANTHROPIC_API_KEY:+1}
       # "1" behind HTTPS, so session cookies are only sent over it.
       ATTACKLEDGER_COOKIE_SECURE: ${ATTACKLEDGER_COOKIE_SECURE:-}
-      # RFC 3161 timestamp authority for receipts (D-034). Only a SHA-256 hash is sent, once
-      # per closed lane. Set ATTACKLEDGER_TSA_URL=off to send nothing and skip timestamps.
+      # RFC 3161 timestamp authority for receipts (D-034) and report seals (D-055). Only a SHA-256
+      # hash is sent, once per closed lane and once per exported report. Set
+      # ATTACKLEDGER_TSA_URL=off to send nothing and skip timestamps.
       ATTACKLEDGER_TSA_URL: ${ATTACKLEDGER_TSA_URL:-http://timestamp.digicert.com}
       # Master key for encryption at rest (D-043, docs/ENCRYPTION.md). Required: without one the
       # API refuses to start (the worker holds no key: the API encrypts what the worker sends). Make one with

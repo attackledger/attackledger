@@ -43,7 +43,13 @@ const KEY_VIA: Record<string, string> = {
   assigned_password: "from a session signed in with a password someone else set",
   operator_cli: "by the operator on the server",
   backfill: "before the key log existed (recorded when it was added)",
+  instance: "as the server's report seal key",
 };
+// The report seal (D-055): the exporting instance signs the body hash and the logs' heads.
+const SEAL_FORMAT = "attackledger-seal-v1";
+const SEAL_TS_STATEMENT = "attackledger-seal-timestamp-v1";
+// A seal is made right after the report is built, and timestamped right after it is signed (microseconds).
+const SEAL_WINDOW: [bigint, bigint] = [-60_000_000n, 600_000_000n];
 
 // ---- Python semantics ----------------------------------------------------------------
 
@@ -1423,7 +1429,8 @@ function voidsReceipt(e: unknown, lane: unknown, rc: unknown, issued: Time): boo
 
 /** With strict (--require-history), the report must carry the audit log and every receipt must
  * commit to it (format v4); see docs/VERIFIER.md for what that proves. */
-async function checkAuditLog(r: Dict, strict = false): Promise<[Problems, Notes]> {
+/** sealed: the audit log entry up to which a valid seal binds the history (checkSeal), or null. */
+async function checkAuditLog(r: Dict, strict = false, sealed: unknown = null): Promise<[Problems, Notes]> {
   const notes: Notes = [];
   const receipted = closedLanes(r);
   const log = getk(r, "audit_log");
@@ -1536,12 +1543,155 @@ async function checkAuditLog(r: Dict, strict = false): Promise<[Problems, Notes]
       notes.push(`${name}: issued ${stamp(issued)}; ${whoText} ${role}; ${scope}`);
     }
   }
-  if (strict && covered !== null) {
+  if (strict && covered !== null && sealed !== null) {
+    notes.push(`the change history is complete, as far as receipt signatures show, up to audit log entry `
+               + `#${pyStr(covered[0])} (the receipt issued ${stamp(covered[1])}), and as far as `
+               + `the report's seal shows, up to entry #${pyStr(sealed)}, when the report was made`);
+  } else if (strict && covered !== null) {
     notes.push(`the change history is complete, as far as signatures show, up to audit log entry #${pyStr(covered[0])} `
                + `(the receipt issued ${stamp(covered[1])}); entries after it are as the `
                + "report gives them, so one left out, such as a later void of a receipt, would not be detected");
   }
   return [problems, notes];
+}
+
+// ---- the report seal ------------------------------------------------------------------------
+//
+// When the server exports a report it signs, with its own Ed25519 key, a text naming the body
+// hash and the heads of the audit log and the key log the report carries (D-055). Its public key
+// is registered in the key log like a reviewer's. It is the server's statement, not a reviewer's.
+
+/** A log as the seal names it: the report's log must end at that head and reach it. */
+function sealedHead(want: unknown, log: unknown, what: string): Problems {
+  if (want === null && log === null) return [];
+  if (log === null) return [`the seal names the ${what} up to entry #${pyStr(getk(or(want, dict()), "seq"))}, which this report leaves out`];
+  if (!isDict(want)) return [`this report carries a ${what} the seal does not name`];
+  const h = or(getk(log, "head"), dict());
+  if (!pyEq(getk(want, "seq"), getk(h, "seq")) || !pyEq(getk(want, "head"), getk(h, "entry_hash"))) {
+    return [`the ${what} in this report ends at entry #${pyStr(getk(h, "seq"))}, not at entry #${pyStr(getk(want, "seq"))}, `
+            + "where the seal says it ended when the report was made"];
+  }
+  const u = upTo(log, getk(want, "seq"), getk(want, "head"));
+  if (u === null || u === false) return [`the ${what} in this report does not reach entry #${pyStr(getk(want, "seq"))}, which the seal names`];
+  return [];
+}
+
+/** The report's seal: the problems, the notes, and the audit log entry up to which the seal binds the
+ * history when it holds (null otherwise). With strict, a report must be sealed. */
+async function checkSeal(r: Dict, roots: Cert[], strict: boolean, mode: Ed25519Mode): Promise<[Problems, Notes, unknown]> {
+  const seal = getk(getk(r, "integrity", dict()), "seal");
+  if (seal === null) {
+    if (strict) return [["this report is not sealed, which --require-history requires"], [], null];
+    return [[], ["this report is not sealed (made before report seals), so nothing the server signed when it "
+                 + "exported the report says its change history was complete then"], null];
+  }
+  let spki: Uint8Array, value: Uint8Array, p: unknown;
+  try {
+    spki = b64decode(at(seal, "public_key"));
+    value = b64decode(at(seal, "value"));
+    p = loadsStr(at(seal, "payload"));
+    if (!isDict(p)) raise("TypeError", "the payload is not an object");
+  } catch (e) {
+    caught(e, "ValueError", "KeyError", "TypeError");
+    return [["the seal's fields cannot be read"], [], null];
+  }
+  const problems: Problems = [], fp = getk(seal, "key_fingerprint");
+  if (!pyEq(hex(await digest("SHA-256", spki)), fp)) problems.push("the seal's public key does not match its fingerprint");
+  if (!pyEq(getk(seal, "algorithm"), "Ed25519")
+      || !(await verifySignature("Ed25519", spki, encode(at(seal, "payload")), value, mode))) {
+    problems.push("the seal's signature does not verify");
+  }
+  if (!pyEq(getk(p, "format"), SEAL_FORMAT)) problems.push("unknown seal format");
+  if (!pyEq(getk(p, "key_fingerprint"), fp)) problems.push("the sealed text names another key");
+  const body = dict();
+  for (const k of Object.keys(r)) if (k !== "integrity") body[k] = r[k];
+  if (!pyEq(getk(p, "report_sha256"), await sha(canonical(body)))) {
+    problems.push("the report is not the one that was sealed: its body was changed after the seal was made");
+  }
+  if (!pyEq(getk(or(getk(p, "engagement"), dict()), "id"), getk(or(getk(r, "engagement"), dict()), "id"))) {
+    problems.push("the seal names another engagement");
+  }
+  let sealedAt: Time | null, gap: bigint | null;
+  try {
+    sealedAt = utc(at(p, "sealed_at"));
+    gap = sealedAt.us - utc(at(r, "generated_at")).us;
+  } catch (e) {
+    caught(e, "ValueError", "KeyError", "TypeError");
+    sealedAt = gap = null;
+  }
+  if (gap === null || gap < SEAL_WINDOW[0] || gap > SEAL_WINDOW[1]) problems.push("the seal was not made when the report was generated");
+  const h = isDict(getk(p, "history")) ? at(p, "history") : dict();
+  problems.push(...sealedHead(getk(h, "audit"), getk(r, "audit_log"), "change history"));
+  problems.push(...sealedHead(getk(h, "key_log"), getk(r, "key_log"), "key log"));
+  // The seal key must be registered in the key log, as the instance's, up to the sealed head.
+  const entries = iter(or(getk(or(getk(r, "key_log"), dict()), "entries"), [])).filter((e) => pyEq(getk(e, "key_fingerprint"), fp));
+  const reg = entries.find((e) => pyEq(getk(e, "event"), "registered")) ?? null;
+  const k = isDict(getk(h, "key_log")) ? at(h, "key_log") : dict();
+  const short = head(pyStr(fp), 16);
+  try {
+    if (reg === null || !pyEq(getk(reg, "via"), "instance") || getk(reg, "user_id") !== null) {
+      problems.push(`the key log in this report does not register the seal's key ${short} as the server's seal key`);
+    } else if (pyLt(getk(k, "seq"), at(reg, "seq")) || (sealedAt !== null && utc(at(reg, "at")).us > sealedAt.us)) {
+      problems.push(`the seal's key ${short} was registered after the report was sealed`);
+    } else if (sealedAt !== null
+               && entries.some((e) => pyEq(getk(e, "event"), "revoked") && utc(at(e, "at")).us < sealedAt!.us)) {
+      problems.push(`the seal's key ${short} was revoked before the report was sealed`);
+    }
+  } catch (e) {
+    caught(e, "ValueError", "KeyError", "TypeError");
+    problems.push(`the key log entries for the seal's key ${short} cannot be read`);
+  }
+  const ts = getk(seal, "timestamp");
+  let when: [Time, string] | null = null;
+  if (truthy(ts)) {
+    let t: Token | null;
+    try {
+      t = readToken(b64decode(at(ts, "token")));
+    } catch (e) {
+      caught(e, "ValueError", "IndexError", "KeyError", "TypeError");
+      problems.push("the seal's timestamp token cannot be read");
+      t = null;
+    }
+    if (t !== null) {
+      const statement = `${SEAL_TS_STATEMENT}\n${pyStr(getk(p, "report_sha256"))}\n${pyStr(getk(seal, "value"))}\n`;
+      const hh = hashOf(t.imprintAlg);
+      if (hh === null || !bytesEq(await digest(hh, encode(statement)), t.imprint)) problems.push("the seal's timestamp covers something else");
+      const [found, tsa] = await tokenProblems(t, roots);
+      problems.push(...found.map((x) => `the seal's timestamp: ${x}`));
+      let shown: Time | null;
+      try {
+        shown = utc(or(getk(ts, "time"), ""));
+      } catch (e) {
+        caught(e, "ValueError");
+        shown = null;
+      }
+      if (shown === null || shown.us !== t.time.us) problems.push("the time shown for the seal's timestamp is not the token's time");
+      const lag = sealedAt === null ? null : t.time.us - sealedAt.us;
+      if (lag === null || lag < SEAL_WINDOW[0] || lag > SEAL_WINDOW[1]) {
+        problems.push("the seal's timestamp is not from when the report was sealed");
+      }
+      when = [t.time, tsa];
+    }
+  }
+  if (problems.length) return [problems, [], null];
+  const a = getk(h, "audit");
+  const upto = ([["audit log", a], ["key log", k]] as [string, unknown][]).filter(([, x]) => truthy(x))
+    .map(([what, x]) => `${what} entry #${pyStr(at(x, "seq"))}`).join(" and ");
+  // A receipt signed over a key log head that includes the seal key's registration ties the key to
+  // the server the reviewer signed on; a key registered after every signature has only its fingerprint.
+  const heads = closedLanes(r).map((l) => payloadV4(at(l, "receipt"))).filter((v4) => v4 !== null)
+    .map((v4) => getk(historyOf(v4)![1], "seq"));
+  const bound = heads.some((x) => (typeof x === "number" || typeof x === "bigint") && !pyLt(x, at(reg, "seq")));
+  const notes = [`sealed ${stamp(sealedAt!)} with the server's seal key ${head(fp, 16)} (Ed25519): the `
+                 + `server that made this report says it was complete, up to ${upto || "no log entry"}, when it was exported`,
+                 `the seal key was registered in the key log ${stamp(utc(at(reg, "at")))} (entry `
+                 + `#${pyStr(at(reg, "seq"))}), ` + (bound ? "and a receipt signature covers that entry, so it was the key of the server the "
+                                                      + "reviewer signed on; whoever holds it could still seal another report"
+                   : "and no receipt signature covers that entry, so only its fingerprint, compared with "
+                     + "the one the tester gives you, ties it to the server")];
+  notes.push(when ? `the seal was timestamped ${isoformat(when[0])} by ${when[1]}`
+                  : "the seal is not timestamped, so its time is the server's clock");
+  return [[], notes, truthy(a) ? at(a, "seq") : 0];
 }
 
 // ---- what a verified HTML report says -----------------------------------------------------------
@@ -1611,6 +1761,19 @@ function factsOf(r: Dict): string[] {
   const n = iter(at(r, "evidence")).length;
   out.push(`Evidence: ${n} entr${n === 1 ? "y" : "ies"}, chain head ${pyStr(getk(s, "chain_head"))}`);
   out.push(`Report generated: ${day(getk(r, "generated_at"))}`);
+  const seal = getk(or(getk(r, "integrity"), dict()), "seal");
+  if (isDict(seal)) {
+    let p: unknown;
+    try {
+      p = loadsStr(at(seal, "payload"));
+    } catch (e) {
+      caught(e, "ValueError", "KeyError", "TypeError");
+      p = dict();
+    }
+    const ts = getk(seal, "timestamp");
+    out.push(`Sealed: ${day(getk(p, "sealed_at"))} by the server's key ${head(pyStr(getk(seal, "key_fingerprint")), 16)}`
+             + (isDict(ts) ? `; timestamped ${day(getk(ts, "time"))}` : ""));
+  }
   return out;
 }
 
@@ -2103,6 +2266,7 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
   add("Evidence chain", contentNotes(report));
   results.push(["Lane receipts", receiptProblems, null]);
   if (!pyEq(at(report, "format"), "attackledger-report/1")) {
+    const [sealProblems, sealNotes, sealed] = await checkSeal(report, roots, strict, mode);
     for (const [name, field] of [["Receipt signatures", "signature"], ["Receipt timestamps", "timestamp"]] as const) {
       const [problems, more] = field === "signature" ? await checkSignatures(report, require, mode)
                                                       : await checkTimestamps(report, roots);
@@ -2115,14 +2279,19 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
         const [keyProblems, keyNotes] = await checkKeyLog(report, strict);
         if (own(report, "key_log") || keyProblems.length) results.push(["Signing key history", keyProblems, null]);
         add("Signing key history", keyNotes);
-        const [auditProblems, auditNotes] = await checkAuditLog(report, strict);
+        const [auditProblems, auditNotes] = await checkAuditLog(report, strict, sealed);
         if (own(report, "audit_log") || auditProblems.length) results.push(["Change history", auditProblems, null]);
         add("Change history", auditNotes);
       }
     }
+    if (pyIn("seal", getk(report, "integrity", dict())) || sealProblems.length) results.push(["Report seal", sealProblems, null]);
+    add("Report seal", sealNotes);
   } else {
     if (require) results.push(["Receipt signatures", ["this report format carries no signatures"], null]);
-    if (strict) results.push(["Change history", ["this report format carries no change history"], null]);
+    if (strict) {
+      results.push(["Change history", ["this report format carries no change history"], null]);
+      results.push(["Report seal", ["this report format carries no seal"], null]);
+    }
   }
 
   const eng = at(report, "engagement"), s = at(report, "summary");
