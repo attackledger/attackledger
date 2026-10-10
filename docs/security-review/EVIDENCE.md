@@ -63,6 +63,10 @@ printed `Verified.`
   not affected.
 - **Remaining:** a forger who also drops the void entry is caught only when a receipt signed
   after the void commits to it (O-2, D-054).
+- **Recheck:** the match on the exact issue time was bypassed by moving the receipt's unsigned
+  issue time by a second, inside the window EV-2 allows, with the void entry kept (so O-2's
+  count held too). A void now also names a signed receipt when its issue time is in that window
+  around the signed one and it came after the payload (`RECHECK.md`, EV-1).
 
 ### EV-2: the receipt's issue time is not the signed one (Medium)
 

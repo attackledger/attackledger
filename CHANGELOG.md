@@ -106,6 +106,23 @@ Authentication, authorization and organization isolation (`AUTH.md`):
   list as the chain position. A string chain position was even accepted. The field types are
   checked first: 422.
 
+A second, adversarial pass over those fixes (`RECHECK.md`) found four bypasses and one new issue:
+- **A voided signed receipt could still verify as receipted** (EV-1 with EV-2, Medium). The void
+  was matched on the receipt's exact issue time, which a report repeats unsigned and EV-2 lets
+  differ from the signed time by up to 15 minutes: moving it a second hid the void, in strict mode
+  too. Both verifiers now match a void in that window around the signed time, if it came after
+  the payload.
+- **Open mode could be reached by DNS rebinding** (AUTH-2, Medium). A page whose public name was
+  pointed at 127.0.0.1 sent same-origin requests and read the answers. Open mode now answers only
+  requests that name the machine by an IP address, a name without a dot or a special-use name.
+- **The command-line verifier printed terminal controls from a report** (RC-1, Low): a name could
+  print a fake `Verified.` and conceal the real result. Such characters are now printed escaped.
+- **Port probes beside requests opened up to twice the rate in connections** (GW-2, Low). Probes
+  now wait for the connection limiter too.
+- Info: NAT64, 6to4 and IPv4-compatible forms of refused addresses are refused too (GW-5, GW-8);
+  every member of a multi-member gzip response is decoded (GW-3, it was cut short, without a leak);
+  a signed payload's ids out of the database's range are a 422, not a 500 (AUTH-7).
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
