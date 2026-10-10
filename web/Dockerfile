@@ -2,7 +2,7 @@
 # tag says what the digest was when it was pinned.
 # node:24.21.0-alpine (Node 24 LTS; Node 20 reached its end of life in April 2026), pinned
 # 2026-10-10. Build stage only: nothing of it is in the image that runs.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS build
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS build
 WORKDIR /web
 COPY package.json package-lock.json ./
 # npm ci installs exactly the lockfile and checks each package against its SHA-512 there.
