@@ -89,7 +89,9 @@ backups, rotate the master key and destroy the old one.
   deleted it returns `None`; `put` raises `ContentDeleted`.
 - Without `engagement_id`, both behave as before 0017 (plaintext, `<blobs>/<dd>/<digest>`).
 - `get(..., engagement_id=N)` falls back to that plaintext location for blobs written
-  before 0017, so old evidence opens as before.
+  before 0017, so old evidence opens as before. The API uses the fallback only for a hash
+  that the engagement's own v1 evidence cites: a newer row names its hash as its writer gave
+  it, and must not open a blob another engagement stored (docs/security-review/AUTH.md, AUTH-1).
 
 ## Existing data
 
@@ -99,13 +101,14 @@ an explicit command encrypts it.**
 - Old evidence rows stay chain v1, with their plaintext summary (see the table above).
 - Old blobs stay plaintext in the flat store until
   `python -m app.vault encrypt-existing [--engagement N]` copies each blob that an
-  engagement's evidence cites into that engagement's encrypted folder, checks it, and
-  removes the plaintext copy once every engagement that cites it has its own encrypted copy.
+  engagement's v1 evidence cites into that engagement's encrypted folder, checks it, and
+  removes the plaintext copy once every engagement whose v1 evidence cites it has its own
+  encrypted copy.
   It can be run again; it reports what it did.
 - `python -m app.vault status` lists, per engagement, encrypted and plaintext blobs,
   encrypted and plaintext (v1) summaries, and whether the content was deleted.
-- Deleting an engagement's content also deletes plaintext blobs that only that engagement
-  cites.
+- Deleting an engagement's content also deletes plaintext blobs that only that engagement's
+  v1 evidence cites (newer evidence citing the same hash elsewhere does not keep them).
 - Old reports verify as before: their entries carry no `v` and are checked as v1.
 
 ## Retention and deletion

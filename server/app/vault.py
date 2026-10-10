@@ -441,10 +441,14 @@ def _legacy(session, eng_id: int) -> list[str]:
 
     from .models import Engagement, Evidence
 
-    mine = set(session.scalars(select(Evidence.sha256).where(Evidence.engagement_id == eng_id)))
+    # Only v1 evidence, written before encryption, ever pointed at a plaintext blob. A newer row
+    # names a hash as its writer gave it, so it neither claims nor keeps another one's blob.
+    mine = set(session.scalars(select(Evidence.sha256).where(Evidence.engagement_id == eng_id,
+                                                             Evidence.record_version == 1)))
     others = {}
     for sha, other in session.execute(select(Evidence.sha256, Evidence.engagement_id)
-                                      .where(Evidence.sha256.in_(sorted(mine)), Evidence.engagement_id != eng_id)):
+                                      .where(Evidence.sha256.in_(sorted(mine)), Evidence.engagement_id != eng_id,
+                                             Evidence.record_version == 1)):
         others.setdefault(sha, set()).add(other)
     # Ids only: no other organization's row enters this session's identity map.
     live = set(session.scalars(select(Engagement.id).where(Engagement.content_deleted_at.is_(None))))
@@ -568,7 +572,9 @@ def encrypt_existing(s, eng_ids: list[int] | None = None) -> dict:
             if e.content_deleted_at is None and (eng_ids is None or e.id in eng_ids)]
     copied, already = 0, 0
     for eng in engs:
-        for digest in sorted(set(s.scalars(select(Evidence.sha256).where(Evidence.engagement_id == eng.id)))):
+        # Only v1 evidence pointed at plaintext blobs; a newer row citing a hash claims no one's.
+        for digest in sorted(set(s.scalars(select(Evidence.sha256).where(Evidence.engagement_id == eng.id,
+                                                                          Evidence.record_version == 1)))):
             if blobs.encrypted_path(digest, eng.id).is_file():
                 already += 1
                 continue
@@ -582,7 +588,7 @@ def encrypt_existing(s, eng_ids: list[int] | None = None) -> dict:
     removed = 0
     live = {e.id for e in s.scalars(select(Engagement).where(Engagement.content_deleted_at.is_(None)))}
     citing: dict[str, set[int]] = {}
-    for sha, eid in s.execute(select(Evidence.sha256, Evidence.engagement_id)):
+    for sha, eid in s.execute(select(Evidence.sha256, Evidence.engagement_id).where(Evidence.record_version == 1)):
         citing.setdefault(sha, set()).add(eid)
     for digest, ids in citing.items():
         if blobs.plain_path(digest).is_file() and all(blobs.encrypted_path(digest, i).is_file()

@@ -570,8 +570,10 @@ def test_agent_runs_need_agents_enabled_the_agent_executor_and_the_gates(api, mo
 
 
 def test_blobs_are_served_only_when_evidence_refers_to_them(api):
-    _, lane = api_lane(api)
-    digest = blobs.put(b"<script>alert(1)</script>")
+    e, lane = api_lane(api)
+    # Stored as every blob is now, under the engagement's key. A plaintext blob (from before
+    # encryption) opens only through v1 evidence: test_security_review_auth.py, AUTH-1.
+    digest = blobs.put(b"<script>alert(1)</script>", engagement_id=e)
     assert api.get(f"/blobs/{digest}").status_code == 404
     api.post(f"/lanes/{lane}/evidence", json={"kind": "response", "sha256": digest, "summary": "s"})
     r = api.get(f"/blobs/{digest}")

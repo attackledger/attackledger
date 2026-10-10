@@ -1385,11 +1385,15 @@ def list_agent_runs(lane_id: int, session: Session = Depends(get_session)):
     return [_job_view(j, with_log=True) for j in jobs]
 
 
-def _plaintext_ok(session, eng: Engagement) -> bool:
-    """Plaintext blobs predate encryption (0018) and organizations (0022), so they are the
-    default organization's. Evidence names its hash as the caller gives it, so another
-    organization citing the same hash must not read them."""
-    return eng.organization_id == orgscope.default_id(session)
+def _plaintext_ok(session, eng: Engagement, digest: str) -> bool:
+    """Plaintext blobs predate encryption (chain record v1) and organizations (0022), so they
+    are the default organization's, and only v1 evidence ever pointed at one. Evidence names its
+    hash as the caller gives it, so a hash cited by newer evidence, in this organization or
+    another, must not open a plaintext blob another engagement stored: only this engagement's
+    own v1 evidence opens one."""
+    return eng.organization_id == orgscope.default_id(session) and session.scalar(
+        select(Evidence.id).where(Evidence.engagement_id == eng.id, Evidence.sha256 == digest,
+                                  Evidence.record_version == 1).limit(1)) is not None
 
 
 @app.get("/blobs/{digest}")
@@ -1407,7 +1411,7 @@ def get_blob(digest: str, request: Request, session: Session = Depends(get_sessi
         if eng.content_deleted_at is not None:
             deleted.append(eng)
             continue
-        data = blobs.get(digest, engagement_id=eng_id, plaintext=_plaintext_ok(session, eng))
+        data = blobs.get(digest, engagement_id=eng_id, plaintext=_plaintext_ok(session, eng, digest))
         if data is not None:
             break
     if data is None and deleted and len(deleted) == len(eng_ids):
@@ -1897,7 +1901,7 @@ def get_inbox_raw(eng_id: int, entry_id: int, part: str, session: Session = Depe
     eng = _get(session, Engagement, eng_id)
     if eng.content_deleted_at is not None:
         raise HTTPException(410, vault.deleted_sentence(vault.deleted_info(eng)))
-    data = blobs.get(digest, engagement_id=eng_id, plaintext=_plaintext_ok(session, eng))
+    data = blobs.get(digest, engagement_id=eng_id, plaintext=_plaintext_ok(session, eng, digest))
     if data is None:
         raise HTTPException(404, "the bytes for this hash are not in the blob store, or do not match it")
     return Response(data, media_type="text/plain; charset=utf-8",
