@@ -7,6 +7,9 @@ regression test in `server/tests/test_security_review_auth.py`. No live stack wa
 traffic left the machine.
 
 Test suite: 758 passed and 1 skipped before; 762 passed and 1 skipped after (4 new tests).
+A second pass (branch `sec2-hardening`, 2026-10-10) fixed AUTH-4 and AUTH-7; see "Fixed in the
+second pass" below. Its suite, with the gateway items of the same pass: 790 passed and 1 skipped
+before, 816 passed and 1 skipped after.
 
 ## Findings
 
@@ -15,10 +18,10 @@ Test suite: 758 passed and 1 skipped before; 762 passed and 1 skipped after (4 n
 | AUTH-1 | Low | A cited hash opened another engagement's pre-encryption blob, and kept it after that engagement's content was deleted | `ec778ee` | `test_auth1_citing_a_hash_does_not_open_another_engagements_plaintext_blob` |
 | AUTH-2 | Low | Changes sent by a page of another origin were accepted: a sibling subdomain (same site) with the session cookie, or any web page in open mode | `0859dbc` | `test_auth2_a_page_of_another_site_cannot_change_anything`, `test_auth2_open_mode_refuses_another_sites_page_too` |
 | AUTH-3 | Low | Separation of duties ignored who imported a lane's evidence | `cff4cc8` | `test_auth3_whoever_imported_a_lanes_evidence_cannot_sign_it` |
-| AUTH-4 | Info | `hmac.compare_digest` raises on non-ASCII bearer tokens and cookies (500, not a bypass) | not fixed | none |
+| AUTH-4 | Info | `hmac.compare_digest` raises on non-ASCII bearer tokens and cookies (500, not a bypass) | `01d167b` (second pass) | `test_auth4_non_ascii_tokens_and_cookies_are_refused_with_401` |
 | AUTH-5 | Info | On SQLite, using an approval does not lock the row | not fixed (Postgres locks it) | none |
 | AUTH-6 | Info | The token-mode cookie is a fixed HMAC of the token, so signing out does not revoke it | not fixed (by design) | none |
-| AUTH-7 | Info | A malformed signed payload gives a 500 instead of a 422 | not fixed | none |
+| AUTH-7 | Info | A malformed signed payload gives a 500 instead of a 422 | `01d167b` (second pass) | `test_auth7_a_payload_with_fields_of_the_wrong_type_is_refused_with_422` |
 
 No Critical, High or Medium issue was found. Organization isolation (D-042) held everywhere I
 looked; the details are under "Checked and sound".
@@ -101,25 +104,47 @@ entries' `mappings`). `docs/TESTER_GUIDE.md` says so.
 
 ### Info
 
-- **AUTH-4.** `auth._principal` compares the bearer header and the token-mode cookie with
-  `hmac.compare_digest` on `str`. That raises `TypeError` for non-ASCII characters (Starlette decodes
-  headers as Latin-1), so such a request gets a 500. The same applies to `orgs.channel_org` for
-  worker and gateway tokens. It fails closed, with no bypass. Comparing the UTF-8 bytes would turn
-  it into a 401.
+- **AUTH-4.** Fixed in the second pass (below).
 - **AUTH-5.** `approvals.consume` locks the proposal (`SELECT ... FOR UPDATE`) on Postgres only. On
   SQLite, two concurrent uses could both read `approved`. Production runs Postgres (both compose
   files), where the second use waits and then sees `sent`. SQLite is used by the tests only.
 - **AUTH-6.** In token mode, the cookie is `HMAC(token, "attackledger-session-v1")`. Signing out
   deletes it in the browser, but a copied cookie works until the token changes. This is by design
   (no sessions without people). People mode uses random sessions stored as hashes.
-- **AUTH-7.** `_check_signed` assumes the payload's field types: a naive `issued_at` or a
-  non-integer `chain.seq` raises (500) before the canonical-form check has a chance to refuse it.
-  It needs the signer's own session and key, so it rejects nothing it should accept.
+- **AUTH-7.** Fixed in the second pass (below).
 - Design notes, not defects: separation of duties covers evidence, not N/A decisions (a person can
   mark every item N/A and sign); sign-in lockout is per email and address, kept in memory (a
   restart clears it); in a multi-organization deployment, sign-in time grows with the number of
   accounts that share an email (ORGANIZATIONS.md already lists per-organization sign-in as future
   work); `auth.OPEN_PATHS` is unused.
+
+### Fixed in the second pass
+
+**AUTH-4: a non-ASCII token or cookie was a 500** (`01d167b`). `auth._principal` compared the
+bearer header and the token-mode cookie with `hmac.compare_digest` on `str`, which raises
+`TypeError` for a non-ASCII character; Starlette decodes headers as Latin-1, so a header with
+UTF-8 bytes was enough. The same held for the worker and gateway tokens (`orgs.channel_org`) and
+for the operator token posted to `/auth/login`, a JSON string that may hold any character.
+Reproduction: `test_auth4_non_ascii_tokens_and_cookies_are_refused_with_401` sends such a bearer
+token to `/engagements`, `/worker/ping` and `/gateway/dns-scopes`, such a session cookie, and such
+a token to `/auth/login`: before the fix the first raised `TypeError` (500). Fix:
+`auth.same_secret` compares the UTF-8 bytes (with `surrogatepass`, so a lone surrogate from JSON
+cannot raise either), and `orgs.channel_org` does the same; the job secret at `/gateway/*` is
+hashed the same way. Each now answers 401; the right token still opens the route (the control in
+the test).
+
+**AUTH-7: a malformed signed payload was a 500** (`01d167b`). `_check_signed` compared a
+canonical payload's fields with the lane, queried the ledger with `chain.seq` and subtracted
+`issued_at` from now, assuming their types. Reproduction:
+`test_auth7_a_payload_with_fields_of_the_wrong_type_is_refused_with_422` signs canonical payloads
+with a time without a zone (500 before: `TypeError` on the subtraction), a list as `chain.seq`
+(500: the database refuses the parameter), a string as `chain.seq` (accepted before, on SQLite,
+which compares `'1'` with 1), a string lane id, a number as the signer's name, and a date that is
+not one. Fix: `main._payload_problem` checks the field types after the canonical-form check and
+before any comparison (ids and the chain position whole numbers, the text fields text, `issued_at`
+a time with a zone) and answers 422 "the signed payload is malformed: ...". The real payload still
+signs (the control in the test). It never accepted a payload it should not have but the string
+chain position, which pointed at the same evidence row.
 
 ## Scope covered
 

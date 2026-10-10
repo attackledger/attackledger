@@ -565,3 +565,12 @@ def test_gw10_what_the_gateway_accepts_h11_can_write():
     assert gateway.header_problem("X-Test", "tab\tinside and spaces") is None
     for bad in (" lead", "trail ", "a\x0bb", "a\x7fb"):
         assert gateway.header_problem("X-Test", bad)
+
+
+def test_gw10_an_identification_h11_would_not_write_is_a_refused_row(stack):
+    """The research header is one line (main.ScopeIn), but a vertical tab or a form feed passed;
+    h11 refuses them when it writes the request. Now a refusal in the log, not a dead connection."""
+    stack.api.add(8, research_header="X-Bug-Bounty: r1\x0bextra")
+    status, _, body = stack.get("http://app.example.com/", auth=stack.auth(job=8))
+    assert status == 400 and b"X-Bug-Bounty" in body and stack.up.requests == []
+    assert stack.rows(1)[-1]["verdict"] == "refused"

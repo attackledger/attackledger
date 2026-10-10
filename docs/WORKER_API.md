@@ -45,7 +45,10 @@ with the API.
   mode, local trials) that would make it an owner. A source-address check cannot be trusted
   behind the production proxy settings (`--forwarded-allow-ips *`), and a second API container
   for the worker adds another holder of the master key.
-- **With the relay** the worker's network holds the gateway and nothing else. The relay forwards
+- **With the relay** the worker's network holds the gateway and nothing else (and, since the
+  second security pass, no address of the Docker host either). The relay listens on that network
+  only (`ATTACKLEDGER_GATEWAY_LISTEN`, security review GW-9), not on the control, default and lab
+  networks. The relay forwards
   only `GET` and `POST` to paths matching `^/worker/[a-z0-9/_-]*$`, with only `Authorization` and
   `Content-Type`, bodies up to 16 MB, never to `/gateway/*` or a person's route. It
   authenticates nothing itself: the API checks every token.
