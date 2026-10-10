@@ -22,6 +22,29 @@ evidence chain identical, and the encrypted note stayed readable.
   self-hosted install answered `/favicon.svg` with the app's HTML. Found by capturing the
   local app through Caido.
 
+### Security
+Found in a review of evidence integrity, encryption, imports and the web front end
+(`docs/security-review/EVIDENCE.md`). Both verifiers changed the same way.
+- **The verifier missed a voided receipt reported as receipted** (EV-1). Setting a void lane's
+  unsigned status back to `closed` hid the void (D-052). The change history check now fails a
+  receipt that an audit entry records as voided.
+- **A receipt's issue time could be moved** (EV-2). The role check read the unsigned time, and
+  moving it before the audit log began skipped the check. It must now lie within the window
+  the server allows after the signed payload's issue time.
+- **The signed engagement was not compared with the report's** (EV-3). Another engagement id
+  fails; a rename since signing is a NOTE.
+- **The counts the verifier prints were not checked** (EV-4). Receipted lanes and evidence
+  entries in the summary must be the report's own.
+- **An HTML report with edited page text still verified** (EV-5). The verifier now says that
+  only the embedded JSON is checked, and "How to verify" says the body hash can be recomputed
+  by anyone.
+- **Deleting an engagement's content left its traffic log URLs** (EV-6). The gateway log's
+  URLs are now blanked; method, host, status and verdict stay.
+- **Azure key headers were stored unredacted** (EV-7): `Ocp-Apim-Subscription-Key`,
+  `X-Functions-Key` and `X-Master-Key`, also as parameters and JSON keys.
+- **Drafts with a credential reached sessionStorage** (EV-8) when written as a JSON field, a key
+  header, `password: ...`, a private key or an AWS key id.
+
 ### Changed
 - **Recon workflow, redesigned** (ideas from the ars0n framework; no code taken).
   - A summary line ("6 steps, 13 tools; 13 done, last finished …") and one clear Run all
