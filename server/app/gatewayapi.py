@@ -172,6 +172,9 @@ def gateway_log(body: LogIn, session: Session = Depends(get_session)):
     engs = {r.engagement_id for r in body.rows if r.engagement_id is not None}
     jobs = {r.job_id for r in body.rows if r.job_id is not None}
     known_engs = set(session.scalars(select(Engagement.id).where(Engagement.id.in_(engs)))) if engs else set()
+    # Rows that arrive after an engagement's content was deleted keep no URL either (vault.delete_content).
+    deleted = set(session.scalars(select(Engagement.id).where(Engagement.id.in_(engs),
+                                                               Engagement.content_deleted_at.is_not(None)))) if engs else set()
     known_jobs = set(session.scalars(select(Job.id).where(Job.id.in_(jobs)))) if jobs else set()
     for r in body.rows:
         at = r.at if r.at.tzinfo else r.at.replace(tzinfo=timezone.utc)
@@ -179,7 +182,7 @@ def gateway_log(body: LogIn, session: Session = Depends(get_session)):
             at=at.astimezone(timezone.utc).replace(tzinfo=None),
             engagement_id=r.engagement_id if r.engagement_id in known_engs else None,
             job_id=r.job_id if r.job_id in known_jobs else None, tool=r.tool, kind=r.kind, method=r.method,
-            url=r.url, host=r.host, port=r.port, status=r.status, verdict=r.verdict, reason=r.reason,
+            url="" if r.engagement_id in deleted else r.url, host=r.host, port=r.port, status=r.status, verdict=r.verdict, reason=r.reason,
             bytes_sent=r.bytes_sent, bytes_received=r.bytes_received, duration_ms=r.duration_ms,
             account=r.account, approval_id=r.approval_id))
         if r.approval_id is not None:

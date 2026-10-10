@@ -12,6 +12,7 @@ choices; the code is `server/app/vault.py`, `server/app/blobs.py` and `server/ap
 | Evidence summary (chain v1 rows, written before 0017) | `evidence.summary` | plaintext | **kept**: the v1 chain hash covers the text itself, so removing it would make the chain unverifiable; reports issued before already carry it |
 | Recon results: observations, endpoints, leads | their tables | plaintext | **deleted** |
 | Job logs, an agent run's closing summary | `jobs.log`, `jobs.result.summary` | plaintext | **replaced** by a deletion note |
+| Traffic log URLs (every request a tool or agent sent through the gateway) | `gateway_requests.url` | plaintext (redacted) | **blanked**; the method, host, port, status, verdict, reason and byte counts stay |
 | Evidence URI (`evidence.uri`) | evidence row | plaintext | kept: the chain record (v1 and v2) commits to it |
 | Item N/A reasons | checklist items | plaintext | kept: the receipt manifest commits to them |
 | Hosts, lane roles, hashes, receipts, signatures, timestamps, key log, audit log | | plaintext | kept: they are what a report verifies |
@@ -124,7 +125,7 @@ an explicit command encrypts it.**
   date is the MVP.
 - **What deletion does**, in this order: in one database transaction it records who and
   when (`content_deleted_at`, `content_deleted_by`, `content_deleted_reason`), nulls the
-  v2 summary ciphertexts, deletes recon results, replaces job logs, and appends an audit
+  v2 summary ciphertexts, deletes recon results, replaces job logs, blanks the traffic log's URLs, and appends an audit
   log entry (`engagement.content_deleted`, by the person or by "the retention policy");
   then it writes a tombstone in the engagement's folder, deletes the key file and every
   blob in the folder, and deletes plaintext blobs only this engagement cites. If the

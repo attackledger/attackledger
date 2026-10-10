@@ -355,10 +355,10 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     """Delete an engagement's content: record it, null the summaries, drop recon results,
     then delete the key and the blobs. Commits. Idempotent: a second call only finishes the
     file step. Returns what was done."""
-    from sqlalchemy import delete as sa_delete, select
+    from sqlalchemy import delete as sa_delete, select, update
 
     from . import auditlog
-    from .models import Endpoint, Engagement, Evidence, Job, Lead, Observation
+    from .models import Endpoint, Engagement, Evidence, GatewayRequest, Job, Lead, Observation
 
     if reason not in REASONS:
         raise ValueError(f"unknown reason {reason!r}")
@@ -381,6 +381,10 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     from . import approvals, testaccounts   # test accounts and proposed writes (D-040, D-041)
     counts.update(testaccounts.wipe(session, eng.id))
     counts.update(approvals.wipe(session, eng.id))
+    # The gateway log keeps what it proves (method, host, port, status, verdict, reason, bytes);
+    # its URLs are the paths and query strings the tools and agents requested, which go.
+    counts["gateway_urls"] = session.execute(update(GatewayRequest).where(
+        GatewayRequest.engagement_id == eng.id, GatewayRequest.url != "").values(url="")).rowcount or 0
     now = datetime.now(timezone.utc)
     by = "the retention policy" if reason == "retention" else auditlog.actor_label(actor)
     note = f"Log deleted with the engagement's content on {now.date().isoformat()}.\n"

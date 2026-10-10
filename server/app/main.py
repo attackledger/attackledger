@@ -1625,6 +1625,7 @@ def _content_terms(rows: list[Evidence]) -> dict:
         "The engagement's key, so the raw evidence and the evidence summaries can no longer be read.",
         "Recon results: observations, URLs and leads.",
         "Imported entries' URLs, labels and tool ids, import file names and the hosts of refused rows.",
+        "The URLs in the traffic log (its methods, hosts, statuses and verdicts stay).",
     ]
     return {"evidence_uris": len(uris), "uris_with_query": queries, "keeps": keeps, "removes": removes}
 
@@ -1668,7 +1669,7 @@ def delete_content(eng_id: int, body: DeleteContentIn, request: Request, session
     res = vault.delete_content(session, eng, actor=auditlog.actor(authz.current(request)), reason="owner")
     return {**_content_status(session, eng), "removed": {k: res.get(k, 0) for k in (
         "summaries_removed", "observations", "endpoints", "leads", "inbox_entries", "import_batches",
-        "blobs_removed", "plaintext_blobs_removed")}}
+        "gateway_urls", "blobs_removed", "plaintext_blobs_removed")}}
 
 
 # ---- scope import ----------------------------------------------------------
