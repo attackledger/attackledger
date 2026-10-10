@@ -177,6 +177,40 @@ def test_web_build_installs_the_lockfile_without_scripts():
     assert lock.count('"resolved"') == lock.count('"integrity": "sha512-')
 
 
+def _workflow_uses(node):
+    """Every `uses:` in a parsed workflow: steps' actions and jobs' reusable workflows."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "uses":
+                yield v
+            else:
+                yield from _workflow_uses(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _workflow_uses(v)
+
+
+def test_github_actions_are_pinned_by_commit():
+    """A tag (actions/checkout@v4) can be moved to other code by whoever controls the action's
+    repository; a full commit SHA cannot. Each pin names its tag in a comment, for people and
+    for moving the pin (docs/SUPPLY_CHAIN.md)."""
+    workflows = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
+    assert workflows
+    seen = 0
+    for wf in workflows:
+        text = wf.read_text()
+        parsed = list(_workflow_uses(yaml.safe_load(text)))
+        lines = re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$", text, re.M)
+        assert sorted(u for u, _ in lines) == sorted(parsed), f"{wf.name}: a uses: the line check does not see"
+        for ref, rest in lines:
+            seen += 1
+            if ref.startswith("./"):
+                continue                    # an action of this repository, at the same commit
+            assert re.fullmatch(r"[\w.-]+/[\w.-]+(/[\w./-]+)?@[0-9a-f]{40}", ref), f"{wf.name}: {ref} is not pinned by commit"
+            assert re.match(r"\s+#\s*v\d", rest), f"{wf.name}: {ref} has no tag comment"
+    assert seen >= 5
+
+
 @pytest.mark.parametrize("files", FILES)
 def test_configs_are_files(files):
     """Compose writes a config's inline `content` into the container, which a read-only root
