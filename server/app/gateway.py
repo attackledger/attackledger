@@ -137,6 +137,10 @@ SERVICE_HOSTS = frozenset({"api.anthropic.com"})
 # The Claude API calls an agent run makes (agentloop: client.beta.messages.create).
 SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"))
 DENY_HOSTS = ("db", "api", "web", "worker", "gateway")
+# Cloud metadata services outside link-local (169.254.0.0/16 is refused as link-local): Alibaba
+# Cloud, AWS over IPv6, Azure's WireServer, Oracle Cloud Classic (security review GW-5).
+METADATA_ADDRESSES = frozenset(ipaddress.ip_address(a) for a in (
+    "100.100.100.200", "fd00:ec2::254", "168.63.129.16", "192.0.0.192"))
 # Removed from an agent's Claude API call; the gateway's own key goes in their place.
 SERVICE_KEY_HEADERS = frozenset({"x-api-key", "authorization"})
 # What an agent run's Claude API call may carry (agentloop.request_params, and what count_tokens
@@ -814,9 +818,9 @@ class Gateway:
         ip = addrs[0]
         if getattr(ip, "ipv4_mapped", None):
             ip = ip.ipv4_mapped
-        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-            raise Refused(403, f"{host} resolves to {ip}, which is never contacted (loopback, link-local or "
-                               f"special address)")
+        if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip in METADATA_ADDRESSES:
+            raise Refused(403, f"{host} resolves to {ip}, which is never contacted (loopback, link-local, cloud "
+                               f"metadata or special address)")
         if ip in await self._denied_addresses():
             raise Refused(403, f"{host} resolves to an address of this deployment, which is never contacted")
         return str(ip)

@@ -217,3 +217,28 @@ def test_gw4_a_reflected_session_is_scrubbed_in_its_decoded_and_escaped_forms():
     assert slashed.replace("/", "\\/").encode() not in body
     assert slashed.replace("&", "&amp;").encode() not in body
     assert b"abc" not in body
+
+
+# ---- GW-5: cloud metadata services outside link-local -------------------------------------------
+
+def test_gw5_metadata_addresses_outside_link_local_are_refused(monkeypatch):
+    from test_gateway import FakeApi
+    gw = gateway.Gateway(FakeApi(), None, deny_hosts=())
+    table = {"ali.example.com": "100.100.100.200", "aws6.example.com": "fd00:ec2::254",
+             "azure.example.com": "168.63.129.16", "oci.example.com": "192.0.0.192",
+             "ok.example.com": "100.100.100.201"}
+
+    async def getaddrinfo(host, port, type=None):
+        if host not in table:
+            raise socket.gaierror("no such host")
+        return [(None, None, None, "", (table[host], 0))]
+
+    async def go():
+        monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", getaddrinfo)
+        assert await gw.resolve("ok.example.com") == "100.100.100.201"
+        for host in ("ali.example.com", "aws6.example.com", "azure.example.com", "oci.example.com"):
+            with pytest.raises(gateway.Refused, match="never contacted"):
+                await gw.resolve(host)
+        with pytest.raises(gateway.Refused, match="never contacted"):
+            await gw.resolve("100.100.100.200")
+    asyncio.run(go())
