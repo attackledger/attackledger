@@ -134,7 +134,7 @@ async function rerun(): Promise<void> {
   try {
     o = await verifyReport(decodeFile(bytes), name, opts);
   } catch (e) {
-    o = { status: "error", title: [], results: [], notes: [], message: (e as Error).message, exitCode: 1 };
+    o = { status: "error", title: [], results: [], notes: [], message: (e as Error).message, exitCode: 2 };
   }
   const digest = await sha256(bytes);
   if (run !== state.running) return;                       // a newer check started meanwhile

@@ -3,8 +3,10 @@
 Each input is the fuzzer's failing case minimised by hand. The tests failed before the fix
 named in FUZZING.md and pass after it; the property tests that found most of them are in
 test_fuzz.py."""
+import importlib.util
 import json
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -12,6 +14,7 @@ from sqlalchemy import select
 
 from app import gateway, importers, jsanalysis, pagetext, redact, scope, scopeimport, urls
 from app.models import Engagement, InboxEntry
+from fuzzing import time_limit
 from test_import import db, team, upload
 from test_people import client  # noqa: F401  (fixture)
 
@@ -27,7 +30,8 @@ def har_entry(url="https://shop.example.com/", status=200, **request) -> dict:
 
 def fast(f, *a, seconds=1.0):
     start = time.perf_counter()
-    out = f(*a)
+    with time_limit(10 * seconds, getattr(f, "__name__", "call")):
+        out = f(*a)
     took = time.perf_counter() - start
     assert took < seconds, f"took {took:.2f} s"
     return out
@@ -266,3 +270,36 @@ def test_fz15_a_secret_multipart_field_is_redacted_and_a_file_part_is_not_read()
     assert redact.http_message(out, redact.Report()) == out
     head, _, stored = out.partition(b"\r\n\r\n")
     assert f"Content-Length: {len(stored)}".encode() in head
+
+
+# ---- FZ-16 to FZ-19: the command-line verifier -----------------------------------------------------
+
+FIXTURES = Path(__file__).resolve().parents[2] / "tools" / "verifier_equivalence" / "fixtures"
+
+
+@pytest.mark.parametrize("name, code, says", [
+    ("fuzz-key-missing.json", 2, "its content is not what an AttackLedger report holds"),
+    ("fuzz-wrong-type.json", 2, "its content is not what an AttackLedger report holds"),
+    ("fuzz-not-utf8.json", 2, "the file is not UTF-8 text"),
+    ("fuzz-not-json.json", 2, "the file is not valid JSON"),
+    ("fuzz-nested-too-deep.json", 2, "the file is not valid JSON"),
+    ("fuzz-lone-surrogate.json", 2, "its content is not what an AttackLedger report holds"),
+    ("fuzz-nested-500.json", 1, "Verification FAILED."),
+    ("fuzz-item-without-text.json", 1, "Verification FAILED."),
+])
+def test_fz16_the_verifier_never_stops_with_a_traceback(name, code, says, capsys):
+    spec = importlib.util.spec_from_file_location("verify_report_fz", FIXTURES.parents[1] / "verify_report.py")
+    vr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vr)
+    assert vr.main(["verify_report.py", str(FIXTURES / name)]) == code
+    out = capsys.readouterr().out
+    assert says in out
+    if code == 2:
+        assert out == f"the report cannot be checked: {says}\n"
+
+
+def test_fz18_a_lone_surrogate_is_printed_escaped():
+    spec = importlib.util.spec_from_file_location("verify_report_fz", FIXTURES.parents[1] / "verify_report.py")
+    vr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vr)
+    assert vr.shown("a\ud800b") == "a\\ud800b"

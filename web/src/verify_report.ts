@@ -381,6 +381,20 @@ function plural(n: number, one: string, many: string): string {
 // ---- JSON as Python reads and writes it ----------------------------------------------------
 
 /** json.loads: ints stay ints (beyond 2**53 as BigInt), floats are PyFloat, NaN and Infinity are read. */
+/** JSON nested deeper than this is refused before it is read, as verify_report.py's MAX_DEPTH
+ * does: Python's own limit depends on its version, so both refuse the same files (FZ-17). */
+const MAX_DEPTH = 500;
+
+function tooDeep(text: string): boolean {
+  let depth = 0;
+  for (const m of text.matchAll(/"(?:[^"\\]|\\.)*"?|[[\]{}]/g)) {
+    const c = m[0];
+    if (c === "[" || c === "{") { if (++depth > MAX_DEPTH) return true; }
+    else if (c === "]" || c === "}") depth--;
+  }
+  return false;
+}
+
 export function pyLoads(text: string): unknown {
   if (text.startsWith("\ufeff")) raise("ValueError", "Unexpected UTF-8 BOM (decode using utf-8-sig)");
   let i = 0;
@@ -410,7 +424,7 @@ export function pyLoads(text: string): unknown {
   }
 
   function value(depth: number): unknown {
-    if (depth > 990) throw new Error("the report is nested too deeply to read");
+    if (depth > 990) throw new Error("the report is nested too deeply to read");   // tooDeep() refused it first
     ws();
     const c = text[i];
     if (c === "{") {
@@ -2239,8 +2253,16 @@ export function readReport(text: string, fileName: string): unknown {
     if (!m) throw new Unusable("no embedded report found in the HTML file");
     text = m[1];
   }
-  return pyLoads(text);
+  if (tooDeep(text)) throw new Unusable("the file is not valid JSON");
+  try {
+    return pyLoads(text);
+  } catch {
+    throw new Unusable("the file is not valid JSON");
+  }
 }
+
+/** Why a report stopped the checks (a missing key, a value of another type), as the script says it. */
+export const MALFORMED = "its content is not what an AttackLedger report holds";
 
 function failure(status: "unusable" | "error", message: string, exitCode: 1 | 2): Outcome {
   return { status, title: [], results: [], notes: [], message, exitCode };
@@ -2251,21 +2273,19 @@ export async function verifyReport(text: string, fileName: string, opts: VerifyO
   let roots: Cert[];
   try {
     roots = loadRoots([...(opts.roots ?? []), ...TSA_ROOTS]);
-  } catch (e) {
-    if (e instanceof Unusable) return failure("error", e.message, 1);
-    return failure("error", `a trusted root cannot be read: ${(e as Error).message}`, 1);
+  } catch {
+    return failure("error", "a trusted root cannot be read", 2);
   }
   let r: unknown;
   try {
     r = readReport(text, fileName);
   } catch (e) {
-    if (e instanceof Unusable) return failure("error", e.message, 1);
-    return failure("error", `the file is not a report that can be read: ${(e as Error).message}`, 1);
+    return failure("error", e instanceof Unusable ? e.message : MALFORMED, 2);
   }
   try {
     return await verifyParsed(r, roots, opts, /\.html?$/.test(fileName));
-  } catch (e) {
-    return failure("error", `the report cannot be checked: ${(e as Error).message}`, 1);
+  } catch {
+    return failure("error", MALFORMED, 2);           // as verify_report.py: exit code 2, no traceback (FZ-16)
   }
 }
 
@@ -2335,7 +2355,7 @@ async function verifyParsed(r: unknown, roots: Cert[], opts: VerifyOptions, html
  * than shows (C0, DEL, C1, bidirectional controls, line separators) escaped, so a name cannot print
  * a fake result and hide the real one (security recheck). The page shows text through the DOM. */
 export function shown(text: string): string {
-  return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, (c) => {
+  return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, (c) => {
     const n = c.charCodeAt(0);
     return n < 0x100 ? `\\x${n.toString(16).padStart(2, "0")}` : `\\u${n.toString(16).padStart(4, "0")}`;
   });
@@ -2343,7 +2363,7 @@ export function shown(text: string): string {
 
 export function cliText(o: Outcome): string {
   if (o.status === "unusable") return `${shown(`${o.message}`)}\n`;
-  if (o.status === "error") return "";
+  if (o.status === "error") return `${shown(`the report cannot be checked: ${o.message}`)}\n`;
   const out = [o.title[0], `  ${o.title[1]}`, ""];
   for (const c of o.results) {
     if (c.verdict === "SKIP") { out.push(`  SKIP  ${c.name} (${c.skip})`); continue; }

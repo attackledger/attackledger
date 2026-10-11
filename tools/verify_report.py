@@ -108,15 +108,46 @@ def canonical(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+class Unreadable(Exception):
+    """The file cannot be read as a report; the message says why (exit code 2)."""
+
+
+# JSON nested deeper than this is refused before it is read: Python's own limit depends on its
+# version and the stack, and the browser module must refuse exactly the same files (fuzzing, FZ-17).
+MAX_DEPTH = 500
+_JSON_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"?|[\[\]{}]')
+
+
+def _too_deep(text: str) -> bool:
+    depth = 0
+    for m in _JSON_TOKEN.finditer(text):
+        c = m.group(0)
+        if c in "[{":
+            depth += 1
+            if depth > MAX_DEPTH:
+                return True
+        elif c in "]}":
+            depth -= 1
+    return False
+
+
 def load(path: str) -> dict:
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except UnicodeDecodeError:
+        raise Unreadable("the file is not UTF-8 text") from None
     if path.endswith((".html", ".htm")):
         m = re.search(r'<script type="application/json" id="attackledger-report">(.*?)</script>', text, re.S)
         if not m:
-            raise SystemExit("no embedded report found in the HTML file")
+            raise Unreadable("no embedded report found in the HTML file")
         text = m.group(1)
-    return json.loads(text)
+    if _too_deep(text):
+        raise Unreadable("the file is not valid JSON")
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):
+        raise Unreadable("the file is not valid JSON") from None
 
 
 # The checks read the JSON report embedded in an HTML report, not the text the page shows.
@@ -128,7 +159,7 @@ HTML_NOTE = ("this is an HTML report: the checks cover the JSON report embedded 
 # and the bidirectional controls and line separators. Text from the report is printed with them
 # escaped, so a name cannot print a fake "Verified." line, then hide the real result behind an
 # escape sequence (security recheck).
-_UNSHOWN = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_UNSHOWN = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069\ud800-\udfff]")   # lone surrogates: FZ-18
 
 
 def shown(text) -> str:
@@ -201,7 +232,7 @@ def manifest(lane: dict, evidence: list[dict], version: int = 2) -> dict:
         "role": lane["role"],
         "host": lane["host"],
         "items": [{"idx": i["idx"], "key": i["key"], "state": i["state"], "na_reason": i["na_reason"],
-                   **({"id": i["item_id"], "text": i["text"]} if version == 2 else {})}
+                   **({"id": i.get("item_id"), "text": i.get("text")} if version == 2 else {})}
                   for i in sorted(lane["items"], key=lambda i: i["idx"])],
         "evidence": [{"id": e["id"], "item": e["item_id"], "kind": e["kind"], "sha256": e["sha256"]} for e in evs],
     }
@@ -1350,7 +1381,31 @@ def check_timestamps(r: dict, roots: list[dict]) -> tuple[list[str], list[str]]:
     return problems, notes
 
 
+# A report that is not what a report holds (a missing key, a value of another type): the checks
+# stop, and the command says so with exit code 2 instead of a traceback (fuzzing, FZ-16).
+MALFORMED = "its content is not what an AttackLedger report holds"
+
+
 def main(argv: list[str]) -> int:
+    """Exit code 0, 1 or 2 (see the top of this file); never a traceback. The output is printed
+    when the checks are over, so a report that stops them prints only the reason."""
+    import contextlib
+    import io
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            code = _main(argv)
+    except Unreadable as e:
+        print(shown(f"the report cannot be checked: {e}"))
+        return 2
+    except Exception:  # noqa: BLE001 - any other stop is a malformed report
+        print(shown(f"the report cannot be checked: {MALFORMED}"))
+        return 2
+    sys.stdout.write(out.getvalue())
+    return code
+
+
+def _main(argv: list[str]) -> int:
     args, root_files, require, strict, rest = [], [], False, False, iter(argv[1:])
     for a in rest:
         if a == "--tsa-root":
@@ -1368,7 +1423,10 @@ def main(argv: list[str]) -> int:
     default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tsa-roots")
     if os.path.isdir(default):
         root_files += sorted(os.path.join(default, f) for f in os.listdir(default) if f.endswith(".pem"))
-    roots = load_roots(root_files)
+    try:
+        roots = load_roots(root_files)
+    except Exception:  # noqa: BLE001
+        raise Unreadable("a trusted root cannot be read") from None
     r = load(args[0])
     if r.get("format") not in FORMATS:
         print(shown(f"unsupported report format: {r.get('format')}"))

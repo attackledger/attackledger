@@ -136,6 +136,15 @@
     {"name": "seal: the void hidden and sealed with another instance's key", "file": "tools/verifier_equivalence/fixtures/seal-other-key.json", "v2": true, "expect": {"status": "failed", "K": "PASS", "H": "PASS", "L": "FAIL"}},
     {"name": "seal: removed (a NOTE)", "file": "tools/verifier_equivalence/fixtures/seal-removed.json", "v2": true, "expect": {"status": "verified", "L": "-"}},
     {"name": "seal: removed, --require-history", "file": "tools/verifier_equivalence/fixtures/seal-removed.json", "history": true, "v2": true, "expect": {"status": "failed", "H": "PASS", "L": "FAIL"}},
-    {"name": "seal: format 1, --require-history", "file": "tools/verifier_equivalence/fixtures/format-1.json", "history": true, "expect": {"status": "failed", "L": "FAIL"}}
+    {"name": "seal: format 1, --require-history", "file": "tools/verifier_equivalence/fixtures/format-1.json", "history": true, "expect": {"status": "failed", "L": "FAIL"}},
+
+    {"name": "fuzzing FZ-16: a key the checks read is missing (exit 2, no traceback)", "file": "tools/verifier_equivalence/fixtures/fuzz-key-missing.json", "expect": {"status": "error"}},
+    {"name": "fuzzing FZ-16: lanes is an object, not a list", "file": "tools/verifier_equivalence/fixtures/fuzz-wrong-type.json", "expect": {"status": "error"}},
+    {"name": "fuzzing FZ-16: the file is not UTF-8", "file": "tools/verifier_equivalence/fixtures/fuzz-not-utf8.json", "expect": {"status": "error"}},
+    {"name": "fuzzing FZ-16: the file is not valid JSON", "file": "tools/verifier_equivalence/fixtures/fuzz-not-json.json", "expect": {"status": "error"}},
+    {"name": "fuzzing FZ-17: JSON nested 501 levels is refused by both", "file": "tools/verifier_equivalence/fixtures/fuzz-nested-too-deep.json", "expect": {"status": "error"}},
+    {"name": "fuzzing FZ-17: JSON nested 499 levels is read by both", "file": "tools/verifier_equivalence/fixtures/fuzz-nested-500.json", "expect": {"status": "failed", "B": "FAIL"}},
+    {"name": "fuzzing FZ-18: a lone surrogate in the report cannot be hashed: both say so", "file": "tools/verifier_equivalence/fixtures/fuzz-lone-surrogate.json", "expect": {"status": "error"}},
+    {"name": "fuzzing FZ-19: an item without its text is a failed check, not a traceback", "file": "tools/verifier_equivalence/fixtures/fuzz-item-without-text.json", "expect": {"status": "failed", "B": "FAIL"}}
   ]
 }

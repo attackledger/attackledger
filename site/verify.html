@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-wc6RWG0q5ZkrlB5fHp67Mh/YLMwcOjKUtrQe5BSYbuU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-iTTlPIqUyCDv8QTJiNOu7Rqaf9EpwGneZTvzWZnUoWE='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Verify a report · AttackLedger</title>
 <meta name="description" content="Check an AttackLedger report in your browser, with the same checks as verify_report.py. The file is not uploaded.">
@@ -272,7 +272,7 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
             report, or save this page and open it offline.</p>
           <details class="cli">
             <summary>The policy this page is served with</summary>
-            <p class="csp">default-src 'none'; script-src 'sha256-wc6RWG0q5ZkrlB5fHp67Mh/YLMwcOjKUtrQe5BSYbuU='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
+            <p class="csp">default-src 'none'; script-src 'sha256-iTTlPIqUyCDv8QTJiNOu7Rqaf9EpwGneZTvzWZnUoWE='; style-src 'sha256-4XBCASIaoqxMYhEnrXXHBDJjtmBekC4WfqVPkzcsGyA='; font-src data:; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; require-trusted-types-for 'script'; trusted-types 'none'</p>
           </details>
           <h3>The same checks as the command line</h3>
           <p>The checks are a line-for-line port of <a href="/verify_report.py"><code>verify_report.py</code></a>, the
@@ -616,6 +616,17 @@ pre { margin: 0.75rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); bor
     if (typeof s === "string") return Array.from(s).slice(0, n).join("");
     if (Array.isArray(s)) return pyRepr(s.slice(0, n));
     return raise("TypeError", `'${typeName(s)}' object is not subscriptable`);
+  }
+  var MAX_DEPTH = 500;
+  function tooDeep(text) {
+    let depth = 0;
+    for (const m of text.matchAll(/"(?:[^"\\]|\\.)*"?|[[\]{}]/g)) {
+      const c = m[0];
+      if (c === "[" || c === "{") {
+        if (++depth > MAX_DEPTH) return true;
+      } else if (c === "]" || c === "}") depth--;
+    }
+    return false;
   }
   function pyLoads(text) {
     if (text.startsWith("\uFEFF")) raise("ValueError", "Unexpected UTF-8 BOM (decode using utf-8-sig)");
@@ -2216,8 +2227,14 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
       if (!m) throw new Unusable("no embedded report found in the HTML file");
       text = m[1];
     }
-    return pyLoads(text);
+    if (tooDeep(text)) throw new Unusable("the file is not valid JSON");
+    try {
+      return pyLoads(text);
+    } catch {
+      throw new Unusable("the file is not valid JSON");
+    }
   }
+  var MALFORMED = "its content is not what an AttackLedger report holds";
   function failure(status, message, exitCode) {
     return { status, title: [], results: [], notes: [], message, exitCode };
   }
@@ -2225,21 +2242,19 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     let roots;
     try {
       roots = loadRoots([...opts.roots ?? [], ...TSA_ROOTS]);
-    } catch (e) {
-      if (e instanceof Unusable) return failure("error", e.message, 1);
-      return failure("error", `a trusted root cannot be read: ${e.message}`, 1);
+    } catch {
+      return failure("error", "a trusted root cannot be read", 2);
     }
     let r;
     try {
       r = readReport(text, fileName);
     } catch (e) {
-      if (e instanceof Unusable) return failure("error", e.message, 1);
-      return failure("error", `the file is not a report that can be read: ${e.message}`, 1);
+      return failure("error", e instanceof Unusable ? e.message : MALFORMED, 2);
     }
     try {
       return await verifyParsed(r, roots, opts, /\.html?$/.test(fileName));
-    } catch (e) {
-      return failure("error", `the report cannot be checked: ${e.message}`, 1);
+    } catch {
+      return failure("error", MALFORMED, 2);
     }
   }
   async function verifyParsed(r, roots, opts, html = false) {
@@ -2301,7 +2316,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     return { status: ok ? "verified" : "failed", title, results: checks, notes, message: null, exitCode: ok ? 0 : 1, facts };
   }
   function shown(text) {
-    return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, (c) => {
+    return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, (c) => {
       const n = c.charCodeAt(0);
       return n < 256 ? `\\x${n.toString(16).padStart(2, "0")}` : `\\u${n.toString(16).padStart(4, "0")}`;
     });
@@ -2309,7 +2324,8 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
   function cliText(o) {
     if (o.status === "unusable") return `${shown(`${o.message}`)}
 `;
-    if (o.status === "error") return "";
+    if (o.status === "error") return `${shown(`the report cannot be checked: ${o.message}`)}
+`;
     const out = [o.title[0], `  ${o.title[1]}`, ""];
     for (const c of o.results) {
       if (c.verdict === "SKIP") {
@@ -2445,7 +2461,7 @@ ${pyStr(or(getk(or(getk(rc, "signature"), dict()), "value"), ""))}
     try {
       o = await verifyReport(decodeFile(bytes), name, opts);
     } catch (e) {
-      o = { status: "error", title: [], results: [], notes: [], message: e.message, exitCode: 1 };
+      o = { status: "error", title: [], results: [], notes: [], message: e.message, exitCode: 2 };
     }
     const digest2 = await sha256(bytes);
     if (run !== state.running) return;

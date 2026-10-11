@@ -239,8 +239,9 @@ function mutant(r, file) {
     let tree = null;
     try { tree = json !== null ? parseRaw(json) : null; } catch { tree = null; }
     let done = false;
-    if (tree && r.next() < 0.75) {
-      const all = nodes(tree);
+    let all = null;
+    try { all = tree ? nodes(tree) : null; } catch { all = null; }      // nested too deep to walk: bytes only
+    if (all && r.next() < 0.75) {
       for (let tries = 0; tries < 20 && !done; tries++) {
         const [name, keeps, f] = r.pick(TREE_OPS);
         if (f(r, r.pick(all)) !== false) {
@@ -287,7 +288,7 @@ export async function fuzz({ v, python, here, repo, cases, count, seed, keep, pa
     try {
       text = v.decodeFile(new Uint8Array(readFileSync(file)));
     } catch (e) {                     // as the page shows a file it cannot decode
-      return fromModule(v.unreadableFile ? v.unreadableFile(e) : { status: "error", title: [], results: [], notes: [], message: e.message, exitCode: 1 });
+      return fromModule({ status: "error", title: [], results: [], notes: [], message: e.message, exitCode: 2 });
     }
     return fromModule(await v.verifyReport(text, file, { roots: roots(c), requireSignatures: !!c.require, requireHistory: !!c.history, ed25519: mode }));
   };

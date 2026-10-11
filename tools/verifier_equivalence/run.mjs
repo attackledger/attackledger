@@ -30,7 +30,7 @@ function fromCli(stdout, code) {
     const m = line.match(/^ {2}(PASS|FAIL|SKIP) {2}(.+?)(?: \(.*\))?$/);
     if (m && CHECKS[m[2]]) verdicts[CHECKS[m[2]]] = m[1];
   }
-  const status = code === 0 ? "verified" : code === 2 ? "unusable"
+  const status = code === 0 ? "verified" : code === 2 ? (stdout.startsWith("the report cannot be checked: ") ? "error" : "unusable")
     : stdout.includes("\nVerification FAILED.\n") ? "failed" : "error";
   return { status, verdicts, text: stdout };
 }
@@ -56,8 +56,8 @@ async function runModule(c, mode) {
   let text;
   try {
     text = v.decodeFile(bytes);
-  } catch {
-    return { status: "error", verdicts: {}, text: "" };
+  } catch (e) {
+    return fromModule({ status: "error", title: [], results: [], notes: [], message: e.message, exitCode: 2 });
   }
   return fromModule(await v.verifyReport(text, c.file, { roots, requireSignatures: !!c.require, requireHistory: !!c.history,
                                                          ed25519: mode }));
