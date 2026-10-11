@@ -13,7 +13,7 @@ report or an attestation.
 **How.** Each suspected issue was first proven with a test that failed, then fixed, and the test
 was kept as a regression test. Traffic went only to localhost, local stubs and the bundled lab,
 apart from package registries, the timestamp authority, and the passive-source queries one lab
-run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,222 tests, and it now also runs
+run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,250 tests, and it now also runs
 on Postgres 16 (`tools/test_postgres.sh`), as production does. The Python and browser verifiers
 give identical results on 134 reports and on 2,600 random mutants (`tools/verifier_equivalence/run.sh`).
 
