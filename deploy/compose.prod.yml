@@ -184,8 +184,11 @@ services:
 
   # HTTPS in front of the web app (which forwards /api/ to the API). See deploy/Caddyfile.
   caddy:
-    # caddy:2.11.4-alpine, pinned by its multi-arch index digest on 2026-10-10.
-    image: caddy:2.11-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    # caddy:2.11.7-alpine, pinned by its multi-arch index digest on 2026-10-11. Younger than two
+    # weeks (2026-10-05), on purpose: 2.11.4's binary was built with Go 1.26.3 and older
+    # golang.org/x/net, x/text and grpc, with 33 Go advisories (3 critical) fixed in the Go 1.26.4
+    # to 1.26.8 and module releases that 2.11.6 and 2.11.7 carry (docs/security-review/SUPPLY_CHAIN.md).
+    image: caddy:2.11-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     <<: *hardening
     # It stays root: its volumes (certificates, ACME account) were made by root, and
     # deploy/certs/key.pem is root's (docs/INSTALL.md, section 5). Root without capabilities

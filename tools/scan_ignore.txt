@@ -1,0 +1,24 @@
+# HIGH and CRITICAL findings of tools/scan_images.sh that have a fix but are accepted for now,
+# each with the reason and a date after which it no longer applies (the scan then fails on it
+# again). One per line:
+#   <vulnerability id> <image glob> <package> <until YYYY-MM-DD> <reason>
+# Only for images AttackLedger runs as published (compose `image:`), which it cannot rebuild
+# without taking over their build; an image built here gets the fix in its Dockerfile instead
+# (web/Dockerfile). Review at each base-image refresh (docs/SUPPLY_CHAIN.md): move the pin when a
+# rebuild of the tag that carries the fix is old enough, then delete the line.
+# Reviewed 2026-10-11 (docs/security-review/SUPPLY_CHAIN.md, "Follow-up, 2026-10-11 (sec5-pins)").
+
+# zlib gz_vacate() overflow, reached only through the gzFile API with non-blocking writes.
+# Postgres: on the database network only; pg_dump writes the custom format (tools/backup.sh), deflate streams.
+CVE-2026-85091 postgres:16-alpine@* zlib 2026-11-11 database network only; pg_dump custom format uses deflate streams not gzFile
+# nginx (lab, lab proxy) compresses with deflate streams; neither enables gzip.
+CVE-2026-85091 nginx:1.30-alpine@* zlib 2026-11-11 lab and lab proxy only; nginx uses deflate streams not gzFile
+# Caddy is a static Go binary (its own compress/flate); libz is there for apk and curl only.
+CVE-2026-85091 caddy:2.11-alpine@* zlib 2026-11-11 static Go binary; libz used by apk and curl only
+# PCRE2 JIT out-of-bounds write with an attacker-controlled pattern: the lab's and the lab
+# proxy's patterns are their configuration files'.
+CVE-2026-103111 nginx:1.30-alpine@* pcre2 2026-11-11 lab and lab proxy only; patterns come from our config only
+# libexpat (fontconfig) and libtiff (libgd) are used by nginx's image-filter and xslt modules,
+# which the lab and lab proxy configurations never load.
+CVE-2026-93990 nginx:1.30-alpine@* libexpat 2026-11-11 lab and lab proxy only; xslt and image filter modules not loaded
+CVE-2026-4775 nginx:1.30-alpine@* tiff 2026-11-11 lab and lab proxy only; image filter module not loaded
