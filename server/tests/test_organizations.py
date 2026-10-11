@@ -460,11 +460,12 @@ def test_each_organization_has_its_own_chains_and_reports_verify(orgs2, tmp_path
     for log in ("audit_log", "key_log"):
         h1, h2 = {l["entry_hash"] for l in r1[log]["links"]}, {l["entry_hash"] for l in r2[log]["links"]}
         assert not h1 & h2 and r1[log]["head"] != r2[log]["head"]
-    # Tampering in one organization's chain breaks that chain only.
+    # Tampering in one organization's chain (with the database's superuser rights, TM-5) breaks that chain only.
     with Session() as s:
-        e = s.scalars(select(AuditEntry).where(AuditEntry.organization_id == 1).order_by(AuditEntry.seq)).first()
-        e.actor_name = "someone else"
-        s.commit()
+        with testdb.append_only_off(s):
+            e = s.scalars(select(AuditEntry).where(AuditEntry.organization_id == 1).order_by(AuditEntry.seq)).first()
+            e.actor_name = "someone else"
+            s.commit()
         assert auditlog.verify(s, 1) and auditlog.verify(s, 2) == []
         assert all(p.startswith("organization 1: ") for p in auditlog.verify(s))
 

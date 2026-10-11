@@ -16,6 +16,7 @@ already migrated to head, as the API leaves it on SQLite.
 """
 import ipaddress
 import os
+from contextlib import contextmanager
 import socket
 import uuid
 
@@ -137,3 +138,23 @@ def drop_template() -> None:
         with _admin_engine().connect() as c:
             c.execute(text(f'DROP DATABASE IF EXISTS "{_head_template}" WITH (FORCE)'))
         _head_template = None
+
+
+@contextmanager
+def append_only_off(session):
+    """What a database superuser, or whoever can write the SQLite file, can do (TM-5): drop the
+    append-only triggers (app/appendonly.py), for the tests that show the hash chains and the
+    verifier still catch what the triggers would have refused, and for tests that make rows as an
+    older release left them. The triggers are made again afterwards."""
+    from app import appendonly, db
+    dialect = session.get_bind().dialect.name
+    for stmt in appendonly.drop_statements(dialect):
+        session.connection().exec_driver_sql(stmt)
+    session.commit()
+    try:
+        yield
+    finally:
+        session.rollback()
+        for stmt in appendonly.create_statements(dialect, appendonly.model_columns(db.Base.metadata)):
+            session.connection().exec_driver_sql(stmt)
+        session.commit()

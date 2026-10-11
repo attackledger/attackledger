@@ -66,6 +66,37 @@ the receipt is closed. In every mode, both verifiers fail a v4 receipt when the 
 not reach the signed head, has another entry there, or leaves out a counted entry. The same goes
 for the key log head and the signer's key registration.
 
+## What a signature does not prove
+
+A valid receipt signature proves that the holder of that key signed exactly that payload. It does
+not prove that the reviewer saw what was signed (TM-4 in [THREAT_MODEL.md](THREAT_MODEL.md)).
+
+The reviewer's private key is created non-extractable (WebCrypto) and kept in the browser's
+storage for AttackLedger's origin: it cannot be copied out, not even by the page. But any script
+the installation serves on that origin can ask the browser to sign with it, and the browser does
+not show the person what is being signed. So a dishonest operator, or a web image that was
+tampered with (in the build, the registry or on the server), could serve a page that has the key
+sign a payload for another lane, or another manifest, while the reviewer believes they are
+signing what the screen shows. The server checks only that a payload is one it issued for that
+lane in the last ten minutes; a dishonest server issues what it wants.
+
+What limits this:
+
+- the signature is only over a payload the server issued for a lane and its current manifest and
+  chain head (D-033): a page cannot make the key sign anything else and have the server keep it,
+  unless the server itself is dishonest;
+- the app's Content-Security-Policy admits no script but the installation's own bundle
+  (`web/nginx.conf`), so another site or injected content cannot use the key (T3.5);
+- the verifier fails a receipt whose payload names another lane, manifest or key than the report
+  (above), so a signature taken for one lane does not pass for another;
+- the key log shows each key's registration, and a reviewer can revoke a key at any time.
+
+What does not: a reader of a report cannot tell from it whether the reviewer saw the payload. The
+signature is the reviewer's key's statement on the code the installation served. A reviewer who
+does not trust the installation's operator should not sign on it. A longer-term option is to show
+the payload's facts (lane, manifest hash, chain head, items) in a form the reviewer confirms before
+the browser signs, and to publish the web image's digest so reviewers can check what they are served.
+
 ## The report seal
 
 A receipt can only bind the history up to the moment it was signed. So since D-055 the server

@@ -445,11 +445,18 @@ The gateway itself does not verify target certificates (as the tools did not), s
 between the gateway and a target a network attacker could read or change traffic. It verifies
 passive sources and the Claude API.
 
+This section models a compromised worker. The gateway itself is trusted for scope, rate,
+identification and the request log; what it holds and what an attacker who ran code in it could
+do, and what would still detect that, is in [THREAT_MODEL.md](THREAT_MODEL.md), B6, "A
+compromised gateway" (TM-6).
+
 ## Operations
 
 - `docker compose up` creates the CA, the gateway token and the volumes on first start. To
   rotate the CA, remove the `gateway-private` and `gateway-public` volumes and restart.
-- Settings (gateway): `ATTACKLEDGER_API_URL` (default `http://api:8000`),
+- Settings (gateway): `ATTACKLEDGER_API_URL` (default `http://api:8000`; the compose file sets
+  `http://api-control:8000`, the API's alias on the control network, where alone its machine
+  routes answer: TM-1 in [THREAT_MODEL.md](THREAT_MODEL.md)),
   `ATTACKLEDGER_GATEWAY_TOKEN` or `ATTACKLEDGER_GATEWAY_TOKEN_FILE`,
   `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`, `ATTACKLEDGER_GATEWAY_SERVICE_HOSTS`,
   `ATTACKLEDGER_GATEWAY_DENY_HOSTS`, `ATTACKLEDGER_GATEWAY_CONTROL_PORT` (default 8081, 0 turns

@@ -70,3 +70,26 @@ test("the operator token still works for automation in people mode", async () =>
   const list = await api.call<{ name: string }[]>("GET", "/engagements");
   expect(list.length).toBeGreaterThan(0);
 });
+
+test("a session that ends on the server while the page is open asks to sign in again", async ({ page, context, browser, guard }) => {
+  // What an idle timeout does (TM-3: 30 minutes without use): the cookie stays in the browser and
+  // the server refuses it. The page notices at its next request and shows the sign-in form.
+  guard.allowConsole(/status of 401/);
+  await signInPerson(context, OWNER.email, OWNER.password);
+  await page.goto(APP);
+  await dismissAccount(page);
+  await expect(page.locator(".whoami")).toContainText("Signed in as E2E Owner");
+  const [session] = await context.cookies();
+  const elsewhere = await browser.newContext();
+  await elsewhere.addCookies([{ name: session.name, value: session.value, domain: "localhost", path: "/" }]);
+  expect((await elsewhere.request.post(`${APP}/api/auth/logout`)).status()).toBe(200);
+  await elsewhere.close();
+  expect((await context.cookies()).map((c) => c.name)).toEqual([session.name]);   // still in this browser
+
+  await page.goto(`${APP}/#/people`);           // in the same page: the People page asks the server
+  await expect(page.locator(".login-expired")).toContainText("Your session expired. Sign in again to continue.");
+  await page.getByLabel("Email").fill(OWNER.email);
+  await page.getByLabel("Password").fill(OWNER.password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.locator(".whoami")).toContainText("Signed in as E2E Owner");
+});

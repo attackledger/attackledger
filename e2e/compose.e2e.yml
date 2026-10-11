@@ -5,7 +5,9 @@
 # here sends traffic anywhere. No port is published on the host: the runner reaches the web
 # app over its own internal network, which has no route out, and its browsers open
 # http://localhost:18180, a port the runner forwards to the web container (e2e/tests/servers.mjs).
-# The tokens and the owner's password are made for each run by tools/test_e2e.sh.
+# The tokens and the owner's password are made for each run by tools/test_e2e.sh. The runner is
+# also on the control network, where it posts recon results as the gateway's relay would: the
+# worker's routes are refused through the web app and answer on the API's control alias only (TM-1).
 services:
   api:
     ports: !reset []
@@ -41,7 +43,7 @@ services:
       # builds it, read-only: the site phase builds into the runner's own /tmp.
       - ./site:/repo/site:ro
       - ./tools/build_pages.sh:/repo/tools/build_pages.sh:ro
-    networks: [browser]
+    networks: [browser, control]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     read_only: true

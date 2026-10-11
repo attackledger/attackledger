@@ -118,6 +118,13 @@ which compose derives from the key.
 
 - Evidence is append-only and chained per engagement:
   `chain_hash = sha256(prev_hash + record)`.
+- The database refuses changes to the append-only tables too (migration 0026,
+  `app/appendonly.py`, TM-5): triggers on `evidence`, `receipts`, `gateway_requests`,
+  `audit_log` and `key_log` refuse every `DELETE` (and `TRUNCATE`) and every `UPDATE` but the
+  three the product makes: an evidence row's encrypted summary and a request-log row's URL and
+  reason are removed when the engagement's content is deleted, and a receipt without a
+  timestamp gets one later. A database superuser can drop the triggers; the hash chains are
+  what proves that nothing changed.
 - A receipt is the hash of a lane's manifest (items and evidence), **signed by the
   person who reviewed and closed the lane** (D-018). Any later change makes it stale
   (shown as VOID). Only people close lanes; executors cannot.
@@ -156,7 +163,10 @@ Four modes (`auth.py`): open (no people, no token: localhost only, and it answer
 that name the machine locally, so DNS rebinding cannot reach it), setup (production with nobody
 yet, D-045), token (`ATTACKLEDGER_API_TOKEN`) and people (email and password). A browser that
 signs in, with a password or with the token, gets a random session cookie; only its SHA-256 is
-stored (`user_sessions`), it ends on sign-out or after 12 hours, and a person's sessions end when
+stored (`user_sessions`), it ends on sign-out, after 30 minutes without use
+(`ATTACKLEDGER_SESSION_IDLE_MINUTES`; requests the web app sends on its own while nobody uses the
+page carry `X-AttackLedger-Background` and do not count, TM-3) or 12 hours after sign-in whatever
+its use, and a person's sessions end when
 their password is reset or they are disabled. A token session names nobody and is bound to the
 token: it works while the API runs with that token, and the API deletes the sessions of any other
 token when it starts (D-056). Scripts, the worker and the gateway send their tokens as bearer

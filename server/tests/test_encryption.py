@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import pytest
+import testdb
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -174,7 +175,7 @@ def test_tampered_ciphertext_is_refused():
 def test_tampered_summary_in_the_database_shows_unreadable_not_an_error(api):
     e, lane = engagement(api)
     attach_note(api, lane["id"], 1, "robots.txt lists /backup/")
-    with api.Session() as s:
+    with api.Session() as s, testdb.append_only_off(s):     # with the database's superuser's rights (TM-5)
         ev = s.scalars(select(Evidence)).one()
         ev.summary_enc = ev.summary_enc[:-4] + "AAAA"
         s.commit()

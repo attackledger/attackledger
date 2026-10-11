@@ -191,7 +191,12 @@ may read it, and it is never committed (the repository ignores it).
    calls to the Claude API; the worker, where the recon tools run, never has it. Without it,
    everything except agent runs works.
 
-7. Check that Compose can read the settings. It prints nothing when they are complete,
+7. Optional: how long a signed-in browser may go without use before it is signed out,
+   `ATTACKLEDGER_SESSION_IDLE_MINUTES` (default 30 minutes). A session ends 12 hours after
+   signing in in any case. The web app's own background requests (polling a run or the approval
+   queue while nobody touches the page) do not count as use, so a page left open is signed out too.
+
+8. Check that Compose can read the settings. It prints nothing when they are complete,
    and names the missing one otherwise:
 
    ```sh
@@ -441,7 +446,7 @@ proxy, resolver and relay listen on its `internal` address only (`ATTACKLEDGER_G
   docker compose exec worker python -c "import socket; socket.create_connection(('db', 5432), 5)"
   # socket.gaierror: ... (no network of the worker has the database on it)
   docker compose logs gateway | head -1
-  # gateway ready: proxy, dns and control on 172.x.0.y (ports 8080, 53, 8081), api http://api:8000,
+  # gateway ready: proxy, dns and control on 172.x.0.y (ports 8080, 53, 8081), api http://api-control:8000,
   #   claude key not set; own networks refused: ...; target networks: <the lab network's subnet>
   ```
 
@@ -683,6 +688,14 @@ Owners manage people. Everyone else sees only the engagements they have a role o
    who administer AttackLedger.
 2. **They choose their own password** at their first sign-in (**Your account**, **Change
    your password**). Nobody can set another person's password through the app (D-036).
+
+**A password is the only sign-in factor.** AttackLedger has no second factor (no TOTP, WebAuthn
+or SSO of its own; TM-2 in [THREAT_MODEL.md](THREAT_MODEL.md)). Whoever has an owner's or a
+reviewer's password can sign in as them; a reviewer's signature still needs the key in their own
+browser. If your policy asks for more than a password, put AttackLedger behind what your
+organisation already uses: its SSO, as an authenticating proxy in front of Caddy, or its VPN, with
+the server reachable only from there. A signed-in browser is signed out after 30 minutes without
+use (`ATTACKLEDGER_SESSION_IDLE_MINUTES`, section 4) and 12 hours after signing in.
 3. **Give roles per engagement:** open the engagement, **Team** tab, tick roles, **Save
    team**. On the same tab:
    - **Separation of duties**: whoever attached a lane's evidence cannot sign its receipt.
@@ -790,7 +803,7 @@ does.
 | Gateway and worker tokens | the volumes `gateway-control` and `worker-control` (section 6), shared with the API only | the gateway's and the worker's calls to the API | no; new ones are made on the next start |
 | Engagement data keys | the blob store, `e/<id>/key.json`, wrapped by the master key | reading one engagement's content | yes (wrapped) |
 | People's passwords | the database, as scrypt hashes | signing in | yes (hashes only) |
-| Session cookies | the database, as SHA-256 hashes | staying signed in (12 hours) | yes (hashes only) |
+| Session cookies | the database, as SHA-256 hashes | staying signed in (30 minutes without use, 12 hours at most) | yes (hashes only) |
 | Reviewers' private signing keys | each reviewer's browser only | signing receipts | no, and they never reach the server |
 | TLS private key | `deploy/certs/key.pem` (option B) or the `caddy_data` volume (options A and C) | HTTPS | no; re-issue or copy it yourself |
 | Caddy's internal CA key (option C) | the `caddy_data` volume | the certificate that users' machines trust | no; copy it yourself (section 14) |
@@ -799,6 +812,9 @@ does.
 also by uid 10001, the containers' user). Docker shows environment variables
 to anyone who can run `docker inspect`, so membership of the `docker` group is the same as
 root on this server: give it to administrators only.
+
+People's passwords are protected by scrypt and a lockout after 5 failures, but a password is the
+only factor (section 10): for a second one, put the server behind your organisation's SSO or VPN.
 
 ## 14. Backup and restore
 
@@ -918,7 +934,7 @@ everything again.
    ```
 
    It ends with `restore: done`. Old sessions from the backup still work until they
-   expire (12 hours); people who were signed in stay signed in.
+   expire (30 minutes without use, 12 hours at most); people who were signed in stay signed in.
 
 4. Sign in as before. Check that the engagements are there, and that a report still
    verifies: on the engagement's **Report** tab, **Download JSON**, then run

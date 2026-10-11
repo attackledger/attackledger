@@ -390,6 +390,28 @@ each with a test.
   mode exactly when every receipt was signed, and was the same bytes in two other processes, from
   every random history.
 
+Gaps the threat model found (`docs/THREAT_MODEL.md`, section 8), each fix with a test that failed
+before it:
+- **The machine routes were reachable through the public front end** (TM-1). nginx forwarded all
+  of `/api/`, so `/api/gateway/*` and `/api/worker/*` answered from outside, guarded by their
+  tokens alone. nginx now refuses both prefixes in every spelling (case, `//`, percent-encoding,
+  `%2F`, dot segments) with the API's own 404, and the API answers the gateway, worker and job
+  routes only on its control-network address (`ATTACKLEDGER_CONTROL_LISTEN`), judged by the
+  connection's local address, never by `X-Forwarded-For`.
+- **Sessions had no idle timeout** (TM-3). Every session, a person's or the operator token's, now
+  ends after 30 minutes without use (`ATTACKLEDGER_SESSION_IDLE_MINUTES`), and 12 hours after
+  sign-in as before. The web app's own polls, while nobody uses the page, do not count as use.
+- **Append-only was enforced by the application only** (TM-5). Database triggers, on Postgres and
+  SQLite, now refuse every `DELETE` (and `TRUNCATE`) on evidence, receipts, the request log, the
+  audit log and the key log, and every `UPDATE` but the three the product makes (content
+  deletion's removal of encrypted summaries and request-log URLs and reasons, and a later
+  timestamp on a receipt that has none). A database superuser can still drop them; the hash
+  chains remain the proof.
+- Documented: there is no second sign-in factor, and SSO or a VPN in front is the deployer's
+  choice (TM-2, `INSTALL.md` §10); code served on the app's origin can use a reviewer's
+  non-extractable key (TM-4, `VERIFIER.md`, D-033); what a compromised gateway holds and could do
+  (TM-6, `THREAT_MODEL.md` B6).
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
@@ -424,6 +446,24 @@ Production: Caddy moves to 2.11.7 (`docker compose pull caddy` before `up -d`), 
 must be rebuilt (`docker compose build web`) to get its Alpine package fixes.
 Rebuild the worker image (`docker compose build worker`, then `docker compose up -d worker`) to
 get the upgraded recon tools; its settings and volumes do not change.
+
+Migrations 0026 and 0027 run when the API starts. **0026** adds the append-only triggers (TM-5):
+a script of your own that updates or deletes rows of `evidence`, `receipts`, `gateway_requests`,
+`audit_log` or `key_log` now fails; a future migration that must change such rows drops the
+trigger first. Restoring a backup made before 0026 works as before; the API adds the triggers
+when it migrates the restored database. **0027** adds `user_sessions.last_seen_at` for the idle
+timeout (TM-3): **sessions now end after 30 minutes without use** (set
+`ATTACKLEDGER_SESSION_IDLE_MINUTES` in `.env` for another limit, up to 720), and sessions older
+than that are signed out at their first request after the upgrade.
+
+**nginx and the gateway (TM-1):** rebuild the web image (`docker compose build web`) for the new
+`web/nginx.conf`, and recreate the API and the gateway: `docker-compose.yml` now sets
+`ATTACKLEDGER_CONTROL_LISTEN=api-control` on the API and `ATTACKLEDGER_API_URL=http://api-control:8000`
+on the gateway. With an older `docker-compose.yml` the setting is missing, and the API does not
+restrict where the machine routes answer (their tokens alone guard them, as before). Anything of yours that called
+`/api/gateway/*` or `/api/worker/*` through the web app, or `/gateway/*` and `/worker/*` on the
+API's published port 127.0.0.1:8000, now gets 404: only the gateway, on the control network,
+reaches them.
 
 ### Added
 - **A threat model** (`docs/THREAT_MODEL.md`): the system's trust boundaries, its assets and

@@ -18,6 +18,8 @@ import copy
 import io
 import json
 
+import testdb
+
 from app import auditlog, gates, keylog, seal
 from app.models import Engagement, Lane, Receipt
 from test_auditlog import setup
@@ -115,7 +117,7 @@ def test_o1_swapped_item_ids_fail_under_manifest_v2(env, tmp_path):
 def test_o1_manifest_v1_receipts_still_close_and_verify_with_a_note(env, tmp_path):
     c, Session = env
     e, L, _, _ = two_items(c, signed=False)
-    with Session() as s:                 # a receipt issued before manifest version 2
+    with Session() as s, testdb.append_only_off(s):     # a receipt issued before manifest version 2
         lane = s.get(Lane, L)
         rc = s.get(Receipt, lane.receipts[-1].id)
         rc.manifest_sha256 = gates.manifest_hash(lane, 1)

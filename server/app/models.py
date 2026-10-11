@@ -454,7 +454,10 @@ class UserSession(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     token_binding: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
-    expires_at: Mapped[datetime]
+    expires_at: Mapped[datetime]                 # the absolute end: SESSION_HOURS after sign-in
+    # When it was last used, written at most once a minute: the idle limit counts from here
+    # (auth.session_over, TM-3). None on sessions from before migration 0027: from created_at.
+    last_seen_at: Mapped[datetime | None]
 
 
 class Membership(OrgOwned, Base):
@@ -589,3 +592,9 @@ class InboxEntry(OrgOwned, Base):
 
 
 from . import orgscope  # noqa: E402,F401  (scopes every session to its organization)
+
+# Append-only tables refuse other changes in the database too (TM-5): migration 0026 makes the
+# triggers for migrated databases, this for databases made from the models.
+from . import appendonly  # noqa: E402
+
+appendonly.attach(Base.metadata)

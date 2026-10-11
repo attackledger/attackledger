@@ -180,14 +180,17 @@ def test_key_log_chains_every_registration_and_revocation(env):
         assert rows[0].prev_hash == keylog.GENESIS and rows[1].prev_hash == rows[0].entry_hash
         assert rows[0].user_name == "Rita Reviewer" and keylog.verify(s) == []
 
-        # Someone with database access edits an entry, or removes one.
-        s.execute(text("UPDATE key_log SET user_name = 'Ray' WHERE seq = 1"))
-        s.commit()
+        # Someone with the database's superuser rights (the append-only triggers refuse anyone else,
+        # TM-5) edits an entry, or removes one.
+        with testdb.append_only_off(s):
+            s.execute(text("UPDATE key_log SET user_name = 'Ray' WHERE seq = 1"))
+            s.commit()
         s.expire_all()
         assert any("record hash" in p for p in keylog.verify(s))
-        s.execute(text("UPDATE key_log SET user_name = 'Rita Reviewer' WHERE seq = 1"))
-        s.execute(text("DELETE FROM key_log WHERE seq = 2"))
-        s.commit()
+        with testdb.append_only_off(s):
+            s.execute(text("UPDATE key_log SET user_name = 'Rita Reviewer' WHERE seq = 1"))
+            s.execute(text("DELETE FROM key_log WHERE seq = 2"))
+            s.commit()
         s.expire_all()
         problems = keylog.verify(s)
         assert any("out of order" in p for p in problems) and any("link" in p for p in problems)

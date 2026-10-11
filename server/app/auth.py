@@ -17,8 +17,10 @@ Four modes, chosen by what exists:
 Passwords are hashed with scrypt (standard library). A session cookie holds a random
 value; only its SHA-256 is stored, so a database leak does not leak sessions. Signing in with
 the token gives the browser such a session too (D-056): it names nobody, is bound to the token,
-ends on sign-out or after SESSION_HOURS, and ends for good when the API starts with another token. Cookies
-are HttpOnly and SameSite=Strict, and a change that a page of another origin sends (a sibling
+ends on sign-out or after SESSION_HOURS, and ends for good when the API starts with another token.
+Every session, a person's or the token's, also ends after ATTACKLEDGER_SESSION_IDLE_MINUTES
+(default 30) without use (TM-3, idle_minutes); SESSION_HOURS stays the limit however much it is
+used. Cookies are HttpOnly and SameSite=Strict, and a change that a page of another origin sends (a sibling
 subdomain is the same site) is refused (from_another_site). Failed sign-ins are counted per email and address,
 and further attempts are refused for a while after too many.
 
@@ -48,6 +50,11 @@ from sqlalchemy import func, select
 
 COOKIE = "al_session"
 SESSION_HOURS = 12
+IDLE_MINUTES = 30            # the default of ATTACKLEDGER_SESSION_IDLE_MINUTES
+SEEN_EVERY = timedelta(minutes=1)    # last_seen_at is written at most this often per session (seen_every)
+# A request the web app makes on its own (a poll, while nobody has used the page for a minute) says
+# so with this header, and does not count as use; it still needs a session that has not ended.
+BACKGROUND_HEADER = "x-attackledger-background"
 OPEN_PATHS = {"/health", "/auth/login", "/auth/logout", "/docs", "/openapi.json"}
 # scrypt: memory-hard, in the standard library. n=2**14, r=8, p=1 is about 16 MB per hash.
 _SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024, "dklen": 32}
@@ -203,12 +210,63 @@ def _sha(v: str) -> str:
     return hashlib.sha256(v.encode()).hexdigest()
 
 
+def now() -> datetime:
+    """The time sessions are judged by (tests replace it)."""
+    return datetime.now(timezone.utc)
+
+
+def idle_minutes() -> int:
+    """ATTACKLEDGER_SESSION_IDLE_MINUTES: how long a session may go without use before it ends,
+    in minutes. Default 30; at most SESSION_HOURS * 60, which leaves only the absolute limit. A
+    value that is not a whole number of at least 1 counts as the default, so a typo never turns the
+    idle limit off."""
+    raw = os.environ.get("ATTACKLEDGER_SESSION_IDLE_MINUTES", "").strip()
+    try:
+        minutes = int(raw) if raw else IDLE_MINUTES
+    except ValueError:
+        minutes = IDLE_MINUTES
+    if minutes < 1:
+        minutes = IDLE_MINUTES
+    return min(minutes, SESSION_HOURS * 60)
+
+
+def last_use(row) -> datetime:
+    return _aware(row.last_seen_at or row.created_at)
+
+
+def session_over(row, at: datetime | None = None) -> bool:
+    """Whether a session has ended by time: past its absolute end (SESSION_HOURS after sign-in), or
+    idle_minutes() since it was last used. A session from before migration 0027 has no last use
+    recorded and counts from its sign-in."""
+    at = at or now()
+    return _aware(row.expires_at) <= at or at - last_use(row) >= timedelta(minutes=idle_minutes())
+
+
+def seen_every() -> timedelta:
+    """How often a session's last use is written: once a minute, or a tenth of the idle limit if
+    that is shorter (a limit of a few minutes would otherwise end sessions that are in use)."""
+    return min(SEEN_EVERY, timedelta(minutes=idle_minutes()) / 10)
+
+
+def _used(session, row, request: Request, at: datetime) -> None:
+    """Record that the session was used, at most once a minute (one UPDATE, not one per request),
+    so the idle limit can end a session up to a minute early. A background request does not count."""
+    from sqlalchemy import update
+
+    from .models import UserSession
+    if request.headers.get(BACKGROUND_HEADER) or at - last_use(row) < seen_every():
+        return
+    session.execute(update(UserSession).where(UserSession.id == row.id).values(last_seen_at=at))
+    session.commit()
+    row.last_seen_at = at
+
+
 def new_session(session, user_id: int) -> str:
     from .models import UserSession
     value = secrets.token_urlsafe(32)
-    now = datetime.now(timezone.utc)
-    session.add(UserSession(token_sha256=_sha(value), user_id=user_id, created_at=now,
-                            expires_at=now + timedelta(hours=SESSION_HOURS)))
+    at = now()
+    session.add(UserSession(token_sha256=_sha(value), user_id=user_id, created_at=at, last_seen_at=at,
+                            expires_at=at + timedelta(hours=SESSION_HOURS)))
     session.commit()
     return value
 
@@ -235,21 +293,21 @@ def new_token_session(session, tok: str) -> str:
     from .models import UserSession
     end_stale_token_sessions(session, commit=False)
     value = secrets.token_urlsafe(32)
-    now = datetime.now(timezone.utc)
+    at = now()
     session.add(UserSession(token_sha256=_sha(value), user_id=None, token_binding=token_binding(tok),
-                            created_at=now, expires_at=now + timedelta(hours=SESSION_HOURS)))
+                            created_at=at, last_seen_at=at, expires_at=at + timedelta(hours=SESSION_HOURS)))
     session.commit()
     return value
 
 
 def end_stale_token_sessions(session, commit: bool = True) -> int:
-    """Delete the token sessions that no longer open anything: expired, or opened with another
-    token than the current one (all of them when no token is set). Run when the API starts, so a
-    token change ends them for good, and at each token sign-in. Returns how many went."""
+    """Delete the token sessions that no longer open anything: expired or idle too long, or opened
+    with another token than the current one (all of them when no token is set). Run when the API
+    starts, so a token change ends them for good, and at each token sign-in. Returns how many went."""
     from .models import UserSession
-    tok, now, n = token(), datetime.now(timezone.utc), 0
+    tok, at, n = token(), now(), 0
     for row in session.scalars(select(UserSession).where(UserSession.user_id.is_(None))):
-        if tok is None or not same_secret(row.token_binding or "", token_binding(tok)) or _aware(row.expires_at) < now:
+        if tok is None or not same_secret(row.token_binding or "", token_binding(tok)) or session_over(row, at):
             session.delete(row)
             n += 1
     if commit:
@@ -315,16 +373,25 @@ def _principal(session, request: Request) -> Principal | None:
     if not cookie:
         return None
     row = session.scalar(select(UserSession).where(UserSession.token_sha256 == _sha(cookie)))
-    if row is None or _aware(row.expires_at) < datetime.now(timezone.utc):
+    if row is None:
+        return None
+    at = now()
+    if session_over(row, at):
+        # Ended for good: deleted, so a longer idle limit set later does not bring it back.
+        session.delete(row)
+        session.commit()
         return None
     if row.user_id is None:             # a browser signed in with the token, while it is the same token
         ok = tok is not None and same_secret(row.token_binding or "", token_binding(tok))
+        if ok:
+            _used(session, row, request, at)
         return operator() if ok else None
     if m != "people":
         return None
     user = session.get(User, row.user_id)
     if user is None or user.disabled:
         return None
+    _used(session, row, request, at)
     roles = {mb.engagement_id: tuple(mb.roles or ())
              for mb in session.scalars(select(Membership).where(Membership.user_id == user.id))}
     return Principal(kind="person", organization_id=user.organization_id, user_id=user.id, name=user.name,

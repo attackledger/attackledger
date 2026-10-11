@@ -409,6 +409,12 @@ options considered and who decided.
   with only a name is still allowed and labelled as not a cryptographic signature.
 - **Lost or replaced keys:** a key can be revoked and a new one registered. Old
   signatures stay valid, because the report carries the key that made them.
+- **What non-extractable does not give (note, 2026-10-11, TM-4):** the key cannot be copied
+  out of the browser, but any code served on the app's origin can have the browser sign with
+  it, and the browser does not show what is signed. A dishonest operator or a tampered web image
+  could get a signature on a payload the reviewer did not see. The signature proves the key
+  signed that payload, not that the reviewer read it (`VERIFIER.md`, "What a signature does not
+  prove"; THREAT_MODEL.md T3.5).
 - **Not yet:** timestamps (step 2b). Until then the signed issue time is the server's
   clock, not an independent one.
 - **Verified:** tests for the RFC 8032 vector, cross-checks against `cryptography`,

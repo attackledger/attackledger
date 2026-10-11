@@ -675,12 +675,26 @@ export interface ApprovalQueue {
   items: WriteProposal[];
 }
 
+// When the person last used the page (a key, a click, a touch, the wheel), or loaded it. A request
+// sent more than a minute after that is the app's own (a poll of the approval queue or of a run):
+// it says so, and the API does not count it as use of the session, which therefore ends after the
+// idle limit (30 minutes by default, TM-3) even with the page left open.
+let lastInput = Date.now();
+if (typeof window !== "undefined") {
+  for (const type of ["keydown", "pointerdown", "wheel", "touchstart"]) {
+    window.addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
+  }
+}
+const BACKGROUND_AFTER_MS = 60_000;
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (DEMO) return demoCall<T>(path, init);
   let res: Response;
+  const background: Record<string, string> =
+    Date.now() - lastInput > BACKGROUND_AFTER_MS ? { "x-attackledger-background": "1" } : {};
   try {
     res = await fetch(`/api${path}`, {
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...background },
       ...init,
     });
   } catch {

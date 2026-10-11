@@ -13,7 +13,7 @@ report or an attestation.
 **How.** Each suspected issue was first proven with a test that failed, then fixed, and the test
 was kept as a regression test. Traffic went only to localhost, local stubs and the bundled lab,
 apart from package registries, the timestamp authority, and the passive-source queries one lab
-run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,251 tests, and it now also runs
+run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,289 tests, and it now also runs
 on Postgres 16 (`tools/test_postgres.sh`), as production does. The Python and browser verifiers
 give identical results on 134 reports and on 2,600 random mutants (`tools/verifier_equivalence/run.sh`).
 
@@ -34,6 +34,11 @@ Severities are the reviewers' own and describe impact in AttackLedger's threat m
 compromised or misled tool or agent in the worker and a malicious page in the operator's browser.
 The threat model itself, with the trust boundaries, the actors, every threat mapped to its
 controls, tests and finding IDs, and the residual risks, is [THREAT_MODEL.md](../THREAT_MODEL.md).
+Writing it found six gaps (its section 8): three were fixed in the code with tests that failed
+before (TM-1: the gateway's and the worker's routes answered through the public front end; TM-3:
+sessions had no idle timeout; TM-5: append-only was enforced by the application only), and three
+are documented (TM-2: no second sign-in factor; TM-4: code served on the app's origin can use a
+reviewer's key; TM-6: a compromised gateway).
 
 ### The findings that mattered most
 

@@ -9,7 +9,7 @@
 //   "E2E clean report"   one receipted lane, for the verifier tests
 //   "Müşteri portalı …"  a name in three scripts, for the report downloads
 import { createHash } from "node:crypto";
-import { api, ApiError, hostile, hostileShort, NAMES, P, waitForApi, WORKER_TOKEN, API } from "./lib";
+import { api, ApiError, hostile, hostileShort, NAMES, P, waitForApi, WORKER_TOKEN, WORKER_API } from "./lib";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -105,7 +105,7 @@ async function seedTestAccount(engId: number): Promise<void> {
 const worker = () => ({ authorization: `Bearer ${WORKER_TOKEN}` });
 
 async function claim(jobId?: number): Promise<{ id: number; token: string }> {
-  const r = await fetch(`${API}/worker/claim`, {
+  const r = await fetch(`${WORKER_API}/worker/claim`, {
     method: "POST", headers: { ...worker(), "content-type": "application/json" },
     body: JSON.stringify(jobId ? { job_id: jobId } : {}),
   });
@@ -115,7 +115,7 @@ async function claim(jobId?: number): Promise<{ id: number; token: string }> {
 }
 
 async function asJob<T = unknown>(job: { id: number; token: string }, path: string, body: unknown): Promise<T> {
-  const r = await fetch(`${API}/worker/jobs/${job.id}/${path}`, {
+  const r = await fetch(`${WORKER_API}/worker/jobs/${job.id}/${path}`, {
     method: "POST", headers: { authorization: `Bearer ${job.token}`, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
