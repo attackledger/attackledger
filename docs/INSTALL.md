@@ -191,7 +191,12 @@ may read it, and it is never committed (the repository ignores it).
    calls to the Claude API; the worker, where the recon tools run, never has it. Without it,
    everything except agent runs works.
 
-7. Check that Compose can read the settings. It prints nothing when they are complete,
+7. Optional: how long a signed-in browser may go without use before it is signed out,
+   `ATTACKLEDGER_SESSION_IDLE_MINUTES` (default 30 minutes). A session ends 12 hours after
+   signing in in any case. The web app's own background requests (polling a run or the approval
+   queue while nobody touches the page) do not count as use, so a page left open is signed out too.
+
+8. Check that Compose can read the settings. It prints nothing when they are complete,
    and names the missing one otherwise:
 
    ```sh
@@ -790,7 +795,7 @@ does.
 | Gateway and worker tokens | the volumes `gateway-control` and `worker-control` (section 6), shared with the API only | the gateway's and the worker's calls to the API | no; new ones are made on the next start |
 | Engagement data keys | the blob store, `e/<id>/key.json`, wrapped by the master key | reading one engagement's content | yes (wrapped) |
 | People's passwords | the database, as scrypt hashes | signing in | yes (hashes only) |
-| Session cookies | the database, as SHA-256 hashes | staying signed in (12 hours) | yes (hashes only) |
+| Session cookies | the database, as SHA-256 hashes | staying signed in (30 minutes without use, 12 hours at most) | yes (hashes only) |
 | Reviewers' private signing keys | each reviewer's browser only | signing receipts | no, and they never reach the server |
 | TLS private key | `deploy/certs/key.pem` (option B) or the `caddy_data` volume (options A and C) | HTTPS | no; re-issue or copy it yourself |
 | Caddy's internal CA key (option C) | the `caddy_data` volume | the certificate that users' machines trust | no; copy it yourself (section 14) |
@@ -918,7 +923,7 @@ everything again.
    ```
 
    It ends with `restore: done`. Old sessions from the backup still work until they
-   expire (12 hours); people who were signed in stay signed in.
+   expire (30 minutes without use, 12 hours at most); people who were signed in stay signed in.
 
 4. Sign in as before. Check that the engagements are there, and that a report still
    verifies: on the engagement's **Report** tab, **Download JSON**, then run
