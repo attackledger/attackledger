@@ -40,12 +40,14 @@ else
       | awk '{print $2}' | sort -u)
 fi
 
-# The scanner's own container: no capability, no privilege gain, a read-only root filesystem.
-HARDEN=(--cap-drop ALL --security-opt no-new-privileges:true -e GRYPE_CHECK_FOR_APP_UPDATE=false
-        -e GRYPE_DB_CACHE_DIR=/home/nonroot/db -v "$DB_VOLUME:/home/nonroot")
-docker run --rm --read-only --tmpfs /tmp:size=512m "${HARDEN[@]}" "$GRYPE" db update -q >&2 \
+# The scanner's own container: no capability, no privilege gain, a read-only root filesystem. Its
+# one writable place is the database volume, mounted on /tmp: a new volume takes the mode of the
+# image's /tmp (1777), so the scanner's user can write it.
+HARDEN=(--read-only --cap-drop ALL --security-opt no-new-privileges:true -e GRYPE_CHECK_FOR_APP_UPDATE=false
+        -e GRYPE_DB_CACHE_DIR=/tmp/db -v "$DB_VOLUME:/tmp")
+docker run --rm "${HARDEN[@]}" "$GRYPE" db update -q >&2 \
   || fail "the vulnerability database could not be downloaded"
-docker run --rm --read-only --tmpfs /tmp:size=64m --network none "${HARDEN[@]}" -e GRYPE_DB_AUTO_UPDATE=false \
+docker run --rm --network none "${HARDEN[@]}" -e GRYPE_DB_AUTO_UPDATE=false \
   "$GRYPE" db status >&2 || fail "no valid vulnerability database"
 
 n=0
@@ -60,7 +62,7 @@ for image in "${images[@]}"; do
   [ -s "$dir/in/etc/os-release" ] || fail "$image: no /etc/os-release"
   [ -s "$dir/in/var/lib/dpkg/status" ] || [ -s "$dir/in/lib/apk/db/installed" ] || fail "$image: no dpkg or apk database"
   # The package lists go into the scanner's container by `docker cp` (an anonymous volume, removed with it).
-  cid="$(docker create --network none --read-only --tmpfs /tmp:size=512m -v /scan "${HARDEN[@]}" -e GRYPE_DB_AUTO_UPDATE=false \
+  cid="$(docker create --network none -v /scan "${HARDEN[@]}" -e GRYPE_DB_AUTO_UPDATE=false \
          "$GRYPE" dir:/scan -q -o json --name "$image")"
   docker cp "$dir/in/." "$cid:/scan/"
   docker start -a "$cid" > "$dir/grype.json" || fail "$image: the scan failed"
