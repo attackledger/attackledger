@@ -28,6 +28,7 @@ give identical results on 134 reports and on 2,600 random mutants (`tools/verifi
 | [RETENTION.md](RETENTION.md) | Whether deleting an engagement's content reaches every store | 3 Medium, 4 Low |
 | [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) | Container privileges, image and package pinning, known advisories, SBOM | 2 Medium, 3 Low |
 | [FUZZING.md](FUZZING.md) | Property-based and mutation fuzzing of the importers, redaction, scope and URL parsing, page and bundle parsers, and both verifiers | 6 Medium, 12 Low, 1 Info |
+| [WEB_E2E.md](WEB_E2E.md) | The web app in Chromium and Firefox (Playwright): hostile content in every view, the CSP and headers, sessions, roles, CSRF, both verifiers, drafts, accessibility | 5 Low, 1 Info |
 
 Severities are the reviewers' own and describe impact in AttackLedger's threat model, mainly a
 compromised or misled tool or agent in the worker and a malicious page in the operator's browser.

@@ -16,7 +16,7 @@
 # Usage: tools/test_e2e.sh [--keep] [playwright test arguments...]
 #   --keep   leave the stack running afterwards (tear it down with: tools/test_e2e.sh --down)
 #   --down   only tear down a stack left by --keep
-# Needs Docker with Compose 2.24 or later. Takes 5 to 10 minutes, more on the first build.
+# Needs Docker with Compose 2.24 or later. About 3 minutes, more on the first build.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT=al-e2e
@@ -82,7 +82,7 @@ dc up -d --wait --wait-timeout 180 db api web
 run_phase() {
   local phase="$1"; shift
   echo "[e2e] phase $phase: Chromium and Firefox"
-  dc run --rm --no-deps -e E2E_PHASE="$phase" runner npx playwright test "$@"
+  dc run --rm --no-deps -e E2E_PHASE="$phase" runner npx playwright test --pass-with-no-tests "$@"
 }
 
 run_phase token "$@"

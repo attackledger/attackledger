@@ -272,6 +272,20 @@ random-mutation mode for the two verifiers (`run.sh --fuzz N`). 19 findings, eac
   printed escaped (FZ-18), and an item without its text fails a check instead of stopping it
   (FZ-19). 2,600 mutants: no difference between the verifiers.
 
+Browser end-to-end tests (`WEB_E2E.md`): the web app in Chromium and Firefox against a stack filled
+with hostile content, under a guard that fails on any CSP violation or script run by injected
+content.
+- **A probe result could put a `javascript:` link in the Recon tab** (WE-2, Low). A worker's probe
+  URL was stored as sent, and the hosts and golden-target tables linked to it; the
+  Content-Security-Policy stopped it, the app did not. The API now refuses a probe URL that is not
+  an http(s) URL of the probed host, and the app links recon URLs only when they are http(s).
+- **Drafts kept more credentials in `sessionStorage`** (WE-4, Low, after EV-8): a URL with a
+  password in it, and GitHub, GitLab, Slack, Stripe, Google, npm, Anthropic and OpenAI tokens.
+  They now stay in memory only.
+- **Unsent notes could pass to the next person on a tab** (WE-6, Low). Drafts are cleared when
+  someone else signs in, but a tab opened while already signed in did not know whose they were.
+  It now does as soon as it knows who is signed in.
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
@@ -303,7 +317,22 @@ need a one-off `docker compose run --cap-add ...` instead, as `tools/backup.sh` 
 for Vite 8's default browsers (Chrome and Edge 111, Firefox 114, Safari 16.4 or later; before:
 Chrome 87, Firefox 78, Safari 14).
 
+### Added
+- **Browser end-to-end tests** (`e2e/`, `tools/test_e2e.sh`, `docs/security-review/WEB_E2E.md`):
+  Playwright in its own pinned image runs 51 tests in Chromium and in Firefox against compose
+  project `al-e2e`, on a network with no route out and no port on the host: hostile content in
+  every view with and without the CSP, the CSP and headers of every document in both themes,
+  token and people sign-in and sign-out, roles, CSRF from a same-site sibling and from another
+  site, both verifiers (good, tampered, unsealed, strict history, a receipt signed in the
+  browser), drafts, and axe-core accessibility checks. The script removes what it started.
+
 ### Fixed
+- **A report download for an engagement named outside Latin-1 failed with a 500** (WE-1): the
+  name went into `Content-Disposition` as UTF-8. It now has an ASCII copy and a UTF-8 `filename*`.
+- **The lane panel's signing area could not be scrolled from the keyboard** (WE-5): it is now a
+  focusable region, as the panel's body was.
+- **A link to an engagement you cannot open asked for its approval queue** (WE-3) before the
+  app showed that it was not yours. Only engagements in your list are asked about.
 - **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on
   Postgres). They were 32-bit `INTEGER`, so a response past 2 GiB, which a target decides, was
   recorded as 2,147,483,647 bytes; the exact count is kept now, up to 2^63 - 1. A negative duration

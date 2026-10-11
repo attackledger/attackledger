@@ -1,5 +1,6 @@
 // Shared by every spec: the addresses, the hostile strings, an API client, and the guard
 // fixture that watches every page a test opens.
+import { createHash } from "node:crypto";
 import { expect, test as base, type BrowserContext, type Page, type Response } from "@playwright/test";
 
 export const APP = "http://localhost:18180";
@@ -25,12 +26,14 @@ function need(name: string): string {
 const X = (id: string) => `__xss('${id}')`;
 export const P = {
   img: (id: string) => `<img src=x onerror="${X(id)}" data-e2exss>`,
-  svg: (id: string) => `"><svg onload="${X(id)}" data-e2exss><circle r=9 /></svg>`,
+  svg: (id: string) => `"><svg onload="${X(id)}" data-e2exss><rect width=9 height=9 /></svg>`,
   script: (id: string) => `</script><script data-e2exss>${X(id)}</script>`,
   iframe: (id: string) => `<iframe srcdoc="<script>parent.${X(id)}</script>" data-e2exss></iframe>`,
   css: () => `<style data-e2exss>*{background:red!important}</style><div style="position:fixed;inset:0" data-e2exss></div>`,
   js: (id: string) => `javascript:${X(id)}//`,
-  rtl: "‮exe.txt‬ e2exss-rtl ⁧אבג",
+  // A right-to-left override that is never closed, then a right-to-left isolate that is not
+  // either: the classic "exe.txt" spoof, and Hebrew letters.
+  rtl: "\u202Eexe.txt e2exss-rtl \u2067\u05D0\u05D1\u05D2",
   long: (id: string) => `e2exss-long-${id}-${"W".repeat(3000)}`,
 };
 
@@ -49,10 +52,29 @@ export const NAMES = {
   hostileEng: `E2E ${P.img("eng-name")}${P.rtl}`,
   cleanEng: "E2E clean report",
   unicodeEng: "Müşteri portalı عربي 東京",
+  signedEng: "E2E signed",
   scope: "*.xss.test",
   app: "app.xss.test",
   api: "api.xss.test",
 };
+
+// ---- people (the people phase) --------------------------------------------------------------------
+// The owner's first password is the one tools/test_e2e.sh gave the server; every other password is
+// derived from it, so each run has new ones and none is written anywhere.
+const ownerFirst = process.env.E2E_OWNER_PASSWORD ?? "";
+const derive = (label: string) => createHash("sha256").update(`${ownerFirst}:${label}`).digest("hex").slice(0, 32);
+
+export const OWNER = { email: process.env.E2E_OWNER_EMAIL ?? "owner@e2e.test", name: "E2E Owner",
+                       firstPassword: ownerFirst, password: derive("owner") };
+const someone = (key: string, name: string) => ({ email: `${key}@e2e.test`, name, firstPassword: derive(`${key}-first`), password: derive(key) });
+export const PEOPLE = {
+  reader: someone("reader", `<img src=x onerror=__xss('person-name') data-e2exss> Reader`),
+  tester: someone("tester", "E2E Tester"),
+  reviewer: someone("reviewer", "E2E Reviewer"),
+  attacker: someone("attacker", "E2E Attacker"),       // has no role anywhere
+};
+/** A password for a person a test creates, from its label. */
+export const passwordFor = (label: string) => derive(label);
 
 // ---- the API, as the operator token -----------------------------------------------------------
 export class Api {
@@ -95,6 +117,15 @@ export class ApiError extends Error {
 
 export const api = new Api();
 
+/** The API as a person: signs in and sends the session cookie. */
+export async function person(email: string, password: string): Promise<Api> {
+  const res = await fetch(`${API}/auth/login`, { method: "POST", headers: { "content-type": "application/json" },
+                                                 body: JSON.stringify({ email, password }) });
+  if (!res.ok) throw new ApiError("POST", "/auth/login", res.status, await res.text());
+  const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0];
+  return new Api({ cookie });
+}
+
 /** Waits until the API answers through the web container (it may still be starting). */
 export async function waitForApi(): Promise<void> {
   const until = Date.now() + 120_000;
@@ -119,6 +150,12 @@ export async function signInToken(context: BrowserContext): Promise<void> {
 export async function signInPerson(context: BrowserContext, email: string, password: string): Promise<void> {
   const r = await context.request.post(`${APP}/api/auth/login`, { data: { email, password } });
   expect(r.status(), await r.text()).toBe(200);
+}
+
+/** Closes the account dialog if it opened by itself (a password to choose, a key notice). */
+export async function dismissAccount(page: Page): Promise<void> {
+  const dialog = page.locator("dialog.account[open]");
+  if (await dialog.isVisible()) await dialog.getByRole("button", { name: /^(Close|Skip for now)$/ }).first().click();
 }
 
 /** Opens an engagement (by name) on a tab, and waits for the tab panel. */
@@ -275,6 +312,20 @@ export async function quiet(page: Page, ms = 400): Promise<void> {
     await page.waitForTimeout(50);
   }
   throw new Error(`requests still in flight on ${page.url()}`);
+}
+
+/** Whether the text of an element reads left to right on screen: its first letter left of its
+ *  last. A bidi override left open in text before it would show it reversed. */
+export async function readsLeftToRight(page: Page, selector: string): Promise<boolean[]> {
+  return page.locator(selector).evaluateAll((els) => els.map((el) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode() as Text | null;
+    if (!node || node.data.trim().length < 2) return true;
+    const text = node.data;
+    const first = text.search(/\S/), last = text.length - 1 - [...text].reverse().join("").search(/\S/);
+    const rect = (i: number) => { const r = document.createRange(); r.setStart(node, i); r.setEnd(node, i + 1); return r.getBoundingClientRect(); };
+    return rect(first).left < rect(last).left;
+  }));
 }
 
 /** Elements a payload would have created, and javascript: links, anywhere in the page. */

@@ -57,6 +57,27 @@ own, set `ATTACKLEDGER_TEST_PG` to a URL whose role may create databases
 (`postgresql+psycopg://user@host/postgres`, the password in `PGPASSWORD`) and run pytest as usual;
 the tests create and drop `al_test_*` databases there.
 
+## Browser tests
+
+`tools/test_e2e.sh` runs the web app in Chromium and Firefox with Playwright
+(`docs/security-review/WEB_E2E.md`). It needs only Docker: it builds this tree's API and web images
+and a runner from Playwright's pinned image (`e2e/Dockerfile`), starts its own stack as compose
+project `al-e2e` with no port on the host, fills it with hostile content, runs the suite twice
+over (with the operator token, then with people signed in), and removes the project's containers,
+networks and volumes. About 3 minutes once the images are built.
+
+```sh
+tools/test_e2e.sh               # everything
+tools/test_e2e.sh -g verifier   # only tests whose name matches; arguments go to playwright test
+tools/test_e2e.sh --keep        # leave the stack up to look at it; tools/test_e2e.sh --down removes it
+```
+
+Run it before a pull request that touches the web app, nginx's headers, sign-in, sessions or roles,
+or the verifiers. A new view goes into `e2e/tests/token/hostile.spec.ts` and `csp.spec.ts`; every
+test runs under the guard in `e2e/tests/lib.ts`, which fails on any CSP violation, script run by
+injected content, dialog or unexpected console error. The tests use made-up credentials only, made
+at run time, and reach nothing outside the test network.
+
 ## AI-assisted contributions
 
 Contributions written with an AI assistant are fine. You are still the one confirming

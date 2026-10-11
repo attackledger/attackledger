@@ -25,7 +25,7 @@ const SECRETISH = new RegExp([
   /(api[_-]?key|passw(or)?d|secret|token|session(id)?)\s*=\s*\S/.source,
   /(api[_-]?key|passw(or)?d|secret|token|session(id)?|subscription[_-]?key|functions[_-]?key)[\w-]*["']?\s*:\s*["']?[^\s"',]{8,}/.source,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b/.source,
-  // A URL with a password in it (https://user:password@host), and tokens a provider marks with a
+  // A URL with a user name and password before its host, and tokens a provider marks with a
   // prefix: GitHub, GitLab, Slack, Stripe, Google, npm, Anthropic and OpenAI (web e2e tests, WE-4).
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*:[^\s/?#@]+@/.source,
   /\b(gh[pousr]_[a-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|xox[abeoprs]-[\w-]{10,}|[rs]k_live_\w{16,})/.source,

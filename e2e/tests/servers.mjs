@@ -48,10 +48,15 @@ const CSRF_PAGES = {
 <script>document.forms[0].submit()</script>`,
   "/form-logout.html": () => `<!doctype html><title>logout</title>
 <form method="POST" action="${APP}/api/auth/logout"></form><script>document.forms[0].submit()</script>`,
-  "/form-login.html": (q) => `<!doctype html><title>login</title>
+  // Login CSRF: signs the victim's browser in as someone else (the token, or the attacker's account).
+  "/form-login.html": (q) => {
+    const fields = q.has("email") ? `"email":${JSON.stringify(q.get("email"))},"password":${JSON.stringify(q.get("password"))}`
+      : `"token":${JSON.stringify(q.get("token") ?? "")}`;
+    return `<!doctype html><title>login</title>
 <form method="POST" action="${APP}/api/auth/login" enctype="text/plain">
-<input type="hidden" name='{"token":"${q.get("token") ?? ""}","x":"' value='"}'></form>
-<script>document.forms[0].submit()</script>`,
+<input type="hidden" name='{${fields.replace(/'/g, "&#39;")},"x":"' value='"}'></form>
+<script>document.forms[0].submit()</script>`;
+  },
   // Scripted requests: no-cors simple requests (sent, answer unreadable) and a JSON request,
   // which needs a CORS preflight the API never grants.
   "/fetch.html": (q) => `<!doctype html><title>fetch</title><pre id="out"></pre><script>

@@ -34,6 +34,8 @@ const CREDENTIALS = [
 const PROSE = ["A wrong password: 401", "The login form answers 200 for any user name, then shows the form again."];
 
 async function drafts(page: Page): Promise<Record<string, string>> {
+  // After the app has handled the last input event (React may update on the next frame).
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   return page.evaluate(() => {
     const out: Record<string, string> = {};
     for (let i = 0; i < sessionStorage.length; i++) {
@@ -93,12 +95,15 @@ test.describe("drafts never keep a credential in storage", () => {
     await note.fill(PROSE[1]);
     const second = await noteField(page, 2);
     await second.fill(`${PROSE[0]} ${CREDENTIALS[0]}`);
-    expect(Object.values(await drafts(page))).toEqual([PROSE[1]]);
+    await expect.poll(async () => Object.values(await drafts(page))).toEqual([PROSE[1]]);
     await page.reload();
     await expect(page.locator(`#item-${laneId}-1-note`)).toHaveValue(PROSE[1]);
     await expect(page.locator(`#item-${laneId}-2-note`)).toHaveCount(0);
-    await page.locator(`#item-${laneId}-1-note`).fill("");
-    expect(await drafts(page)).toEqual({});
+    // Emptying the field drops the draft (the lane may still render once more after the reload).
+    await expect(async () => {
+      await page.locator(`#item-${laneId}-1-note`).fill("");
+      expect(await drafts(page)).toEqual({});
+    }).toPass({ timeout: 10_000 });
   });
 
   test("signing out clears every draft", async ({ page }) => {

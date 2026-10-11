@@ -192,7 +192,13 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   const [page, setPage] = useState<"work" | "people">(start.page);
   const [menuOpen, setMenuOpen] = useState(false);   // narrow screens: the engagement list folds away
   useEffect(() => {
-    if (!DEMO) api.me().then(setMe).catch(() => {}).finally(() => setMeKnown(true));
+    if (!DEMO) api.me().then((m) => {
+      // The drafts in this tab are this person's from now on, also in a tab that never showed the
+      // sign-in form (opened while signed in, or reloaded): whoever signs in here next after the
+      // session ends gets them only if it is the same person (web e2e tests, WE-6).
+      claimDrafts(`${m.kind}:${m.user_id ?? ""}`);
+      setMe(m);
+    }).catch(() => {}).finally(() => setMeKnown(true));
   }, []);
   const owner = can(me, null, "team");   // People page and Team tab
 

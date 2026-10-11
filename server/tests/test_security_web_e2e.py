@@ -18,7 +18,7 @@ from app.models import Observation  # noqa: E402
 
 # ---- WE-1: a report download for a name outside Latin-1 ------------------------------------------
 
-@pytest.mark.parametrize("name", ["Müşteri portalı", "عربي", "東京 pentest", "Café ‮exe.txt"])
+@pytest.mark.parametrize("name", ["Müşteri portalı", "عربي", "東京 pentest", "Café \u202eexe.txt"])
 @pytest.mark.parametrize("path", ["report", "report.html"])
 def test_we1_a_report_downloads_whatever_script_its_name_is_in(client, name, path):
     eng = client.post("/engagements", json={"name": name}).json()["id"]
