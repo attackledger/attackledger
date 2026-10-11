@@ -11,7 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 FILES = [["docker-compose.yml"], ["docker-compose.yml", "deploy/compose.prod.yml"]]
-DOCKERFILES = ["server/Dockerfile", "worker/Dockerfile", "web/Dockerfile"]
+DOCKERFILES = ["server/Dockerfile", "worker/Dockerfile", "web/Dockerfile", "e2e/Dockerfile"]
 # The one service that keeps root, and the one capability it gets back: the caddy binary
 # carries it as a file capability (the kernel refuses to run it without it) and binds 80/443.
 ROOT_SERVICES = {"caddy": {"NET_BIND_SERVICE"}}
