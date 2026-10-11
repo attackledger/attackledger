@@ -13,9 +13,9 @@ report or an attestation.
 **How.** Each suspected issue was first proven with a test that failed, then fixed, and the test
 was kept as a regression test. Traffic went only to localhost, local stubs and the bundled lab,
 apart from package registries, the timestamp authority, and the passive-source queries one lab
-run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 954 tests, and it now also runs
+run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,050 tests, and it now also runs
 on Postgres 16 (`tools/test_postgres.sh`), as production does. The Python and browser verifiers
-give identical results on 126 reports (`tools/verifier_equivalence/run.sh`).
+give identical results on 134 reports and on 2,600 random mutants (`tools/verifier_equivalence/run.sh`).
 
 ## Reports
 
@@ -49,6 +49,10 @@ compromised or misled tool or agent in the worker and a malicious page in the op
 - **Postgres-only (security):** times were stored in the database session's zone, which kept
   approvals usable for hours on a non-UTC server, and one bad log row could stop the gateway's
   log and then all its traffic (also GW-11).
+- **FZ-4 (Medium): an exclude rule could silently match nothing.** A rule with a line end before
+  its last dot was stored broken, so the host it was meant to exclude under a wildcard stayed in
+  scope for the gateway. Fuzzing also found five inputs that took quadratic time and could stall an
+  import or a recon run (FZ-6, FZ-11 to FZ-13).
 - **RET-2, RET-3 (Medium): content deletion missed running jobs and job targets.** The backup
   documentation also overstated what master-key rotation does (RET-7).
 
