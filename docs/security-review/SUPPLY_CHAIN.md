@@ -6,7 +6,10 @@ measured on a running copy, and what is left. How to maintain it is `docs/SUPPLY
 A follow-up on 2026-10-11 (branch `sec4-deps`) closed four of the gaps: FastAPI past 0.136, Vite 5,
 GitHub Actions by tag and the base-image refresh routine ("Follow-up" below). A second follow-up
 the same day (branch `sec5-pins`) refreshed the stale pins, added an OS-package vulnerability scan
-and decided on OS-package pinning (SC-10, SC-11; "Follow-up, 2026-10-11 (sec5-pins)").
+and decided on OS-package pinning (SC-10, SC-11; "Follow-up, 2026-10-11 (sec5-pins)"). A third
+(branch `sec5-ci`) brought the CI to what contributors run, added a weekly security workflow,
+extended the image scan to Go binaries and widened Dependabot (SC-12; "Follow-up, 2026-10-11
+(sec5-ci)").
 
 Network traffic in this review went only to Docker Hub, PyPI, the npm registry, the Go module
 proxy and checksum database, GitHub (the worker's pinned downloads, as the build already does)
@@ -30,6 +33,7 @@ was contacted.
 | SC-9 (found on the running copy) | Compose refuses inline `configs: content:` for a read-only service (`` `file` is the sole supported option ``): the lab proxy would not have started in production with `--profile lab` | would have been a regression | its nginx configuration moved, unchanged, to `deploy/lab-proxy.conf` | `test_configs_are_files` |
 | SC-10 (second follow-up) | Caddy 2.11.4, the internet-facing TLS terminator: its binary was built with Go 1.26.3 and older `golang.org/x/net`, `x/text` and `grpc`, with 33 known Go advisories (2 Critical, 20 High) | Medium (as SC-2: it faces clients; reachability of each advisory in Caddy was not analysed) | Caddy 2.11.7 (Go 1.26.8): 20 of them fixed, 13 left that no Caddy release fixes yet | image scan by hand (below) |
 | SC-11 (second follow-up) | The web image (nginx 1.30.5 on Alpine 3.24) had 4 HIGH findings with an Alpine fix (zlib, pcre2, libexpat, tiff) and OpenSSL 3.5.8, matched by 4 HIGH advisories; no newer nginx build exists. No OS-package scanner existed | Low (none reachable as used: no TLS, no gzip, no regex from clients, the modules that use expat and tiff are not loaded) | the six packages raised to minimum versions in `web/Dockerfile`; `tools/scan_images.sh` | `tools/scan_images.sh`: 0 HIGH left in web; `test_os_packages_are_installed_as_decided` and two more |
+| SC-12 (third follow-up) | The image scan read OS packages only. Given the Go binaries, it finds 35 HIGH or CRITICAL rows with a fix (14 advisories) in the worker's recon tools: `golang.org/x/net` 0.17.0 to 0.31.0 and `x/text` in subfinder 2.6.7, dnsx 1.2.1, httpx 1.6.9 and katana 1.1.2; `grpc` 1.82.1, `go-git` 5.19.1, `x/crypto` 0.53.0 and `x/net` 0.56.0 in nuclei 3.11.1; `fasthttp` 1.31.0 and `x/net` 0.17.0 in gau 2.2.4 | Low (the tools are HTTP and DNS clients in the worker's sandbox, behind the gateway; the likely effect is a hostile target crashing or hanging a tool within a job's limits; reachability per advisory not analysed) | not fixed here: the tools have to move (below). The scan now reports them, and the weekly workflow fails on them | `tools/scan_images.sh`; `test_image_scan_reads_go_binaries_and_fails_on_expired_entries` |
 
 Tests: 878 passed and 1 skipped before; 898 passed and 1 skipped after, on the rebuilt API image
 (20 new tests in `server/tests/test_supply_chain.py`). `tools/release_gate.sh` passes. `cd web && npm ci && npx tsc --noEmit`,
@@ -445,16 +449,154 @@ Tests: 1,050 passed and 1 skipped before; 1,055 passed and 1 skipped after, on t
 image (5 new in `test_supply_chain.py`: OS-package installs per Dockerfile, the scanner pinned by
 digest, the accepted findings' format; each failed with the rule broken).
 
+## Follow-up, 2026-10-11 (sec5-ci): CI parity, a weekly security workflow, Go binaries, Dependabot
+
+Branch `sec5-ci`. Network traffic went only to Docker Hub (base, scanner and linter images, tag
+lookups), PyPI (the pip-audit lock and pip-audit's advisory queries), the npm registry (`npm ci`,
+`npm audit`), the Go module proxy (`@latest` and `go.mod` of the recon tools, read only), Anchore's
+vulnerability database, GitHub (the worker build's pinned downloads) and GET requests to the
+GitHub API (action release tags). No target was contacted. The workflows could not be run on
+GitHub from here: they were checked with actionlint, and each command they run was run locally.
+
+**CI parity.** `.github/workflows/tests.yml` ran the SQLite suite and the web build only. It now
+has five jobs, each a command a contributor runs (`CONTRIBUTING.md`, "What the CI runs"):
+
+| Job | Runs | Measured here |
+|---|---|---|
+| `server` | `python -m pytest -q server/tests`; the fuzz tests (`test_fuzz.py`, `test_security_fuzz.py`) are part of it at their default, seeded size: nothing skips them | in the full run below |
+| `postgres` (new) | `docker build` of the API image, then `tools/test_postgres.sh` (the full suite on Postgres 16 in a time zone other than UTC, then the migration-0022 upgrade of a database the 0.7.1 code filled; `fetch-depth: 0` for that commit). The script now defaults to the Postgres image `docker-compose.yml` pins by digest instead of the `postgres:16-alpine` tag | 1,055 passed and 1 skipped, then 2 passed (upgrade), `[pg] PASS`, 3 min 49 s |
+| `verifier` (new) | `tools/verifier_equivalence/run.sh`, then `--fuzz 500 --seed 20261010` | 134 reports and 107 building blocks, 0 differences (80 s); the 500 mutants: 0 differences, 0 tracebacks (30 s) |
+| `web` | `npm ci --ignore-scripts`, `npx tsc --noEmit` (new), lint, build | `tsc` passes |
+| `workflows` (new) | `tools/lint_workflows.sh`: actionlint 1.7.12 (pinned by digest) with shellcheck and pyflakes, no network, no capability, the files through stdin | 0 problems on the three workflows; a deliberately broken one gave 2 (a shellcheck warning and an unknown `github.` property) and exit 1 |
+
+Every job keeps `permissions: contents: read`, uses no secret, and every `actions/checkout` now
+has `persist-credentials: false`, so the job's token is not left in `.git/config` for the build
+steps to read.
+
+**The weekly security workflow.** `.github/workflows/security.yml`, Mondays 05:23 UTC and on
+demand, read-only, no secrets (`docs/SUPPLY_CHAIN.md`, "The weekly security workflow"):
+
+| Job | Runs | Fails | Measured here |
+|---|---|---|---|
+| `images` | builds api, worker, web; `tools/scan_images.sh` (with the pinned Postgres, nginx and Caddy); `tools/sbom.sh`; uploads the SBOM and Grype's reports (`actions/upload-artifact` 7.0.1, the newest release at least two weeks old) | a fixable HIGH or CRITICAL not accepted, an expired `scan_ignore.txt` entry, a failed scan; the SBOM is written and uploaded either way | scan below; SBOM: the 18 files of `docs/SUPPLY_CHAIN.md` from the `sec5-ci` images (1 min 41 s) |
+| `pins` | `tools/refresh_pins.sh`, report only | a failed lookup; stale is a warning | 10 pins, 2 stale (the two Python lines, as decided in the second follow-up): a warning |
+| `python` | `pip-audit --disable-pip --require-hashes` on each of the five hashed locks, one at a time (given together, pip-audit refuses two files that pin one package at different versions: measured), pip-audit 2.10.1 from its own hashed lock (`tools/ci/requirements-audit.txt`, made by `tools/lock_requirements.sh`, installed `--require-hashes --no-deps --only-binary :all:`) | any advisory | no known vulnerability in any lock; a positive control (`cryptography==43.0.3`) gave 10 and exit 1 |
+| `npm` | `npm audit --omit=dev --package-lock-only`, then `npm audit --package-lock-only --audit-level=high` | any production advisory; a HIGH or CRITICAL development one | 0 and 0 |
+
+The scan step and the pin step write their output to the run's summary; a finding is an
+`::error::` annotation, a stale pin a `::warning::`. The scan's rule for `scan_ignore.txt` changed
+with it: an entry past its date now fails the scan by itself (before, it was only printed, and
+failed nothing once the finding it covered was gone), and an entry that matches no finding in an
+image that was scanned is printed as a note, so a fix that has arrived is seen.
+
+**SC-12: the Go binaries.** `tools/scan_images.sh` now streams each image's filesystem out
+(`docker export` of a created, never started container) through a short Python filter that keeps
+every ELF file containing Go's build-information marker (`\xff Go buildinf:`), wherever it is, and
+puts those files next to the package databases in the scanner's input. Grype's Go cataloger then
+reads each binary's module list and Go version. Found: Caddy's `/usr/bin/caddy`, the worker's eight
+Go tools in `/opt/pd/bin` (feroxbuster is Rust, without embedded dependency data), and `gosu` in
+the Postgres image, which nobody had listed. The api and web images have none. The whole scan of
+the six images took 44 s with the database cached.
+
+On images rebuilt from this branch (`attackledger-{api,worker,web}:sec5-ci`): `35 HIGH/CRITICAL
+with a fix, 20 accepted, 135 without a fix, 0 expired entries`, exit 1. The 35 are all the
+worker's Go tools:
+
+| Tool (`worker/Dockerfile`) | Modules with a fixable HIGH or CRITICAL | Newest release (Go module proxy) |
+|---|---|---|
+| subfinder 2.6.7, httpx 1.6.9 | `x/net` 0.29.0 (GO-2026-4918, -5026, -5942, -6603, -6610, -6611, -6612 Critical), `x/text` 0.18.0 (GO-2026-5970) | subfinder 2.17.0 (2026-10-08, `x/net` 0.59.0); httpx 1.12.0 (2026-09-08, 0.58.0) |
+| dnsx 1.2.1 | `x/net` 0.17.0 (the same seven), `x/text` 0.14.0 | 1.3.1 (2026-08-31, 0.55.0) |
+| katana 1.1.2 | `x/net` 0.31.0 (the same seven), `x/text` 0.20.0 | 1.8.0 (2026-10-05, 0.58.0) |
+| nuclei 3.11.1 | `grpc` 1.82.1 (GHSA-2v4p-qf9q-27wj, GHSA-vp52-pcj8-j9qc), `go-git` 5.19.1 (GHSA-hc8v-wwc9-vgxm), `x/crypto` 0.53.0 (GO-2026-6354, -6355), `x/net` 0.56.0 (GO-2026-6603, -6610, -6611, -6612) | 3.11.1 is the newest |
+| gau 2.2.4 | `fasthttp` 1.31.0 (GHSA-fx95-883v-4q4h), `x/net` 0.17.0 (GO-2026-5026), `x/text` 0.13.0 | 2.2.4 is the newest (2024-10) |
+
+assetfinder and waybackurls have none; `mholt/archiver` 3.5.1 (GHSA-7vpp-9cxj-q8gv, in four tools)
+has no fix. Not fixed in this branch: `go install module@version` builds each tool with its own
+`go.mod`, so the only fix is a newer release of the tool, and moving four recon tools across many
+minor versions changes the worker's behaviour (flags, output) and needs the lab pipeline, not a
+dependency bump; subfinder 2.17.0 and katana 1.8.0 are also younger than two weeks. Even the newest
+releases leave `x/net` below 0.60.0, so GO-2026-6603, -6610, -6611 and -6612 stay in every tool
+until their authors rebuild. Severity Low: the tools are clients in the worker's sandbox (no
+secret, no way out but the gateway), and most of these advisories are on the HTTP/2 or DNS-parsing
+side a hostile target controls, so the likely effect is a target crashing or hanging a tool within
+the job's time and memory limits; each advisory's reachability was not analysed. `scan_ignore.txt`
+stays closed to images built here, so the weekly scan fails on them until the tools move: that is
+the reminder.
+
+Caddy 2.11.7 (Go 1.26.8, `x/net` 0.59.0) has 14 HIGH or CRITICAL rows, 10 advisories (four in
+both the standard library and `x/net`), all fixed only in Go 1.26.9 and `x/net` 0.60.0, which no
+Caddy release is built with (with three unrated ones, the 13 the second follow-up counted by
+hand): accepted in `scan_ignore.txt` until 2026-11-11, the same date as the OS
+findings. Four are reachable in principle (HTTP Trailer handling and HTTP/2 framing, flow control
+and CPU exhaustion, GO-2026-6603, -6610, -6611, -6612: Caddy terminates HTTP/2 for every client);
+four are code
+`deploy/Caddyfile` does not use (Windows-only `os.Root` junctions, ECH, which is not configured,
+multipart form parsing and `Range` handling in `FileServer`, with no `file_server` or form
+matcher); for the two CONNECT ones (an outgoing CONNECT with a body; a handler answering CONNECT
+with 2xx) whether a client's CONNECT reaches them through `reverse_proxy` was not analysed. The
+reason is the same for all of them: nothing to move to yet. `server/tests/test_supply_chain.py`
+now accepts a Go module path (`golang.org/x/net`) or `stdlib` as the package of an entry.
+
+**Dependabot.** `.github/dependabot.yml` existed since 2026-10-09 (D-048, with Dependabot alerts
+and security updates on), which the "Gaps left" list of this review had missed: weekly pip
+(`/server` only), npm, Docker and Actions, ungrouped but for npm development packages, without the
+two-week rule. Now: the pip entry covers `/worker` and `/tools/ci` too; compose images are a
+`docker-compose` entry (`/`, `/deploy`); every ecosystem is grouped into one weekly pull request
+(npm in two, production and development) with `cooldown: default-days: 14`; a Python minor, a
+Node major and a Postgres major are ignored as weekly bumps. Security updates are not delayed by
+the cooldown. A Python bump cannot pass the tests until a maintainer re-locks it (the lock test
+compares each lock with its `.in` file); `docs/SUPPLY_CHAIN.md`, "Dependabot", says how.
+Dependabot's own validation of the file happens only on GitHub: `cooldown` and `docker-compose`
+are its newest keys, and if it refuses one, its Dependabot tab says so.
+
+**Tests.** 14 new in `test_supply_chain.py` (some per workflow): every workflow but the CLA one
+read-only at the top and in each job, no `secrets.`, no `pull_request_target` or `workflow_run`;
+`pull_request_target` only in `cla.yml`, whose only step is the pinned CLA action (no `run:`, no
+checkout); `persist-credentials: false` on every checkout, `--ignore-scripts` on every `npm ci`,
+digest-pinned job containers; the tests workflow runs each command above; the security workflow
+is scheduled and on demand only, uses `bash` (pipefail), fails on a scan finding and only warns on
+a stale pin, uploads its artifact even after a failure; actionlint pinned by digest with no
+network; the scan reads Go binaries and fails on an expired entry; Dependabot covers every lock
+directory, Dockerfile, compose file directory and npm lockfile, weekly, grouped, with a cooldown of
+at least 14 days; every `requirements*.in` is in `tools/lock_requirements.sh`, in the lock test
+and in the pip-audit step. Each failed with its rule broken (17 mutations, all caught).
+Counts: 1,055 passed and 1 skipped before; 1,069 passed and 1 skipped after, on SQLite (the API
+image) and on Postgres (`tools/test_postgres.sh`, then the 2 upgrade tests). `tools/release_gate.sh`
+passes.
+
 ## Gaps left
 
+Closed by the third follow-up (sec5-ci):
+- ~~The image scan reads OS packages only~~: it reads every Go binary as well (SC-12). What it
+  still does not read: feroxbuster (Rust, no embedded dependency data; its version and hash are in
+  `worker/Dockerfile`), and the Python and npm packages, which `pip-audit` and `npm audit` cover.
+- ~~Nothing runs the scan on a schedule~~, ~~nothing runs `tools/refresh_pins.sh` on a schedule~~:
+  the weekly security workflow runs both, with `pip-audit`, `npm audit` and the SBOM; an expired
+  accepted finding fails it.
+- ~~Actions are pinned, not watched~~: Dependabot's `github-actions` entry (there since 2026-10-09,
+  which this list had missed) now groups them weekly with the two-week cooldown.
+- ~~The CI ran the SQLite suite and the web build only~~: it runs the Postgres suite, the verifier
+  equivalence and its seeded fuzzing, the type check and a workflow lint as well.
+
+Still open:
+- **The worker's Go recon tools have 35 HIGH or CRITICAL rows with a fix** (SC-12): moving
+  subfinder, dnsx, httpx and katana to newer releases fixes most of them and needs the lab
+  pipeline; nuclei and gau have no newer release; four `x/net` advisories wait for every tool to
+  be rebuilt with `x/net` 0.60.0. Until then the weekly scan fails on them, on purpose.
+- **Caddy's 14 Go rows**, accepted until 2026-11-11, wait for a Caddy release built with Go 1.26.9;
+  the third-party images' OS findings end the same day.
+- **The workflows have not run on GitHub yet.** They were checked with actionlint and each command
+  was run locally; the first runs (and Dependabot's own check of `.github/dependabot.yml`, whose
+  `cooldown` and `docker-compose` keys are its newest) are the real test. GitHub stops the weekly
+  schedule after 60 days without activity in the repository.
+- **pip-audit has no accepted-finding list**: any Python advisory fails the weekly job. One that is
+  accepted would need `--ignore-vuln` in the workflow with a comment, which nothing tests yet.
+- **The scanner and the linter are pinned outside `FROM` and `image:`** (`GRYPE`, `ACTIONLINT`), so
+  neither Dependabot nor `tools/refresh_pins.sh` sees them; they are checked by hand with the base
+  images.
 - **OS packages are not version-pinned** (decided in the second follow-up: an exact pin breaks the
   build at the next security update; a scan finding gets a minimum version instead). apt and apk
   check the signed indexes, so the risk is drift between builds, not tampering.
-- **The image scan reads OS packages only** (closed for those in the second follow-up). The Go
-  modules compiled into Caddy and the worker's recon tools are not scanned (Caddy's were, once,
-  by hand: 13 advisories left that wait for a Caddy built with Go 1.26.9 and `x/net` 0.60.0); the
-  Python and npm packages are covered by `pip-audit` and `npm audit`. Nothing runs the scan on a
-  schedule, and the third-party images' accepted findings end on 2026-11-11.
 - **OpenSSL 3.5.8 in the Postgres, nginx (lab) and Caddy images** matches four HIGH advisories that
   Alpine has no record of; not reachable as used (no TLS through it), and gone at the next rebuild
   of those images.
@@ -462,12 +604,9 @@ digest, the accepted findings' format; each failed with the rule broken).
   time, not against signatures or checksums their publishers sign: feroxbuster publishes none.
 - **The images are not signed** (cosign or similar) and no build provenance is published. An
   install builds its own images from the repository, so the trust anchor is the git checkout
-  (`git checkout` of a tag; tags are not signed either).
+  (`git checkout` of a tag; tags are not signed either). The weekly workflow builds images to scan
+  them and publishes none.
 - **Arjun's sources** are built from sdists (hash-pinned, but their `setup.py` runs at build time).
-- **Base images are refreshed by hand** (closed as a routine in the follow-up): `tools/refresh_pins.sh`
-  shows what is stale, but nothing runs it on a schedule yet; a scheduled CI job running it (it
-  exits 1 when a pin is stale) would remind someone.
-- **Actions are pinned, not watched**: a pinned action gets no fixes until someone moves the pin
-  (no Dependabot or Renovate configuration; adding one is a new service with write access to
-  pull requests).
+- **Base images are moved by hand**: the weekly workflow and Dependabot say when a pin is stale;
+  choosing the build (the two-week rule) and rebuilding stay a maintainer's.
 - **FastAPI 0.142+** wait for the two-week rule and a decision on `opentelemetry-api` (follow-up).
