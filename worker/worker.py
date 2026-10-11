@@ -157,9 +157,12 @@ def commands(kind: str, eng) -> list[tuple[str, list[str]]]:
                            *flags])]
     if kind == "crawl":
         flags = require_identification(eng)
+        # -duf: every page katana fetches is listed, also one whose body it has already seen
+        # (since katana 1.7 such pages are left out of the output: /item?id=1 and /item?id=2
+        # with the same page would leave one endpoint, and its parameter, unrecorded).
         return [("katana", [tool("katana"), "-silent", "-j", "-d", str(eng.crawl_depth), "-jc",
                             "-fs", "fqdn", "-cos", CRAWL_OUT_OF_SCOPE, "-rl", rps, "-c", "5",
-                            "-ct", "10m", *flags])]
+                            "-ct", "10m", "-duf", *flags])]
     if kind == "archive":
         return [("gau", [tool("gau"), "--subs", "--threads", "2", "--timeout", "30"]),
                 ("wayback", [tool("waybackurls")])]

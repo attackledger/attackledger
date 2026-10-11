@@ -36,6 +36,7 @@ def test_crawl_stays_on_host_skips_destructive_paths_and_identifies():
     assert c[c.index("-fs") + 1] == "fqdn"
     assert "logout" in c[c.index("-cos") + 1] and "/delete" in c[c.index("-cos") + 1]
     assert c[c.index("-d") + 1] == "2" and "X-Bug-Bounty: r1" in c
+    assert "-duf" in c      # pages with a body already seen are still listed (katana 1.7+)
 
 
 def test_port_scan_needs_engagement_permission_and_skips_smtp():

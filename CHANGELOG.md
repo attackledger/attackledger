@@ -274,10 +274,25 @@ Containers and dependencies (`SUPPLY_CHAIN.md`):
 - **The image scan reads Go binaries** (SC-12): Caddy's, the worker's eight recon tools and the
   Postgres image's `gosu` are now scanned for the Go modules and Go release compiled into them.
   Caddy 2.11.7's 14 findings need Go 1.26.9, which no Caddy release has yet: accepted until
-  2026-11-11. The worker's recon tools carry 35 HIGH or CRITICAL rows with a fix (old
+  2026-11-11. The worker's recon tools carried 35 HIGH or CRITICAL rows with a fix (old
   `golang.org/x/net` and `x/text` in subfinder, dnsx, httpx and katana, `grpc`, `go-git` and
-  `x/crypto` in nuclei, `fasthttp` in gau): they are moved by upgrading the tools, not yet done,
-  so the weekly scan fails until then.
+  `x/crypto` in nuclei, `fasthttp` in gau): fixed by the next bullet.
+- **The worker's recon tools are upgraded, and built with fixed dependencies** (SC-12):
+  subfinder 2.6.7 → 2.16.0, dnsx 1.2.1 → 1.3.1, httpx 1.6.9 → 1.12.0, katana 1.1.2 → 1.7.0 (each
+  the newest release at least two weeks old); nuclei 3.11.1 and gau 2.2.4 are already the newest.
+  No release has `golang.org/x/net` 0.60.0 yet (GO-2026-6603, -6610, -6611, -6612, one critical),
+  so each tool is now built by `worker/build_go_tool.sh`: the release, with the modules a finding
+  names raised to exact fixed versions (`x/net` 0.60.0, `x/text` 0.42.0; in nuclei `x/crypto`
+  0.57.0, `grpc` 1.84.0, `go-git` 5.19.2; `fasthttp` 1.74.0 in gau; `pgx` 5.11.0 in katana 1.7.0),
+  every module checked against Go's checksum database and the selected versions checked by the
+  script. The image scan finds no HIGH or CRITICAL with a fix in the worker (was 35), and no Go
+  module HIGH or CRITICAL at all. The flags the worker passes are unchanged in meaning; the crawl
+  now passes `-duf`, because katana 1.7 leaves pages whose body it has already seen out of its
+  output (measured on the lab: `/products?id=1` and its `id` parameter went missing). gau now
+  reaches its HTTPS archive sources through the gateway (its old HTTP library sent the proxy no
+  `Host` header, and nothing it sent was logged); subfinder's newer sources that the gateway does
+  not list as passive sources are refused, as before. `docs/SUPPLY_CHAIN.md`, "The Go recon tools",
+  says how to move a tool or a module.
 - **Dependabot** covers the worker's and the CI's Python locks and the compose images as well, in
   grouped weekly pull requests that wait 14 days after a release (the two-week rule); a Python
   minor, a Node major and a Postgres major are left to a decision. `docs/SUPPLY_CHAIN.md` says how
@@ -369,6 +384,8 @@ for Vite 8's default browsers (Chrome and Edge 111, Firefox 114, Safari 16.4 or 
 Chrome 87, Firefox 78, Safari 14).
 Production: Caddy moves to 2.11.7 (`docker compose pull caddy` before `up -d`), and the web image
 must be rebuilt (`docker compose build web`) to get its Alpine package fixes.
+Rebuild the worker image (`docker compose build worker`, then `docker compose up -d worker`) to
+get the upgraded recon tools; its settings and volumes do not change.
 
 ### Fixed
 - **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on
