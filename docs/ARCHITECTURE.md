@@ -1,6 +1,7 @@
 # Architecture
 
 This file describes what runs today. Where the architecture is going: `TARGET_ARCHITECTURE.md`.
+What it protects, from whom, and what risk is left: `THREAT_MODEL.md`.
 
 AttackLedger has one job: **prove what was tested**. Every part of the system
 either produces evidence, gates who may produce it, or turns it into a
@@ -166,6 +167,9 @@ reviewer). Routes without an entry are open to owners only, and a test checks th
 every route has one. See D-032.
 
 ## Invariants worth keeping
+
+Each of these is mapped to the threat it addresses, its test and its residual risk in
+`THREAT_MODEL.md`.
 
 - Unknown is out of scope. Exclusions win. A wildcard does not cover its apex.
 - No tool runs on an engagement without recorded authorization.

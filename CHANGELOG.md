@@ -409,6 +409,13 @@ Production: Caddy moves to 2.11.7 (`docker compose pull caddy` before `up -d`), 
 must be rebuilt (`docker compose build web`) to get its Alpine package fixes.
 
 ### Added
+- **A threat model** (`docs/THREAT_MODEL.md`): the system's trust boundaries, its assets and
+  actors, each threat in STRIDE terms with the control in the code, the test that shows it, the
+  security review findings that tested it and the residual risk; what signatures and the report
+  seal prove against a dishonest operator; what the deployer must do; and how an auditor can check
+  a report and rerun the tests. It lists six gaps noted while writing it (TM-1 to TM-6), among them
+  the machine routes being reachable through the public front end and the lack of a second
+  sign-in factor. Linked from `docs/ARCHITECTURE.md` and `docs/security-review/README.md`.
 - **Browser end-to-end tests** (`e2e/`, `tools/test_e2e.sh`, `docs/security-review/WEB_E2E.md`):
   Playwright in its own pinned image runs 51 tests in Chromium and in Firefox against compose
   project `al-e2e`, on a network with no route out and no port on the host: hostile content in

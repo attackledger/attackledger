@@ -32,6 +32,8 @@ give identical results on 134 reports and on 2,600 random mutants (`tools/verifi
 
 Severities are the reviewers' own and describe impact in AttackLedger's threat model, mainly a
 compromised or misled tool or agent in the worker and a malicious page in the operator's browser.
+The threat model itself, with the trust boundaries, the actors, every threat mapped to its
+controls, tests and finding IDs, and the residual risks, is [THREAT_MODEL.md](../THREAT_MODEL.md).
 
 ### The findings that mattered most
 
