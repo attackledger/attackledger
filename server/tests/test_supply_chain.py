@@ -219,3 +219,51 @@ def test_configs_are_files(files):
         for name, conf in (yaml.load((ROOT / f).read_text(), Loader=_Loader).get("configs") or {}).items():
             assert set(conf) == {"file"}, f"{f}: config {name}"
             assert (ROOT / conf["file"]).is_file(), conf["file"]
+
+
+def _run_lines(dockerfile: str) -> str:
+    lines = [ln for ln in (ROOT / dockerfile).read_text().splitlines() if not ln.lstrip().startswith("#")]
+    return "\n".join(lines).replace("\\\n", " ")
+
+
+@pytest.mark.parametrize("dockerfile", DOCKERFILES)
+def test_os_packages_are_installed_as_decided(dockerfile):
+    """OS packages are not pinned to exact versions (docs/SUPPLY_CHAIN.md, "OS packages"): the
+    Debian and Alpine mirrors keep only the newest build of each, so an exact pin breaks the
+    build at the next security update. An Alpine package raised for a scan finding names a
+    floor (`pkg>=version`); apt installs without recommended packages, apk without a cache."""
+    text = _run_lines(dockerfile)
+    for cmd in re.findall(r"apt-get install[^&\n]*", text):
+        assert "--no-install-recommends" in cmd, cmd
+        for arg in cmd.split()[2:]:
+            assert "=" not in arg.strip("'\""), f"{dockerfile}: {arg} (exact apt pin)"
+    for cmd in re.findall(r"apk (?:add|upgrade)[^&\n]*", text):
+        assert "--no-cache" in cmd, cmd
+        for arg in (a.strip("'\"") for a in cmd.split()[2:] if not a.startswith("-")):
+            assert re.fullmatch(r"[a-z0-9][\w.+-]*(>=[\w.+-]+)?", arg), f"{dockerfile}: {arg} (only a floor, >=)"
+
+
+def test_image_scanner_is_pinned_by_digest():
+    text = (ROOT / "tools/scan_images.sh").read_text()
+    refs = re.findall(r"^GRYPE=(\S+)", text, re.M)
+    assert len(refs) == 1 and re.fullmatch(r"anchore/grype:v[\d.]+-nonroot@sha256:[0-9a-f]{64}", refs[0]), refs
+    assert "--network none" in text          # the scans themselves have no network
+
+
+def test_scan_ignore_entries_name_a_reason_and_an_end():
+    """Each accepted finding of tools/scan_images.sh: an id, an image it runs as published (an
+    image built here gets the fix in its Dockerfile instead), the package, an end date and a reason."""
+    import datetime
+    import fnmatch
+    published = {svc["image"] for files in FILES for svc in _services(files).values()
+                 if svc.get("image") and not svc.get("build")}
+    lines = [ln for ln in (ROOT / "tools/scan_ignore.txt").read_text().splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")]
+    for line in lines:
+        vid, image, package, until, *reason = line.split()
+        assert re.fullmatch(r"(CVE-\d{4}-\d+|GHSA(-[0-9a-z]{4}){3}|GO-\d{4}-\d+)", vid), line
+        assert any(fnmatch.fnmatch(p, image) for p in published), f"no published image matches: {line}"
+        assert not image.startswith("attackledger-"), line
+        assert re.fullmatch(r"[a-z0-9][\w.+-]*", package), line
+        datetime.date.fromisoformat(until)
+        assert len(reason) >= 3, f"no reason: {line}"
