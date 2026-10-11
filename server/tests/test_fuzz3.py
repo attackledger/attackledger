@@ -8,16 +8,21 @@ report from histories with signed receipts, voids, content deletion and the seal
 test_fuzz.py (fuzzing.py): seeded, offline, time-limited; a failure names the seed and the
 iteration. ATTACKLEDGER_FUZZ_ITERATIONS makes every test run that many inputs.
 """
+import base64
+import json
+import os
 import socket
 import ssl
 import sys
 import time
+from urllib.parse import quote
 
 import pytest
 
-from app import gateway
-from fuzzing import INTERESTING, iterations, mutate_bytes, rng, show, time_limit
+from app import gateway, redact
+from fuzzing import INTERESTING, elapsed, iterations, mutate_bytes, rng, show, time_limit
 from test_gateway import Stack as GatewayStack
+from test_fuzz2 import NAMES, _secret
 from tlsfuzz import ALPNS, SNIS, client_hello, connect, drain
 
 
@@ -180,3 +185,231 @@ def test_fuzz_a_head_cut_anywhere_is_one_row(gw, capfd):
         if idle and not in_tunnel:
             assert out.startswith(b"HTTP/1.1 408") or rows[0]["method"] == "CONNECT", f"iteration {i}: {show(out)}"
         _clean_stderr(capfd, f"iteration {i}")
+
+
+# ---- redaction: positional XML-RPC, SAML, unquoted HTML attributes, nested JSON ----------------------
+
+SIZE = int(os.environ.get("ATTACKLEDGER_FUZZ_SIZE") or 40_000)
+BUDGET = float(os.environ.get("ATTACKLEDGER_FUZZ_BUDGET") or 2.0)
+RPC_SECRET = ["wp.getUsersBlogs", "wp.getPosts", "metaWeblog.newPost", "blogger.getUsersBlogs", "mt.getCategoryList",
+              "system.login", "auth.authenticate", "user.getToken", "Session.Login", "api.signIn", "x.setPassword"]
+RPC_PLAIN = ["demo.sayHello", "pingback.ping", "system.listMethods", "examples.getStateName", "weather.get"]
+JSON_SECRET = ["password", "credentials", "Credentials", "credential", "token", "api_key", "clientSecret",
+               "\\u0070assword", "session"]
+SAML_PREFIXES = ["saml:", "saml2:", "", "ns2:", "s:"]
+
+
+def _value(r, v: str, sp: str) -> str:
+    return r.choice([f"<value>{sp}<string>{v}</string>{sp}</value>", f"<value>{sp}{v}{sp}</value>",
+                     f"<value><base64>{v}</base64></value>"])
+
+
+def _rpc_params(r, v: str, sp: str) -> list[str]:
+    params = [_value(r, r.choice(["tess", "blog-1", "en"]), sp) if r.random() < 0.5 else
+              f"<value><int>{r.randrange(100)}</int></value>" for _ in range(r.randint(1, 3))]
+    params.insert(r.randrange(len(params) + 1), _value(r, v, sp))
+    return params
+
+
+def _rpc_doc(r, method: str) -> tuple[str, str]:
+    """A call of `method` with a value at a random position among its parameters, sent alone or
+    in system.multicall (the brute-force amplifier)."""
+    v = _secret(r, "<&>\"'")
+    sp = r.choice(["", " ", "\n  ", "\t"])
+    params = _rpc_params(r, v, sp)
+    if r.random() < 0.6:
+        doc = (f"<?xml version=\"1.0\"?><methodCall>{sp}<methodName>{sp}{method}{sp}</methodName>{sp}<params>"
+               + "".join(f"<param>{sp}{p}{sp}</param>" for p in params) + "</params></methodCall>")
+    else:
+        other = [f"<value><struct><member><name>methodName</name><value><string>{m}</string></value></member>"
+                 f"<member><name>params</name><value><array><data>"
+                 + "".join(_rpc_params(r, "tess", sp)) + "</data></array></value></member></struct></value>"
+                 for m in r.sample(RPC_PLAIN, r.randint(0, 2))]
+        call = (f"<value><struct><member><name>methodName</name><value>{r.choice(['<string>%s</string>', '%s'])}"
+                f"</value></member><member><name>params</name><value><array><data>{sp}" % method
+                + sp.join(params) + "</data></array></value></member></struct></value>")
+        other.insert(r.randrange(len(other) + 1), call)
+        doc = ("<methodCall><methodName>system.multicall</methodName><params><param><value><array><data>"
+               + "".join(other) + "</data></array></value></param></params></methodCall>")
+    return doc, v
+
+
+def _saml_assertion(r, v: str) -> tuple[str, str]:
+    p = r.choice(SAML_PREFIXES)
+    ns = "" if "saml" in p and r.random() < 0.5 else ' xmlns="urn:oasis:names:tc:SAML:2.0:assertion"'
+    if r.random() < 0.3:
+        return (f"<{p}EncryptedAssertion{ns}><xenc:EncryptedData><xenc:CipherData><xenc:CipherValue>{v}"
+                f"</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData></{p}EncryptedAssertion>"), p
+    leaf = r.choice([f"<{p}NameID>{v}</{p}NameID>", f"<{p}AttributeValue>{v}</{p}AttributeValue>",
+                     f"<ds:X509Certificate>{v}</ds:X509Certificate>"])
+    return (f"<{p}Assertion ID=\"_a{r.randrange(10**6)}\" Version=\"2.0\"{ns}><{p}Issuer>idp</{p}Issuer>"
+            f"<{p}Subject>{leaf}</{p}Subject><ds:SignatureValue>sig</ds:SignatureValue></{p}Assertion>"), p
+
+
+def _saml_doc(r) -> tuple[str, str]:
+    """An assertion inside other XML (SOAP, WS-Security, ECP, an artifact response), or a SAML
+    response in base64 under a name that is not secret, in a form or JSON."""
+    v = _secret(r, "<&>\"'")
+    assertion, p = _saml_assertion(r, v)
+    wrap = r.choice(["%s", "<soap:Envelope xmlns:soap=\"x\"><soap:Header><wsse:Security>%s</wsse:Security></soap:Header>"
+                     "<soap:Body/></soap:Envelope>",
+                     "<S:Envelope><S:Body><samlp:ArtifactResponse><samlp:Response>%s</samlp:Response>"
+                     "</samlp:ArtifactResponse></S:Body></S:Envelope>",
+                     "<trust:RequestSecurityTokenResponse><trust:RequestedSecurityToken>%s"
+                     "</trust:RequestedSecurityToken></trust:RequestSecurityTokenResponse>"])
+    doc = wrap % assertion
+    if r.random() < 0.35:
+        response = (f"<samlp:Response xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\">{assertion}</samlp:Response>"
+                    if r.random() < 0.5 else '<?xml version="1.0"?>' + doc)
+        if "urn:oasis:names:tc:SAML" not in response:
+            response = response.replace(">", ' xmlns:x="urn:oasis:names:tc:SAML:2.0:assertion">', 1)
+        b64 = base64.b64encode(response.encode()).decode()
+        if r.random() < 0.3:
+            b64 = "\r\n".join(b64[i:i + 76] for i in range(0, len(b64), 76))
+        name = r.choice(["data", "RelayStateX", "msg", "payload"])
+        form = r.randrange(3)
+        doc = [f"{name}={quote(b64, safe='')}&x=1", json.dumps({name: b64}), b64][form]
+        return doc, quote(b64[:60], safe="") if form == 0 else b64[:60]
+    return doc, v
+
+
+def _html_doc(r) -> tuple[str, str]:
+    """<input name=password value=x>, unquoted, quoted or mixed, in any order, upper case too."""
+    name = r.choice(NAMES + ["csrf_token", "authenticity_token", "csrf-token"])
+    v = _secret(r, "<>\"'=` \t\r\n&")
+    q = r.choice(["", "", '"', "'"])
+    attr = r.choice(["value", "VALUE", "content"])
+    nq = r.choice(["", '"', "'"])
+    pair = [f"{r.choice(['name', 'NAME', 'key', 'property'])}={nq}{name}{nq}", f"{attr}={q}{v}{q}"]
+    r.shuffle(pair)
+    tag = r.choice(["input", "meta", "INPUT", "add"])
+    extra = r.choice(["", " type=hidden", " id=f1", ' class="a b"'])
+    doc = r.choice([f"<{tag}{extra} {pair[0]} {pair[1]}>", f"<{tag} {pair[0]}{extra} {pair[1]} />",
+                    f"<{tag} data-{name}={v}>"])
+    return f"<html><form method=post>{doc}</form></html>", v
+
+
+def _json_tree(r, v: str, depth: int):
+    if depth == 0:
+        return v
+    if r.random() < 0.5:
+        items = [r.choice(["tess", 7, True, None]) for _ in range(r.randint(0, 2))]
+        items.insert(r.randrange(len(items) + 1), _json_tree(r, v, depth - 1))
+        return items
+    obj = {k: r.choice(["tess", 7, False]) for k in r.sample(["user", "id", "kind", "n"], r.randint(0, 2))}
+    obj[r.choice(["value", "pin", "secret", "x", "data"])] = _json_tree(r, v, depth - 1)
+    return dict(r.sample(list(obj.items()), len(obj)))
+
+
+def _json_doc(r) -> tuple[str, str]:
+    """A secret key whose value is an object or an array holding the secret anywhere in it."""
+    v = _secret(r, "\"\\\r\n")
+    key = r.choice(JSON_SECRET)
+    inner = json.dumps(_json_tree(r, v, r.randint(1, 4)), indent=r.choice([None, 2]))
+    if not inner.startswith(("{", "[")):
+        inner = "[" + inner + "]"
+    doc = '{"ok": 1, "%s":%s%s, "after": "tess"}' % (key, r.choice(["", " ", "\n "]), inner)
+    return doc, v
+
+
+NEW_FORMATS = {"xmlrpc": lambda r: _rpc_doc(r, r.choice(RPC_SECRET)), "saml": _saml_doc, "html": _html_doc,
+               "json": _json_doc}
+
+
+@pytest.mark.parametrize("fmt", sorted(NEW_FORMATS))
+def test_fuzz_redaction_of_the_new_forms_leaves_no_placed_secret(fmt):
+    """A secret placed where the second pass left it (a positional XML-RPC parameter, a SAML
+    assertion in other XML or in base64 under any name, an unquoted HTML attribute, a JSON object
+    or array under a secret key): it never survives text or a whole HTTP message; a second pass
+    changes nothing; JSON stays JSON with the same keys."""
+    r = rng(f"redact3-{fmt}")
+    ctype = {"xmlrpc": "text/xml", "saml": "application/soap+xml", "html": "text/html",
+             "json": "application/json"}[fmt]
+    for i in range(iterations(400)):
+        doc, v = NEW_FORMATS[fmt](r)
+        with time_limit(2, f"iteration {i}"):
+            once = redact.text(doc, redact.Report())
+            twice = redact.text(once, redact.Report())
+            raw = f"POST /x HTTP/1.1\r\nContent-Type: {ctype}\r\nContent-Length: {len(doc)}\r\n\r\n{doc}".encode()
+            msg = redact.http_message(raw, redact.Report())
+            again = redact.http_message(msg, redact.Report())
+        assert v not in once and v.encode() not in msg, f"{fmt} iteration {i}: {v!r} survived in {show(once)}"
+        assert twice == once and again == msg, f"{fmt} iteration {i}: not idempotent: {show(once)}"
+        if fmt == "json":
+            before, after = json.loads(doc), json.loads(once)
+            assert list(after) == list(before) and after["after"] == "tess", f"iteration {i}: {show(once)}"
+        if fmt == "xmlrpc":
+            assert "methodName" in once and ("<int>" in once) == ("<int>" in doc), f"iteration {i}: {show(once)}"
+
+
+def _plain_rpc(r):
+    doc, _ = _rpc_doc(r, r.choice(RPC_PLAIN))
+    return doc.replace("system.multicall", "demo.batch")
+
+
+def _plain_saml(r):
+    v = _secret(r, "<&>\"'")
+    return f"<test:Results><test:Assertion ID=\"a1\"><test:NameID>{v}</test:NameID></test:Assertion></test:Results>"
+
+
+def _plain_html(r):
+    doc, _ = _html_doc(r)
+    for n in sorted(NAMES + ["csrf_token", "authenticity_token", "csrf-token"], key=len, reverse=True):
+        doc = doc.replace(n, "nickname")
+    return doc
+
+
+def _plain_json(r):
+    doc, _ = _json_doc(r)
+    for n in sorted(JSON_SECRET, key=len, reverse=True):
+        doc = doc.replace(f'"{n}"', '"profile"')
+    return doc
+
+
+@pytest.mark.parametrize("fmt, make", [("xmlrpc", _plain_rpc), ("saml", _plain_saml), ("html", _plain_html),
+                                       ("json", _plain_json)])
+def test_fuzz_redaction_of_the_new_forms_without_secrets_keeps_them(fmt, make):
+    """The same documents without a secret name, method or SAML namespace come out as they went in."""
+    r = rng(f"redact3-plain-{fmt}")
+    for i in range(iterations(200)):
+        doc = make(r)
+        words = [w for w in "".join(c if c.isalnum() else " " for c in doc).split() if w != "Assertion"]
+        if any(redact.secret_name(t) for t in words) or any(redact.rpc_secret_method(t) for t in doc.split(">")):
+            continue            # a random value spelled a secret name
+        assert redact.text(doc, redact.Report()) == doc, f"{fmt} iteration {i}: {show(doc)}"
+
+
+PUMP3 = ["<methodName>wp.a</methodName>", "<methodName>wp.a</methodName><param><value>", "<param><value>",
+         "<value><string>", "</value><value>", "</value><value>x", "<data><value><string>a</string></value>",
+         "<name>methodName</name><value>auth.x</value>", "<saml:Assertion>", "<saml:Assertion>x",
+         "</saml:Assertion", "<Assertion xmlns='urn:oasis:names:tc:SAML:2.0:assertion'>", "<saml:Artifact>",
+         '"token": {', '"token": [', '"password": [[', '"credentials":{"a":"', '{"token": {"a": "\\', '"\\',
+         '"token": {"', "<input name=password value=", "<a value=", "name=token content=", "<i b=c d=e ",
+         "PHNhbWw", "P" + "A" * 120, "PD94bWw%2B", "P" + "A" * 99 + "\r\n"]
+
+
+@pytest.mark.parametrize("where", ["text", "form body"])
+def test_fuzz_redaction_of_the_new_forms_is_linear(where):
+    """The new rules on pumped input: four times the input takes at most eight times as long
+    (the fastest of three runs when one measurement looks slow, as in the first pass)."""
+    f = {"text": lambda s: redact.text(s, redact.Report()),
+         "form body": lambda s: redact.http_message(
+             b"POST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" + s.encode(),
+             redact.Report())}[where]
+    r = rng(f"redact3-pump-{where}")
+    units = PUMP3 + [u + "y" for u in PUMP3] + ["".join(r.choice(PUMP3) for _ in range(r.randint(2, 3)))
+                                                for _ in range(iterations(25))]
+
+    def measure(unit, runs):
+        times = []
+        for size in (SIZE // 4, SIZE):
+            s = unit * max(1, size // len(unit))
+            with time_limit(10 * BUDGET, f"{where} on {unit!r}"):
+                times.append(min(elapsed(f, s)[1] for _ in range(runs)))
+        return times
+    for unit in units:
+        times = measure(unit, 1)
+        if times[1] > 8 * times[0] + 0.05 or times[1] > BUDGET:
+            times = measure(unit, 3)
+        assert times[1] <= 8 * times[0] + 0.05 and times[1] <= BUDGET, \
+            f"{where} is not linear on {unit!r}: {times[0]:.3f} s, then {times[1]:.3f} s"

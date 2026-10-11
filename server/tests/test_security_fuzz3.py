@@ -14,7 +14,7 @@ import time
 
 import pytest
 
-from app import gateway
+from app import gateway, redact
 from fuzzing import time_limit
 from test_gateway import Stack as GatewayStack, parse
 from tlsfuzz import client_hello, connect, drain
@@ -285,3 +285,109 @@ def test_quiet_unraisable_passes_anything_else_on():
     hook(U(UnicodeDecodeError("ascii", b"\xff", 0, 1, "x"), b"\xff"))
     hook(U(ValueError("other"), None))
     assert [type(u.exc_value) for u in seen] == [ValueError]
+
+
+# ---- FZ-41: SAML assertions inside other XML, and in base64 under any name ------------------------
+
+SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion"
+
+
+@pytest.mark.parametrize("doc, secret", [
+    # WS-Security in a SOAP header: the assertion's subject and attributes were kept (its signature
+    # value was replaced, but an encrypted assertion's was not: the service provider accepts it as it is).
+    ('<soap:Envelope><soap:Header><wsse:Security><saml:Assertion ID="a1"><saml:Subject><saml:NameID>'
+     'lab-subject-1</saml:NameID></saml:Subject></saml:Assertion></wsse:Security></soap:Header></soap:Envelope>',
+     "lab-subject-1"),
+    ('<samlp:ArtifactResponse><samlp:Response><saml2:EncryptedAssertion><xenc:CipherValue>lab-cipher-2'
+     '</xenc:CipherValue></saml2:EncryptedAssertion></samlp:Response></samlp:ArtifactResponse>', "lab-cipher-2"),
+    (f'<ns2:Assertion xmlns:ns2="{SAML_NS}"><ns2:AttributeValue>lab-attr-3</ns2:AttributeValue></ns2:Assertion>',
+     "lab-attr-3"),
+    ('<samlp:ArtifactResolve><samlp:Artifact>AAQAAlab-artifact-4</samlp:Artifact></samlp:ArtifactResolve>',
+     "AAQAAlab-artifact-4"),
+])
+def test_fz41_a_saml_assertion_in_other_xml_is_replaced_whole(doc, secret):
+    out = redact.text(doc, redact.Report())
+    assert secret not in out and "[redacted:sha256:" in out and redact.text(out, redact.Report()) == out
+
+
+def test_fz41_a_base64_saml_response_under_any_name_and_the_bearer_grants():
+    import base64
+    from urllib.parse import quote
+    response = (f'<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"><saml:Assertion '
+                f'xmlns:saml="{SAML_NS}"><saml:NameID>lab-b64-5</saml:NameID></saml:Assertion></samlp:Response>')
+    b64 = base64.b64encode(response.encode()).decode()
+    for doc in (f"data={quote(b64, safe='')}&x=1", '{"payload": "%s"}' % b64, "\r\n".join(b64[i:i + 76] for i in
+                                                                                    range(0, len(b64), 76)),
+                f"grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Asaml2-bearer&assertion={quote(b64)}",
+                "wresult=%3Ct%3ARequestSecurityTokenResponse%3E%3Csaml%3AAssertion%3Elab-wres-6"):
+        out = redact.text(doc, redact.Report())
+        assert b64[:60] not in out and quote(b64[:60], safe="") not in out and "lab-wres-6" not in out, out[:200]
+    # Not SAML: base64 of other XML, a WebAuthn assertion in JSON, an <Assertion> of a test report.
+    other = base64.b64encode(b"<svg xmlns='http://www.w3.org/2000/svg'>" + b"<g/>" * 40 + b"</svg>").decode()
+    for doc in ('{"img": "%s"}' % other, '{"assertion": {"authenticatorData": "SZYN", "clientDataJSON": "eyJ0"}}',
+                "<junit:Assertion>expected 1</junit:Assertion>"):
+        assert redact.text(doc, redact.Report()) == doc
+
+
+# ---- FZ-42: XML-RPC parameters known only by their position ------------------------------------
+
+@pytest.mark.parametrize("method", ["wp.getUsersBlogs", "metaWeblog.newPost", "blogger.getUsersBlogs",
+                                    "system.login", "auth.authenticate", "user.getToken"])
+def test_fz42_positional_xmlrpc_credentials_are_replaced(method):
+    """wp.getUsersBlogs(username, password) and the like: the password is the second <param>, with
+    no name, and was stored as it was (the brute-force target of WordPress's xmlrpc.php)."""
+    doc = (f"<?xml version='1.0'?><methodCall><methodName>{method}</methodName><params>"
+           "<param><value><i4>1</i4></value></param><param><value><string>tess</string></value></param>"
+           "<param><value>lab-rpc-7</value></param><param><value><struct><member><name>title</name>"
+           "<value><string>Hello</string></value></member></struct></value></param></params></methodCall>")
+    out = redact.text(doc, redact.Report())
+    assert "lab-rpc-7" not in out and "tess" not in out and "<i4>1</i4>" in out and "Hello" in out
+    assert method in out and redact.text(out, redact.Report()) == out
+
+
+def test_fz42_system_multicall_amplification_is_replaced_call_by_call():
+    calls = "".join(
+        f"<value><struct><member><name>methodName</name><value><string>{m}</string></value></member>"
+        f"<member><name>params</name><value><array><data><value><string>admin</string></value>"
+        f"<value><string>{p}</string></value></data></array></value></member></struct></value>"
+        for m, p in (("wp.getUsersBlogs", "lab-mc-8"), ("demo.sayHello", "keep-me"), ("wp.getUsersBlogs", "lab-mc-9")))
+    doc = ("<methodCall><methodName>system.multicall</methodName><params><param><value><array><data>"
+           f"{calls}</data></array></value></param></params></methodCall>")
+    out = redact.text(doc, redact.Report())
+    assert "lab-mc-8" not in out and "lab-mc-9" not in out and "keep-me" in out
+    assert out.count("wp.getUsersBlogs") == 2
+
+
+# ---- FZ-43: unquoted HTML attribute values -----------------------------------------------------
+
+@pytest.mark.parametrize("doc, secret", [
+    ("<input type=hidden name=csrf_token value=lab-csrf-10>", "lab-csrf-10"),
+    ("<INPUT VALUE=lab-pw-11 NAME=password/>", "lab-pw-11"),
+    ("<meta name=csrf-token content=lab-meta-12>", "lab-meta-12"),
+    ("<div data-session=lab-data-13 class=x>", "lab-data-13"),
+    ("<div data-pwd='lab-data-14'>", "lab-data-14"),
+])
+def test_fz43_unquoted_html_attribute_values_are_replaced(doc, secret):
+    out = redact.text(doc, redact.Report())
+    assert secret not in out and redact.text(out, redact.Report()) == out
+    assert out.endswith("/>") == doc.endswith("/>")
+
+
+# ---- FZ-44: JSON objects and arrays under a secret key ----------------------------------------
+
+def test_fz44_objects_and_nested_arrays_under_a_secret_key_are_replaced_keys_kept():
+    import json
+    doc = ('{"credentials": {"user": "tess", "pin": 4321, "otp": ["lab-otp-15"]}, "password": [["lab-pw-16"]], '
+           '"token": {"value": "lab-tok-17", "scopes": ["a", {"x": "lab-tok-18"}]}, "user": "tess", "n": 1}')
+    out = redact.text(doc, redact.Report())
+    for s in ("lab-otp-15", "lab-pw-16", "lab-tok-17", "lab-tok-18", "4321"):
+        assert s not in out
+    data = json.loads(out)
+    assert list(data) == ["credentials", "password", "token", "user", "n"] and data["user"] == "tess"
+    assert list(data["credentials"]) == ["user", "pin", "otp"] and data["n"] == 1
+    assert redact.text(out, redact.Report()) == out
+
+
+def test_fz44_a_secret_object_cut_off_is_replaced_to_where_the_search_stopped():
+    out = redact.text('{"session": {"id": "lab-cut-19", "more": [1, 2', redact.Report())
+    assert "lab-cut-19" not in out and out.startswith('{"session": {"id": "[redacted:sha256:')

@@ -463,7 +463,8 @@ def test_the_vendored_rules_match_the_servers():
     assert tool.Vendored._SETCOOKIE_SPLIT.pattern == redact._SETCOOKIE_SPLIT.pattern
     assert tool.Vendored._SCHEME.pattern == redact._SCHEME.pattern
     names = ["api_key", "apiKey", "X-Api-Key", "token", "csrftoken", "code", "sid", "Session", "user", "q",
-             "password", "pass", "passport", "id", "x-amz-signature", "private_key", "", "-"]
+             "password", "pass", "passport", "id", "x-amz-signature", "private_key", "", "-", "assertion", "wresult",
+             "credentials", "X-Amz-Credential", "Access-Control-Allow-Credentials"]
     assert [tool.Vendored.secret_name(n) for n in names] == [redact.secret_name(n) for n in names]
     for name, value in HEADERS:
         a, b = redact.Report(), tool.Vendored.Report()
