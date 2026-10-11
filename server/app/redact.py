@@ -60,6 +60,7 @@ Everything here is linear in the size of the input: each rule is one regular exp
 pass whose repetitions are bounded or anchored (measured at about 5 MB per second).
 """
 import base64
+import functools
 import hashlib
 import json
 import re
@@ -411,6 +412,12 @@ def _xml_attrs(attrs: str, rep: Report) -> str:
     return "".join(out) + attrs[pos:] if out else attrs
 
 
+@functools.lru_cache(maxsize=64)
+def _saml_tags(qname: str) -> tuple[re.Pattern, re.Pattern]:
+    """An element's opening and closing tags, and not those of a longer name (AssertionIDRef)."""
+    return re.compile(re.escape("<" + qname) + r"[\s>/]"), re.compile(re.escape("</" + qname) + r"[\s>]")
+
+
 def _xml(s: str, rep: Report) -> str:
     """Secrets in XML and HTML (FZ-23): see the module's rules. One pass over the opening tags;
     each search for an element's end is bounded, and remembered when it fails, so the pass is
@@ -436,13 +443,23 @@ def _xml(s: str, rep: Report) -> str:
             continue
         low = local.lower()
         if low in SAML_ELEMENTS and (saml or "saml" in qname.lower()):
-            close, a = "</" + qname, m.end()
-            j = s.find(close, max(a, no_close.get(close, a)), a + SAML_MAX)
-            if j < 0:
-                no_close[close] = min(len(s), a + SAML_MAX)
+            opener, closer = _saml_tags(qname)
+            a, hi = m.end(), m.end() + SAML_MAX
+            c = closer.search(s, max(a, no_close.get(qname, a)), hi)      # not </saml:AssertionIDRef
+            if c is None:
+                no_close[qname] = min(len(s), hi)
                 continue
-            if s[j + len(close):j + len(close) + 1] not in (">", " ", "\t", "\r", "\n") or a < pos:
+            j = c.start()
+            if a < pos:
                 continue
+            # An assertion inside this one's <Advice>: the end is the close that balances them.
+            depth = len(opener.findall(s, a, j))
+            while depth:
+                c = closer.search(s, j + 1, hi)
+                if c is None:
+                    break
+                depth += len(opener.findall(s, j + 1, c.start())) - 1
+                j = c.start()
             if s[a:j].strip():
                 out += [s[pos:a], _mask(s[a:j], local, rep)]
                 pos = j

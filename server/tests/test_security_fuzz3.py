@@ -304,6 +304,10 @@ SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion"
      "lab-attr-3"),
     ('<samlp:ArtifactResolve><samlp:Artifact>AAQAAlab-artifact-4</samlp:Artifact></samlp:ArtifactResolve>',
      "AAQAAlab-artifact-4"),
+    # An assertion in another's <Advice> (and an <AssertionIDRef>, which is not one): the outer one goes whole.
+    ('<saml:Assertion ID="o"><saml:Advice><saml:AssertionIDRef>r</saml:AssertionIDRef><saml:Assertion ID="i">x'
+     '</saml:Assertion></saml:Advice><saml:AttributeValue>lab-outer-5</saml:AttributeValue></saml:Assertion>',
+     "lab-outer-5"),
 ])
 def test_fz41_a_saml_assertion_in_other_xml_is_replaced_whole(doc, secret):
     out = redact.text(doc, redact.Report())

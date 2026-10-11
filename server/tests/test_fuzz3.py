@@ -244,7 +244,9 @@ def _saml_assertion(r, v: str) -> tuple[str, str]:
                 f"</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData></{p}EncryptedAssertion>"), p
     leaf = r.choice([f"<{p}NameID>{v}</{p}NameID>", f"<{p}AttributeValue>{v}</{p}AttributeValue>",
                      f"<ds:X509Certificate>{v}</ds:X509Certificate>"])
-    return (f"<{p}Assertion ID=\"_a{r.randrange(10**6)}\" Version=\"2.0\"{ns}><{p}Issuer>idp</{p}Issuer>"
+    advice = r.choice(["", "", f"<{p}Advice><{p}AssertionIDRef>r</{p}AssertionIDRef><{p}Assertion ID=\"i\">in"
+                                f"</{p}Assertion></{p}Advice>"])        # an assertion inside this one
+    return (f"<{p}Assertion ID=\"_a{r.randrange(10**6)}\" Version=\"2.0\"{ns}><{p}Issuer>idp</{p}Issuer>{advice}"
             f"<{p}Subject>{leaf}</{p}Subject><ds:SignatureValue>sig</ds:SignatureValue></{p}Assertion>"), p
 
 
@@ -385,6 +387,7 @@ PUMP3 = ["<methodName>wp.a</methodName>", "<methodName>wp.a</methodName><param><
          "<value><string>", "</value><value>", "</value><value>x", "<data><value><string>a</string></value>",
          "<name>methodName</name><value>auth.x</value>", "<saml:Assertion>", "<saml:Assertion>x",
          "</saml:Assertion", "<Assertion xmlns='urn:oasis:names:tc:SAML:2.0:assertion'>", "<saml:Artifact>",
+         "<saml:Assertion><saml:Advice><saml:Assertion></saml:Assertion>", "<saml:AssertionIDRef>",
          '"token": {', '"token": [', '"password": [[', '"credentials":{"a":"', '{"token": {"a": "\\', '"\\',
          '"token": {"', "<input name=password value=", "<a value=", "name=token content=", "<i b=c d=e ",
          "PHNhbWw", "P" + "A" * 120, "PD94bWw%2B", "P" + "A" * 99 + "\r\n"]

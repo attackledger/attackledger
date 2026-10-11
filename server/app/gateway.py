@@ -22,8 +22,9 @@ How a tool reaches it:
 
   http://host/...    absolute-form request to the proxy, with Proxy-Authorization
   https://host/...   CONNECT host:port, then TLS with a certificate from the gateway's own CA
-                     (trusted only inside the worker). A tunnel that does not start TLS is
-                     closed: no byte is ever relayed without being parsed.
+                     (trusted only inside the worker), for the CONNECT host. A tunnel that
+                     does not start TLS is closed and logged: no byte is ever relayed without
+                     being parsed, and every connection that sent anything has a log row.
   port probe         CONNECT host:port with "X-AttackLedger-Probe: connect": the gateway opens
                      a TCP connection, answers 200 (open) or 502 (closed) and closes it.
   DNS                UDP port 53: A, AAAA and CNAME questions for names in scope of an
