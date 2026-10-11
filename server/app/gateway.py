@@ -371,8 +371,8 @@ class CA:
 def _keep_server_name(ssl_object, server_name, _ctx):
     """The TLS server name (SNI) a client asked for, kept on its connection so the tunnel can
     compare it with the CONNECT host once the handshake is done (server_name_of). The leaf is the
-    CONNECT host's whatever is asked; OpenSSL has already refused an empty, overlong or
-    NUL-holding name, and Python one that is not ASCII, before this is called. Never raises:
+    CONNECT host's whatever is asked; OpenSSL has already refused an overlong or NUL-holding
+    name, and Python one that is not ASCII, before this is called (an empty one gets here). Never raises:
     an exception here would be printed and fail the handshake with an internal error."""
     try:
         ssl_object.attackledger_server_name = server_name

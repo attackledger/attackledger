@@ -314,6 +314,30 @@ XML, multipart, form and GraphQL bodies, and the inbox mapping and report builde
   log task survives an odd answer instead of stopping for good, and the inbox status filter
   refuses `²` and 5,000 digits with a 422 instead of a 500.
 
+A third fuzzing pass (`FUZZING.md`, "Third pass"; `test_fuzz3.py`) took the second pass's list:
+the gateway's TLS layer, connections that carry no request, the redaction gaps it named, and the
+report with signed receipts, voids, content deletion and the seal. 9 findings (FZ-36 to FZ-44),
+each with a test.
+- **Positional XML-RPC passwords and SAML assertions reached evidence** (FZ-42, FZ-41, Medium):
+  `wp.getUsersBlogs(username, password)` and every WordPress, Blogger, MetaWeblog and Movable Type
+  call, alone or in `system.multicall`, and login-named methods, now have their string parameters
+  replaced; a SAML assertion, encrypted assertion or artifact inside SOAP or WS-Security is
+  replaced whole, and so is a base64 SAML message under any name (`assertion=`, `wresult`, a JSON
+  field). `assertion`, `wresult` and `credentials` are secret names, in the Caido tool's copy too.
+- **More redaction gaps** (FZ-43, FZ-44): unquoted HTML attribute values (`<input name=csrf_token
+  value=...>`), `data-*` attributes, and every value inside a JSON object or array under a secret
+  key (`"credentials": {...}`), keys kept.
+- **Every connection the gateway accepted has a row in the request log** (FZ-36, FZ-38): a tunnel
+  that carried no request (a failed TLS handshake, a client that does not trust the gateway CA, a
+  TLS scanner, a client gone or idle) has one row of its own, a request head that never ends is
+  answered 408 and logged, and a CONNECT with a body or with bytes before the 200 is refused and
+  logged. Idle connections, such as the healthcheck's, leave none.
+- **Nothing is read in a tunnel that did not come through TLS** (FZ-37): bytes sent before the
+  tunnel opened were read as its first request. The TLS server name must be the CONNECT host
+  (FZ-39), and refusals inside a tunnel name its job (FZ-40). The report built, verified in strict
+  mode exactly when every receipt was signed, and was the same bytes in two other processes, from
+  every random history.
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the

@@ -66,7 +66,8 @@ covers it. It is simpler because there is nothing to switch off:
 - it speaks HTTP/1.1 only and offers only `http/1.1` in ALPN;
 - it never relays raw bytes. Every request is parsed and written out again by h11, so a
   malformed or smuggled request cannot reach a target; a tunnel that does not start a TLS
-  handshake with the gateway's certificate is closed;
+  handshake with the gateway's certificate, for the CONNECT host, is closed and logged
+  (decision 11);
 - one upstream connection per request (`Connection: close`), opened only after the request
   has passed every check, to an address resolved and checked by the gateway itself.
 
@@ -231,7 +232,8 @@ connection, never a 502 it could record as the target's answer (measured: httpx 
 gateway 502 as a live HTTPS service before this). AttackLedger's own clients (the agent's
 tool, the worker's fetcher) send `X-AttackLedger-Errors: respond` and get a 502 with the
 reason instead; the header is never forwarded. Each request is logged as `allowed`,
-`refused` (a rule) or `failed` (the target could not be reached).
+`refused` (a rule) or `failed` (the target could not be reached), and so is every connection
+that carried no whole request, once (decision 11).
 
 Tools get the gateway as an address (`http://job-…@172.x.x.x:8080`), not as the name
 `gateway`: httpx and katana resolve the proxy's name with the resolver they are given, which
@@ -361,6 +363,38 @@ without leaving the log silent:
 
 The byte counts and the duration are 64-bit since migration `0025` (they were 32-bit INTEGER on
 Postgres, where a response past 2 GiB did not fit; the API had kept such counts as 2^31 - 1).
+
+### 11. Connections that carry no request, and the TLS layer (2026-10-11)
+
+Every connection that sent the gateway anything has a row in the request log; one row, never
+more (`FUZZING.md`, third pass, FZ-36 to FZ-40). Before, a connection that ended before a whole
+request was read left none.
+
+- **A request head that never ends** (part of one, then nothing for 90 seconds in all or 60
+  between two reads) is answered `408` and logged like a head h11 refuses (`400`): verdict
+  `refused`, no URL. A connection that sent nothing (the healthcheck's connect, every 3 seconds)
+  and a keep-alive connection idle after its last request have nothing to log and are closed.
+- **CONNECT** has no content (RFC 9110): one with a body is refused (`400`), and so is one
+  followed by bytes before the `200` came back. A client that sends its ClientHello without
+  waiting is refused the same way, whether the bytes arrived with the head or just after the
+  `200`: bytes the stream had read before the TLS handshake started were read inside the tunnel
+  as if they had come through TLS (FZ-37), and now nothing is read that did not.
+- **A tunnel that carried no request** has one row of its own, method `CONNECT`, the job and the
+  host, no status: `refused` when the TLS handshake failed (plain HTTP, garbage, a client that
+  does not trust the gateway CA, which the reason says, or no handshake within 10 seconds) or the
+  server name did not match; `failed` when the client closed the tunnel or left it idle after the
+  handshake (a TLS scanner). A tunnel that carried requests has their rows only.
+- **The TLS server name (SNI)** must be the CONNECT host when the client sends one (case and a
+  final dot aside): another name is refused after the handshake, before anything is read. The
+  certificate is always the CONNECT host's, and every request must name that host in `Host`, so
+  another name could never reach another host; now the log says so. A client that sends no name
+  (an IP address, or a tool that does not) is accepted; an empty one is not the CONNECT host's.
+  OpenSSL refuses an overlong or NUL-holding name, and Python one that is not ASCII
+  (`gateway.quiet_unraisable` turns Python's traceback for that into one line on stderr).
+- **ALPN**: only `http/1.1` is offered. A client offering only `h2` gets no protocol (OpenSSL
+  does not acknowledge one), and its HTTP/2 preface is refused with a reason that says so
+  (`400`, logged with the tunnel's job). Every refusal inside a tunnel names the tunnel's job and
+  engagement; one before the credential was looked up named none (FZ-40).
 
 ## Threat model
 

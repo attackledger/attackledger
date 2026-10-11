@@ -216,3 +216,105 @@ Server suite (SQLite): 1,050 passed and 1 skipped before; 1,154 passed and 1 ski
 migration-0022 upgrade check passes. One run of the whole suite on a loaded machine failed the
 first pass's linearity check for `pagetext.view` (code this pass did not change; 8 times plus
 50 ms is a tight margin under load); it passed alone and in the next full runs.
+
+# Third pass
+
+Date: 2026-10-11. Branch `sec6-fuzz3`, from `5f89ee7`. The same agent setup and harness
+(`server/tests/fuzzing.py`), aimed at what the second pass listed as still not covered: the
+gateway's TLS layer, request heads that never end and tunnels that never carry a request,
+XML-RPC parameters known only by their position, SAML assertions inside other XML, unquoted
+HTML attribute values, JSON objects and arrays under a secret key, and a report fuzz with
+signed receipts, voids, content deletion and the seal, checked across processes. Everything ran
+in-process or in a throwaway API container; the gateway tests use the in-process gateway of
+`test_gateway.py` on 127.0.0.1 and Python's `ssl` with the gateway's own CA, in front of local
+stub upstreams. No traffic left the machine.
+
+```sh
+python -m pytest -q tests/test_fuzz3.py tests/test_security_fuzz3.py      # about 40 s
+ATTACKLEDGER_FUZZ_ITERATIONS=400 ATTACKLEDGER_FUZZ_SEED=7 python -m pytest -q tests/test_fuzz3.py -k tls
+```
+
+ClientHellos come from `server/tests/tlsfuzz.py`: a real ClientHello from Python's `ssl`
+(MemoryBIO, nothing sent), with its server name and ALPN extensions replaced by any bytes.
+
+## Targets and properties (`server/tests/test_fuzz3.py`)
+
+| Target | Property | Inputs per default run |
+|---|---|---|
+| Gateway TLS, raw ClientHellos | After CONNECT, a ClientHello with any server name (the CONNECT host in other cases, an IP literal, `[::1]`, empty, 64-character labels, 255, 256 and 4,000 bytes, not ASCII, Latin-1, a NUL, CRLF and a header, `*.`, another host, none) and any ALPN list (`h2` only, empty, three 255-byte names, `h3`, `http/1.0`), TLS 1.3 and 1.2, byte-mutated or not, followed by an alert, the hello again or a token, then closed or left idle: no crash, exactly one row for the connection (the tunnel's own, `refused` or `failed`, naming the job and host), nothing sent upstream, never an answer in HTTP, within 15 s | 60 |
+| Gateway TLS, whole handshakes | Python's `ssl`, verifying with the gateway CA or not, with server names of every kind (none, case, final dot, another host, an excluded host, an IP, a 63-character label) and ALPN lists, then nothing, a request (inside the tunnel's rules or not: HTTP/2 preface, absolute form, another `Host`, a write) or a mutated one, closed with or without `close_notify`: one row when the tunnel carried no request, never a tunnel row besides a request's; nothing upstream without an `allowed` row; nothing at all for another server name; only `http/1.1` or no protocol negotiated | 40 |
+| Request heads cut anywhere | Any non-empty part of a plain, CONNECT or in-tunnel head (mutated or not), then closed or left idle until the head timeout: exactly one row (400 or 408), the tool answered, nothing upstream | 40 |
+| The second pass's request fuzz, strengthened | Every input that sent anything now leaves a row, tunnels included (it allowed none for a tunnel that carried no request) | 120 |
+| Redaction of the new forms | A value placed in a positional XML-RPC parameter (WordPress, Blogger, MetaWeblog and Movable Type calls, login-named methods; `<string>`, bare and `<base64>` values; alone or in `system.multicall` among other calls), a SAML assertion or encrypted assertion inside SOAP, WS-Security, an artifact response or WS-Trust (prefixes `saml:`, `saml2:`, `ns2:`, none, with the namespace on the element or not), a SAML response in base64 under a name that is not secret (form, JSON, raw, wrapped at 76), an HTML attribute quoted or not in any order and case, `data-*` attributes, a JSON object or array 1 to 4 levels deep under a secret key (escaped keys too): it never survives `text` or `http_message`, a second pass changes nothing, JSON stays JSON with the same keys; the same documents without a secret name, method or SAML namespace come back unchanged; 29 pumped tokens (alone, followed by `y`, and 25 random combinations) are linear | 400 and 200 per format |
+| The report | Random histories (the second pass's operations, plus closes signed with Ed25519 and ECDSA P-256 keys by a reviewer, an owner and a tester who is refused, unsigned closes, voids by a reopened item or new evidence, keys revoked after signing, the signer renamed (random text), given another email, disabled and enabled again, roles changed, the content deleted): no request answers 5xx; the JSON and HTML reports build, are the JSON rendered, and verify with `tools/verify_report.py`; in strict mode (`--require-history`) they verify exactly when every receipt in force is signed, and otherwise fail for that reason; then two other Python processes with other hash seeds (`PYTHONHASHSEED` 1 and 4242), reading the same database with the clock fixed, write the same bytes for every engagement | 5 histories |
+
+Runs made, besides the default suite: seeds 1 to 3 at 400 inputs per TLS and head test, seeds 1
+to 3 and 9 to 11 at 3,000 redaction placements per format, seeds 1 to 6 at 30 report histories,
+and 600 inputs of the strengthened request fuzz, after the fixes, with no failure. While the
+SAML rule was being written, the placement fuzzer found that an `<AssertionIDRef>` inside an
+assertion (its close tag starts like the assertion's) made the rule skip the assertion, and that
+an assertion in another's `<Advice>` ended the outer one's replacement early; both are in the
+regression tests.
+
+## Findings
+
+Severity in AttackLedger's threat model, as in the first two passes. Each has a regression test
+in `server/tests/test_security_fuzz3.py` (FZ-*) that failed before its fix; "found by" says
+whether a fuzzer of `test_fuzz3.py` found it, a probe written while building one did, or it was
+on the second pass's list.
+
+| ID | Severity | Where | What | Found by | Fix |
+|---|---|---|---|---|---|
+| FZ-36 | Low | `gateway._connect` | A CONNECT with a body (`Content-Length`, chunked, cut off) was closed with no answer and no row; one followed by bytes before the `200` was answered `200` and then closed, with no row | probe while writing the TLS fuzzer | Both are a `400` and a `CONNECT` row (`refused`); a body that never arrives is a `408` |
+| FZ-37 | Low | `gateway._connect` (`StreamWriter.start_tls`) | Bytes the client sent after CONNECT, before the `200` came back, stayed in the stream's buffer, and the tunnel read them as its first request, as if they had come through TLS: a plain `GET` was sent to the target and its answer went back inside TLS. Every check still applied (scope, `Host`, the credential), so nothing out of scope was reachable, but "every tunnel is TLS" did not hold | probe (an API answer that takes 300 ms, as in a deployment) | The buffer is checked with no await between the check and the handshake's start, which stops reading; such a tunnel is refused and logged |
+| FZ-38 | Low | `gateway._serve`, `_connect` | No row for a connection that ended before a whole request: a tunnel whose TLS handshake failed (plain HTTP, garbage, a client that does not trust the CA, no handshake), a tunnel closed or idle after its handshake (a TLS scanner), and a request head that stopped arriving (plain or in a tunnel). A tool that only made handshakes, or failed every one, did not appear in the request log | on the second pass's list | One row per connection: the tunnel's own (`CONNECT`, the job and host, why), or a `408` for a head cut off; nothing for a connection that sent nothing (the healthcheck's) or a keep-alive one idle after its request |
+| FZ-39 | Info | `gateway.CA.server_context`, `_connect` | The TLS server name (SNI) was not read: a client that does not check the certificate could make its handshake for another name than it had CONNECTed to. The certificate was the CONNECT host's and every request had to name that host in `Host`, so nothing reached another host | probe while writing the TLS fuzzer | The name is kept by an SNI callback and must be the CONNECT host's when sent; otherwise the tunnel is refused, with the name in the row. Non-ASCII names, which Python refuses before the callback with a traceback on stderr, are one line (`gateway.quiet_unraisable`, installed in `main`) |
+| FZ-40 | Info | `gateway._request` | Inside a tunnel, a refusal made before the credential was looked up (a target that is not a path, a `Host` of another host, an HTTP/2 preface from a client offering only `h2`) logged a row with no job and no engagement, so the engagement's log did not show it | probe while writing the TLS fuzzer (ALPN `h2`) | The tunnel's job and engagement are in every row it leaves; `PRI * HTTP/2.0` is told that the gateway speaks HTTP/1.1 only |
+| FZ-41 | Medium | `redact` (`_xml`, `SECRET_NAMES`, `_formats`) | A SAML assertion inside other XML (WS-Security, an artifact response, ECP) kept its subject and attributes, and an encrypted assertion was kept whole: a service provider decrypts and accepts it as it is, so it logged its subject in until it expired. A SAML response in base64 under another name than `SAMLResponse` (OAuth's SAML bearer grant `assertion=`, WS-Federation's `wresult`, a JSON field) was stored as it was | on the second pass's list; placements | `<Assertion>`, `<EncryptedAssertion>` and `<Artifact>` are replaced whole when the XML is SAML's (a `saml` prefix or SAML's namespace in the document), an assertion in another's `<Advice>` included; a base64 run starting like XML is decoded (its first 6,000 characters) and replaced when it names SAML's namespace; `assertion`, `wresult` and `credentials` are secret names (a JSON `assertion` is WebAuthn's and is not) |
+| FZ-42 | Medium | `redact` (`_xmlrpc`) | XML-RPC parameters known only by their position were stored: `wp.getUsersBlogs(username, password)`, the WordPress brute-force target, and every WordPress, Blogger, MetaWeblog and Movable Type call, which all take a password that way, in `system.multicall` too | on the second pass's list; placements | In a call of those APIs, or of a method named for a login (`login`, `auth`, `token`, `session`, `password`, ...), every string parameter is replaced: a parameter's own value and each value directly in an array (multicall's params); numbers, booleans and struct members with names that are not secret stay |
+| FZ-43 | Low | `redact._xml_attrs` | HTML attribute values without quotes were not read: `<input type=hidden name=csrf_token value=...>`, `<meta name=csrf-token content=...>`, `<INPUT VALUE=... NAME=password>`; nor `data-*` attributes named by what follows (`data-pwd`) | on the second pass's list; placements (`data-*`) | Unquoted values as HTML ends them (a `/` that closes the tag is kept); `data-` is ignored for the name |
+| FZ-44 | Low | `redact._json` | A JSON object or a nested array under a secret key was kept: `"credentials": {...}` (only its own secret keys went), `"token": {"value": ...}`, `"session": {"id": ...}`, `"password": [["..."]]` | on the second pass's list; placements | Every string and number inside it is replaced, keys kept, the JSON still valid; its end is found by counting brackets outside strings (at most 1,000,000 characters on); one cut off is replaced to where the search stopped |
+
+## What held
+
+- OpenSSL refused every malformed ClientHello the fuzzer made, and every overlong or NUL-holding
+  server name, before the gateway's code ran; Python refused names that are not ASCII. An empty
+  name passes OpenSSL and is refused by the gateway, as not the CONNECT host's. The CA issued a leaf for every name the scope allows, including 1,931-character names
+  of 63-character labels and IP literals, in about a millisecond. No ALPN list made the gateway
+  negotiate anything but `http/1.1`.
+- Nothing reached an upstream from a tunnel whose server name was another host, whose handshake
+  failed, or whose request was refused; the `Host` check held on every request inside a tunnel.
+- The report built, verified and verified strictly from every random history with signed
+  receipts, voids, revoked keys, renamed, re-emailed and disabled signers, changed roles and
+  deleted content, and strict mode failed exactly the reports with an unsigned receipt in force.
+  Two processes with other hash seeds wrote the same bytes as the first for every engagement:
+  no set, dictionary or hash order leaks into a report, and the seal (Ed25519, deterministic) is
+  the same for the same body and time.
+- The new redaction rules are linear on every pumped input and idempotent, and the first and
+  second passes' placement, plain and pumped tests still pass on them. Measured on 2 MB bodies:
+  JSON with a secret object in each record at 2.2 MB/s (4.6 before), an XML-RPC call of 40,000
+  parameters at 3 MB/s, HTML at 3.7 MB/s.
+
+## Still not covered
+
+- Redaction: an XML element with a secret name that holds other elements (other than a SAML
+  assertion), JavaScript object literals (unquoted keys), XML-RPC calls of other APIs that take
+  a password by position, and a deflated SAML message under another name than `SAMLResponse`.
+  `redact.py` lists these.
+- The gateway still speaks HTTP/1.1 only; HTTP/2 and HTTP/3 are refused, not fuzzed. The upstream
+  side of TLS (what a target's handshake can do to the gateway's client) was not fuzzed.
+- The report fuzz drives the API with one organization and the WSTG pack, and no timestamp
+  authority; timestamps on receipts and seals are covered by `test_timestamps.py` and
+  `test_report_seal.py`, not by random histories.
+- The verifiers were not changed in this pass, so the equivalence run was not repeated (134
+  reports, 0 differences, from the first pass). The web app is the subject of the end-to-end tests.
+
+## Counts
+
+Server suite (SQLite): 1,159 passed and 1 skipped before; 1,222 passed and 1 skipped after
+(`test_fuzz3.py`, `test_security_fuzz3.py`, and more cases in `test_caido_pull.py`'s check of the
+vendored rules). Postgres (`tools/test_postgres.sh`): 1,222 passed and 1 skipped, and the
+migration-0022 upgrade check passes; the report fuzz's other processes read the same Postgres
+database there. The second pass's request fuzz holds the stronger property (a row for every
+connection that sent anything). The verifiers did not change: 134 reports, 0 differences, as
+before.
