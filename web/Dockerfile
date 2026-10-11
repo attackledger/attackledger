@@ -17,7 +17,7 @@ RUN npm run build
 
 # nginx:1.30.5-alpine (the stable branch; 1.27 has had no release since April 2025), pinned
 # 2026-10-10. docker-compose.yml runs it as its unprivileged nginx user (101).
-FROM nginx:1.30-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+FROM nginx:1.31-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
 # Alpine fixes published after that build, for the HIGH findings of tools/scan_images.sh
 # (2026-10-11; docs/SUPPLY_CHAIN.md, "OS packages"). Each is a floor, not an exact version: the
 # build fails if the mirror lacks at least that version, and does not break when a newer one
