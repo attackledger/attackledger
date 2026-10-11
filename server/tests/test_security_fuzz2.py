@@ -406,3 +406,32 @@ def test_fz30_the_gateway_reads_an_answer_of_any_shape(data):
     sends the log, which then stopped for good: rows queued up and the gateway refused all traffic."""
     assert gateway._unlogged(data, 3) == []
     assert isinstance(gateway._detail(data), str)
+
+
+def test_fz30_the_log_task_survives_an_error_and_sends_the_rows_later(tmp_path, monkeypatch):
+    from test_gateway import FakeApi
+    api = FakeApi()
+    gw = gateway.Gateway(api, None, deny_hosts=(), networks=[], quarantine=str(tmp_path / "q.jsonl"))
+    gw.record(rules=None, tool="httpx", kind="target", method="GET", url="http://app.example.com/", verdict="allowed")
+    calls = []
+    real = api.post_log
+
+    async def flaky(rows):
+        calls.append(len(rows))
+        if len(calls) == 1:
+            raise RuntimeError("a bug")
+        return await real(rows)
+    api.post_log = flaky
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda s: real_sleep(0))
+
+    async def run():
+        task = asyncio.ensure_future(gw.flush_forever())
+        for _ in range(500):
+            await asyncio.sleep(0)
+            if api.logged:
+                break
+        task.cancel()
+    with time_limit(10):
+        asyncio.run(run())
+    assert len(calls) >= 2 and len(api.logged) == 1 and not gw.log_rows

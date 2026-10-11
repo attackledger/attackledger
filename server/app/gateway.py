@@ -1148,7 +1148,12 @@ class Gateway:
 
     async def flush_forever(self) -> None:
         while True:
-            ok = await self.flush_log()
+            try:
+                ok = await self.flush_log()
+            except Exception as e:  # noqa: BLE001 - one bad answer must not stop the log for good (FZ-30)
+                print(f"gateway: sending the request log failed ({type(e).__name__}: {str(e)[:120]}); "
+                      f"{len(self.log_rows)} rows waiting", file=sys.stderr, flush=True)
+                ok = False
             await asyncio.sleep(0.5 if ok else 2.0)
 
     # ---- HTTP -----------------------------------------------------------------------
