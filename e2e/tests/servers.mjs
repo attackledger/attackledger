@@ -97,7 +97,7 @@ async function verifierPage(req, res) {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/verify.html") { res.statusCode = 404; res.end("not found"); return; }
   try {
-    const body = await readFile(process.env.E2E_SITE_VERIFY ?? "/site/verify.html");
+    const body = await readFile(process.env.E2E_SITE_VERIFY ?? "/repo/site/verify.html");
     res.setHeader("content-type", "text/html; charset=utf-8");
     res.setHeader("x-content-type-options", "nosniff");
     res.end(body);
