@@ -27,7 +27,10 @@ def _col(fieldnames, *cands):
 def _host_from(identifier: str) -> str:
     v = identifier.strip()
     if "://" in v:
-        v = urlsplit(v).hostname or ""
+        try:
+            v = urlsplit(v).hostname or ""
+        except ValueError:          # "https://[x/": one invalid row, not an invalid file (fuzzing, FZ-14)
+            v = ""
     v = v.split("/", 1)[0]
     if v.count(":") == 1 and not v.startswith("["):
         v = v.split(":", 1)[0]
@@ -35,7 +38,15 @@ def _host_from(identifier: str) -> str:
 
 
 def parse(text: str) -> dict:
-    reader = csv.DictReader(io.StringIO(text))
+    """Raises ValueError, with a message for the person, for a file that cannot be read."""
+    try:
+        return _parse(text)
+    except csv.Error as e:          # a lone CR in a field, a field over csv's size limit (FZ-14)
+        raise ValueError(f"the CSV cannot be read: {e}") from None
+
+
+def _parse(text: str) -> dict:
+    reader = csv.DictReader(io.StringIO(text, newline=""))
     id_col = _col(reader.fieldnames, "identifier", "asset_identifier", "asset", "domain", "host")
     if not id_col:
         raise ValueError("no identifier column; expected a HackerOne scope export")

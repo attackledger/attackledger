@@ -155,7 +155,7 @@ def import_file(session, eng: Engagement, data: bytes, *, fmt: str | None, filen
         rep = redact.Report(off=not on)
         url, label, req, resp = e.url, e.label, e.request, e.response
         if on:
-            url = redact.text(url, rep)
+            url = redact.url(url, rep)                 # the host stays as the scope check read it
             label = redact.text(label, rep) if label else label
             req = redact.http_message(req, rep, personal=True, what="binary request body")
             resp = redact.http_message(resp, rep, personal=True, what="binary response body")

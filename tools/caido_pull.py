@@ -499,9 +499,9 @@ class Vendored:
                     "subscriptionkey", "functionskey", "masterkey")
     MARKER_PREFIX = "[redacted:sha256:"
     MARKER_RE = re.compile(r"\[redacted:sha256:[0-9a-f]{12}\]")
-    _COOKIE_PAIR = re.compile(r"(^|;)(\s*[^=;\s][^=;]*=)([^;]*)")
     _SETCOOKIE_SPLIT = re.compile(r"(,\s*(?=[!#$%&'*+\-.^_`|~0-9A-Za-z]+=))")
-    _SCHEME = re.compile(r"^(\s*[A-Za-z][\w.\-]*\s+)(\S.*?)(\s*)$", re.S)
+    _SCHEME = re.compile(r"(\s*[A-Za-z][\w.\-]*\s+)(\S.*)", re.S)
+    _TOKEN = re.compile(r":?[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
     _KV = re.compile(r"""(?<![\w.\-\[\]%])([A-Za-z0-9_.\-\[\]%]{1,64})=(?!=)("[^"\r\n]{0,4000}"|'[^'\r\n]{0,4000}'|[^&\s#"'<>;,)]*)""")
     _HEAD_END = re.compile(rb"\r?\n\r?\n")
 
@@ -528,7 +528,11 @@ class Vendored:
 
     @classmethod
     def marker(cls, value: str) -> str:
-        return f"{cls.MARKER_PREFIX}{hashlib.sha256(value.encode('utf-8', 'surrogateescape')).hexdigest()[:12]}]"
+        try:
+            raw = value.encode("utf-8", "surrogateescape")
+        except UnicodeEncodeError:
+            raw = value.encode("utf-8", "surrogatepass")
+        return f"{cls.MARKER_PREFIX}{hashlib.sha256(raw).hexdigest()[:12]}]"
 
     @classmethod
     def _mask(cls, value: str, kind: str, rep) -> str:
@@ -539,20 +543,21 @@ class Vendored:
 
     @classmethod
     def _cookie_values(cls, value: str, kind: str, rep) -> str:
-        def sub(m):
-            v = m.group(3)
+        out = []
+        for piece in value.split(";"):
+            name, eq, v = piece.partition("=") if "=" in piece else ("", "", piece)
             core = v.strip()
-            if not core:
-                return m.group(0)
-            lead, trail = v[:len(v) - len(v.lstrip())], v[len(v.rstrip()):]
-            return f"{m.group(1)}{m.group(2)}{lead}{cls._mask(core, kind, rep)}{trail}"
-        return cls._COOKIE_PAIR.sub(sub, value)
+            if core and (eq or not cls.MARKER_RE.search(core)):
+                lead, trail = v[:len(v) - len(v.lstrip())], v[len(v.rstrip()):]
+                piece = f"{name}{eq}{lead}{cls._mask(core, kind, rep)}{trail}"
+            out.append(piece)
+        return ";".join(out)
 
     @classmethod
     def _set_cookie(cls, value: str, kind: str, rep) -> str:
         out = []
-        for piece in cls._SETCOOKIE_SPLIT.split(value):
-            if cls._SETCOOKIE_SPLIT.fullmatch(piece):
+        for i, piece in enumerate(cls._SETCOOKIE_SPLIT.split(value)):
+            if i % 2:
                 out.append(piece)
                 continue
             pair, sep, attrs = piece.partition(";")
@@ -571,9 +576,10 @@ class Vendored:
         if not cls.secret_name(name):
             return value
         if n in ("authorization", "proxyauthorization"):
-            m = cls._SCHEME.match(value)
+            core = value.rstrip()
+            m = cls._SCHEME.fullmatch(core)
             if m:
-                return m.group(1) + cls._mask(m.group(2), name, rep) + m.group(3)
+                return m.group(1) + cls._mask(m.group(2), name, rep) + value[len(core):]
         return cls._mask(value, name, rep)
 
     @classmethod
@@ -590,9 +596,9 @@ class Vendored:
     @classmethod
     def header_line(cls, line: str, rep) -> str:
         name, sep, value = (line[1:].partition(":") if line.startswith(":") else line.partition(":"))
-        if not sep:
-            return cls.params(line, rep)
         name = (":" + name) if line.startswith(":") else name
+        if not sep or not cls._TOKEN.fullmatch(name.strip()):
+            return cls.params(line, rep)
         lead = value[:len(value) - len(value.lstrip())]
         v = value.strip()
         new = cls.header_value(name.strip(), v, rep)

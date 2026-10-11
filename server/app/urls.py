@@ -32,8 +32,8 @@ def host_of(url: str) -> str | None:
         parts = urlsplit(url.strip())
     except ValueError:
         return None
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname or "\\" in parts.netloc:
+        return None         # a backslash ends the host for a browser, not for Python (fuzzing, FZ-3)
     return parts.hostname.lower()
 
 

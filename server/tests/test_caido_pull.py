@@ -448,7 +448,9 @@ HEADERS = [("Cookie", "sid=abc; theme=dark; x="), ("Set-Cookie", "a=1; Path=/, b
            ("X-Auth-Token", "lab-t"), ("X-CSRF-Token", "c"), ("X-Session-Id", "s"), ("Content-Type", "text/html"),
            ("Accept", "*/*"), ("Referer", "https://shop.example.com/?q=1&access_token=lab-r"),
            ("Cookie", redact.marker("already")), ("Authorization", "Bearer " + redact.marker("already")),
-           ("Db_Password", "p"), ("signature", "s"), ("Host", "shop.example.com")]
+           ("Db_Password", "p"), ("signature", "s"), ("Host", "shop.example.com"),
+           ("Cookie", "nameless-lab-cookie; a=1"), ("Set-Cookie", "nameless; Path=/"), ("password=lab-a", "b"),
+           ("Authorization", "Bearer lab-tok-2" + " " * 50)]
 
 
 def test_the_vendored_rules_match_the_servers():
@@ -457,7 +459,7 @@ def test_the_vendored_rules_match_the_servers():
     assert tool.Vendored.MARKER_PREFIX == redact.MARKER_PREFIX
     assert tool.Vendored.MARKER_RE.pattern == redact.MARKER_RE.pattern
     assert tool.Vendored._KV.pattern == redact._KV.pattern
-    assert tool.Vendored._COOKIE_PAIR.pattern == redact._COOKIE_PAIR.pattern
+    assert tool.Vendored._TOKEN.pattern == redact._TOKEN.pattern
     assert tool.Vendored._SETCOOKIE_SPLIT.pattern == redact._SETCOOKIE_SPLIT.pattern
     assert tool.Vendored._SCHEME.pattern == redact._SCHEME.pattern
     names = ["api_key", "apiKey", "X-Api-Key", "token", "csrftoken", "code", "sid", "Session", "user", "q",

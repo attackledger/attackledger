@@ -9,7 +9,9 @@ that happens to contain a filler pattern.
 Secrets are never stored in full and never tested against any service: only a
 masked preview, a SHA-256 of the value and where it was found are kept.
 """
+import bisect
 import hashlib
+import itertools
 import re
 from urllib.parse import urljoin, urlsplit
 
@@ -48,7 +50,9 @@ PUBLIC_BY_DESIGN = [
     (r"\bAIza[0-9A-Za-z_\-]{35}", "Google API key (check its restrictions separately)"),
     (r"\bkey_(?:live|test)_[0-9A-Za-z]{10,}", "Branch.io client key"),
     (r"https://[0-9a-f]{32}@[\w.\-]*sentry\.io/\d+", "Sentry DSN"),
-    (r"\d+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com", "Google OAuth client id"),
+    # (?<!\d): without it, every digit of a long run started a new match that read the run
+    # again (quadratic; fuzzing, FZ-12). The matches are the same.
+    (r"(?<!\d)\d+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com", "Google OAuth client id"),
     (r"\b6L[0-9A-Za-z_\-]{38}\b", "reCAPTCHA site key"),
     (r"\bpk\.eyJ[0-9A-Za-z_\-\.]{20,}", "Mapbox public token"),
     (r"\bphc_[0-9A-Za-z]{40,}", "PostHog project key"),
@@ -157,8 +161,20 @@ def uses_hash_routing(text: str) -> bool:
     return bool(HASH_ROUTING_RE.search(text))
 
 
+# Work limits for one bundle (fuzzing, FZ-13). A router table has hundreds of routes and its
+# children arrays add up to its own size a few times; a bundle made of nothing but unclosed
+# "children:[" made every one of them read 400,000 characters, and took hours.
+MAX_ROUTE_HITS = 50_000             # "path:" candidates looked at
+MAX_BRACKET_READ = 4_000_000        # characters read to find the ends of children arrays, in all
+
+
 def _close_bracket(text: str, i: int, limit: int = 400_000) -> int:
     """Index of the bracket closing the one at text[i], skipping string literals; -1 if not found."""
+    return _scan_bracket(text, i, limit)[0]
+
+
+def _scan_bracket(text: str, i: int, limit: int) -> tuple[int, int]:
+    """(_close_bracket's answer, characters read)."""
     depth, j, end = 0, i, min(len(text), i + limit)
     while j < end:
         c = text[j]
@@ -171,9 +187,9 @@ def _close_bracket(text: str, i: int, limit: int = 400_000) -> int:
         elif c in "]})":
             depth -= 1
             if depth == 0:
-                return j
+                return j, j - i
         j += 1
-    return -1
+    return -1, j - i
 
 
 def spa_routes(text: str) -> list[str]:
@@ -181,7 +197,7 @@ def spa_routes(text: str) -> list[str]:
     children joined to their parent (privacy-security/privacy-policy). Wildcards and the
     empty root route are left out; route parameters stay as written (:id)."""
     matches = []
-    hits = list(ROUTE_RE.finditer(text))
+    hits = list(itertools.islice(ROUTE_RE.finditer(text), MAX_ROUTE_HITS))
     for n, m in enumerate(hits):
         stop = hits[n + 1].start() if n + 1 < len(hits) else len(text)
         window = text[m.end(): min(stop, m.end() + 300)]
@@ -191,18 +207,24 @@ def spa_routes(text: str) -> list[str]:
     if not matches:
         return []
     # Children spans: each belongs to the nearest route before it in the same object.
-    spans = []
+    spans, starts, budget = [], [m.start() for m in matches], MAX_BRACKET_READ
     for c in CHILDREN_RE.finditer(text):
-        parent = next((m for m in reversed(matches) if m.start() < c.start()), None)
-        if parent is None or c.start() - parent.end() > 400:
+        k = bisect.bisect_left(starts, c.start())
+        parent = matches[k - 1] if k else None
+        if parent is None or c.start() - parent.end() > 400 or budget <= 0:
             continue
-        end = _close_bracket(text, c.end() - 1)
+        end, read = _scan_bracket(text, c.end() - 1, min(400_000, budget))
+        budget -= read
         if end > 0:
             spans.append((c.end(), end, parent))
-    out = set()
-    for m in matches:
-        segs = [p.group(2).strip("/") for s, e, p in sorted(spans, key=lambda x: x[0])
-                if s <= m.start() <= e]
+    spans.sort(key=lambda x: x[0])
+    out, active, nxt = set(), [], 0
+    for m in matches:                               # in order: the spans holding each, by a sweep
+        while nxt < len(spans) and spans[nxt][0] <= m.start():
+            active.append(spans[nxt])
+            nxt += 1
+        active = [x for x in active if x[1] >= m.start()]
+        segs = [p.group(2).strip("/") for _, _, p in active]
         own = m.group(2).strip("/")
         if own in ("**", "*") or (not own and not segs):
             continue

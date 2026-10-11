@@ -18,11 +18,38 @@ from urllib.parse import urljoin, urlsplit
 
 from . import jsanalysis, surface
 
-_DROP_BLOCKS = re.compile(r"<(script|style|noscript|template|svg)\b[^>]*>.*?</\1\s*>", re.I | re.S)
-_COMMENT = re.compile(r"<!--.*?-->", re.S)
+# Each of these is found with a search that never rescans: "<!--.*?-->" and its kind read to the
+# end of the page again for every unclosed "<!--", "<script" or "<title", which made a 1 MB page
+# of them take minutes (fuzzing, FZ-11).
+_BLOCK_OPEN = re.compile(r"<(script|style|noscript|template|svg)\b[^<>]*>", re.I)
 _LISTING = re.compile(r"<title>\s*(index of|listing directory|directory listing for|directory:)\s*([^<]*)</title>|"
                       r"<h1>\s*index of\s|\[to parent directory\]", re.I)
-_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+_TITLE_OPEN = re.compile(r"<title[^<>]*>", re.I)
+_TITLE_CLOSE = re.compile(r"</title>", re.I)
+
+
+def _strip_comments(text: str) -> str:
+    """Every <!-- ... --> replaced by a space. An unclosed one, and everything after it, stays."""
+    out, pos = [], 0
+    while (i := text.find("<!--", pos)) >= 0 and (j := text.find("-->", i + 4)) >= 0:
+        out += [text[pos:i], " "]
+        pos = j + 3
+    return "".join(out) + text[pos:] if out else text
+
+
+def _drop_blocks(text: str) -> str:
+    """Script, style, noscript, template and svg blocks replaced by a space."""
+    out, pos, start, unclosed = [], 0, 0, set()
+    while m := _BLOCK_OPEN.search(text, start):
+        name = m.group(1).lower()
+        close = None if name in unclosed else re.compile(rf"</{name}\s*>", re.I).search(text, m.end())
+        if close is None:
+            unclosed.add(name)              # no later block of this name is closed either
+            start = m.start() + 1
+            continue
+        out += [text[pos:m.start()], " "]
+        pos = start = close.end()
+    return "".join(out) + text[pos:]
 
 
 class _Links(HTMLParser):
@@ -71,18 +98,20 @@ def looks_js(url: str, content_type: str = "") -> bool:
 
 
 def title_of(text: str) -> str:
-    m = _TITLE.search(text[:20000])
-    return " ".join(unescape(m.group(1)).split())[:200] if m else ""
+    head = text[:20000]
+    m = _TITLE_OPEN.search(head)
+    close = _TITLE_CLOSE.search(head, m.end()) if m else None
+    return " ".join(unescape(head[m.end():close.start()]).split())[:200] if close else ""
 
 
 def strip_html(text: str) -> tuple[str, list[str]]:
     """(visible text with whitespace collapsed, links in document order without duplicates)."""
     p = _Links()
     try:
-        p.feed(_COMMENT.sub(" ", text))
+        p.feed(_strip_comments(text))
         p.close()
     except Exception:  # noqa: BLE001 - malformed markup: fall back to a regex strip
-        body = re.sub(r"<[^>]+>", " ", _DROP_BLOCKS.sub(" ", _COMMENT.sub(" ", text)))
+        body = re.sub(r"<[^<>]+>", " ", _drop_blocks(_strip_comments(text)))
         return re.sub(r"[ \t]+", " ", unescape(body)).strip(), []
     lines = [" ".join(l.split()) for l in "".join(p.text).splitlines()]
     return "\n".join(l for l in lines if l), list(dict.fromkeys(p.links))

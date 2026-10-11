@@ -8,6 +8,7 @@
 import { spawnSync } from "node:child_process";
 import { constants, createHash, generateKeyPairSync, privateEncrypt, sign } from "node:crypto";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -81,6 +82,14 @@ if (JSON.stringify(expected) !== JSON.stringify(v.TSA_ROOTS)) {
 // ---- whole reports ----------------------------------------------------------------------
 
 const { cases } = JSON.parse(readFileSync(path.join(here, "cases.json"), "utf8"));
+
+// --fuzz N: random mutants of these reports instead (fuzz.mjs); the cases above stay as they are.
+if (argv.includes("--fuzz")) {
+  const { fuzz } = await import("./fuzz.mjs");
+  process.exit(await fuzz({ v, python, here, repo, cases, count: Number(opt("--fuzz", "2000")), seed: Number(opt("--seed", "20261010")),
+                            keep: opt("--keep", null), parallel: Number(opt("--jobs", String(os.availableParallelism()))),
+                            fromCli, fromModule }));
+}
 const rows = [];
 let failures = 0, pending = 0;
 for (const c of cases) {

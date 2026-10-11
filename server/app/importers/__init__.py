@@ -104,6 +104,11 @@ def http_url(value) -> str:
         raise RowError("no readable URL") from None
     if parts.scheme.lower() not in ("http", "https") or not host:
         raise RowError("the URL is not an http or https URL with a host")
+    if "\\" in parts.netloc:
+        # A browser ends the host at a backslash, Python at the next "/": in
+        # https://other.example\@shop.example.com/ the request went to other.example, and the
+        # scope check would read shop.example.com (fuzzing, FZ-3). The gateway refuses it too.
+        raise RowError("the URL has a backslash before its path, which browsers read as the end of the host")
     return u
 
 
@@ -111,9 +116,11 @@ def status(value) -> int | None:
     """An HTTP status; 0, empty or absent means there was no response."""
     if value in (None, "", 0, "0"):
         return None
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        raise RowError("the status is not a whole number")       # 200.5 is not 200; 1e400 is infinity
     try:
         n = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise RowError("the status is not a number") from None
     if not 100 <= n <= 599:
         raise RowError(f"the status {n} is not an HTTP status")

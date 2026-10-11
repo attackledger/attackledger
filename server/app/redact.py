@@ -39,7 +39,9 @@ Everything here is linear in the size of the input: each rule is one regular exp
 pass whose repetitions are bounded or anchored (measured at about 5 MB per second).
 """
 import hashlib
+import json
 import re
+from urllib.parse import quote, unquote
 
 from . import jsanalysis
 
@@ -78,7 +80,11 @@ def secret_name(name: str) -> bool:
 
 
 def marker(value: str) -> str:
-    return f"{MARKER_PREFIX}{hashlib.sha256(value.encode('utf-8', 'surrogateescape')).hexdigest()[:12]}]"
+    try:
+        raw = value.encode("utf-8", "surrogateescape")
+    except UnicodeEncodeError:      # a lone surrogate from JSON ("\ud800"), not from undecodable bytes
+        raw = value.encode("utf-8", "surrogatepass")
+    return f"{MARKER_PREFIX}{hashlib.sha256(raw).hexdigest()[:12]}]"
 
 
 _KIND_CLEAN = re.compile(r"[^\w.\-\[\] ]")
@@ -140,28 +146,34 @@ def _mask(value: str, kind: str, rep: Report) -> str:
 # ---- headers ------------------------------------------------------------------
 
 _AUTH_HEADERS = {"authorization", "proxyauthorization"}
-_COOKIE_PAIR = re.compile(r"(^|;)(\s*[^=;\s][^=;]*=)([^;]*)")
 # Several Set-Cookie values joined into one: split before "name=", not inside an Expires date.
 _SETCOOKIE_SPLIT = re.compile(r"(,\s*(?=[!#$%&'*+\-.^_`|~0-9A-Za-z]+=))")
-_SCHEME = re.compile(r"^(\s*[A-Za-z][\w.\-]*\s+)(\S.*?)(\s*)$", re.S)
+# "Scheme credentials". Matched on the value without its trailing space: a lazy ".*?" followed
+# by "\s*$" was quadratic in a run of spaces inside the value (fuzzing, FZ-6).
+_SCHEME = re.compile(r"(\s*[A-Za-z][\w.\-]*\s+)(\S.*)", re.S)
+# A header name (RFC 9110 token), with an HTTP/2 pseudo-header's leading colon.
+_TOKEN = re.compile(r":?[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 
 
 def _cookie_values(value: str, kind: str, rep: Report) -> str:
-    def sub(m):
-        v = m.group(3)
+    """name=value pairs separated by ";": every value is replaced, names kept. A piece without
+    "=" is a cookie without a name (RFC 6265 allows one, and document.cookie = "x" sends it),
+    so it is replaced too (fuzzing, FZ-9)."""
+    out = []
+    for piece in value.split(";"):
+        name, eq, v = piece.partition("=") if "=" in piece else ("", "", piece)
         core = v.strip()
-        if not core:
-            return m.group(0)
-        lead = v[:len(v) - len(v.lstrip())]
-        trail = v[len(v.rstrip()):]
-        return f"{m.group(1)}{m.group(2)}{lead}{_mask(core, kind, rep)}{trail}"
-    return _COOKIE_PAIR.sub(sub, value)
+        if core and (eq or not MARKER_RE.search(core)):     # a nameless piece already redacted stays
+            lead, trail = v[:len(v) - len(v.lstrip())], v[len(v.rstrip()):]
+            piece = f"{name}{eq}{lead}{_mask(core, kind, rep)}{trail}"
+        out.append(piece)
+    return ";".join(out)
 
 
 def _set_cookie(value: str, kind: str, rep: Report) -> str:
     out = []
-    for piece in _SETCOOKIE_SPLIT.split(value):
-        if _SETCOOKIE_SPLIT.fullmatch(piece):
+    for i, piece in enumerate(_SETCOOKIE_SPLIT.split(value)):
+        if i % 2:                   # a separator (the split keeps them at the odd places)
             out.append(piece)
             continue
         pair, sep, attrs = piece.partition(";")
@@ -182,9 +194,10 @@ def header_value(name: str, value: str, rep: Report) -> str:
     if not secret_name(name):
         return value
     if n in _AUTH_HEADERS:
-        m = _SCHEME.match(value)
+        core = value.rstrip()
+        m = _SCHEME.fullmatch(core)
         if m:       # "Bearer <token>": the scheme stays readable
-            return m.group(1) + _mask(m.group(2), name, rep) + m.group(3)
+            return m.group(1) + _mask(m.group(2), name, rep) + value[len(core):]
     return _mask(value, name, rep)
 
 
@@ -209,7 +222,11 @@ _KV = re.compile(r"""(?<![\w.\-\[\]%])([A-Za-z0-9_.\-\[\]%]{1,64})=(?!=)("[^"\r\
 _JSON_KV = re.compile(r'("((?:[^"\\\r\n]|\\.){1,100})")(\s*:\s*)'
                       r'("(?:[^"\\]|\\.)*"|-?\d[0-9.eE+\-]{0,40}|\[[^\[\]{}]{0,20000}\])')
 _JSON_SCALAR = re.compile(r'"(?:[^"\\]|\\.)*"|-?\d[0-9.eE+\-]{0,40}')
-_HAR_HEADER = re.compile(r'("name"\s*:\s*"([^"\\\r\n]{1,100})"\s*,\s*"value"\s*:\s*")((?:[^"\\]|\\.)*)(")')
+_HAR_HEADER = re.compile(r'("name"\s*:\s*"((?:[^"\\\r\n]|\\.){1,100})"\s*,\s*"value"\s*:\s*")((?:[^"\\]|\\.)*)(")')
+# A form field in a multipart/form-data body: its headers, a blank line, then its value. Only
+# the value's first line is read: a field is one line, a file part is not a field.
+_MULTIPART = re.compile(r'(?im)^(content-disposition[ \t]*:[^\r\n]{0,500}?;[ \t]*name="([^"\r\n]{1,100})"'
+                        r'([^\r\n]{0,500})\r?\n(?:[^\r\n]{1,1000}\r?\n){0,10}\r?\n)([^\r\n]{1,4000})')
 
 # A whole block, or, without its END line (cut off), the header and the base64 lines after it.
 _PEM_BEGIN = re.compile(r"-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----")
@@ -252,6 +269,24 @@ def _header_lines(s: str, rep: Report) -> str:
     return _HEADER_LINE.sub(sub, s)
 
 
+def _multipart(s: str, rep: Report) -> str:
+    def sub(m):
+        if not secret_name(m.group(2)) or "filename" in m.group(1).lower():
+            return m.group(0)
+        return m.group(1) + _mask(m.group(4), m.group(2), rep)
+    return _MULTIPART.sub(sub, s)
+
+
+def _json_name(raw: str) -> str:
+    """A JSON key as the reader of the JSON sees it: "\\u0074oken" is "token" (FZ-10)."""
+    if "\\" not in raw:
+        return raw
+    try:
+        return json.loads(f'"{raw}"')
+    except ValueError:
+        return raw
+
+
 def _kv(s: str, rep: Report) -> str:
     def sub(m):
         name, v = m.group(1), m.group(2)
@@ -270,7 +305,7 @@ def _json(s: str, rep: Report) -> str:
         return f'"{_mask(lit, kind, rep)}"'
 
     def sub(m):
-        key, value = m.group(2), m.group(4)
+        key, value = _json_name(m.group(2)), m.group(4)
         if not secret_name(key) or _norm(key) in JSON_NOT_SECRET:
             return m.group(0)
         if value.startswith("["):
@@ -280,7 +315,7 @@ def _json(s: str, rep: Report) -> str:
         return m.group(1) + m.group(3) + value
 
     def har(m):
-        name, value = m.group(2), m.group(3)
+        name, value = _json_name(m.group(2)), m.group(3)
         if not (secret_name(name) or _norm(name) in ("cookie", "setcookie")):
             return m.group(0)
         return m.group(1) + header_value(name, value, rep) + m.group(4)
@@ -329,8 +364,31 @@ def text(s: str, rep: Report, *, personal: bool = False) -> str:
     """Every rule over one piece of text: a URL, a note, a body, a summary."""
     if not s:
         return s
-    s = _formats(_kv(_json(_header_lines(s, rep), rep), rep), rep)
+    s = _formats(_kv(_json(_header_lines(_multipart(s, rep), rep), rep), rep), rep)
     return _personal(s, rep) if personal else s
+
+
+_AUTHORITY = re.compile(r"(\s*[A-Za-z][A-Za-z0-9+.\-]*://)([^/?#\\]*)(.*)", re.S)
+
+
+def url(u: str, rep: Report) -> str:
+    """A URL for storage: the text rules on everything after the authority, and a password
+    in the authority replaced. The host itself is kept as it is: it names a place in scope,
+    not a secret, and a rule matching inside it (a label shaped like an AWS key id or a Slack
+    token) made the stored URL name no host (fuzzing, FZ-7)."""
+    m = _AUTHORITY.fullmatch(u or "")
+    if not m:
+        return text(u, rep)
+    start, authority, rest = m.groups()
+    userinfo, at, hostport = authority.rpartition("@")
+    if at:
+        user, colon, password = userinfo.partition(":")
+        if colon and password and not MARKER_RE.fullmatch(unquote(password)):
+            # Percent-encoded: a marker's brackets in the authority make Python's urlsplit
+            # refuse the whole URL ("Invalid IPv6 URL"), so the stored URL named no host.
+            password = quote(_mask(password, "password in URL", rep), safe=":")
+        userinfo = text(user, rep) + colon + password
+    return start + userinfo + at + hostport + text(rest, rep)
 
 
 def looks_binary(data: bytes, filename: str | None = None) -> bool:
@@ -378,9 +436,11 @@ _HEAD_END = re.compile(rb"\r?\n\r?\n")
 def _header_line(line: str, rep: Report) -> str:
     # HTTP/2 pseudo-headers (":authority: x") start with a colon that is part of the name.
     name, sep, value = (line[1:].partition(":") if line.startswith(":") else line.partition(":"))
-    if not sep:
-        return text(line, rep)
     name = (":" + name) if line.startswith(":") else name
+    if not sep or not _TOKEN.fullmatch(name.strip()):
+        # Not "Name: value": a line that only contains a colon ("password=a:b", or a marker,
+        # whose text has colons) is text; read as a header, its first part was kept (FZ-8).
+        return text(line, rep)
     lead = value[:len(value) - len(value.lstrip())]
     v = value.strip()
     new = header_value(name.strip(), v, rep)
@@ -411,7 +471,7 @@ def http_message(raw: bytes | None, rep: Report, *, personal: bool = False,
     return new_head + sep + new_body
 
 
-_CONTENT_LENGTH = re.compile(r"^(content-length[ \t]*:[ \t]*)(\d+)([ \t]*)$", re.I)
+_CONTENT_LENGTH = re.compile(r"(content-length[ \t]*:[ \t]*)([0-9]{1,18})([ \t]*)", re.I)   # FZ-2
 
 
 def _fix_content_length(lines: list[str], before: int, after: int) -> None:
@@ -419,6 +479,6 @@ def _fix_content_length(lines: list[str], before: int, after: int) -> None:
     describes the old body. Rewrite it to the stored body's length. A value that did not
     match the body before (an export that decoded or cut it) is left as the tool wrote it."""
     for i in range(2, len(lines), 2):
-        m = _CONTENT_LENGTH.match(lines[i])
+        m = _CONTENT_LENGTH.fullmatch(lines[i])
         if m and int(m.group(2)) == before:
             lines[i] = f"{m.group(1)}{after}{m.group(3)}"

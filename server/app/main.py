@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -53,6 +55,17 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="AttackLedger", version="0.8.0", lifespan=lifespan,
               dependencies=[Depends(authz.authorize)], docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(nulguard.NulGuard)     # a NUL in a request: refused, or replaced on the machine channels
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(_request: Request, exc: RequestValidationError) -> Response:
+    """FastAPI's own 422, written as ASCII JSON. The errors echo the input, and a lone surrogate
+    in a JSON string ("\\ud800", which Python's JSON reader accepts) cannot be encoded as UTF-8:
+    the 422 became a 500 on every JSON route (fuzzing, FZ-5)."""
+    return Response(json.dumps({"detail": jsonable_encoder(exc.errors())}), status_code=422,
+                    media_type="application/json")
+
+
 app.include_router(gatewayapi.router)
 app.include_router(workerapi.router)
 app.include_router(testaccounts.router)
