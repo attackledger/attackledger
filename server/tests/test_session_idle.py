@@ -134,6 +134,22 @@ def test_the_idle_limit_is_configurable_and_a_bad_value_keeps_the_default(env, m
     assert me(c) == 401
 
 
+def test_a_short_limit_is_extended_by_use_too(env, monkeypatch):
+    """With a limit of a minute, the last use is written every 6 seconds, not once a minute
+    (which would end a session in use: found on a running stack)."""
+    c, clock, _, writes = env
+    monkeypatch.setenv("ATTACKLEDGER_SESSION_IDLE_MINUTES", "1")
+    assert auth.seen_every() == timedelta(seconds=6)
+    sign_in(c)
+    writes.clear()
+    for _ in range(10):                              # a request every 22 seconds, for 220 seconds
+        clock.advance(seconds=22)
+        assert me(c) == 200
+    assert len(writes) == 10
+    clock.advance(seconds=60)
+    assert me(c) == 401
+
+
 def test_token_sessions_end_after_the_same_time_without_use(env, monkeypatch):
     c, clock, Session, _ = env
     monkeypatch.setenv("ATTACKLEDGER_API_TOKEN", TOKEN)

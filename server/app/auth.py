@@ -51,7 +51,7 @@ from sqlalchemy import func, select
 COOKIE = "al_session"
 SESSION_HOURS = 12
 IDLE_MINUTES = 30            # the default of ATTACKLEDGER_SESSION_IDLE_MINUTES
-SEEN_EVERY = timedelta(minutes=1)    # last_seen_at is written at most this often per session
+SEEN_EVERY = timedelta(minutes=1)    # last_seen_at is written at most this often per session (seen_every)
 # A request the web app makes on its own (a poll, while nobody has used the page for a minute) says
 # so with this header, and does not count as use; it still needs a session that has not ended.
 BACKGROUND_HEADER = "x-attackledger-background"
@@ -242,13 +242,19 @@ def session_over(row, at: datetime | None = None) -> bool:
     return _aware(row.expires_at) <= at or at - last_use(row) >= timedelta(minutes=idle_minutes())
 
 
+def seen_every() -> timedelta:
+    """How often a session's last use is written: once a minute, or a tenth of the idle limit if
+    that is shorter (a limit of a few minutes would otherwise end sessions that are in use)."""
+    return min(SEEN_EVERY, timedelta(minutes=idle_minutes()) / 10)
+
+
 def _used(session, row, request: Request, at: datetime) -> None:
     """Record that the session was used, at most once a minute (one UPDATE, not one per request),
     so the idle limit can end a session up to a minute early. A background request does not count."""
     from sqlalchemy import update
 
     from .models import UserSession
-    if request.headers.get(BACKGROUND_HEADER) or at - last_use(row) < SEEN_EVERY:
+    if request.headers.get(BACKGROUND_HEADER) or at - last_use(row) < seen_every():
         return
     session.execute(update(UserSession).where(UserSession.id == row.id).values(last_seen_at=at))
     session.commit()
