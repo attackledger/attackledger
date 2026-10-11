@@ -160,15 +160,22 @@ export function checkDocumentHeaders(r: Response): string[] {
   const url = new URL(r.url());
   const h = r.headers();
   const bad: string[] = [];
+  // A header the API and nginx both set arrives twice, joined with a comma; browsers read the
+  // first value (Fetch, "determine nosniff"), so each copy must say the same.
   const want = (name: string, value: string) => {
-    if ((h[name] ?? "").toLowerCase() !== value.toLowerCase()) bad.push(`${url.pathname}: ${name} is ${JSON.stringify(h[name] ?? null)}, not ${value}`);
+    const got = (h[name] ?? "").split(",").map((v) => v.trim().toLowerCase());
+    if (!got.every((v) => v === value.toLowerCase())) bad.push(`${url.pathname}: ${name} is ${JSON.stringify(h[name] ?? null)}, not ${value}`);
   };
   if (url.origin !== APP) return bad;               // the test's own pages
   const csp = h["content-security-policy"] ?? "";
   want("x-content-type-options", "nosniff");
   if (url.pathname.startsWith("/api/")) {
-    // The API's documents (the printable report, raw evidence, the docs) carry the API's own policy.
-    if (!csp.includes("default-src 'none'")) bad.push(`${url.pathname}: no default-src 'none' in ${JSON.stringify(csp)}`);
+    // The API's HTML pages (the printable report, the docs) carry the API's own policy; raw
+    // evidence is text under a sandbox; JSON opened in a tab is not rendered as a page.
+    const type = (h["content-type"] ?? "").toLowerCase();
+    if (!/^(text\/html|text\/plain|application\/json)/.test(type)) bad.push(`${url.pathname}: served as ${type}`);
+    if (type.startsWith("text/") && !csp.includes("default-src 'none'")) bad.push(`${url.pathname}: no default-src 'none' in ${JSON.stringify(csp)}`);
+    if (type.startsWith("text/plain") && !/\bsandbox\b/.test(csp)) bad.push(`${url.pathname}: raw text without a CSP sandbox`);
     if (/script-src[^;]*'unsafe-inline'/.test(csp) || /script-src[^;]*'unsafe-eval'/.test(csp)) bad.push(`${url.pathname}: unsafe script-src`);
     want("x-frame-options", "DENY");
   } else {
@@ -200,6 +207,7 @@ export const test = base.extend<{ guard: Guard }>({
     const allowed: RegExp[] = [];
     const g: Guard = { csp: [], xss: [], dialogs: [], errors: [], documents: [], allowConsole: (re) => allowed.push(re) };
     const headerProblems: string[] = [];
+    const failed: string[] = [];
     await context.exposeBinding("__e2eReport", ({ page }, kind: string, detail: string) => {
       const where = page?.url() ?? "?";
       if (kind === "csp" && browserFavicon(detail)) return;
@@ -222,6 +230,8 @@ export const test = base.extend<{ guard: Guard }>({
         else if (m.type() === "error" && !allowed.some((re) => re.test(text)) && !harness(page, text)) g.errors.push(`${page.url()}: ${text}`);
       });
       page.on("pageerror", (e) => g.errors.push(`${page.url()}: uncaught ${e.name}: ${e.message}`));
+      // The console says only "Failed to load resource"; which one is here.
+      page.on("response", (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
       page.on("dialog", (d) => { g.dialogs.push(`${d.type()}: ${d.message()}`); void d.dismiss().catch(() => undefined); });
       page.on("response", (r) => {
         if (r.request().resourceType() !== "document") return;
@@ -235,7 +245,7 @@ export const test = base.extend<{ guard: Guard }>({
     expect(g.xss, "a script from injected content ran").toEqual([]);
     expect(g.csp, "Content-Security-Policy violations").toEqual([]);
     expect(g.dialogs, "dialogs opened").toEqual([]);
-    expect(g.errors, "console errors or uncaught exceptions").toEqual([]);
+    expect(g.errors, `console errors or uncaught exceptions (responses over 400: ${failed.join("; ") || "none"})`).toEqual([]);
     expect(headerProblems, "documents served without their security headers").toEqual([]);
   }, { auto: true }],
 });

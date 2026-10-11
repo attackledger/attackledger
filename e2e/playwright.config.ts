@@ -22,7 +22,12 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+    // Firefox under Playwright 1.63 loses about one navigation in ten from a new tab to a page sent
+    // with Cross-Origin-Opener-Policy (the browsing-context switch it makes): the page loads, the
+    // test never hears of it. Firefox's COOP handling is off here for that reason only; the guard
+    // still checks that every document is sent with COOP, and Chromium enforces it.
+    { name: "firefox", use: { ...devices["Desktop Firefox"],
+                              launchOptions: { firefoxUserPrefs: { "browser.tabs.remote.useCrossOriginOpenerPolicy": false } } } },
   ],
   webServer: {
     command: "node tests/servers.mjs",

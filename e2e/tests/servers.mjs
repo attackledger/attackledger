@@ -11,12 +11,24 @@
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
+import { lookup } from "node:dns/promises";
 
 const WEB_HOST = process.env.E2E_WEB_HOST ?? "web";
 const APP = "http://localhost:18180";
 
-net.createServer((client) => {
-  const upstream = net.connect(80, WEB_HOST);
+// "localhost" is 127.0.0.1 and ::1 in the runner (/etc/hosts): each server listens on both, so a
+// browser that tries ::1 first finds it there too.
+function listen(make, port) {
+  make().listen(port, "127.0.0.1");
+  make().on("error", () => undefined).listen(port, "::1");    // no IPv6 loopback: IPv4 alone
+}
+
+// The web container's address, looked up once.
+const { address: webAddress } = await lookup(WEB_HOST, { family: 4 });
+function forward(client) {
+  const upstream = net.connect({ port: 80, host: webAddress });
+  client.setNoDelay(true);
+  upstream.setNoDelay(true);
   client.pipe(upstream);
   upstream.pipe(client);
   const end = () => { client.destroy(); upstream.destroy(); };
@@ -24,7 +36,8 @@ net.createServer((client) => {
   upstream.on("error", end);
   client.on("close", end);
   upstream.on("close", end);
-}).listen(18180, "127.0.0.1");
+}
+listen(() => net.createServer(forward), 18180);
 
 // Each page runs its attempts when opened and writes what it saw into #out, as JSON.
 const CSRF_PAGES = {
@@ -65,16 +78,17 @@ const tries = [
 </script>`,
 };
 
-http.createServer((req, res) => {
+function otherOrigin(req, res) {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname === "/health") { res.end("ok"); return; }
   const page = CSRF_PAGES[url.pathname];
   if (!page) { res.statusCode = 404; res.end("not found"); return; }
   res.setHeader("content-type", "text/html; charset=utf-8");
   res.end(page(url.searchParams));
-}).listen(18181, "127.0.0.1");
+}
+listen(() => http.createServer(otherOrigin), 18181);
 
-http.createServer(async (req, res) => {
+async function verifierPage(req, res) {
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/verify.html") { res.statusCode = 404; res.end("not found"); return; }
   try {
@@ -86,6 +100,7 @@ http.createServer(async (req, res) => {
     res.statusCode = 500;
     res.end("site/verify.html is not mounted");
   }
-}).listen(18182, "127.0.0.1");
+}
+listen(() => http.createServer(verifierPage), 18182);
 
 console.log("e2e servers: app forward 18180, other origins 18181, verifier page 18182");

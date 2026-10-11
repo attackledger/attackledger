@@ -365,13 +365,14 @@ function Workspace({ onSignedOut }: { onSignedOut: (mode: LoginMode) => void }) 
   const [waiting, setWaiting] = useState(0);
   useEffect(() => {
     setWaiting(0);
-    if (!works || current == null) return;
+    // Only an engagement in the list: a link to one this person cannot open asks the server nothing.
+    if (!works || current == null || !listed) return;
     let live = true;
     const poll = () => api.approvals(current).then((q) => { if (live) setWaiting(q.waiting); }).catch(() => undefined);
     poll();
     const t = window.setInterval(poll, 10000);
     return () => { live = false; window.clearInterval(t); };
-  }, [works, current]);
+  }, [works, current, listed]);
   // A link to a tab this person does not have (the Team tab, for someone who is not an owner):
   // the opening tab is chosen for them instead.
   const tabMissing = meKnown && current != null && !tabs.includes(tab);
@@ -1301,7 +1302,8 @@ function Folio({ laneId, me, link, onClose, onChanged, onGoLane, onGoImport, onL
         )}
 
         {lane && (
-          <div className="folio-foot">
+          // It scrolls on a short screen, so it takes the focus for the arrow keys (as .folio-body does).
+          <div className="folio-foot" role="region" aria-label="Signing this lane" tabIndex={0}>
             {error && <p className="field-error" role="alert">{error}</p>}
             {signError && lane.status !== "closed" && (
               <div className="refusal" role="alert"><p><strong>Not signed.</strong> {signError.replace(/\.$/, "")}.</p></div>
