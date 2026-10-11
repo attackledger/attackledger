@@ -24,7 +24,7 @@
 #   E2E_REPORT_DIR  a directory for Playwright's HTML report and the traces of failed tests,
 #                   one folder per phase (the CI uploads it when a test fails); by default
 #                   nothing is kept
-# Needs Docker with Compose 2.24 or later. About 8 minutes, more on the first build.
+# Needs Docker with Compose 2.24 or later. About 7 minutes, more on the first build.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="${E2E_PROJECT:-al-e2e}"

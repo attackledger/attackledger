@@ -89,7 +89,7 @@ web images and a runner from Playwright's pinned image (`e2e/Dockerfile`), check
 `tools/build_pages.sh` inside the runner and served with its `_headers` as Cloudflare Pages would),
 starts its own stack as compose project `al-e2e` with no port on the host, fills it with hostile
 content, runs the app's suite twice over (with the operator token, then with people signed in), and
-removes the project's containers, networks and volumes. About MINUTES minutes once the images are built.
+removes the project's containers, networks and volumes. About 7 minutes once the images are built.
 
 ```sh
 tools/test_e2e.sh               # everything

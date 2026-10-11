@@ -43,7 +43,7 @@ export default async function globalSetup(): Promise<void> {
 
   // One engagement per browser for a receipt the reviewer signs with a key made in the browser:
   // its only lane has every item evidenced by the owner, and waits for the signature.
-  for (const browser of ["chromium", "firefox"]) {
+  for (const browser of ["chromium", "firefox", "webkit"]) {     // the projects in playwright.config.ts
     const name = `${NAMES.signedEng} ${browser}`;
     if ((await owner.call<{ name: string }[]>("GET", "/engagements")).some((e) => e.name === name)) continue;
     const eng = await owner.call<{ id: number }>("POST", "/engagements", { name });

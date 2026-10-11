@@ -28,7 +28,7 @@ give identical results on 134 reports and on 2,600 random mutants (`tools/verifi
 | [RETENTION.md](RETENTION.md) | Whether deleting an engagement's content reaches every store | 3 Medium, 4 Low |
 | [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) | Container privileges, image and package pinning, known advisories, OS-package scan, SBOM | 3 Medium, 5 Low |
 | [FUZZING.md](FUZZING.md) | Property-based and mutation fuzzing of the importers, redaction, scope and URL parsing, page and bundle parsers, and both verifiers; a second pass on the gateway's HTTP and DNS parsing, the gateway log, redaction of XML, multipart, form and GraphQL bodies, the inbox mapping and the report | 9 Medium, 23 Low, 3 Info |
-| [WEB_E2E.md](WEB_E2E.md) | The web app in Chromium and Firefox (Playwright): hostile content in every view, the CSP and headers, sessions, roles, CSRF, both verifiers, drafts, accessibility | 5 Low, 1 Info |
+| [WEB_E2E.md](WEB_E2E.md) | The web app in Chromium, Firefox and WebKit (Playwright): hostile content in every view, the CSP and headers, sessions, roles, CSRF, both verifiers, drafts, accessibility; the public site as Cloudflare Pages serves it (headers, outside requests, the demo, the `/verify` page against `verify_report.py`); the suite in the CI | 8 Low, 1 Info |
 
 Severities are the reviewers' own and describe impact in AttackLedger's threat model, mainly a
 compromised or misled tool or agent in the worker and a malicious page in the operator's browser.
