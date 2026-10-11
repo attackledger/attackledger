@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from app import gateway
+from app import gateway, redact
 from fuzzing import time_limit
 from test_gateway import Stack as GatewayStack, parse
 
@@ -234,3 +234,128 @@ def test_fz22_a_test_accounts_response_body_is_read_in_bounded_time(gw, monkeypa
     time.sleep(0.3)             # the stub sees the gateway hang up
     row = gw.rows(1)[-1]
     assert row["account"] == "alice" and "in time" in row["reason"]
+
+
+# ---- FZ-23 to FZ-27: redaction of XML, SAML, multipart, form and GraphQL bodies -----------------------
+
+LAB = "lab-" + "Zq9" + "secretVALUE"        # split: the secret scan must not read test data as a credential
+
+
+def redacted(text: str) -> str:
+    out = redact.text(text, redact.Report())
+    assert redact.text(out, redact.Report()) == out, "not idempotent"
+    return out
+
+
+@pytest.mark.parametrize("body", [
+    f"<login><password>{LAB}</password></login>",
+    f'<soap:Header><wsse:Security><wsse:UsernameToken><wsse:Username>tess</wsse:Username><wsse:Password '
+    f'Type="http://docs.oasis-open.org/wss#PasswordText">{LAB}</wsse:Password></wsse:UsernameToken></wsse:Security>',
+    f'<wsse:BinarySecurityToken ValueType="x" EncodingType="y">\n  {LAB}\n</wsse:BinarySecurityToken>',
+    f"<Password><![CDATA[{LAB}]]></Password>",
+    f"<p:apiKey>{LAB}</p:apiKey >",
+    f'<cred password = "{LAB}"/>',
+    f"<cred token='{LAB}'>",
+    f"<methodCall><methodName>login</methodName><params><param><value><struct><member><name>password</name>"
+    f"<value><string>{LAB}</string></value></member></struct></value></param></params></methodCall>",
+    f"<member><name>session_id</name><value>{LAB}</value></member>",
+    f"<dict><key>Password</key>\n\t<string>{LAB}</string></dict>",
+    f'<configuration><add key="DbPassword" value="{LAB}"/></configuration>',
+    f'<input type="hidden" name="csrf_token" value="{LAB}">',
+    f'<meta name="csrf-token" content="{LAB}">',
+])
+def test_fz23_secrets_in_xml_and_html_are_redacted(body):
+    """SOAP (WS-Security), XML-RPC, plists, .NET settings and HTML forms kept their secrets: only
+    name="value" attributes were read."""
+    out = redacted(body)
+    assert LAB not in out and redact.marker(LAB) in out
+
+
+@pytest.mark.parametrize("body", [
+    "<ListBucketResult><Contents><Key>backups/password.txt</Key><Size>12</Size></Contents></ListBucketResult>",
+    "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>",
+    "<wsse:UsernameToken><wsse:Username>tess</wsse:Username></wsse:UsernameToken>",
+    "<sessionInfo><user>tess</user></sessionInfo>",
+    '<input type="password" name="password" value="">',
+    "<p>Enter your <b>password</b> below</p>",
+])
+def test_fz23_xml_that_holds_no_secret_is_kept(body):
+    """An S3 object key, an error code, an element holding other elements, an empty value, prose."""
+    assert redacted(body) == body
+
+
+@pytest.mark.parametrize("name", ["SAMLResponse", "SAMLart"])
+def test_fz24_a_saml_response_or_artifact_is_redacted(name):
+    """A signed SAML response (or the artifact that fetches it) logs its bearer in; both are posted
+    as form fields (HTTP-POST and artifact bindings) and were stored as they were."""
+    body = f"{name}=PHNhbWxwOlJlc3BvbnNlPg{LAB}%3D&RelayState=%2Fhome"
+    out = redacted(body)
+    assert LAB not in out and "RelayState=%2Fhome" in out
+    raw = f"POST /acs HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{body}".encode()
+    assert LAB.encode() not in redact.http_message(raw, redact.Report())
+
+
+@pytest.mark.parametrize("part", [
+    f'Content-Disposition: form-data; name="password"\r\n\r\nfirst line\r\n{LAB}',
+    f'Content-Disposition: form-data; name="private_key"\r\nContent-Type: text/plain\r\n\r\nline\n{LAB}\nline',
+    f"Content-Disposition: form-data; name=password\r\n\r\n{LAB}",
+    f'Content-Disposition: form-data; name="token"\r\n\r\n--not the boundary\r\n{LAB}',
+])
+def test_fz25_a_multipart_value_is_redacted_to_its_boundary(part):
+    """Only the first line of a field was read (and only a quoted name), so the rest of a
+    multi-line value, or a field named without quotes, was stored."""
+    body = f"--xyz\r\nContent-Disposition: form-data; name=\"user\"\r\n\r\ntess\r\n--xyz\r\n{part}\r\n--xyz--\r\n"
+    out = redacted(body)
+    assert LAB not in out and "tess" in out and out.endswith("\r\n--xyz--\r\n")
+    raw = (f"POST /f HTTP/1.1\r\nContent-Type: multipart/form-data; boundary=xyz\r\nContent-Length: {len(body)}\r\n\r\n"
+           + body).encode()
+    stored = redact.http_message(raw, redact.Report())
+    assert LAB.encode() not in stored and f"Content-Length: {len(stored.split(b'\r\n\r\n', 1)[1])}".encode() in stored
+
+
+@pytest.mark.parametrize("form", [
+    f"user=tess&pass%77ord={LAB}",                  # a percent-encoded name
+    f"user=tess&password=ab;{LAB}&x=1",             # characters a form value may hold raw
+    f"user=tess&password=ab,{LAB}&x=1",
+    f"user=tess&password=ab){LAB}&x=1",
+    f"user=tess&password=ab'{LAB}&x=1",
+    f"user=tess&password=ab#{LAB}&x=1",
+    f'user=tess&password=ab"{LAB}&x=1',
+    f"user=tess&password=ab<{LAB}&x=1",
+])
+def test_fz26_a_form_value_is_redacted_whole(form):
+    """A value stopped at ; , ) ' # " or < (the rules are written for text, where those end a
+    value), so the rest of a password a client sent unencoded was kept; a percent-encoded name
+    was not recognised."""
+    raw = f"POST /login HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n{form}".encode()
+    out = redact.http_message(raw, redact.Report())
+    assert LAB.encode() not in out and b"user=tess" in out
+    assert redact.http_message(out, redact.Report()) == out
+    target = "/login?" + form
+    line = redact.http_message(f"GET {target} HTTP/1.1\r\nHost: shop.example.com\r\n\r\n".encode(), redact.Report())
+    assert LAB.encode() not in line
+    stored = redact.url("https://shop.example.com" + target.split("#")[0], redact.Report())
+    assert LAB not in stored
+
+
+def test_fz26_text_and_the_query_of_a_url_are_still_read_as_text():
+    """Outside a form body or a query, those characters still end a value: code and prose."""
+    assert redacted(f"f(password={LAB}); next") == f"f(password={redact.marker(LAB)}); next"
+
+
+@pytest.mark.parametrize("body", [
+    '{"query":"mutation { login(username: \\"tess\\", password: \\"%s\\") { token } }"}' % LAB,
+    'mutation { login(username: "tess", password: "%s") { token } }' % LAB,
+    "query=mutation%7Blogin(username%3A%22tess%22%2C%20password%3A%20%22" + LAB + "%22)%7D",
+    '{"query":"{ me(sessionToken: \\"%s\\") { id } }"}' % LAB,
+])
+def test_fz27_a_secret_graphql_argument_is_redacted(body):
+    """Variables were redacted (they are JSON), an argument written in the query was not."""
+    out = redacted(body)
+    assert LAB not in out and ("tess" in out or "me(" in out)
+
+
+def test_fz27_graphql_that_holds_no_secret_is_kept():
+    for body in ['{"query":"mutation($password: String!) { login(password: $password) { ok } }"}',
+                 'query { country(code: "FR") { name } }', '{"query":"{ a(token: 5) }"}']:
+        assert redacted(body) == body

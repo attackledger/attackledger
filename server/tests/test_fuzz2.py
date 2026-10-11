@@ -8,13 +8,15 @@ the iteration. ATTACKLEDGER_FUZZ_ITERATIONS makes every test run that many input
 """
 import asyncio
 import json
+import os
 import socket
 import time
+from urllib.parse import quote, unquote
 
 import pytest
 
-from app import gateway
-from fuzzing import INTERESTING, iterations, mutate_bytes, rng, show, time_limit
+from app import gateway, redact
+from fuzzing import INTERESTING, elapsed, iterations, mutate_bytes, rng, show, time_limit
 from test_gateway import Stack as GatewayStack
 
 
@@ -172,3 +174,156 @@ def test_fuzz_gateway_responses_never_hang_and_always_leave_a_row(gw, capfd, mon
         assert rows[0]["verdict"] in ("allowed", "failed"), rows[0]
         err = capfd.readouterr().err
         assert "connection ended by an error" not in err, f"iteration {i}: {err[:500]} {show(bytes(data))}"
+
+
+# ---- redaction: XML, multipart, forms, GraphQL ---------------------------------------------------
+
+SIZE = int(os.environ.get("ATTACKLEDGER_FUZZ_SIZE") or 40_000)
+BUDGET = float(os.environ.get("ATTACKLEDGER_FUZZ_BUDGET") or 2.0)
+NAMES = ["password", "Password", "PASSWD", "api_key", "apiKey", "X-Api-Key", "access_token", "sessionToken",
+         "client_secret", "SAMLResponse", "otp", "pwd", "db-password", "refreshToken", "privateKey"]
+PLAIN = ["user", "email", "q", "page", "name", "Username", "lang", "redirect", "id", "value"]
+
+
+def _secret(r, avoid: str) -> str:
+    """A value with the characters that ended one too early (FZ-26), minus those the format
+    itself cannot hold unescaped (avoid)."""
+    chars = [c for c in "abcXYZ0129;,)(' #!$*+-./:?@[]^_`{|}~=" + '"<>\\' if c not in avoid]
+    core = "lab" + "".join(r.choice(chars) for _ in range(r.randint(6, 30))) + str(r.randrange(10**6))
+    return core.strip()
+
+
+def _xml_doc(r) -> tuple[str, str]:
+    name = r.choice(NAMES)
+    prefix = r.choice(["", "wsse:", "ns1:", "s:"])
+    v = _secret(r, "<&>\"'")
+    sp = r.choice(["", " ", "\n  ", "\t"])
+    form = r.randrange(7)
+    if form == 0:
+        doc = f"<{prefix}{name}>{sp}{v}{sp}</{prefix}{name}>"
+    elif form == 1:
+        doc = f'<{prefix}{name} Type="t" a="1">{v}</{prefix}{name} >'
+    elif form == 2:
+        doc = f"<{prefix}{name}><![CDATA[{v}]]></{prefix}{name}>"
+    elif form == 3:
+        q = r.choice("\"'")
+        doc = f"<cred {name}{r.choice(['=', ' = ', '='])}{q}{v}{q} user={q}tess{q}/>"
+    elif form == 4:
+        doc = (f"<member><name>{name}</name>{sp}<value>{r.choice(['<string>%s</string>', '%s', '<base64>%s</base64>'])}"
+               f"</value></member>") % v
+    elif form == 5:
+        doc = f"<dict><key>{name}</key>{sp}<string>{v}</string></dict>"
+    else:
+        attr = r.choice(["name", "key", "property"])
+        doc = f'<{r.choice(["input", "meta", "add"])} {attr}="{name}" {r.choice(["value", "content"])}="{v}">'
+    wrap = r.choice(["%s", "<?xml version=\"1.0\"?><soap:Envelope><soap:Body>%s</soap:Body></soap:Envelope>",
+                     "<html><form>%s</form></html>", "<methodCall><params><param><value><struct>%s</struct>"
+                     "</value></param></params></methodCall>"])
+    return wrap % doc, v
+
+
+def _multipart_doc(r) -> tuple[str, str]:
+    b = "----b" + str(r.randrange(10**6))
+    v = _secret(r, "")
+    if r.random() < 0.5:
+        v = v[:8] + r.choice(["\r\n", "\n"]) + v[8:] + r.choice(["", "\r\n--not-it"])
+    quoted = r.random() < 0.8
+    name = r.choice(NAMES)
+    part = (f'Content-Disposition: form-data; name={chr(34) + name + chr(34) if quoted else name}'
+            f'{r.choice(["", "; x=1"])}\r\n{r.choice(["", "Content-Type: text/plain" + chr(13) + chr(10)])}\r\n{v}')
+    doc = (f"--{b}\r\nContent-Disposition: form-data; name=\"user\"\r\n\r\ntess\r\n--{b}\r\n{part}\r\n"
+           f"--{b}{r.choice(['--', ''])}\r\n")
+    return doc, v.strip()
+
+
+def _form_doc(r) -> tuple[str, str]:
+    name = r.choice(NAMES)
+    if r.random() < 0.3:
+        name = "".join(f"%{ord(c):02X}" if r.random() < 0.3 else c for c in name)
+    v = _secret(r, "&\r\n\t ")
+    pairs = [f"{n}={r.choice(['x', 'tess', '1'])}" for n in r.sample(PLAIN, 2)]
+    pairs.insert(r.randrange(3), f"{name}={v}")
+    return "&".join(pairs), v
+
+
+def _graphql_doc(r) -> tuple[str, str]:
+    name = r.choice([n for n in NAMES if "-" not in n])
+    v = _secret(r, '"\\\r\n&#%+')
+    query = f'mutation {{ login(user: "tess", {name}:{r.choice(["", " "])}"{v}") {{ ok }} }}'
+    form = r.randrange(3)
+    if form == 0:
+        return json.dumps({"query": query, "variables": {}}), v
+    if form == 1:
+        return query, v
+    return "query=" + quote(query, safe="") + "&operationName=Login", v
+
+
+FORMATS = {"xml": _xml_doc, "multipart": _multipart_doc, "form": _form_doc, "graphql": _graphql_doc}
+
+
+@pytest.mark.parametrize("fmt", sorted(FORMATS))
+def test_fuzz_redaction_of_bodies_leaves_no_placed_secret(fmt):
+    """A secret with a secret name, placed in an XML, multipart, form or GraphQL body: it never
+    survives, in text or in a whole HTTP message (with its Content-Type), and a second pass
+    changes nothing."""
+    r = rng(f"redact-body-{fmt}")
+    ctype = {"xml": "text/xml", "multipart": "multipart/form-data; boundary=x", "graphql": "application/json",
+             "form": "application/x-www-form-urlencoded"}[fmt]
+    for i in range(iterations(400)):
+        doc, v = FORMATS[fmt](r)
+        with time_limit(2, f"iteration {i}"):
+            once = redact.text(doc, redact.Report())
+            twice = redact.text(once, redact.Report())
+            raw = f"POST /x HTTP/1.1\r\nContent-Type: {ctype}\r\nContent-Length: {len(doc)}\r\n\r\n{doc}".encode()
+            msg = redact.http_message(raw, redact.Report())
+            again = redact.http_message(msg, redact.Report())
+        assert v not in once and v.encode() not in msg, f"{fmt} iteration {i}: {v!r} survived in {show(once)}"
+        assert twice == once and again == msg, f"{fmt} iteration {i}: not idempotent: {show(once)}"
+        if fmt in ("multipart", "graphql"):
+            assert "tess" in once, f"{fmt} iteration {i}: more than the secret went: {show(once)}"
+
+
+@pytest.mark.parametrize("fmt", sorted(FORMATS))
+def test_fuzz_redaction_of_bodies_without_secrets_keeps_them(fmt):
+    """The same documents with a name that is not secret come out as they went in."""
+    r = rng(f"redact-plain-{fmt}")
+    for i in range(iterations(200)):
+        doc, v = FORMATS[fmt](r)
+        for n in sorted(NAMES, key=len, reverse=True):
+            doc = doc.replace(n, "nickname")
+        doc = doc.replace(quote("nickname", safe=""), "nickname")
+        if any(redact.secret_name(t) for t in ("".join(c if c.isalnum() else " " for c in unquote(doc))).split()):
+            continue            # a random value spelled a secret name
+        assert redact.text(doc, redact.Report()) == doc, f"{fmt} iteration {i}: {show(doc)}"
+
+
+PUMP = ["<password>", "<password>a", "<a:password x='1'>", "<password><![CDATA[", "<![CDATA[", "]]>",
+        "<name>password</name>", "<name>password</name><value>", "<key>token</key>", "<value>", "</password>",
+        '<input name="token" value="', 'name="token" ', "password = '", "<a b=\"", "<a\n",
+        'Content-Disposition: form-data; name=password\r\n\r\n', "--b\r\n",
+        'Content-Disposition: form-data; name="token"\r\n\r\nx\r\n',
+        "password: \"", 'password:\\"', "password%3A%22", "%20token%3A%22a", "token:\"a", "&password=",
+        "password=a;", "pass%77ord=", "SAMLResponse=", "a:\"", "\\\""]
+
+
+def _pumped_units(r):
+    return PUMP + [u + "y" for u in PUMP] + ["".join(r.choice(PUMP) for _ in range(r.randint(2, 3)))
+                                             for _ in range(iterations(25))]
+
+
+@pytest.mark.parametrize("where", ["text", "form body", "url"])
+def test_fuzz_redaction_of_bodies_is_linear(where):
+    """The new rules on pumped input: four times the input takes at most eight times as long."""
+    f = {"text": lambda s: redact.text(s, redact.Report()),
+         "form body": lambda s: redact.http_message(
+             b"POST / HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" + s.encode(), redact.Report()),
+         "url": lambda s: redact.url("https://shop.example.com/a?" + s, redact.Report())}[where]
+    r = rng(f"redact-pump-{where}")
+    for i, unit in enumerate(_pumped_units(r)):
+        times = []
+        for size in (SIZE // 4, SIZE):
+            s = unit * max(1, size // len(unit))
+            with time_limit(10 * BUDGET, f"{where} on {unit!r}"):
+                times.append(elapsed(f, s)[1])
+        assert times[1] <= 8 * times[0] + 0.05 and times[1] <= BUDGET, \
+            f"{where} is not linear on {unit!r}: {times[0]:.3f} s, then {times[1]:.3f} s"

@@ -469,9 +469,13 @@ def test_the_vendored_rules_match_the_servers():
         a, b = redact.Report(), tool.Vendored.Report()
         assert tool.Vendored.header_line(f"{name}: {value}", b) == redact._header_line(f"{name}: {value}", a), name
         assert a.kinds == b.kinds
-    raw = ("GET /a?session_token=lab-q&x=1 HTTP/1.1\r\n" + "".join(f"{n}: {v}\r\n" for n, v in HEADERS) +
-           "\r\n").encode()
-    assert tool.Vendored.http_message(raw, tool.Vendored.Report()) == redact.http_message(raw, redact.Report())
+    assert tool.Vendored._REQUEST_LINE.pattern == redact._REQUEST_LINE.pattern
+    for target in ["/a?session_token=lab-q&x=1", "/a?password=lab;q,r)s&x=1", "/a?pass%77ord=lab-p", "/a?SAMLart=lab-s",
+                   "/a?a=1&&=&token=&api+key=lab-k", "/no-query", "/a?"]:
+        raw = (f"GET {target} HTTP/1.1\r\n" + "".join(f"{n}: {v}\r\n" for n, v in HEADERS) + "\r\n").encode()
+        assert tool.Vendored.http_message(raw, tool.Vendored.Report()) == redact.http_message(raw, redact.Report())
+        q = target.partition("?")[2]
+        assert tool.Vendored.query(q, tool.Vendored.Report()) == redact.params(q, redact.Report()), q
 
 
 # ---- round trip -----------------------------------------------------------------------------

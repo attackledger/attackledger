@@ -22,7 +22,17 @@ Rules, in the order they run:
   JSON         "key": value at any depth when the key is secret (strings, numbers and flat
                arrays of them), and HAR-style {"name": <secret header>, "value": ...}.
                "code" counts in query strings and forms only: in JSON it is a status code.
-  parameters   name=value in query strings, form bodies and text, when the name is secret.
+  XML, HTML    the text of an element with a secret name (<wsse:Password>, <apiKey>, in
+               CDATA too) when it holds no other element; an attribute with a secret name
+               (spaces around "=" too); the value after a secret <name> (XML-RPC) or <key>
+               (plist); value= or content= of a tag whose name=, key= or property= is secret
+               (<input name="csrf_token" value=...>, <add key="DbPassword" value=...>).
+  multipart    a field with a secret name, up to its boundary (every line of it).
+  GraphQL      a string argument with a secret name written in the query, as it appears in
+               JSON, in a GraphQL body and URL-encoded in a GET query.
+  parameters   name=value in query strings, form bodies and text, when the name is secret
+               (percent-encoded too). In a URL's query and a form body, the whole value up to
+               the next "&"; in other text, the value ends where code or prose ends it.
   formats      JWTs, PEM private keys, bearer tokens, passwords in URLs (user:pass@), and
                the credential formats recon already looks for (jsanalysis.REAL: AWS access
                key ids, Stripe, Slack, GitHub, GitLab, npm, ... tokens).
@@ -30,9 +40,11 @@ Rules, in the order they run:
                to 19 digits that pass the Luhn check and start like a card number.
 
 What this does not do: general detection of personal data (names, addresses, phone
-numbers), values under a secret key that are nested objects, secrets with no telling name
-or format, and binary content (images, PDFs, compressed bodies), which is stored as it is
-and recorded as not redacted. A marker is a short hash: it does not reveal a strong secret,
+numbers), values under a secret key that are nested objects (in JSON, or an XML element
+holding other elements, such as a SAML assertion), secrets with no telling name or format
+(XML-RPC parameters known only by their position, unquoted HTML attribute values), and
+binary content (images, PDFs, compressed bodies), which is stored as it is and recorded as
+not redacted. A marker is a short hash: it does not reveal a strong secret,
 but someone who guesses a weak value (a short password) can confirm the guess.
 
 Everything here is linear in the size of the input: each rule is one regular expression
@@ -41,7 +53,7 @@ pass whose repetitions are bounded or anchored (measured at about 5 MB per secon
 import hashlib
 import json
 import re
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, unquote_plus
 
 from . import jsanalysis
 
@@ -53,12 +65,16 @@ from . import jsanalysis
 SECRET_NAMES = frozenset({
     "key", "pwd", "pass", "sid", "sig", "code", "auth", "jwt", "otp",
     "cookie", "setcookie", "authorization", "proxyauthorization",
+    # A signed SAML response logs its bearer in, and the artifact fetches one (FZ-24).
+    "samlresponse", "samlart",
 })
 SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey",
                 "subscriptionkey", "functionskey", "masterkey")
 # In JSON, "code" is nearly always a status or error code; it stays secret in query strings
 # and form bodies, where it is the OAuth authorization code.
 JSON_NOT_SECRET = frozenset({"code"})
+# In XML, <Code> is an error code (S3, SOAP faults) and <Key> an object's name (an S3 listing).
+XML_NOT_SECRET = frozenset({"code", "key"})
 
 MARKER_PREFIX = "[redacted:sha256:"
 MARKER_RE = re.compile(r"\[redacted:sha256:[0-9a-f]{12}\]")
@@ -223,10 +239,32 @@ _JSON_KV = re.compile(r'("((?:[^"\\\r\n]|\\.){1,100})")(\s*:\s*)'
                       r'("(?:[^"\\]|\\.)*"|-?\d[0-9.eE+\-]{0,40}|\[[^\[\]{}]{0,20000}\])')
 _JSON_SCALAR = re.compile(r'"(?:[^"\\]|\\.)*"|-?\d[0-9.eE+\-]{0,40}')
 _HAR_HEADER = re.compile(r'("name"\s*:\s*"((?:[^"\\\r\n]|\\.){1,100})"\s*,\s*"value"\s*:\s*")((?:[^"\\]|\\.)*)(")')
-# A form field in a multipart/form-data body: its headers, a blank line, then its value. Only
-# the value's first line is read: a field is one line, a file part is not a field.
-_MULTIPART = re.compile(r'(?im)^(content-disposition[ \t]*:[^\r\n]{0,500}?;[ \t]*name="([^"\r\n]{1,100})"'
-                        r'([^\r\n]{0,500})\r?\n(?:[^\r\n]{1,1000}\r?\n){0,10}\r?\n)([^\r\n]{1,4000})')
+# A form field in a multipart/form-data body: its headers (the name quoted or not), a blank
+# line, then its value, which ends at the part's boundary. A file part is not a field.
+_MULTIPART = re.compile(r'(?im)^(content-disposition[ \t]*:[^\r\n]{0,500}?;[ \t]*name=(?:"([^"\r\n]{1,100})"'
+                        r'|([^\s;"]{1,100}))([^\r\n]{0,500})\r?\n(?:[^\r\n]{1,1000}\r?\n){0,10}\r?\n)')
+MULTIPART_MAX = 64_000          # characters of one field's value that are looked through for its end
+
+# XML and HTML (FZ-23). An opening tag: its name (with a namespace prefix) and its attributes,
+# between two angle brackets, so each match reads at most up to the next "<" (linear).
+_XML_OPEN = re.compile(r"<((?:[A-Za-z_][\w.\-]{0,63}:)?([A-Za-z_][\w.\-]{0,63}))((?:\s[^<>]{0,4000})?)>")
+_XML_ATTR = re.compile(r"""(?<![\w.\-:])((?:[A-Za-z_][\w.\-]{0,63}:)?([A-Za-z_][\w.\-]{0,63}))([ \t\r\n]*=[ \t\r\n]*)"""
+                       r"""("[^"<]{0,4000}"|'[^'<]{0,4000}')""")
+# After <name>password</name> (XML-RPC) or <key>password</key> (a plist): the value element.
+_XML_NEXT = re.compile(r"\s{0,200}(?:<value>\s{0,200})?<(string|value|base64|data)>([^<]{1,20000})</\1\s{0,20}>")
+XML_MAX = 20_000                # characters of one element's text
+_XML_PAIR_NAMES = ("name", "key", "property")
+_XML_PAIR_VALUES = ("value", "content")
+
+# GraphQL string arguments with a secret name (FZ-27), written in the query: in a GraphQL body,
+# inside a JSON string (the quotes escaped), and URL-encoded in a GET query. "$name: Type" is a
+# variable's definition, not a value.
+_GQL_ARGS = [
+    re.compile(r'(?<![\w$])([A-Za-z_]\w{0,63})([ \t]*:[ \t]*")((?:[^"\\\r\n]|\\.){1,4000})(")'),
+    re.compile(r'(?<![\w$])([A-Za-z_]\w{0,63})([ \t]*:[ \t]*\\")((?:[^"\\\r\n]|\\[^"\r\n]){1,4000})(\\")'),
+    re.compile(r'(?:(?<=%20)|(?<=%2[Cc8])|(?<=%7[Bb])|(?<=%0[Aa])|(?<![\w$%]))'      # after a space , ( { or line end
+               r'([A-Za-z_]\w{0,63})((?:%20|\+)*(?:%3[Aa]|:)(?:%20|\+)*%22)((?:(?!%22)[^&\s#"]){1,4000})(%22)'),
+]
 
 # A whole block, or, without its END line (cut off), the header and the base64 lines after it.
 _PEM_BEGIN = re.compile(r"-----BEGIN ((?:[A-Z0-9]+ )*)PRIVATE KEY-----")
@@ -270,11 +308,139 @@ def _header_lines(s: str, rep: Report) -> str:
 
 
 def _multipart(s: str, rep: Report) -> str:
+    """Each field with a secret name, up to the line before its boundary: the "--" line that
+    opened its part, found again after the value (FZ-25). Without one (a body cut off), up to
+    the end when that is near, else the first line."""
+    out, pos = [], 0
+    absent: dict[str, int] = {}             # boundary -> no boundary line before this index
+    for m in _MULTIPART.finditer(s):
+        name = m.group(2) or m.group(3)
+        if m.start() < pos or not secret_name(name) or "filename" in m.group(1).lower():
+            continue
+        start = m.end()
+        opened = s.rfind("\n--", max(0, m.start() - 2000), m.start())
+        line = s[opened + 1:s.find("\n", opened + 1)] if opened >= 0 else (
+            s[:s.find("\n")] if s.startswith("--") else "")
+        boundary = line.rstrip("\r")
+        end = -1
+        if boundary and absent.get(boundary, -1) < start:
+            end = s.find("\n" + boundary, start, start + MULTIPART_MAX)
+            if end < 0:
+                absent[boundary] = min(len(s), start + MULTIPART_MAX)
+        if end >= 0:
+            end -= 1 if s[end - 1:end] == "\r" else 0
+        elif len(s) - start <= MULTIPART_MAX:
+            end = len(s.rstrip("\r\n")) if len(s.rstrip("\r\n")) > start else len(s)
+        else:
+            eol = s.find("\n", start, start + 4001)
+            end = (eol - (s[eol - 1:eol] == "\r")) if eol >= 0 else min(len(s), start + 4000)
+        value = s[start:end]
+        if not value:
+            continue
+        out += [s[pos:start], _mask(value, name, rep)]
+        pos = end
+    return "".join(out) + s[pos:] if out else s
+
+
+def _xml_secret(local: str) -> bool:
+    return secret_name(local) and _norm(local) not in XML_NOT_SECRET
+
+
+def _xml_attrs(attrs: str, rep: Report) -> str:
+    found = list(_XML_ATTR.finditer(attrs))
+    if not found:
+        return attrs
+    # <input name="csrf_token" value=...>, <meta name="csrf-token" content=...>, <add key="DbPassword" value=...>
+    pair = next((m.group(4)[1:-1] for m in found
+                 if m.group(2).lower() in _XML_PAIR_NAMES and secret_name(m.group(4)[1:-1])), None)
+    out, pos = [], 0
+    for m in found:
+        local, value = m.group(2), m.group(4)
+        secret = _xml_secret(local)
+        if secret or (pair and local.lower() in _XML_PAIR_VALUES):
+            out += [attrs[pos:m.start(4)], value[0], _mask(value[1:-1], local if secret else pair, rep), value[0]]
+            pos = m.end(4)
+    return "".join(out) + attrs[pos:] if out else attrs
+
+
+def _xml(s: str, rep: Report) -> str:
+    """Secrets in XML and HTML (FZ-23): see the module's rules. One pass over the opening tags;
+    each search for an element's end is bounded, and remembered when it fails, so the pass is
+    linear in the input."""
+    if "<" not in s:
+        return s
+    out, pos, i = [], 0, 0
+    no_cdata_end = -1                   # no "]]>" before this index
+    while True:
+        m = _XML_OPEN.search(s, i)
+        if not m:
+            break
+        i = m.end()
+        qname, local, attrs = m.group(1), m.group(2), m.group(3)
+        if attrs:
+            new = _xml_attrs(attrs, rep)
+            if new != attrs and m.start(3) >= pos:
+                out += [s[pos:m.start(3)], new]
+                pos = m.end(3)
+        if attrs.endswith("/"):
+            continue
+        low = local.lower()
+        if not (_xml_secret(local) or low in ("name", "key")):
+            continue
+        start = m.end()
+        if s.startswith("<![CDATA[", start):
+            a = start + 9
+            j = -1 if no_cdata_end > a else s.find("]]>", a, a + XML_MAX)
+            if j < 0:
+                no_cdata_end = min(len(s), a + XML_MAX)
+                continue
+            v0, v1, close = a, j, j + 3
+        else:
+            j = s.find("<", start, start + XML_MAX)
+            if j < 0:
+                continue
+            v0, v1, close = start, j, j
+        if not s.startswith("</" + qname, close):
+            continue
+        after = close + 2 + len(qname)
+        if after < len(s) and s[after] not in "> \t\r\n":
+            continue
+        text = s[v0:v1]
+        core = text.strip()
+        if not core:
+            continue
+        kind = local
+        if low in ("name", "key") and not _xml_secret(local):
+            # XML-RPC <member><name>password</name><value>..., a plist <key>password</key><string>...
+            if not secret_name(core):
+                continue
+            end = s.find(">", after, after + 22)
+            nxt = _XML_NEXT.match(s, end + 1) if end >= 0 else None
+            if not nxt or not nxt.group(2).strip():
+                continue
+            v0, v1, text, kind = nxt.start(2), nxt.end(2), nxt.group(2), core
+            core = text.strip()
+            i = max(i, nxt.end())
+        if v0 < pos:
+            continue
+        lead = text[:len(text) - len(text.lstrip())]
+        out += [s[pos:v0], lead, _mask(core, kind, rep), text[len(lead) + len(core):]]
+        pos = v1
+    return "".join(out) + s[pos:] if out else s
+
+
+def _graphql(s: str, rep: Report) -> str:
+    if ":" not in s and "%3" not in s:
+        return s
+
     def sub(m):
-        if not secret_name(m.group(2)) or "filename" in m.group(1).lower():
+        name = m.group(1)
+        if not secret_name(name) or _norm(name) in JSON_NOT_SECRET:
             return m.group(0)
-        return m.group(1) + _mask(m.group(4), m.group(2), rep)
-    return _MULTIPART.sub(sub, s)
+        return m.group(1) + m.group(2) + _mask(m.group(3), name, rep) + m.group(4)
+    for rx in _GQL_ARGS:
+        s = rx.sub(sub, s)
+    return s
 
 
 def _json_name(raw: str) -> str:
@@ -290,12 +456,29 @@ def _json_name(raw: str) -> str:
 def _kv(s: str, rep: Report) -> str:
     def sub(m):
         name, v = m.group(1), m.group(2)
-        if not secret_name(name):
+        if not (secret_name(name) or ("%" in name and secret_name(unquote(name)))):     # pass%77ord (FZ-26)
             return m.group(0)
         if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
             return f"{name}={v[0]}{_mask(v[1:-1], name, rep)}{v[0]}"
         return f"{name}={_mask(v, name, rep)}"
     return _KV.sub(sub, s)
+
+
+def params(q: str, rep: Report) -> str:
+    """A URL's query or a form body (application/x-www-form-urlencoded): each value whose name
+    is secret, decoded, is replaced whole, up to the next "&" (FZ-26). The text rules stop a
+    value at ; , ) ' # " < and spaces, which end one in code and prose but not in a form a
+    client sent without encoding them; the rest of such a password was kept."""
+    if "=" not in q:
+        return q
+    out = []
+    for piece in q.split("&"):
+        name, eq, value = piece.partition("=")
+        core = value.rstrip()
+        if eq and core and secret_name(unquote_plus(name)):
+            piece = f"{name}={_mask(core, name, rep)}{value[len(core):]}"
+        out.append(piece)
+    return "&".join(out)
 
 
 def _json(s: str, rep: Report) -> str:
@@ -364,7 +547,7 @@ def text(s: str, rep: Report, *, personal: bool = False) -> str:
     """Every rule over one piece of text: a URL, a note, a body, a summary."""
     if not s:
         return s
-    s = _formats(_kv(_json(_header_lines(_multipart(s, rep), rep), rep), rep), rep)
+    s = _formats(_kv(_graphql(_json(_xml(_header_lines(_multipart(s, rep), rep), rep), rep), rep), rep), rep)
     return _personal(s, rep) if personal else s
 
 
@@ -388,6 +571,10 @@ def url(u: str, rep: Report) -> str:
             # refuse the whole URL ("Invalid IPv6 URL"), so the stored URL named no host.
             password = quote(_mask(password, "password in URL", rep), safe=":")
         userinfo = text(user, rep) + colon + password
+    path, q, query = rest.partition("?")
+    if q:
+        query, h, fragment = query.partition("#")
+        rest = path + q + params(query, rep) + h + fragment
     return start + userinfo + at + hostport + text(rest, rep)
 
 
@@ -404,16 +591,17 @@ def looks_binary(data: bytes, filename: str | None = None) -> bool:
 
 
 def data(raw: bytes, rep: Report, *, personal: bool = False, filename: str | None = None,
-         what: str = "binary content") -> bytes:
+         what: str = "binary content", form: bool = False) -> bytes:
     """Bytes as stored: text is redacted (bytes that are not valid UTF-8 are kept as they
-    are); binary content is kept unchanged and recorded as not redacted."""
+    are); binary content is kept unchanged and recorded as not redacted. form: the body of a
+    message whose Content-Type is application/x-www-form-urlencoded."""
     if not raw:
         return raw
     if looks_binary(raw, filename):
         rep.skipped(what)
         return raw
     s = raw.decode("utf-8", "surrogateescape")
-    out = text(s, rep, personal=personal)
+    out = text(params(s, rep) if form else s, rep, personal=personal)
     return raw if out == s else out.encode("utf-8", "surrogateescape")
 
 
@@ -461,14 +649,26 @@ def http_message(raw: bytes | None, rep: Report, *, personal: bool = False,
     head_b, sep, body = (raw[:m.start()], raw[m.start():m.end()], raw[m.end():]) if m else (raw, b"", b"")
     head = head_b.decode("utf-8", "surrogateescape")
     lines = re.split(r"(\r?\n)", head)
-    out = [text(lines[0], rep)] if lines else []
+    out = [text(start_line(lines[0], rep), rep)] if lines else []
     for i, part in enumerate(lines[1:], start=1):
         out.append(part if i % 2 else _header_line(part, rep))
-    new_body = data(body, rep, personal=personal, what=what)
+    form = any(_FORM_TYPE.match(lines[i]) for i in range(2, len(lines), 2))
+    new_body = data(body, rep, personal=personal, what=what, form=form)
     if new_body != body:
         _fix_content_length(out, len(body), len(new_body))
     new_head = "".join(out).encode("utf-8", "surrogateescape")
     return new_head + sep + new_body
+
+
+_FORM_TYPE = re.compile(r"(?i)content-type[ \t]*:[ \t]*application/x-www-form-urlencoded\b")
+_REQUEST_LINE = re.compile(r"([A-Za-z]{1,20} +)([^ ?]*\?)([^ ]*)(.*)", re.S)
+
+
+def start_line(line: str, rep: Report) -> str:
+    """A request line's query, read as a query (params): everything after "?" in the target,
+    as servers read it; a request target has no fragment."""
+    m = _REQUEST_LINE.fullmatch(line)
+    return line if not m else m.group(1) + m.group(2) + params(m.group(3), rep) + m.group(4)
 
 
 _CONTENT_LENGTH = re.compile(r"(content-length[ \t]*:[ \t]*)([0-9]{1,18})([ \t]*)", re.I)   # FZ-2
