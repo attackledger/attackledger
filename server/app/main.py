@@ -9,6 +9,7 @@ import zipfile
 from contextlib import asynccontextmanager
 
 from datetime import date, datetime, timezone
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -1310,10 +1311,19 @@ def _filename(eng: dict, ext: str) -> str:
     return f"attackledger-{slug}-{eng['id']}.{ext}"
 
 
+def _attachment(eng: dict, ext: str) -> str:
+    """Content-Disposition for a downloaded report. The name keeps the engagement's letters in any
+    script (filename*, RFC 6266), with an ASCII copy for older clients: a header is sent as
+    Latin-1, so a name such as "Müşteri" in filename= alone was a 500 (web end-to-end tests)."""
+    name = _filename(eng, ext)
+    plain = "".join(ch if ch.isascii() else "-" for ch in name)
+    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}"
+
+
 @app.get("/engagements/{eng_id}/report")
 def report_json(eng_id: int, download: bool = False, session: Session = Depends(get_session)):
     r = _report(eng_id, session)
-    headers = {"Content-Disposition": f'attachment; filename="{_filename(r["engagement"], "json")}"'} if download else {}
+    headers = {"Content-Disposition": _attachment(r["engagement"], "json")} if download else {}
     return JSONResponse(r, headers=headers)
 
 
@@ -1326,7 +1336,7 @@ def report_html(eng_id: int, download: bool = False, session: Session = Depends(
         "X-Content-Type-Options": "nosniff",
     }
     if download:
-        headers["Content-Disposition"] = f'attachment; filename="{_filename(r["engagement"], "html")}"'
+        headers["Content-Disposition"] = _attachment(r["engagement"], "html")
     return HTMLResponse(report.render_html(r), headers=headers)
 
 

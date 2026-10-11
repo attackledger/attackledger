@@ -418,6 +418,12 @@ def results(job_id: int, body: ResultsIn, session: Session = Depends(get_session
         if not host or not scope.in_scope(host, inc, exc):
             out["refused"] += 1
             continue
+        # The web app links a probed host to this URL: an http(s) URL of the host itself, never a
+        # javascript: or other URL a tool or a compromised worker made up (web end-to-end tests).
+        url = o.data.get("url")
+        if url is not None and (not isinstance(url, str) or urls.host_of(url) != host):
+            out["refused"] += 1
+            continue
         session.add(Observation(job_id=job.id, engagement_id=eng.id, host=host, data=clean(o.data)))
         if host not in known:
             known.add(host)

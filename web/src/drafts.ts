@@ -17,13 +17,19 @@ const OWNER = "attackledger-draft-owner";
 const mem = new Map<string, string>();
 
 // A credential pasted in (a header, a JWT, "password=...", a JSON field or a header such as
-// "access_token": "..." or X-Api-Key: ..., a private key, an AWS key id), not a sentence such as
+// "access_token": "..." or X-Api-Key: ..., a private key, an AWS key id, a URL with a password, a
+// provider's prefixed token), not a sentence such as
 // "a wrong password: 401": after a colon, only a value of eight or more characters counts.
 const SECRETISH = new RegExp([
   /authorization\s*:|bearer\s+[\w.~+/-]{8,}|(^|\s)(set-)?cookie\s*:|eyJ[\w-]{8,}\./.source,
   /(api[_-]?key|passw(or)?d|secret|token|session(id)?)\s*=\s*\S/.source,
   /(api[_-]?key|passw(or)?d|secret|token|session(id)?|subscription[_-]?key|functions[_-]?key)[\w-]*["']?\s*:\s*["']?[^\s"',]{8,}/.source,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b/.source,
+  // A URL with a user name and password before its host, and tokens a provider marks with a
+  // prefix: GitHub, GitLab, Slack, Stripe, Google, npm, Anthropic and OpenAI (web e2e tests, WE-4).
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*:[^\s/?#@]+@/.source,
+  /\b(gh[pousr]_[a-z0-9]{20,}|github_pat_\w{20,}|glpat-[\w-]{20,}|xox[abeoprs]-[\w-]{10,}|[rs]k_live_\w{16,})/.source,
+  /\b(AIza[\w-]{30,}|npm_[a-z0-9]{30,}|sk-(ant-|proj-)?[\w-]{20,})/.source,
 ].join("|"), "i");
 
 function storage(): Storage | null {
