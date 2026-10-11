@@ -13,7 +13,7 @@ report or an attestation.
 **How.** Each suspected issue was first proven with a test that failed, then fixed, and the test
 was kept as a regression test. Traffic went only to localhost, local stubs and the bundled lab,
 apart from package registries, the timestamp authority, and the passive-source queries one lab
-run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,050 tests, and it now also runs
+run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,154 tests, and it now also runs
 on Postgres 16 (`tools/test_postgres.sh`), as production does. The Python and browser verifiers
 give identical results on 134 reports and on 2,600 random mutants (`tools/verifier_equivalence/run.sh`).
 
@@ -27,7 +27,7 @@ give identical results on 134 reports and on 2,600 random mutants (`tools/verifi
 | [RECHECK.md](RECHECK.md) | An adversarial second pass over every fix above | 4 bypasses (2 Medium), 1 new Low |
 | [RETENTION.md](RETENTION.md) | Whether deleting an engagement's content reaches every store | 3 Medium, 4 Low |
 | [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) | Container privileges, image and package pinning, known advisories, OS-package scan, SBOM | 3 Medium, 4 Low |
-| [FUZZING.md](FUZZING.md) | Property-based and mutation fuzzing of the importers, redaction, scope and URL parsing, page and bundle parsers, and both verifiers | 6 Medium, 12 Low, 1 Info |
+| [FUZZING.md](FUZZING.md) | Property-based and mutation fuzzing of the importers, redaction, scope and URL parsing, page and bundle parsers, and both verifiers; a second pass on the gateway's HTTP and DNS parsing, the gateway log, redaction of XML, multipart, form and GraphQL bodies, the inbox mapping and the report | 9 Medium, 23 Low, 3 Info |
 
 Severities are the reviewers' own and describe impact in AttackLedger's threat model, mainly a
 compromised or misled tool or agent in the worker and a malicious page in the operator's browser.
@@ -53,6 +53,13 @@ compromised or misled tool or agent in the worker and a malicious page in the op
   its last dot was stored broken, so the host it was meant to exclude under a wildcard stayed in
   scope for the gateway. Fuzzing also found five inputs that took quadratic time and could stall an
   import or a recon run (FZ-6, FZ-11 to FZ-13).
+- **FZ-22 (Medium): a target could hold the gateway's connections open.** Endless `100 Continue`
+  answers or a response sent a line at a time kept a connection, and the tool's, open with no row
+  in the request log; only the time between two reads was bounded. A head now has 90 seconds.
+- **FZ-23, FZ-27 (Medium): secrets in XML and GraphQL bodies reached evidence.** SOAP passwords
+  (`<wsse:Password>`), XML-RPC and plist values, hidden form tokens and inline GraphQL arguments
+  were stored unredacted; so were multi-line multipart values and the rest of a form value after
+  a `;` (FZ-25, FZ-26).
 - **RET-2, RET-3 (Medium): content deletion missed running jobs and job targets.** The backup
   documentation also overstated what master-key rotation does (RET-7).
 

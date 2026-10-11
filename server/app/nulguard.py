@@ -15,6 +15,12 @@ fails closed). Now, on every database:
     carry what targets and tools produced and must be kept, each NUL becomes U+FFFD, the
     replacement character, before the route reads the body (so before anything is hashed).
 
+A lone surrogate (U+D800 to U+DFFF on its own) is handled the same way: JSON can spell one
+("\ud800") and Python's reader accepts it, as it does the bytes ED A0 80, but UTF-8, and so
+every database driver, cannot hold one, and the commit raised: a 500 on every route that
+stores text (fuzzing, FZ-31). A body without a Content-Type is checked too: FastAPI reads it
+as JSON (FZ-32).
+
 The import upload (POST /engagements/{id}/imports) is the export file itself, kept byte for
 byte; the import adapters handle NUL in the fields they read (importers.text, http_url).
 """
@@ -26,20 +32,31 @@ MACHINE = ("/worker/", "/gateway/")
 RAW_BODY = re.compile(r"^/engagements/[^/]+/imports$")
 
 
-def _has_nul(value) -> bool:
+_UNSTORABLE = re.compile("[\x00\ud800-\udfff]")
+_SURROGATE = re.compile("[\ud800-\udfff]")
+# How JSON spells a NUL or a surrogate (a valid pair too: it is only parsed to be sure), and
+# UTF-8's bytes for a surrogate, which Python's JSON reader takes from bytes (surrogatepass).
+_SPELLED = re.compile(rb"\\u(?:0000|[dD][89a-fA-F][0-9a-fA-F]{2})|\xed[\xa0-\xbf]")
+
+
+def _find(value, rx) -> bool:
     if isinstance(value, str):
-        return "\x00" in value
+        return rx.search(value) is not None
     if isinstance(value, dict):
-        return any(_has_nul(k) or _has_nul(v) for k, v in value.items())
+        return any(_find(k, rx) or _find(v, rx) for k, v in value.items())
     if isinstance(value, list):
-        return any(_has_nul(v) for v in value)
+        return any(_find(v, rx) for v in value)
     return False
 
 
+def _has_nul(value) -> bool:
+    return _find(value, re.compile("\x00"))
+
+
 def replace(value):
-    """The same JSON value with every NUL in its strings (keys included) replaced."""
+    """The same JSON value with every NUL and lone surrogate in its strings (keys included) replaced."""
     if isinstance(value, str):
-        return value.replace("\x00", REPLACEMENT)
+        return _UNSTORABLE.sub(REPLACEMENT, value)
     if isinstance(value, dict):
         return {replace(k): replace(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -59,7 +76,7 @@ def _is_json(scope) -> bool:
         if name == b"content-type":
             kind = value.split(b";")[0].strip().lower()
             return kind == b"application/json" or kind.endswith(b"+json")
-    return False
+    return True             # no Content-Type: FastAPI reads the body as JSON (FZ-32)
 
 
 class NulGuard:
@@ -84,16 +101,23 @@ class NulGuard:
             chunks.append(message.get("body", b""))
             more = message.get("more_body", False)
         body = b"".join(chunks)
-        if b"\\u0000" in body:                         # how JSON writes a NUL; then look properly
+        if _SPELLED.search(body):                      # a NUL or a surrogate may be in it; then look properly
             try:
                 data = json.loads(body)
-            except ValueError:
+            except (ValueError, RecursionError):
                 data = None                             # not JSON: the route refuses it
-            if data is not None and _has_nul(data):
+            if data is not None and _find(data, _UNSTORABLE):
                 if not path.startswith(MACHINE):
-                    return await _respond(send, 422, "text in the request contains a NUL character (U+0000), "
-                                                     "which is not stored; remove it and send the request again")
-                body = json.dumps(replace(data), ensure_ascii=False).encode()
+                    if _has_nul(data):
+                        return await _respond(send, 422, "text in the request contains a NUL character (U+0000), "
+                                                         "which is not stored; remove it and send the request again")
+                    return await _respond(send, 422, "text in the request contains a lone surrogate (U+D800 to "
+                                                     "U+DFFF), which is not text and is not stored; remove it and "
+                                                     "send the request again")
+                # ASCII, with escapes: a lone surrogate ("\udc80", which JSON can spell) cannot be
+                # encoded as UTF-8, and the whole request was a 500 (fuzzing, FZ-28). Read back,
+                # the escapes are the same text; the route deals with the surrogate.
+                body = json.dumps(replace(data)).encode()
                 scope = {**scope, "headers": [(n, str(len(body)).encode() if n == b"content-length" else v)
                                               for n, v in scope["headers"]]}
         return await self.app(scope, _replay([{"type": "http.request", "body": body, "more_body": False}], receive),

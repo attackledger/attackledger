@@ -128,7 +128,19 @@ def test_fz5_a_lone_surrogate_in_json_is_a_422_not_a_500(client):
     lane = client.post("/lanes", json={"asset_id": a, "role": "info"}).json()
     body = '{"item_idx": %d, "kind": "note", "text": "token=\\ud800lab"}' % lane["items"][0]["idx"]
     r = client.post(f"/lanes/{lane['id']}/attach", content=body, headers={"content-type": "application/json"})
-    assert r.status_code == 422 and "\\ud800" in r.text
+    # Since FZ-31 the NUL guard refuses a lone surrogate before FastAPI reads the body; still a 422.
+    assert r.status_code == 422 and r.content.isascii() and "lone surrogate" in r.text
+
+
+def test_fz5_fastapis_own_422_is_ascii_whatever_it_echoes():
+    """The handler that FZ-5 added, still in place behind the NUL guard (FZ-31)."""
+    import asyncio
+    from fastapi.exceptions import RequestValidationError
+    from app.main import _invalid_request
+    exc = RequestValidationError([{"type": "missing", "loc": ("body", "sha256"), "msg": "Field required",
+                                   "input": {"text": "token=\ud800lab"}}])
+    r = asyncio.run(_invalid_request(None, exc))
+    assert r.status_code == 422 and r.body.isascii() and b"\\ud800" in r.body
 
 
 def test_fz5_redaction_takes_a_lone_surrogate():

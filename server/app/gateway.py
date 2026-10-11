@@ -53,7 +53,6 @@ Run: python -m app.gateway
 """
 import asyncio
 import base64
-import binascii
 import hashlib
 import html
 import ipaddress
@@ -124,6 +123,12 @@ PURGE_IDS = 5000                           # ids per question (gatewayapi.PURGE_
 CONNECT_TIMEOUT = 10.0
 PROBE_TIMEOUT = 3.0
 READ_TIMEOUT = 60.0      # between two reads from either side
+# A head as a whole, a target's informational (1xx) answers included: each read coming within
+# READ_TIMEOUT did not bound it, so a target sending a line at a time, or 100 Continue for ever,
+# held the connection as long as it liked (fuzzing, FZ-22).
+HEAD_TIMEOUT = 90.0
+MAX_INFORMATIONAL = 32
+SCRUBBED_BODY_TIMEOUT = 300.0    # a test account's response, read whole before anything goes back
 HANDSHAKE_TIMEOUT = 10.0
 MAX_HEAD = 64 * 1024
 MAX_SERVICE_BODY = 20 * 1024 * 1024
@@ -476,7 +481,7 @@ def credential(auth: str | None) -> tuple[int, str, str]:
         raise Refused(407, "use Basic proxy authentication with the job credential")
     try:
         user, sep, secret = base64.b64decode(value.strip(), validate=True).decode().partition(":")
-    except (binascii.Error, UnicodeDecodeError):
+    except ValueError:      # binascii.Error, UnicodeDecodeError, and a value that is not ASCII (FZ-20)
         raise Refused(407, "the job credential is malformed")
     m = USER_RE.match(user)
     if not sep or not m or not secret:
@@ -556,7 +561,8 @@ def split_authority(authority: str, default_port: int | None = None) -> tuple[st
         if default_port is None:
             raise Refused(400, "a port is required")
         port = str(default_port)
-    if not port.isdigit() or not 0 < int(port) < 65536:
+    # ASCII digits only: "²".isdigit() is True and int("²") raises (fuzzing, FZ-20).
+    if not (port.isascii() and port.isdigit()) or not 0 < int(port) < 65536:
         raise Refused(400, "not a valid port")
     return host.lower().rstrip("."), int(port)
 
@@ -620,7 +626,9 @@ class Policy:
         # _method=DELETE and the like. Only a value that can be a method name counts: parameter
         # discovery (Arjun) and scanners send _method with numbers or payloads, which no
         # framework reads as a method.
-        query = urlsplit(path).query
+        # What urlsplit reads as the query, without urlsplit: a path such as "//[x/" made it
+        # raise (Invalid IPv6 URL) and the request was dropped without a row (FZ-20).
+        query = path.partition("#")[0].partition("?")[2]
         for k, v in parse_qsl(query, keep_blank_values=True):
             m = v.strip().upper()
             if k.lower() == "_method" and m.isalpha() and m not in READ_ONLY and m != method:
@@ -1140,7 +1148,12 @@ class Gateway:
 
     async def flush_forever(self) -> None:
         while True:
-            ok = await self.flush_log()
+            try:
+                ok = await self.flush_log()
+            except Exception as e:  # noqa: BLE001 - one bad answer must not stop the log for good (FZ-30)
+                print(f"gateway: sending the request log failed ({type(e).__name__}: {str(e)[:120]}); "
+                      f"{len(self.log_rows)} rows waiting", file=sys.stderr, flush=True)
+                ok = False
             await asyncio.sleep(0.5 if ok else 2.0)
 
     # ---- HTTP -----------------------------------------------------------------------
@@ -1163,7 +1176,11 @@ class Gateway:
     async def _serve(self, reader, writer, tunnel: Tunnel | None) -> None:
         conn = h11.Connection(h11.SERVER, max_incomplete_event_size=MAX_HEAD)
         while True:
-            ev = await _next(conn, reader)
+            try:
+                ev = await asyncio.wait_for(_next(conn, reader), HEAD_TIMEOUT)
+            except h11.RemoteProtocolError as e:
+                await self._unreadable(conn, writer, tunnel, e)
+                return
             if not isinstance(ev, h11.Request):
                 return
             if tunnel is None and ev.method == b"CONNECT":
@@ -1173,6 +1190,24 @@ class Gateway:
             if not keep or conn.our_state is not h11.DONE or conn.their_state is not h11.DONE:
                 return
             conn.start_next_cycle()
+
+    async def _unreadable(self, conn, writer, tunnel: Tunnel | None, e: h11.RemoteProtocolError) -> None:
+        """A request head h11 refuses (not ASCII, a bad Content-Length, a line that is not a header,
+        too large): answered with h11's status and logged, without the URL, which was not read
+        (FZ-21). Before, the connection was closed with no answer and no row."""
+        started, rules, tool = self.clock(), None, "unknown"
+        if tunnel is not None:
+            try:
+                rules, tool = await self.identify(tunnel.auth)
+            except Refused:
+                pass
+        hint = getattr(e, "error_status_hint", 400)
+        refusal = Refused(hint if 400 <= hint < 500 else 400,
+                          f"the request is not valid HTTP/1.1 ({str(e).split(':')[0][:80]})")
+        self.record(rules=rules, tool=tool, kind="target", method="", url="", host=tunnel.host if tunnel else "",
+                    port=tunnel.port if tunnel else None, status=refusal.status, verdict="refused",
+                    reason=refusal.reason, started=started)
+        await self._refuse(conn, writer, b"GET", refusal)
 
     async def _refuse(self, conn, writer, req_method: bytes, e: Refused) -> None:
         body = b"" if req_method == b"HEAD" else (f"AttackLedger gateway: {e.reason}\n").encode()
@@ -1268,7 +1303,10 @@ class Gateway:
                     return await self._answer_self_check(conn, reader, writer)
                 if not target.lower().startswith("http://"):
                     raise Refused(400, "send http:// URLs in absolute form, and https:// through CONNECT")
-                parts = urlsplit(target)
+                try:
+                    parts = urlsplit(target)
+                except ValueError:              # "http://[shop/": Invalid IPv6 URL (FZ-20)
+                    raise Refused(400, "not a valid URL")
                 if parts.username is not None or parts.password is not None:
                     raise Refused(403, "URLs with credentials are not sent")
                 host, port = split_authority(parts.netloc, 80)
@@ -1287,7 +1325,7 @@ class Gateway:
             if (label or approval_text) and kind != "target":
                 raise Refused(403, "test accounts and approved writes are for target requests only")
             if approval_text is not None:
-                if not approval_text.isdigit() or len(approval_text) > 12:
+                if not (approval_text.isascii() and approval_text.isdigit()) or len(approval_text) > 12:
                     raise Refused(400, "X-AttackLedger-Approval names an approval by its number")
                 approval_id = int(approval_text)
             self.policy.check(rules, kind, method, path, ev.headers, write=approval_id is not None)
@@ -1315,10 +1353,15 @@ class Gateway:
                                       account=account, approved=approved["headers"] if approved else None)
             if body:
                 out.append((b"Content-Length", str(len(body)).encode()))
-        except Refused as e:
+        except Exception as e:
+            # Every request that gets here is answered and logged, whatever stopped it: a refusal,
+            # a request h11 could not read to the end, or a bug in a check (FZ-20, FZ-21). Before,
+            # anything but Refused ended the connection with no answer and no row.
+            if not isinstance(e, Refused):
+                e = _not_checked(e)
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
-                        status=e.status, verdict="refused", reason=e.reason, started=started,
-                        account=account["label"] if account else label, approval_id=approval_id)
+                        status=e.status, verdict="failed" if e.status >= 500 else "refused", reason=e.reason,
+                        started=started, account=account["label"] if account else label, approval_id=approval_id)
             await self._refuse(conn, writer, ev.method, e)
             return False
         return await self._forward(conn, writer, rules, tool, kind, method, scheme, host, port, path, out, body,
@@ -1379,12 +1422,10 @@ class Gateway:
             sent = len(out)           # the request as it left: head and body, in bytes
             await upw.drain()
             try:
-                while True:
-                    resp = await _next(upc, upr)
-                    if isinstance(resp, h11.InformationalResponse):
-                        continue
-                    break
-            except (h11.ProtocolError, OSError, asyncio.TimeoutError) as e:
+                resp = await asyncio.wait_for(_final_head(upc, upr, host), HEAD_TIMEOUT)
+            except asyncio.TimeoutError:
+                raise Refused(502, f"{host} did not send its response head in time")
+            except (h11.ProtocolError, OSError) as e:
                 if upc.their_state is h11.SEND_RESPONSE and isinstance(e, h11.RemoteProtocolError):
                     raise Refused(502, f"{host} closed the connection without a response")
                 raise Refused(502, f"{host} sent no valid response: {str(e)[:120] or type(e).__name__}")
@@ -1437,19 +1478,24 @@ class Gateway:
         """A response to a request sent as a test account: read whole, scrubbed, then sent on with
         its new length. (keep the client connection, reason, bytes received)."""
         chunks, size, reason = [], 0, ""
-        while True:
-            ev = await _next(upc, upr)
-            if isinstance(ev, h11.Data):
-                size += len(ev.data)
-                if size > MAX_SCRUBBED_BODY:
-                    reason = f"the response is larger than {MAX_SCRUBBED_BODY} bytes; it was cut off"
-                    break
-                chunks.append(ev.data)
-            elif isinstance(ev, h11.EndOfMessage):
-                break
-            else:
-                reason = "the response ended early"
-                break
+
+        async def read() -> str:
+            nonlocal size
+            while True:
+                ev = await _next(upc, upr)
+                if isinstance(ev, h11.Data):
+                    size += len(ev.data)
+                    if size > MAX_SCRUBBED_BODY:
+                        return f"the response is larger than {MAX_SCRUBBED_BODY} bytes; it was cut off"
+                    chunks.append(ev.data)
+                elif isinstance(ev, h11.EndOfMessage):
+                    return ""
+                else:
+                    return "the response ended early"
+        try:        # nothing goes back before the end, so the whole body is bounded in time (FZ-22)
+            reason = await asyncio.wait_for(read(), SCRUBBED_BODY_TIMEOUT)
+        except asyncio.TimeoutError:
+            reason = f"the response body did not arrive in time ({SCRUBBED_BODY_TIMEOUT:g} s); it was cut off"
         head = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in HOP_BY_HOP]
         body = b"".join(chunks)
         # Accept-Encoding: identity was asked for, but a target may compress anyway, and the
@@ -1721,6 +1767,29 @@ async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
         return ev
 
 
+async def _final_head(upc: h11.Connection, upr, host: str):
+    """The response to a request, after at most MAX_INFORMATIONAL informational (1xx) answers."""
+    for _ in range(MAX_INFORMATIONAL + 1):
+        resp = await _next(upc, upr)
+        if not isinstance(resp, h11.InformationalResponse):
+            return resp
+    raise Refused(502, f"{host} sent more than {MAX_INFORMATIONAL} informational (1xx) responses")
+
+
+def _not_checked(e: Exception) -> Refused:
+    """The refusal for a request whose checks stopped with something other than Refused: the
+    client's message could not be read to the end, or a check has a bug. Never the exception's
+    text for a bug: it may quote the request."""
+    if isinstance(e, h11.RemoteProtocolError):
+        return Refused(400, f"the request is not valid HTTP/1.1 ({str(e).split(':')[0][:80]})")
+    if isinstance(e, asyncio.TimeoutError):
+        return Refused(408, "the request did not arrive in time")
+    if isinstance(e, (ConnectionError, asyncio.IncompleteReadError)):
+        return Refused(400, "the client closed the connection before the request was complete")
+    print(f"gateway: a request could not be checked: {type(e).__name__}: {str(e)[:300]}", file=sys.stderr, flush=True)
+    return Refused(500, f"the gateway could not check this request ({type(e).__name__}); nothing was sent")
+
+
 def _decode(coding: str, body: bytes, limit: int) -> bytes:
     """A body in Content-Encoding gzip or deflate, decoded (at most `limit` bytes). ValueError for
     any other encoding, or a body that decodes to more. A gzip body may hold several members one
@@ -1781,7 +1850,10 @@ def parse_question(data: bytes):
             break
         if n & 0xC0 or i + n > len(data) or len(labels) > 127:
             return None
-        labels.append(data[i:i + n])
+        # A label may hold a dot: escaped as DNS writes it, so the name checked is the name the
+        # forwarded packet asks; joined as they were, ["x.shop", "example", "com"] read as
+        # x.shop.example.com, in scope of *.shop.example.com (fuzzing, FZ-35).
+        labels.append(data[i:i + n].replace(b"\\", b"\\\\").replace(b".", b"\\."))
         i += n
     if i + 4 > len(data):
         return None
@@ -1861,7 +1933,8 @@ def _env_hosts(name: str, base) -> frozenset:
 def _unlogged(data, n: int) -> list[tuple[int, str]]:
     """The rows of a batch of n that the API answered as not stored (POST /gateway/log)."""
     out = {}
-    for u in (data.get("unlogged") if isinstance(data, dict) else None) or []:
+    unlogged = data.get("unlogged") if isinstance(data, dict) else None
+    for u in unlogged if isinstance(unlogged, list) else []:      # any other shape: none (FZ-30)
         i = u.get("index") if isinstance(u, dict) else None
         if type(i) is int and 0 <= i < n:
             out[i] = str(u.get("reason") or "")[:200]
@@ -1873,7 +1946,9 @@ def _detail(data) -> str:
     value it repeats as "input")."""
     detail = data.get("detail") if isinstance(data, dict) else None
     if isinstance(detail, list) and detail and isinstance(detail[0], dict):
-        loc = ".".join(x for x in (detail[0].get("loc") or []) if isinstance(x, str) and x not in ("body", "rows"))
+        where = detail[0].get("loc")
+        loc = ".".join(x for x in (where if isinstance(where, list) else []) if isinstance(x, str)
+                       and x not in ("body", "rows"))
         return f" ({loc}: {str(detail[0].get('msg', ''))[:120]})"
     return f" ({detail[:120]})" if isinstance(detail, str) else ""
 

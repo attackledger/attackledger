@@ -76,14 +76,24 @@ class Adapter:
 
 # ---- helpers the adapters share ----------------------------------------------------------
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def storable(s: str) -> str:
+    """Text as stored: a lone surrogate, which JSON can spell ("\\ud800") but UTF-8 and so the
+    database cannot hold, becomes U+FFFD (fuzzing, FZ-34). Before, one made the import a 500."""
+    return _SURROGATE.sub("\ufffd", s)
+
+
 def text(value, limit: int) -> str | None:
     """A short string field from an export: None when absent or empty, cut to a limit. A NUL,
-    which Postgres cannot store, becomes U+FFFD (the replacement character) on every database."""
+    which Postgres cannot store, and a lone surrogate become U+FFFD (the replacement character)
+    on every database."""
     if value is None:
         return None
     if not isinstance(value, (str, int)) or isinstance(value, bool):
         raise RowError("a text field has the wrong type")
-    s = str(value).replace("\x00", "\ufffd").strip()
+    s = storable(str(value).replace("\x00", "\ufffd")).strip()
     return s[:limit] or None
 
 
@@ -94,7 +104,7 @@ def method(value) -> str:
 
 
 def http_url(value) -> str:
-    if not isinstance(value, str) or len(value) > 8_000 or "\x00" in value:
+    if not isinstance(value, str) or len(value) > 8_000 or "\x00" in value or _SURROGATE.search(value):
         raise RowError("no readable URL")
     u = value.strip()
     try:
@@ -169,7 +179,7 @@ def message(start: str, headers: list[tuple[str, str]], body: bytes) -> bytes:
     """Raw HTTP bytes rebuilt from an export's fields (HAR keeps no raw bytes). Line breaks
     inside a field are replaced, so one field can never become two headers."""
     head = "\r\n".join([_clean(start)] + [f"{_clean(n)}: {_clean(v)}" for n, v in headers])
-    return (head + "\r\n\r\n").encode("utf-8", "surrogateescape") + body
+    return storable(head + "\r\n\r\n").encode("utf-8") + body
 
 
 def target(url: str) -> str:

@@ -285,6 +285,35 @@ random-mutation mode for the two verifiers (`run.sh --fuzz N`). 19 findings, eac
   printed escaped (FZ-18), and an item without its text fails a check instead of stopping it
   (FZ-19). 2,600 mutants: no difference between the verifiers.
 
+A second fuzzing pass (`FUZZING.md`, "Second pass"; `test_fuzz2.py`) took the first pass's list of
+what it had not covered: the gateway's own HTTP and DNS parsing, the gateway log, redaction of
+XML, multipart, form and GraphQL bodies, and the inbox mapping and report builder. 16 findings
+(FZ-20 to FZ-35), each with a test.
+- **A target could hold the gateway's connections open** (FZ-22, Medium): endless `100 Continue`
+  answers, a response head sent a line at a time, or a test account's response body sent a byte
+  at a time, with no row in the request log until it ended. A head now has 90 seconds in all and
+  at most 32 informational answers; a scrubbed body 300 seconds.
+- **Secrets in XML and HTML bodies were stored unredacted** (FZ-23, Medium): SOAP WS-Security
+  passwords and tokens, CDATA, XML-RPC members, plist keys, `.NET <add key=... value=...>`,
+  hidden-input and meta CSRF tokens, attributes with spaces around `=`. So were **GraphQL string
+  arguments written in the query** (FZ-27, Medium), in JSON, GraphQL and URL-encoded GET bodies.
+- **More redaction gaps** (FZ-24 to FZ-26): `SAMLResponse` and `SAMLart` are secret names; a
+  multipart field is redacted to its boundary, every line of it, with or without quotes around its
+  name; in a URL's query and a form body each secret value is replaced whole up to the next `&`
+  (it stopped at `; , ) ' # " <`), and percent-encoded names are decoded. The Caido tool's
+  vendored rules follow.
+- **Requests the gateway dropped without a row** (FZ-20, FZ-21): a request its checks raised on
+  (`http://[x/`, superscript digits in a port or an approval number, a credential that is not
+  ASCII) and a head or body h11 refuses are now answered and logged.
+- **The DNS name checked is the name forwarded** (FZ-35): a label holding a dot was read as two.
+- **Lone surrogates and NUL** (FZ-28, FZ-31, FZ-32, FZ-34): a lone surrogate in a person's JSON
+  was a 500 on every route that stores text (now a 422, like a NUL; replaced on the machine
+  channels), a batch with a NUL and a surrogate was a 500 on the gateway log, a body without a
+  Content-Type skipped the NUL guard, and a HAR with a lone surrogate failed to import.
+- **Smaller ones** (FZ-29, FZ-30, FZ-33): a log placeholder valid by construction, the gateway's
+  log task survives an odd answer instead of stopping for good, and the inbox status filter
+  refuses `²` and 5,000 digits with a 422 instead of a 500.
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the

@@ -1837,7 +1837,8 @@ async def _upload_body(request: Request) -> bytes:
     if request.headers.get("content-type", "").lower().lstrip().startswith("multipart/"):
         raise HTTPException(415, _MULTIPART)
     declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > importers.MAX_FILE_BYTES:
+    if declared and declared.isascii() and declared.isdigit() and (len(declared) > 18 or
+                                                                   int(declared) > importers.MAX_FILE_BYTES):
         raise HTTPException(413, f"the file is larger than {importers.MAX_FILE_BYTES // 1_000_000} MB; "
                                  "export fewer items")
     chunks, size = [], 0
@@ -1950,7 +1951,7 @@ def list_inbox(eng_id: int, state: str | None = None, host: str | None = None, m
             query = query.where(InboxEntry.status.is_(None))
         elif len(s) == 3 and s[0] in "12345" and s[1:] == "xx":
             query = query.where(InboxEntry.status >= int(s[0]) * 100, InboxEntry.status < int(s[0]) * 100 + 100)
-        elif s.isdigit():
+        elif s.isascii() and s.isdigit() and len(s) <= 3:     # not "²", nor 5,000 digits (FZ-33)
             query = query.where(InboxEntry.status == int(s))
         else:
             raise HTTPException(422, "status is a code such as 404, a class such as 4xx, or none")

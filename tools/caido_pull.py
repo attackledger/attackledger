@@ -494,7 +494,8 @@ class Vendored:
     other places, or personal data: the server applies those at import."""
 
     SECRET_NAMES = frozenset({"key", "pwd", "pass", "sid", "sig", "code", "auth", "jwt", "otp",
-                              "cookie", "setcookie", "authorization", "proxyauthorization"})
+                              "cookie", "setcookie", "authorization", "proxyauthorization",
+                              "samlresponse", "samlart"})
     SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey",
                     "subscriptionkey", "functionskey", "masterkey")
     MARKER_PREFIX = "[redacted:sha256:"
@@ -504,6 +505,7 @@ class Vendored:
     _TOKEN = re.compile(r":?[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
     _KV = re.compile(r"""(?<![\w.\-\[\]%])([A-Za-z0-9_.\-\[\]%]{1,64})=(?!=)("[^"\r\n]{0,4000}"|'[^'\r\n]{0,4000}'|[^&\s#"'<>;,)]*)""")
     _HEAD_END = re.compile(rb"\r?\n\r?\n")
+    _REQUEST_LINE = re.compile(r"([A-Za-z]{1,20} +)([^ ?]*\?)([^ ]*)(.*)", re.S)
 
     class Report:
         def __init__(self):
@@ -586,12 +588,31 @@ class Vendored:
     def params(cls, s: str, rep) -> str:
         def sub(m):
             name, v = m.group(1), m.group(2)
-            if not cls.secret_name(name):
+            if not (cls.secret_name(name) or ("%" in name and cls.secret_name(urllib.parse.unquote(name)))):
                 return m.group(0)
             if len(v) >= 2 and v[0] in "\"'" and v[-1] == v[0]:
                 return f"{name}={v[0]}{cls._mask(v[1:-1], name, rep)}{v[0]}"
             return f"{name}={cls._mask(v, name, rep)}"
         return cls._KV.sub(sub, s) if s else s
+
+    @classmethod
+    def query(cls, q: str, rep) -> str:
+        """A query: each secret value replaced whole, up to the next "&" (redact.params)."""
+        if "=" not in q:
+            return q
+        out = []
+        for piece in q.split("&"):
+            name, eq, value = piece.partition("=")
+            core = value.rstrip()
+            if eq and core and cls.secret_name(urllib.parse.unquote_plus(name)):
+                piece = f"{name}={cls._mask(core, name, rep)}{value[len(core):]}"
+            out.append(piece)
+        return "&".join(out)
+
+    @classmethod
+    def start_line(cls, line: str, rep) -> str:
+        m = cls._REQUEST_LINE.fullmatch(line)
+        return line if not m else m.group(1) + m.group(2) + cls.query(m.group(3), rep) + m.group(4)
 
     @classmethod
     def header_line(cls, line: str, rep) -> str:
@@ -614,7 +635,7 @@ class Vendored:
         m = cls._HEAD_END.search(raw)
         head_b, rest = (raw[:m.start()], raw[m.start():]) if m else (raw, b"")
         lines = re.split(r"(\r?\n)", head_b.decode("utf-8", "surrogateescape"))
-        out = [cls.params(lines[0], rep)] if lines else []
+        out = [cls.params(cls.start_line(lines[0], rep), rep)] if lines else []
         for i, part in enumerate(lines[1:], start=1):
             out.append(part if i % 2 else cls.header_line(part, rep))
         return "".join(out).encode("utf-8", "surrogateescape") + rest
@@ -632,11 +653,13 @@ class Redactor:
             self.module = Vendored
         self.rep = self.module.Report()
 
-    def _text(self, s: str) -> str:
-        return self.module.text(s, self.rep) if self.full else Vendored.params(s, self.rep)
+    def _text(self, s: str, query: bool = False) -> str:
+        if self.full:
+            return self.module.text(self.module.params(s, self.rep) if query else s, self.rep)
+        return Vendored.params(Vendored.query(s, self.rep) if query else s, self.rep)
 
     def row(self, row: dict, request: bytes | None, response: bytes | None):
-        row = dict(row, path=self._text(row["path"]), query=self._text(row["query"]))
+        row = dict(row, path=self._text(row["path"]), query=self._text(row["query"], query=True))
         request = self.module.http_message(request, self.rep, personal=True, what="binary request body")
         response = self.module.http_message(response, self.rep, personal=True, what="binary response body")
         return row, request, response
