@@ -86,6 +86,30 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  # The browser end-to-end tests (docs/security-review/WEB_E2E.md): the public site as Cloudflare
+  # Pages serves it, then the web app on its own stack (the API and web images built from this
+  # commit), in Chromium, Firefox and WebKit, inside the Playwright image e2e/Dockerfile pins by
+  # digest, on a Docker network with no route out. Every token and password is made for the run.
+  # When a test fails, Playwright's HTML report and the failed tests' traces are uploaded (the
+  # tokens in them were random for that run and died with its stack).
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - run: tools/test_e2e.sh
+        env:
+          E2E_REPORT_DIR: ${{ runner.temp }}/e2e-report
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ failure() }}
+        with:
+          name: e2e-report-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-report
+          retention-days: 7
+          if-no-files-found: ignore
+
   # The workflows themselves: actionlint (pinned by digest) with shellcheck on every run: script.
   workflows:
     runs-on: ubuntu-24.04

@@ -46,6 +46,7 @@ run yourself first:
 | `postgres` | the same suite on Postgres 16 and the migration-0022 upgrade check | `tools/test_postgres.sh` |
 | `verifier` | the browser verifier against `tools/verify_report.py`, then 500 seeded mutants | `tools/verifier_equivalence/run.sh`, then `--fuzz 500 --seed 20261010` |
 | `web` | type check, lint, build | `cd web && npm ci --ignore-scripts && npx tsc --noEmit && npm run lint && npm run build` |
+| `e2e` | the browser tests: the public site as Cloudflare Pages serves it, then the web app on its own stack, in Chromium, Firefox and WebKit (Playwright's report is uploaded when a test fails) | `tools/test_e2e.sh` (Docker; `docs/security-review/WEB_E2E.md`) |
 | `workflows` | actionlint and shellcheck on the workflows | `tools/lint_workflows.sh` (Docker) |
 
 The jobs have a read-only token and no secrets, so a pull request from a fork runs them all.
@@ -82,12 +83,13 @@ the tests create and drop `al_test_*` databases there.
 
 ## Browser tests
 
-`tools/test_e2e.sh` runs the web app in Chromium and Firefox with Playwright
-(`docs/security-review/WEB_E2E.md`). It needs only Docker: it builds this tree's API and web images
-and a runner from Playwright's pinned image (`e2e/Dockerfile`), starts its own stack as compose
-project `al-e2e` with no port on the host, fills it with hostile content, runs the suite twice
-over (with the operator token, then with people signed in), and removes the project's containers,
-networks and volumes. About 3 minutes once the images are built.
+`tools/test_e2e.sh` runs the public site and the web app in Chromium, Firefox and WebKit with
+Playwright (`docs/security-review/WEB_E2E.md`). It needs only Docker: it builds this tree's API and
+web images and a runner from Playwright's pinned image (`e2e/Dockerfile`), checks the site (built by
+`tools/build_pages.sh` inside the runner and served with its `_headers` as Cloudflare Pages would),
+starts its own stack as compose project `al-e2e` with no port on the host, fills it with hostile
+content, runs the app's suite twice over (with the operator token, then with people signed in), and
+removes the project's containers, networks and volumes. About MINUTES minutes once the images are built.
 
 ```sh
 tools/test_e2e.sh               # everything
@@ -96,7 +98,8 @@ tools/test_e2e.sh --keep        # leave the stack up to look at it; tools/test_e
 ```
 
 Run it before a pull request that touches the web app, nginx's headers, sign-in, sessions or roles,
-or the verifiers. A new view goes into `e2e/tests/token/hostile.spec.ts` and `csp.spec.ts`; every
+the verifiers, or the site (`site/`, `tools/build_pages.sh`). A new view goes into
+`e2e/tests/token/hostile.spec.ts` and `csp.spec.ts`, a new site page into `e2e/tests/site/`; every
 test runs under the guard in `e2e/tests/lib.ts`, which fails on any CSP violation, script run by
 injected content, dialog or unexpected console error. The tests use made-up credentials only, made
 at run time, and reach nothing outside the test network.

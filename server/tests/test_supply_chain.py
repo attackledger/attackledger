@@ -362,14 +362,14 @@ def test_checkouts_keep_no_token_and_installs_run_no_scripts(path):
 
 def test_ci_runs_what_contributors_run():
     """The tests workflow runs the SQLite suite (with the default fuzz tests), the Postgres
-    suite, the verifier equivalence and its seeded fuzzing, the type check, the web build and
-    the workflow lint, on every push and pull request."""
+    suite, the verifier equivalence and its seeded fuzzing, the type check, the web build, the
+    browser end-to-end tests and the workflow lint, on every push and pull request."""
     wf = _workflow("tests.yml")
     assert {"push", "pull_request"} <= set(_on(wf))
     text = _run_text(wf)
     for command in ("python -m pytest -q server/tests", "tools/test_postgres.sh",
                     "tools/verifier_equivalence/run.sh\n", "npx tsc --noEmit", "npm run lint",
-                    "npm run build", "tools/lint_workflows.sh"):
+                    "npm run build", "tools/test_e2e.sh", "tools/lint_workflows.sh"):
         assert command in text + "\n", command
     assert re.search(r"tools/verifier_equivalence/run\.sh --fuzz \d+ --seed \d+", text)
     assert (ROOT / "server/tests/test_fuzz.py").exists() and (ROOT / "server/tests/test_security_fuzz.py").exists()
