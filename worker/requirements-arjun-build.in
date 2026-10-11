@@ -1,0 +1,4 @@
+# What it takes to build Arjun and ratelimit, which are published as source only: setuptools,
+# hash-pinned too, installed without pip's build isolation (which would fetch an unpinned one).
+# Locked into requirements-arjun-build.txt by tools/lock_requirements.sh.
+setuptools==84.0.0

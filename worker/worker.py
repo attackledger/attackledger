@@ -59,6 +59,8 @@ from app.text import plural  # noqa: E402
 
 POLL_SECONDS = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
 JOB_TIMEOUT = int(os.environ.get("WORKER_JOB_TIMEOUT", "1800"))
+STDERR_TAIL = 8000          # of a tool's stderr, the end is kept (and 2,000 characters of it logged)
+HELPER_JOIN_SECONDS = 5     # for the threads that feed a tool's stdin and read its stderr, once it has ended
 # The API marks a running job interrupted when its worker has not reported for two minutes
 # (workerapi.STALE_SECONDS); this is how often the worker reports while a job runs.
 HEARTBEAT_SECONDS = float(os.environ.get("WORKER_HEARTBEAT_SECONDS", "15"))
@@ -280,9 +282,8 @@ class Run:
         proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, env=self.gw.env(name))
         self.proc = proc
-        proc.stdin.write("\n".join(stdin_lines) + "\n")
-        proc.stdin.close()
-        # Enforce the time limit even when a tool prints nothing for a long time.
+        # Enforce the time limit even when a tool prints nothing for a long time; from the start,
+        # so that it also covers a tool that never reads its input.
         timed_out = threading.Event()
 
         def _expire():
@@ -291,6 +292,35 @@ class Run:
         watchdog = threading.Timer(max(self.remaining_time(), 0), _expire)
         watchdog.daemon = True
         watchdog.start()
+
+        # The input is written, and stderr read, by threads while this one reads stdout. Written
+        # first, a tool that answers line by line (cat, dnsx, httpx) filled its stdout pipe and
+        # waited for it to be read while the worker still waited to finish writing; stderr read
+        # last, a tool that wrote more than a pipe holds to it before its output waited the same way.
+        def _feed():
+            # A tool may end without reading its input (env, a bad flag): writing to it is then a broken
+            # pipe, which is the tool's outcome (its exit code and stderr say why), not the worker's error.
+            try:
+                proc.stdin.write("\n".join(stdin_lines) + "\n")
+            except (BrokenPipeError, ValueError, OSError):    # ValueError: closed under us by a kill
+                pass
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, ValueError, OSError):
+                pass
+        err_tail = []
+
+        def _drain():
+            tail = ""
+            try:
+                for chunk in iter(lambda: proc.stderr.read(8192), ""):
+                    tail = (tail + chunk)[-STDERR_TAIL:]
+            except (ValueError, OSError):
+                pass
+            err_tail.append(tail)
+        helpers = [threading.Thread(target=f, daemon=True, name=f"{name}-{f.__name__[1:]}") for f in (_feed, _drain)]
+        for t in helpers:
+            t.start()
         try:
             for n, line in enumerate(proc.stdout, start=1):
                 self.digest.update(f"{name}\t{line}".encode())
@@ -303,12 +333,15 @@ class Run:
         finally:
             watchdog.cancel()
             proc.wait()
+            # A child the tool started may still hold its pipes open: do not wait on it for ever.
+            for t in helpers:
+                t.join(HELPER_JOIN_SECONDS)
             self.proc = None
         if timed_out.is_set():
             raise Cancelled("timed out")
         if self.cancelled.is_set():
             raise Cancelled("cancelled")
-        err = proc.stderr.read().strip()
+        err = (err_tail[0] if err_tail else "").strip()
         if err:
             self.log(err[-2000:])
         if proc.returncode not in (0, None):

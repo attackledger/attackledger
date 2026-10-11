@@ -53,6 +53,19 @@ Gateway and worker isolation (`GATEWAY.md`):
   the approval was used. They are now refused where they come in (422 for test accounts, a tool
   error for the agent, no approval of such a request), and the gateway logs a refusal instead of
   dropping the connection.
+- **One request log row the API refused stopped the gateway's log, and then all traffic** (GW-11,
+  third pass). The gateway sends an unwritten batch again until the API takes it, and refuses every
+  request once 5,000 rows wait; the API refused the whole batch for one bad row. Any tool in the
+  worker could do it: an `X-AttackLedger-As` label longer than 16 characters was logged whole, and
+  the API refused it (422). The label is now logged as the column holds it, and one row can no
+  longer hold the log up: the API writes every row it can and answers, per row, the ones it cannot
+  store, storing in each one's place a placeholder (verdict `unlogged`, no URL, and why), so the log
+  still counts the traffic it could not record. The gateway sets such rows aside in a bounded
+  quarantine file in its private volume (`/data/gateway/log-quarantine.jsonl`, holding only what
+  the log row holds); a batch refused whole with 400, 413 or 422 is halved until the row is found.
+  An API or database that is down, a 5xx or a wrong token keep the rows queued, and the gateway
+  still fails closed. A lone surrogate in a row (a 422, then a 500, for the whole batch) is kept
+  as U+FFFD, and a time with no UTC form is a placeholder.
 
 Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers changed the same way:
 - **The verifier missed a voided receipt reported as receipted** (EV-1). Setting a void lane's
@@ -93,6 +106,31 @@ Evidence, encryption, imports and the web app (`EVIDENCE.md`); both verifiers ch
   the demo were rebuilt in the current format (manifest v2, payload v4, sealed).
 - **A verified HTML report did not show what was verified** (O-3). Both verifiers now list what
   its embedded JSON says (engagement, scope, lanes, signers, dates, counts) to compare with the page.
+- **Deleting an engagement's content now reaches every place it is kept** (RET-1 to RET-7, an
+  audit of every store, `docs/security-review/RETENTION.md`). A new test seeds a unique string into
+  every store, deletes the content and searches every table row, the SQLite file's bytes, the blob
+  store and the gateway's quarantine file; a second engagement's string is the control. Left behind
+  before, now removed:
+  - the gateway's quarantine file kept the deleted engagement's request log rows (RET-1). The
+    gateway now asks the API at start and every minute (`POST /gateway/content-deleted`) and
+    removes their rows;
+  - a run going on at the deletion kept running and writing: log lines, its error, the agent's
+    summary; its exchanges' URLs stayed until it ended (RET-2). Deletion cancels the engagement's
+    queued and running jobs, deletes their exchanges, and keeps nothing they report afterwards;
+  - job targets kept the URLs recon found, with paths and query strings, and agent runs their
+    outcome text (RET-3). Targets are reduced to their hosts, the text is removed;
+  - the request log's reasons quote the request (an approved write's URL, unredacted) and the
+    target's malformed reply (RET-4). They are blanked with the URLs, also for rows that arrive
+    later, and the gateway redacts them as it redacts URLs;
+  - on a SQLite built without `SECURE_DELETE` (the one in macOS's Python), deleted rows stayed
+    readable in the database file (RET-5). Every SQLite connection now turns `secure_delete` on;
+  - plaintext blobs from before encryption that no evidence cites (a v0.6 agent run stored every
+    exchange) were never removed (RET-6). `encrypt-existing` removes them, `status` counts them;
+  - the docs said that rotating the master key makes a deletion final in old backups (RET-7). It
+    does for their encrypted half only: the database dump in a backup is plaintext. The install
+    guide, `ENCRYPTION.md`, `tools/backup.sh`, `tools/restore.sh` and the deletion screen now say
+    that deletion does not reach backups made before it, and that restoring one brings the content
+    back.
 
 Authentication, authorization and organization isolation (`AUTH.md`):
 - **A cited hash opened another engagement's blob from before encryption** (AUTH-1, Low).
@@ -163,6 +201,52 @@ On Postgres, as production runs (the suite had run on SQLite only; `tools/test_p
   A NUL in a tool's output did the same to a job's log and results on the worker's channel; it is
   kept as U+FFFD there too.
 
+Containers and dependencies (`SUPPLY_CHAIN.md`):
+- **Every container ran with Docker's default capabilities and a writable root filesystem**
+  (SC-1), and Postgres, nginx and Caddy as root. Every service now has `no-new-privileges`, no
+  capability (Caddy keeps `NET_BIND_SERVICE`, which its binary needs to run), a read-only root
+  filesystem with sized `noexec` tmpfs folders, a non-root user (Postgres 70, nginx 101) and
+  memory and process limits, in the development file too. The gateway's port 53 and nginx's port
+  80 are bound through `net.ipv4.ip_unprivileged_port_start=0`, not a capability.
+- **Base images were unpinned, and four no longer got fixes** (SC-2): nginx 1.27 and Caddy 2.8.4,
+  which face clients, Node 20 and Go 1.23 (which compiled seven recon tools). Every image is now
+  pinned by its multi-arch digest, on nginx 1.30.5, Caddy 2.11.4, Node 24.21.0 and Go 1.26.9.
+- **Python dependencies were pinned at the top only** (SC-3): 34 of the 46 installed packages
+  were whatever PyPI had on the day of the build, unchecked. `server/requirements.txt` is now a
+  lock with every package hashed (`server/requirements.in` is what people edit;
+  `tools/lock_requirements.sh` makes the lock), installed with `pip --require-hashes --no-deps
+  --only-binary :all:`. Arjun's source packages are built with a hash-pinned setuptools (SC-5).
+- **Known advisories in the API's packages** (SC-4), none found reachable in a way that mattered
+  here: cryptography 43.0.3 → 50.0.0, starlette 0.41.3 → 1.6.0 (FastAPI 0.115.6 → 0.136.3),
+  pip 25.0.1 → 26.2.1, pytest 8.3.4 → 9.1.1. `pip-audit` now finds none in either image.
+- **The web build ran npm install scripts** (SC-6). It now uses `npm ci --ignore-scripts`; the
+  production dependencies have no advisory, and the development tools were upgraded (Vite
+  5.4.21, ESLint 9.39.5, typescript-eslint 8.71.1), leaving two dev-server-only advisories that
+  need Vite 6.
+- **SBOM**: `tools/sbom.sh` writes a CycloneDX SBOM per image (OS packages, Python, the Go
+  modules of each recon tool, npm), from the built images (SC-7, `docs/SUPPLY_CHAIN.md`).
+- `tools/backup.sh`, `tools/restore.sh` and the pre-encryption upgrade step run their root steps
+  as one-off containers with only the capabilities they need (SC-8), so they keep working without
+  the default ones (measured: without them, root could not read the engagement keys and every
+  backup failed). The lab proxy's nginx configuration is now a file, `deploy/lab-proxy.conf`:
+  Compose cannot write inline content into a read-only container (SC-9).
+- **FastAPI 0.136.3 → 0.141.1, starlette 1.6.0 → 1.7.0.** FastAPI 0.137+ no longer lists an
+  included router's routes in `app.routes`, so the tests that check every route (each has a
+  permission rule, none reaches another organization, the worker's routes) would have seen none
+  of the gateway, worker, test-account and approval routes. They now walk included routers
+  (`server/tests/routewalk.py`), checked against the OpenAPI schema and each router, and a new
+  test sends a request to every route and checks that `authz.authorize` runs and finds that
+  route's own rule.
+- **Vite 5.4.21 → 8.3.1** (@vitejs/plugin-react 4.3.4 → 6.1.1, esbuild 0.28.2 as a development
+  dependency of its own): the two development-server advisories left (SC-6) are gone, `npm audit`
+  finds none. The built app has the same files and the same inline script, so the
+  Content-Security-Policy is unchanged; the verifier page builds byte-identical.
+- **GitHub Actions are pinned by commit SHA**, with the tag in a comment; a test fails on any
+  `uses:` that is not.
+- **`tools/refresh_pins.sh`** shows, for every digest-pinned base image, the digest its tag points
+  at today (`--write` moves the stale ones). `docs/SUPPLY_CHAIN.md` suggests running it monthly
+  and whenever an advisory names a base image.
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
@@ -176,7 +260,29 @@ starts.
 On a Postgres server whose `TimeZone` is not UTC (not the Compose stack's), times written before
 this upgrade stay shifted by that zone's offset; new ones are stored in UTC.
 
+Migration 0025 (run when the API starts) changes three columns of `gateway_requests` to BIGINT. On
+Postgres that rewrites the table under a lock: with a large request log the API takes longer to
+start, and the gateway queues its rows (failing closed past 5,000) until it is up. Counts recorded
+before as 2,147,483,647 stay so. Rows the gateway sets aside are in `/data/gateway/log-quarantine.jsonl`
+in the `gateway-private` volume; a backup of the database does not include them.
+
+Containers and dependencies (`docs/security-review/SUPPLY_CHAIN.md`): `docker compose build`
+pulls the new base images by digest, and `docker compose down` then `docker compose up -d --wait`
+(see above) recreates every container with the new limits; volumes and data are kept. Postgres now runs as uid 70 from the start: a
+data volume made by an earlier release is already owned by it. Caddy reads
+`deploy/certs/key.pem` as root without `DAC_OVERRIDE`: keep the key owned by root (INSTALL §5
+copies it as root), or Caddy cannot read it. The web container's memory limit is 512 MB (was
+256 MB): uploads wait in a memory-backed tmpfs. Scripts of your own that `docker compose exec
+--user 0` into a container and expect root's usual powers (reading other users' files, chown) now
+need a one-off `docker compose run --cap-add ...` instead, as `tools/backup.sh` does. The web app is built
+for Vite 8's default browsers (Chrome and Edge 111, Firefox 114, Safari 16.4 or later; before:
+Chrome 87, Firefox 78, Safari 14).
+
 ### Fixed
+- **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on
+  Postgres). They were 32-bit `INTEGER`, so a response past 2 GiB, which a target decides, was
+  recorded as 2,147,483,647 bytes; the exact count is kept now, up to 2^63 - 1. A negative duration
+  is recorded as unknown.
 - **A NUL character in a request gave a 500 on Postgres**, after part of the work, where SQLite
   stored it. Now on every database: in the path or query 400, in a person's JSON 422 with nothing
   stored; in an import, a row whose URL holds one is listed as unreadable, and other fields keep
@@ -190,6 +296,22 @@ this upgrade stay shifted by that zone's offset; new ones are stored in UTC.
 - **A flaky worker test.** `test_worker.py`'s gateway test compared two separate DNS lookups of
   `gateway.invalid`; a resolver that answered inconsistently made them differ. The tests now
   answer `.invalid` names themselves (RFC 6761: they never resolve).
+- **The same worker test was still flaky, and the cause was the worker.** The worker wrote a
+  tool's input to its stdin and closed it; a tool that had already ended without reading it (the
+  test runs `env`; a real tool refusing a flag does the same) made that a `BrokenPipeError` that
+  ended the job with the worker's error instead of the tool's exit code and stderr. Whether `env`
+  finished first was timing: with three suites at once it failed in 4 of 9 runs. A broken pipe to a
+  tool is now the tool's outcome; a new test sends more input than a pipe holds to a tool that
+  quits, so it fails every time without the fix.
+- **A tool that answers as it reads could hang its job.** The worker wrote all of a tool's input
+  before reading any of its output, so a tool that writes while it reads (`dnsx`, `httpx` and
+  `katana` answer target by target) filled its output pipe, about 64 KiB, and waited for the worker,
+  which still waited to finish writing. The time limit's timer started only after the write, so the
+  job stayed running until someone cancelled it. stderr had the same wait: read only after stdout
+  ended, more than a pipe of warnings before the output stopped the tool until the time limit. The
+  input is now written and stderr read by threads while stdout is read, the timer starts with the
+  tool, and a broken pipe is still the tool's outcome. Two new tests (`cat` echoing 50,000 lines,
+  a tool writing 460 KB of warnings first) hung or timed out before the fix.
 - **`tools/backup.sh` and `tools/restore.sh` swallowed the rest of a script.** Run from a
   pipe or a heredoc (for example `ssh host 'bash -s' < steps.sh`), `docker compose exec`
   read the caller's stdin, so nothing after the backup ran. Docker calls no longer read

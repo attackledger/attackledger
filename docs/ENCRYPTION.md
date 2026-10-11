@@ -11,11 +11,25 @@ choices; the code is `server/app/vault.py`, `server/app/blobs.py` and `server/ap
 | Evidence summary (chain v2 rows) | `evidence.summary_enc` | AES-256-GCM, engagement key | ciphertext set to null; `summary_sha256` stays |
 | Evidence summary (chain v1 rows, written before 0017) | `evidence.summary` | plaintext | **kept**: the v1 chain hash covers the text itself, so removing it would make the chain unverifiable; reports issued before already carry it |
 | Recon results: observations, endpoints, leads | their tables | plaintext | **deleted** |
-| Job logs, an agent run's closing summary | `jobs.log`, `jobs.result.summary` | plaintext | **replaced** by a deletion note |
-| Traffic log URLs (every request a tool or agent sent through the gateway) | `gateway_requests.url` | plaintext (redacted) | **blanked**; the method, host, port, status, verdict, reason and byte counts stay |
+| Job logs, an agent run's closing summary and outcome text | `jobs.log`, `jobs.result.summary`, `.detail` | plaintext | **replaced** by a deletion note; summary and detail removed |
+| Job targets (URLs recon found, with paths and query strings) | `jobs.targets`, `jobs.remaining_targets` | plaintext | **reduced to their hosts** |
+| A run still going when the content is deleted | its job | | **cancelled**; log lines, errors and summaries it reports afterwards are not kept |
+| An agent run's exchanges (the URL of each request it sent) | `agent_exchanges` | plaintext (redacted) | **deleted** (they were deleted when the run ended) |
+| Traffic log URLs and reasons (every request a tool or agent sent through the gateway) | `gateway_requests.url`, `.reason` | plaintext (redacted) | **blanked**, also for rows that arrive later; the method, host, port, status, verdict and byte counts stay |
+| Traffic log rows the API could not store | the gateway's quarantine file (`/data/gateway/log-quarantine.jsonl`) | plaintext (redacted) | **removed** by the gateway within a minute (at its next start if it is down), `GATEWAY.md` decision 10 |
+| Test accounts (session material, role, hosts) | `test_accounts` | material AES-256-GCM, engagement key | **deleted** |
+| Proposed writes: the request, its URL, the agent's reason, decision notes | `write_proposals` | request AES-256-GCM, engagement key | waiting ones **deleted**; the others' request, URL, reason and note **blanked** (method, host, hashes and decision stay) |
+| Imported entries: URLs, labels, tool ids and times, dismissal reasons, file names, refused rows | `inbox_entries`, `import_batches` | plaintext (redacted); raw exchanges in the blob store | **blanked**; host, method, status and hashes stay |
+| Plaintext blobs from before 0017 that no evidence cites (a v0.6 agent run's exchanges it did not add as evidence) | blob store, flat | plaintext | not attributable to an engagement: `encrypt-existing` removes them (below) |
 | Evidence URI (`evidence.uri`) | evidence row | plaintext | kept: the chain record (v1 and v2) commits to it |
 | Item N/A reasons | checklist items | plaintext | kept: the receipt manifest commits to them |
 | Hosts, lane roles, hashes, receipts, signatures, timestamps, key log, audit log | | plaintext | kept: they are what a report verifies |
+
+The audit log is hash-chained and cannot change, so what its entries hold stays: notes people
+wrote when approving or rejecting a write and dismissal reasons (both redacted), the path a person
+typed to confirm a DELETE, test account labels, roles, hosts and header names, and import tool
+names. Every store, what deletion does to it and what it cannot reach (backups, Postgres's dead
+rows and WAL, container logs, browsers, the Claude API) is in `docs/security-review/RETENTION.md`.
 
 Why recon results are not encrypted at rest: they are filtered and searched in SQL (host,
 URL substring, lead kind), the recon view lists them in bulk, and they are recon metadata
@@ -82,10 +96,15 @@ instead; that is not in the MVP.
 4. Start the API and the worker with the new key. Destroy the old key once backups made
    with it are no longer needed.
 
-Rotation is also what finishes a deletion in old backups: a backup of the blob store still
-holds the wrapped key of an engagement deleted since. Without the master key it was
-wrapped with, that copy is useless, so after deleting content that must not survive in
-backups, rotate the master key and destroy the old one.
+Rotation is also what finishes a deletion in old backups, **for the encrypted content only**:
+a backup of the blob store still holds the wrapped key of an engagement deleted since.
+Without the master key it was wrapped with, that copy is useless, so after deleting content
+that must not survive in backups, rotate the master key and destroy the old one. The
+backup's database dump is not encrypted, and rotation does nothing to it: it keeps, in
+plaintext, what deletion removes from the database (recon results, job logs and targets,
+traffic log URLs and reasons, imported entries' URLs and labels, the URLs and reasons of
+proposed writes). Only deleting the backups made before the deletion removes those; see
+"Backups" under "Retention and deletion".
 
 ## Blobs
 
@@ -119,6 +138,11 @@ an explicit command encrypts it.**
   encrypted and plaintext (v1) summaries, and whether the content was deleted.
 - Deleting an engagement's content also deletes plaintext blobs that only that engagement's
   v1 evidence cites (newer evidence citing the same hash elsewhere does not keep them).
+- Before 0017, an agent run stored every exchange it sent as a plaintext blob, and only the
+  ones it added as evidence are cited. Nothing opens the others and nothing names their
+  engagement, so deleting an engagement's content cannot find them. `encrypt-existing` run
+  without `--engagement` removes every plaintext blob no v1 evidence cites; `status` counts
+  them. Run it once after upgrading from 0.6.
 - Old reports verify as before: their entries carry no `v` and are checked as v1.
 
 ## Retention and deletion
@@ -137,11 +161,27 @@ an explicit command encrypts it.**
   date is the MVP.
 - **What deletion does**, in this order: in one database transaction it records who and
   when (`content_deleted_at`, `content_deleted_by`, `content_deleted_reason`), nulls the
-  v2 summary ciphertexts, deletes recon results, replaces job logs, blanks the traffic log's URLs, and appends an audit
+  v2 summary ciphertexts, deletes recon results, test accounts, waiting write proposals and
+  agent exchanges, blanks imported entries and the other proposals, cancels queued and
+  running jobs, replaces job logs, drops agent summaries and reduces job targets to hosts,
+  blanks the traffic log's URLs and reasons, and appends an audit
   log entry (`engagement.content_deleted`, by the person or by "the retention policy");
   then it writes a tombstone in the engagement's folder, deletes the key file and every
   blob in the folder, and deletes plaintext blobs only this engagement cites. If the
   process stops between the two steps, the API's next retention pass finishes the file step.
+  The gateway, which the API cannot reach, removes the engagement's rows from its
+  quarantine file when it next asks (`POST /gateway/content-deleted`, every minute).
+- **On the database files.** On SQLite the API's connections turn `secure_delete` on, so
+  deleted rows and replaced values are overwritten in the file. On Postgres a deleted or
+  updated row stays in the table's file as a dead row until `VACUUM` reuses the space, and in
+  the write-ahead log until it is recycled (or for good in a WAL archive); `VACUUM FULL` on the
+  tables rewrites them. A database dump (`tools/backup.sh`) made after the deletion holds
+  none of it.
+- **Backups.** Deletion does not reach backups made before it, and restoring one brings the
+  deleted content back (delete it again after the restore). The encrypted part of an old
+  backup becomes unreadable once the master key is rotated and the old one destroyed; its
+  database dump holds the plaintext listed above until the backup itself is deleted. Keep
+  backups no longer than the retention you promise.
 - **Afterwards** the engagement takes no new evidence, jobs or agent runs, and no new
   receipts, because nobody can review evidence that can no longer be read (refused with a
   message, not an error). Receipts issued before stay valid. Its lanes, items, receipts, hashes and audit history stay; every

@@ -318,9 +318,17 @@ class LogIn(BaseModel):
 @router.post("/worker/jobs/{job_id}/log")
 def job_log(job_id: int, body: LogIn, session: Session = Depends(get_session)):
     job = _job(session, job_id)
+    if _content_gone(job):            # a run that was going on when the content was deleted
+        return {"ok": True, "kept": False}
     _log(job, *body.lines)
     session.commit()
     return {"ok": True}
+
+
+def _content_gone(job: Job) -> bool:
+    """The job's engagement had its content deleted (vault.delete_content cancelled the job): what
+    its run reports from then on (log lines, an error, an agent's summary) is not kept."""
+    return job.engagement.content_deleted_at is not None
 
 
 class ProgressIn(BaseModel):
@@ -625,10 +633,13 @@ def finish(job_id: int, body: FinishIn, session: Session = Depends(get_session))
         job.output_sha256 = body.output_sha256
     job.result_count = body.result_count
     lines = []
+    gone = _content_gone(job)
     if job.kind == "agent":
         res = body.agent or {}
         if res:
             job.result = _agent_result(job, res)
+            if gone:
+                job.result = {k: v for k, v in job.result.items() if k not in ("summary", "detail")}
         status_ = (job.result or {}).get("status")
         job.targets_done = 1 if status_ == "finished" else 0
         if body.error:
@@ -648,7 +659,8 @@ def finish(job_id: int, body: FinishIn, session: Session = Depends(get_session))
                 pass
             status = (JobStatus.cancelled if cancelled else
                       JobStatus.partial if (job.remaining_targets or body.stopped) else JobStatus.done)
-    _log(job, *lines)
+    if not gone:
+        _log(job, *lines)
     job.status = status
     job.finished_at = job.finished_at if cancelled and job.finished_at else now()
     end_tokens(session, job)

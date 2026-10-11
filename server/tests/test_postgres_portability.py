@@ -6,7 +6,8 @@ The suite runs on SQLite by default and on Postgres with ATTACKLEDGER_TEST_PG
   - times: a session in another zone than UTC stored aware times in its local time;
   - NUL: Postgres text cannot hold U+0000, so a NUL gave a 500 after part of the work, and on
     the gateway's channel it stopped the request log, and then the traffic, for good;
-  - integers: Postgres INTEGER is 32 bits; a gateway log row with a count past 2 GiB did the same;
+  - integers: Postgres INTEGER is 32 bits; a gateway log row with a count past 2 GiB did the same
+    (the counts are BIGINT since migration 0025);
   - lengths: a column's length is enforced by Postgres only;
   - LIKE ignores case on SQLite only.
 """
@@ -78,15 +79,21 @@ def test_the_gateway_log_takes_every_row_it_is_sent(stack, monkeypatch):
     job = stack.queue(e, "probe", ["app.example.com"])
     rows = [_log_row(e, job), _log_row(e, job, url="https://app.example.com/\x00admin", reason="cut\x00off"),
             _log_row(e, job, url="https://app.example.com/big", bytes_received=3_000_000_000,
-                     duration_ms=2**40, port=70_000, status=10_000, approval_id=2**40)]
+                     duration_ms=2**40, port=70_000, status=10_000, approval_id=2**40),
+            _log_row(e, job, url="https://app.example.com/huge", bytes_sent=2**70, bytes_received=2**62,
+                     duration_ms=-5)]
     r = stack.api.post("/gateway/log", json={"rows": rows}, headers={"authorization": f"Bearer {GATEWAY_TOKEN}"})
-    assert r.status_code == 200 and r.json() == {"written": 3}
+    assert r.status_code == 200 and r.json() == {"written": 4, "unlogged": []}
     with stack.Session() as s:
         got = {g.url: g for g in s.scalars(select(GatewayRequest))}
-    assert set(got) == {"https://app.example.com/", "https://app.example.com/�admin", "https://app.example.com/big"}
+    assert set(got) == {"https://app.example.com/", "https://app.example.com/�admin", "https://app.example.com/big",
+                        "https://app.example.com/huge"}
     assert got["https://app.example.com/�admin"].reason == "cut�off"
-    big = got["https://app.example.com/big"]
-    assert big.bytes_received == gatewayapi.INT4_MAX and big.duration_ms == gatewayapi.INT4_MAX
+    # Counts and durations are BIGINT (migration 0025): kept exactly, up to 2**63 - 1.
+    big, huge = got["https://app.example.com/big"], got["https://app.example.com/huge"]
+    assert big.bytes_received == 3_000_000_000 and big.duration_ms == 2**40
+    assert huge.bytes_sent == gatewayapi.INT8_MAX == 2**63 - 1 and huge.bytes_received == 2**62
+    assert huge.duration_ms is None
     assert big.port is None and big.status is None and big.approval_id is None
     assert got["https://app.example.com/"].port == 443 and got["https://app.example.com/"].status == 200
 

@@ -188,3 +188,7 @@ every route has one. See D-032.
   that every request carries the research identification (nuclei: 8,899/8,899), and the
   target's log checks that the per-second peak stays at the limit (feroxbuster 20/20,
   Arjun 10/10).
+- Every container runs with `no-new-privileges`, no Linux capability (Caddy keeps the one its
+  binary needs), a read-only root filesystem and a non-root user (Caddy excepted), within memory
+  and process limits. Images are pinned by digest, Python packages by hash, npm packages by the
+  lockfile (`docs/security-review/SUPPLY_CHAIN.md`, checked by `test_supply_chain.py`).

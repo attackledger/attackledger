@@ -7,7 +7,7 @@ and latest receipt (see gates.py).
 from datetime import date, datetime, timezone
 from enum import Enum
 
-from sqlalchemy import DDL, JSON, ForeignKey, String, Text, UniqueConstraint, event, false as sa_false, true as sa_true
+from sqlalchemy import DDL, JSON, BigInteger, ForeignKey, String, Text, UniqueConstraint, event, false as sa_false, true as sa_true
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column, relationship
 
 from .db import Base
@@ -360,11 +360,13 @@ class GatewayRequest(OrgOwned, Base):
     host: Mapped[str] = mapped_column(String(255), default="")
     port: Mapped[int | None]
     status: Mapped[int | None]                           # the target's, or the gateway's refusal
-    verdict: Mapped[str] = mapped_column(String(8))      # allowed, refused, failed (upstream error)
+    verdict: Mapped[str] = mapped_column(String(8))      # allowed, refused, failed (upstream error), unlogged (gatewaylog.py)
     reason: Mapped[str] = mapped_column(String(300), default="")
-    bytes_sent: Mapped[int] = mapped_column(default=0)
-    bytes_received: Mapped[int] = mapped_column(default=0)
-    duration_ms: Mapped[int | None]
+    # A target can make these as large as it likes: 64 bits (migration 0025; a response past
+    # 2 GiB did not fit the 32-bit INTEGER they were on Postgres).
+    bytes_sent: Mapped[int] = mapped_column(BigInteger, default=0)
+    bytes_received: Mapped[int] = mapped_column(BigInteger, default=0)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger)
     account: Mapped[str | None] = mapped_column(String(16))     # test account label it was sent as (D-040)
     approval_id: Mapped[int | None]                              # the approved write it sent (D-041)
 

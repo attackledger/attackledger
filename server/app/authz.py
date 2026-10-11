@@ -131,6 +131,7 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/gateway/approval"): ("gateway", None),
     ("GET", "/gateway/dns-scopes"): ("gateway", None),
     ("POST", "/gateway/log"): ("gateway", None),
+    ("POST", "/gateway/content-deleted"): ("gateway", None),
 
     ("GET", "/worker/ping"): ("worker", None),
     ("POST", "/worker/claim"): ("worker", None),

@@ -16,13 +16,13 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 import testdb
 from sqlalchemy import inspect as sa_inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
 import orgfill
+import routewalk
 from harness import ROOT
 from orgfill import PW, bearer, sign_in
 
@@ -159,12 +159,7 @@ def _norm(r, *ids) -> tuple:
 
 
 def routes() -> list[tuple[str, str, str]]:
-    out = []
-    for r in app.routes:
-        if isinstance(r, APIRoute):
-            for m in sorted(r.methods):
-                perm = authz.RULES[(m, r.path)][0]
-                out.append((m, r.path, perm))
+    out = [(m, path, authz.RULES[(m, path)][0]) for m, path, _ in routewalk.endpoints(app)]
     assert {(m, p) for m, p, _ in out} == set(authz.RULES)        # the walk covers the whole table
     return out
 

@@ -532,12 +532,14 @@ def test_encrypt_existing_moves_old_blobs_into_each_engagement(api):
         v1_row(s, s.get(Lane, lane1["id"]), "shared", sha(shared))
         v1_row(s, s.get(Lane, lane2["id"]), "shared too", sha(shared))
         res = vault.encrypt_existing(s, [e1])
-    assert res == {"encrypted": 2, "already_encrypted": 0, "plaintext_removed": 1}   # engagement two still needs one
+    assert res == {"encrypted": 2, "already_encrypted": 0, "plaintext_removed": 1,
+                   "uncited_removed": 0}   # engagement two still needs one
     assert not blobs.plain_path(sha(only)).exists() and blobs.get(sha(only), engagement_id=e1) == only
     assert b"old blob" not in blobs.encrypted_path(sha(only), e1).read_bytes()
     assert blobs.plain_path(sha(shared)).exists()
     with api.Session() as s:
-        assert vault.encrypt_existing(s, [e1]) == {"encrypted": 0, "already_encrypted": 2, "plaintext_removed": 0}
+        assert vault.encrypt_existing(s, [e1]) == {"encrypted": 0, "already_encrypted": 2, "plaintext_removed": 0,
+                                                   "uncited_removed": 0}
         res = vault.encrypt_existing(s)
     assert res["encrypted"] == 1 and res["plaintext_removed"] == 1 and not blobs.plain_path(sha(shared)).exists()
     assert blobs.get(sha(shared), engagement_id=e2) == shared

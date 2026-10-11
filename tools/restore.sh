@@ -17,6 +17,10 @@
 #      backup's, and starts the stack again. The API then migrates the restored database
 #      forward to this version, as on any upgrade.
 #
+# A backup made before an engagement's content was deleted holds that content again once
+# restored, and the engagement shows it as never deleted: delete it again afterwards
+# (docs/ENCRYPTION.md, "Retention and deletion").
+#
 # The encryption master key is not in the backup; put the original one in place before
 # restoring (docs/INSTALL.md, sections 7 and 14). The script works on the install folder
 # it lives in (or ATTACKLEDGER_DIR). Compatible with bash 3.2 and later. Stops at the first error.
@@ -93,7 +97,7 @@ ROWS=$(dc exec -T db psql -U attackledger -d attackledger -tA -c "
   from pg_tables where schemaname = 'public' and tablename not in ('alembic_version', 'organizations')" | tr -d '\r')
 # A fresh install already holds one row: the default organization that migration 0022 makes.
 # Organizations alone are not data; every table that holds data belongs to one of them.
-BLOBS=$(dc run --rm --no-deps -T --user 0 --entrypoint sh api -c "find /data/blobs -type f | wc -l" | tr -d ' \r')
+BLOBS=$(dc run --rm --no-deps -T --user 0 --cap-add DAC_READ_SEARCH --entrypoint sh api -c "find /data/blobs -type f | wc -l" | tr -d ' \r')
 if [ "$ROWS" != "0" ] || [ "$BLOBS" != "0" ]; then
   if [ "$FORCE" != "1" ]; then
     die "this install is not empty ($ROWS database rows, $BLOBS blob files). Restoring replaces all of it. Back it up first, then run again with --force"
@@ -111,8 +115,10 @@ dc exec -T -e PGOPTIONS=--client-min-messages=warning db psql -U attackledger -d
 dc_in exec -T db pg_restore -U attackledger -d attackledger --no-owner --exit-on-error < "$SRC/postgres.dump"
 
 echo "restore: restoring the blob store"
-# As root, then handed to uid 10001, which the API and the worker both run as.
-dc_in run --rm --no-deps -T --user 0 --entrypoint sh api -c \
+# As root, then handed to uid 10001, which the API and the worker both run as. The service has no
+# capabilities (docker-compose.yml): this one-off container gets back the three that deleting,
+# extracting and chown need as root, and nothing else.
+dc_in run --rm --no-deps -T --user 0 --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --entrypoint sh api -c \
   "find /data/blobs -mindepth 1 -delete && tar -C /data/blobs -xzf - && chown -R 10001 /data/blobs && find /data/blobs -type f | wc -l" \
   < "$SRC/blobs.tar.gz" | tr -d ' \r' | sed 's/^/restore: blob files restored: /'
 

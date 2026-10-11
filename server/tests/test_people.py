@@ -8,8 +8,8 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+import routewalk
 import testdb
 from sqlalchemy.orm import sessionmaker
 
@@ -78,15 +78,10 @@ def resolve_all(c, lane):
 # ---- the permission table ------------------------------------------------------
 
 def test_every_route_has_a_permission_rule():
-    missing = []
-    for r in app.routes:
-        if isinstance(r, APIRoute):
-            for m in r.methods - {"HEAD", "OPTIONS"}:
-                if (m, r.path) not in authz.RULES:
-                    missing.append(f"{m} {r.path}")
+    served = {(m, p) for m, p, _ in routewalk.endpoints(app) if m not in ("HEAD", "OPTIONS")}
+    missing = sorted(f"{m} {p}" for m, p in served - set(authz.RULES))
     assert missing == []
-    stale = [k for k in authz.RULES if not any(isinstance(r, APIRoute) and r.path == k[1] and k[0] in r.methods
-                                               for r in app.routes)]
+    stale = sorted(f"{m} {p}" for m, p in set(authz.RULES) - served)
     assert stale == []
 
 

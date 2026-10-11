@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import select
 
+import routewalk
 from harness import WORKER_TOKEN, stack  # noqa: F401
 
 from app import blobs, ledger, modules, vault, workerapi
@@ -130,8 +131,7 @@ def test_the_worker_cannot_write_receipts_or_change_scope_or_rules(stack, monkey
                 ("POST", "/people", {"email": "w@example.com", "name": "w", "password": "x" * 16})):
             assert stack.call(method, path, token, body)[0] == 401, (method, path)
     # And the worker's own routes offer none of it.
-    worker_routes = sorted((m, r.path) for r in app.routes if getattr(r, "path", "").startswith("/worker/")
-                           for m in r.methods)
+    worker_routes = sorted((m, path) for m, path, _ in routewalk.endpoints(app) if path.startswith("/worker/"))
     assert worker_routes == sorted([("GET", "/worker/ping"), ("POST", "/worker/claim")]
                                    + [("POST", f"/worker/jobs/{{job_id}}/{x}") for x in JOB_ROUTES])
     assert stack.call("POST", f"/worker/jobs/{job.id}/agent/call", job.token,
