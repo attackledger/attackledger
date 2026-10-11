@@ -2,9 +2,11 @@
 # each with the reason and a date after which it no longer applies (the scan then fails on it
 # again). One per line:
 #   <vulnerability id> <image glob> <package> <until YYYY-MM-DD> <reason>
+# <package> is the OS package, or for a Go binary the Go module (golang.org/x/net) or `stdlib`
+# for the Go release it was built with.
 # Only for images AttackLedger runs as published (compose `image:`), which it cannot rebuild
 # without taking over their build; an image built here gets the fix in its Dockerfile instead
-# (web/Dockerfile). Review at each base-image refresh (docs/SUPPLY_CHAIN.md): move the pin when a
+# (web/Dockerfile; for the worker's Go tools, a release of the tool built with the fix). Review at each base-image refresh (docs/SUPPLY_CHAIN.md): move the pin when a
 # rebuild of the tag that carries the fix is old enough, then delete the line.
 # Reviewed 2026-10-11 (docs/security-review/SUPPLY_CHAIN.md, "Follow-up, 2026-10-11 (sec5-pins)").
 
@@ -22,3 +24,25 @@ CVE-2026-103111 nginx:1.30-alpine@* pcre2 2026-11-11 lab and lab proxy only; pat
 # which the lab and lab proxy configurations never load.
 CVE-2026-93990 nginx:1.30-alpine@* libexpat 2026-11-11 lab and lab proxy only; xslt and image filter modules not loaded
 CVE-2026-4775 nginx:1.30-alpine@* tiff 2026-11-11 lab and lab proxy only; image filter module not loaded
+
+# Caddy 2.11.7's binary (Go 1.26.8, golang.org/x/net 0.59.0): fixed only in Go 1.26.9 and x/net
+# 0.60.0, and Caddy 2.11.7 is the newest release, built with neither (SC-10; reviewed 2026-10-11,
+# "Follow-up, 2026-10-11 (sec5-ci)"). Move the pin when a Caddy release built with them is out.
+# HTTP/2 and Trailer handling, which Caddy does for every client:
+GO-2026-6603 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; HTTP Trailer handling, reachable
+GO-2026-6603 caddy:2.11-alpine@* golang.org/x/net 2026-11-11 no Caddy release built with x/net 0.60.0 yet; HTTP Trailer handling, reachable
+GO-2026-6610 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; HTTP/2 framing, reachable
+GO-2026-6610 caddy:2.11-alpine@* golang.org/x/net 2026-11-11 no Caddy release built with x/net 0.60.0 yet; HTTP/2 framing, reachable
+GO-2026-6611 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; HTTP/2 CPU exhaustion, reachable
+GO-2026-6611 caddy:2.11-alpine@* golang.org/x/net 2026-11-11 no Caddy release built with x/net 0.60.0 yet; HTTP/2 CPU exhaustion, reachable
+GO-2026-6612 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; HTTP/2 flow control, reachable
+GO-2026-6612 caddy:2.11-alpine@* golang.org/x/net 2026-11-11 no Caddy release built with x/net 0.60.0 yet; HTTP/2 flow control, reachable
+# Standard-library code that deploy/Caddyfile does not use (one site, reverse_proxy to web:80;
+# no file_server, forward proxy, form matcher or ECH), on Linux; for the two CONNECT ones,
+# whether a client's CONNECT reaches them through reverse_proxy was not analysed:
+GO-2026-6604 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; os.Root junctions, Windows only
+GO-2026-6605 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; outgoing CONNECT with a body; reachability not analysed
+GO-2026-6607 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; ECH, not configured
+GO-2026-6608 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; multipart form parsing, no handler or matcher here parses forms
+GO-2026-6609 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; Range parsing in FileServer and ServeContent, no file_server
+GO-2026-6613 caddy:2.11-alpine@* stdlib 2026-11-11 no Caddy release built with Go 1.26.9 yet; handler answering CONNECT with 2xx; reachability not analysed

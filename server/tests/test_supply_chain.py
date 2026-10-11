@@ -147,8 +147,11 @@ def _locked(path: Path) -> dict[str, tuple[str, int]]:
     return out
 
 
-@pytest.mark.parametrize("lock", ["server/requirements.txt", "server/requirements-pip.txt",
-                                  "worker/requirements-arjun.txt", "worker/requirements-arjun-build.txt"])
+LOCKS = ["server/requirements.txt", "server/requirements-pip.txt", "worker/requirements-arjun.txt",
+         "worker/requirements-arjun-build.txt", "tools/ci/requirements-audit.txt"]
+
+
+@pytest.mark.parametrize("lock", LOCKS)
 def test_locks_hash_every_package_and_match_their_input(lock):
     locked = _locked(ROOT / lock)
     assert locked
@@ -264,6 +267,166 @@ def test_scan_ignore_entries_name_a_reason_and_an_end():
         assert re.fullmatch(r"(CVE-\d{4}-\d+|GHSA(-[0-9a-z]{4}){3}|GO-\d{4}-\d+)", vid), line
         assert any(fnmatch.fnmatch(p, image) for p in published), f"no published image matches: {line}"
         assert not image.startswith("attackledger-"), line
-        assert re.fullmatch(r"[a-z0-9][\w.+-]*", package), line
+        # An OS package (zlib), or in a Go binary a Go module (golang.org/x/net) or Go itself (stdlib).
+        assert re.fullmatch(r"[a-z0-9][\w.+-]*(/[\w.+~-]+)*", package), line
         datetime.date.fromisoformat(until)
         assert len(reason) >= 3, f"no reason: {line}"
+
+
+def test_every_lock_is_made_by_the_lock_script_and_tested():
+    """Each requirements*.in in the tree is locked by tools/lock_requirements.sh, its lock is in
+    LOCKS (hashes, no index), and the weekly pip-audit reads it."""
+    tracked = {str(p.relative_to(ROOT)) for p in ROOT.glob("**/requirements*.in")
+               if "node_modules" not in p.parts and ".git" not in p.parts}
+    script = (ROOT / "tools/lock_requirements.sh").read_text()
+    listed = set(re.findall(r'^\s*"([\w./-]+\.in)(?: unsafe)?"$', script, re.M))
+    assert tracked and tracked == listed
+    assert {f[:-3] + ".txt" for f in tracked} == set(LOCKS)
+    audit = next(str(s["run"]) for s in _steps(_workflow("security.yml")) if "pip-audit\" --disable-pip" in str(s.get("run")))
+    for lock in LOCKS:
+        assert f"-r {lock}" in audit, f"pip-audit does not read {lock}"
+
+
+# ---- the GitHub workflows ---------------------------------------------------------------------
+
+WORKFLOWS = sorted((ROOT / ".github/workflows").glob("*.y*ml"))
+# The one workflow with pull_request_target and write permissions: CLA Assistant Lite stores the
+# signatures in this repository. It must never run the pull request's code.
+CLA = "cla.yml"
+
+
+def _workflow(name: str) -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+
+
+def _on(wf: dict) -> dict:
+    on = wf.get("on", wf.get(True))         # YAML 1.1 reads a bare `on:` key as True
+    if isinstance(on, str):
+        return {on: None}
+    if isinstance(on, list):
+        return dict.fromkeys(on)
+    return on or {}
+
+
+def _steps(wf: dict):
+    for job in (wf.get("jobs") or {}).values():
+        yield from job.get("steps") or []
+
+
+def _run_text(wf: dict) -> str:
+    return "\n".join(str(s.get("run", "")) for s in _steps(wf))
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_workflows_are_read_only_and_use_no_secrets(path):
+    """Every workflow but the CLA one runs with a token that can only read the repository, at
+    the top and in each job, uses no secret, and is not started by pull_request_target or
+    workflow_run (which run with the base repository's token on someone else's changes)."""
+    if path.name == CLA:
+        return
+    wf = yaml.safe_load(path.read_text())
+    assert wf.get("permissions") == {"contents": "read"}, path.name
+    for name, job in wf["jobs"].items():
+        perms = job.get("permissions")
+        assert perms is None or (isinstance(perms, dict) and set(perms.values()) <= {"read", "none"}), (path.name, name)
+    assert not {"pull_request_target", "workflow_run"} & set(_on(wf)), path.name
+    assert "secrets." not in path.read_text(), path.name
+    assert "pull_request_target" not in path.read_text(), path.name
+
+
+def test_only_the_cla_workflow_runs_on_pull_request_target_and_runs_no_code():
+    with_target = [p.name for p in WORKFLOWS if "pull_request_target" in _on(yaml.safe_load(p.read_text()))]
+    assert with_target == [CLA]
+    steps = list(_steps(_workflow(CLA)))
+    assert steps and all("run" not in s for s in steps)
+    assert all(str(s.get("uses", "")).startswith("contributor-assistant/github-action@") for s in steps)
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+def test_checkouts_keep_no_token_and_installs_run_no_scripts(path):
+    """actions/checkout leaves the job's token in .git/config unless told not to; npm ci runs
+    install scripts unless told not to (as web/Dockerfile does)."""
+    wf = yaml.safe_load(path.read_text())
+    for step in _steps(wf):
+        if str(step.get("uses", "")).startswith("actions/checkout@"):
+            assert (step.get("with") or {}).get("persist-credentials") is False, path.name
+    for cmd in re.findall(r"npm (?:ci|install)[^\n]*", _run_text(wf)):
+        assert "--ignore-scripts" in cmd, cmd
+    for key in ("container", "services"):
+        for job in wf["jobs"].values():
+            images = [job.get(key)] if key == "container" else list((job.get(key) or {}).values())
+            for image in images:
+                ref = image.get("image") if isinstance(image, dict) else image
+                assert ref is None or re.search(r"@sha256:[0-9a-f]{64}$", ref), ref
+
+
+def test_ci_runs_what_contributors_run():
+    """The tests workflow runs the SQLite suite (with the default fuzz tests), the Postgres
+    suite, the verifier equivalence and its seeded fuzzing, the type check, the web build and
+    the workflow lint, on every push and pull request."""
+    wf = _workflow("tests.yml")
+    assert {"push", "pull_request"} <= set(_on(wf))
+    text = _run_text(wf)
+    for command in ("python -m pytest -q server/tests", "tools/test_postgres.sh",
+                    "tools/verifier_equivalence/run.sh\n", "npx tsc --noEmit", "npm run lint",
+                    "npm run build", "tools/lint_workflows.sh"):
+        assert command in text + "\n", command
+    assert re.search(r"tools/verifier_equivalence/run\.sh --fuzz \d+ --seed \d+", text)
+    assert (ROOT / "server/tests/test_fuzz.py").exists() and (ROOT / "server/tests/test_security_fuzz.py").exists()
+
+
+def test_security_workflow_runs_weekly_and_fails_on_findings():
+    wf = _workflow("security.yml")
+    on = _on(wf)
+    assert set(on) == {"schedule", "workflow_dispatch"}
+    assert [c["cron"] for c in on["schedule"]] and all(len(c["cron"].split()) == 5 for c in on["schedule"])
+    assert (wf.get("defaults") or {}).get("run", {}).get("shell") == "bash"     # -eo pipefail
+    text = _run_text(wf)
+    for command in ("tools/scan_images.sh", "tools/refresh_pins.sh", "tools/sbom.sh",
+                    'pip-audit" --disable-pip --require-hashes',
+                    "npm audit --omit=dev --package-lock-only",
+                    "npm audit --package-lock-only --audit-level=high",
+                    "--require-hashes --no-deps --only-binary :all: -r tools/ci/requirements-audit.txt"):
+        assert command in text, command
+    # A scan finding (exit 1) and a failed scan fail the job; a stale pin (exit 1) only warns.
+    scan = next(s["run"] for s in _steps(wf) if "tools/scan_images.sh" in str(s.get("run")))
+    assert re.search(r"1\) echo \"::error[^\n]*exit 1", scan)
+    pins = next(s["run"] for s in _steps(wf) if "tools/refresh_pins.sh" in str(s.get("run")))
+    assert re.search(r"1\) echo \"::warning[^\n]*;;", pins) and "exit 1" not in pins
+    uploads = [s for s in _steps(wf) if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+    assert uploads and all("!cancelled()" in str(s.get("if")) for s in uploads)
+
+
+def test_workflow_lint_and_scanner_images_are_pinned_by_digest():
+    text = (ROOT / "tools/lint_workflows.sh").read_text()
+    refs = re.findall(r"^ACTIONLINT=(\S+)", text, re.M)
+    assert len(refs) == 1 and re.fullmatch(r"rhysd/actionlint:[\d.]+@sha256:[0-9a-f]{64}", refs[0]), refs
+    assert "--network none" in text
+
+
+def test_image_scan_reads_go_binaries_and_fails_on_expired_entries():
+    """The image scan gives Grype each image's Go binaries as well as its package databases, and
+    an entry of scan_ignore.txt past its date fails it, as a finding does."""
+    text = (ROOT / "tools/scan_images.sh").read_text()
+    assert "docker export" in text and "Go buildinf:" in text
+    assert "sys.exit(1 if fixable or expired else 0)" in text
+
+
+def test_dependabot_covers_every_dependency_with_the_two_week_rule():
+    """Weekly, grouped, with a cooldown of at least 14 days (the newest release at least two
+    weeks old, docs/SUPPLY_CHAIN.md), for every place a dependency is declared."""
+    conf = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
+    assert conf["version"] == 2
+    dirs: dict[str, set] = {}
+    for u in conf["updates"]:
+        eco = u["package-ecosystem"]
+        assert u["schedule"]["interval"] == "weekly", eco
+        assert int((u.get("cooldown") or {}).get("default-days", 0)) >= 14, eco
+        assert u.get("groups"), eco
+        dirs.setdefault(eco, set()).update(u.get("directories") or [u["directory"]])
+    assert dirs["github-actions"] == {"/"}
+    assert dirs["pip"] == {"/" + str(Path(lock).parent) for lock in LOCKS}
+    assert dirs["docker"] == {"/" + str(Path(d).parent) for d in DOCKERFILES}
+    assert dirs["docker-compose"] == {"/" + str(Path(f).parent).replace(".", "") for f in FILES[1]}
+    npm = {"/" + str(p.parent.relative_to(ROOT)) for p in ROOT.glob("*/package-lock.json")}
+    assert npm and dirs["npm"] == npm

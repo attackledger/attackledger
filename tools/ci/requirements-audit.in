@@ -1,0 +1,5 @@
+# pip-audit, for the weekly security workflow (.github/workflows/security.yml), which checks the
+# hashed locks against the Python advisory databases. Locked with hashes into
+# requirements-audit.txt by tools/lock_requirements.sh; CI installs it with --require-hashes.
+# The newest release at least two weeks old (docs/SUPPLY_CHAIN.md).
+pip-audit==2.10.1

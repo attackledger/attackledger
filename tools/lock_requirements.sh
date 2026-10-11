@@ -24,6 +24,7 @@ locks=(
   "server/requirements-pip.in unsafe"
   "worker/requirements-arjun.in"
   "worker/requirements-arjun-build.in unsafe"
+  "tools/ci/requirements-audit.in"
 )
 
 only="${1:-}"     # optional: lock this .in file only
