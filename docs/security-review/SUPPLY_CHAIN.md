@@ -9,7 +9,9 @@ the same day (branch `sec5-pins`) refreshed the stale pins, added an OS-package 
 and decided on OS-package pinning (SC-10, SC-11; "Follow-up, 2026-10-11 (sec5-pins)"). A third
 (branch `sec5-ci`) brought the CI to what contributors run, added a weekly security workflow,
 extended the image scan to Go binaries and widened Dependabot (SC-12; "Follow-up, 2026-10-11
-(sec5-ci)").
+(sec5-ci)"). A fourth (branch `sec6-tools`) fixed SC-12: the worker's recon tools moved
+to newer releases and are built with the advisories' fixed modules ("Follow-up, 2026-10-11
+(sec6-tools)").
 
 Network traffic in this review went only to Docker Hub, PyPI, the npm registry, the Go module
 proxy and checksum database, GitHub (the worker's pinned downloads, as the build already does)
@@ -33,7 +35,7 @@ was contacted.
 | SC-9 (found on the running copy) | Compose refuses inline `configs: content:` for a read-only service (`` `file` is the sole supported option ``): the lab proxy would not have started in production with `--profile lab` | would have been a regression | its nginx configuration moved, unchanged, to `deploy/lab-proxy.conf` | `test_configs_are_files` |
 | SC-10 (second follow-up) | Caddy 2.11.4, the internet-facing TLS terminator: its binary was built with Go 1.26.3 and older `golang.org/x/net`, `x/text` and `grpc`, with 33 known Go advisories (2 Critical, 20 High) | Medium (as SC-2: it faces clients; reachability of each advisory in Caddy was not analysed) | Caddy 2.11.7 (Go 1.26.8): 20 of them fixed, 13 left that no Caddy release fixes yet | image scan by hand (below) |
 | SC-11 (second follow-up) | The web image (nginx 1.30.5 on Alpine 3.24) had 4 HIGH findings with an Alpine fix (zlib, pcre2, libexpat, tiff) and OpenSSL 3.5.8, matched by 4 HIGH advisories; no newer nginx build exists. No OS-package scanner existed | Low (none reachable as used: no TLS, no gzip, no regex from clients, the modules that use expat and tiff are not loaded) | the six packages raised to minimum versions in `web/Dockerfile`; `tools/scan_images.sh` | `tools/scan_images.sh`: 0 HIGH left in web; `test_os_packages_are_installed_as_decided` and two more |
-| SC-12 (third follow-up) | The image scan read OS packages only. Given the Go binaries, it finds 35 HIGH or CRITICAL rows with a fix (14 advisories) in the worker's recon tools: `golang.org/x/net` 0.17.0 to 0.31.0 and `x/text` in subfinder 2.6.7, dnsx 1.2.1, httpx 1.6.9 and katana 1.1.2; `grpc` 1.82.1, `go-git` 5.19.1, `x/crypto` 0.53.0 and `x/net` 0.56.0 in nuclei 3.11.1; `fasthttp` 1.31.0 and `x/net` 0.17.0 in gau 2.2.4 | Low (the tools are HTTP and DNS clients in the worker's sandbox, behind the gateway; the likely effect is a hostile target crashing or hanging a tool within a job's limits; reachability per advisory not analysed) | not fixed here: the tools have to move (below). The scan now reports them, and the weekly workflow fails on them | `tools/scan_images.sh`; `test_image_scan_reads_go_binaries_and_fails_on_expired_entries` |
+| SC-12 (third follow-up) | The image scan read OS packages only. Given the Go binaries, it finds 35 HIGH or CRITICAL rows with a fix (14 advisories) in the worker's recon tools: `golang.org/x/net` 0.17.0 to 0.31.0 and `x/text` in subfinder 2.6.7, dnsx 1.2.1, httpx 1.6.9 and katana 1.1.2; `grpc` 1.82.1, `go-git` 5.19.1, `x/crypto` 0.53.0 and `x/net` 0.56.0 in nuclei 3.11.1; `fasthttp` 1.31.0 and `x/net` 0.17.0 in gau 2.2.4 | Low (the tools are HTTP and DNS clients in the worker's sandbox, behind the gateway; the likely effect is a hostile target crashing or hanging a tool within a job's limits; reachability per advisory not analysed) | fixed in the fourth follow-up (sec6-tools): subfinder 2.16.0, dnsx 1.3.1, httpx 1.12.0, katana 1.7.0, nuclei 3.11.1 and gau 2.2.4, each built with the fixed modules (`x/net` 0.60.0 and others, `worker/build_go_tool.sh`); 0 left. The crawl gained `-duf` (katana 1.7 changed its output) | `tools/scan_images.sh`: 0 with a fix in the worker; `test_image_scan_reads_go_binaries_and_fails_on_expired_entries`, `test_go_tools_are_exact_releases_built_with_checked_modules`; the lab pipeline, old against new |
 
 Tests: 878 passed and 1 skipped before; 898 passed and 1 skipped after, on the rebuilt API image
 (20 new tests in `server/tests/test_supply_chain.py`). `tools/release_gate.sh` passes. `cd web && npm ci && npx tsc --noEmit`,
@@ -564,6 +566,130 @@ Counts: 1,055 passed and 1 skipped before; 1,069 passed and 1 skipped after, on 
 image) and on Postgres (`tools/test_postgres.sh`, then the 2 upgrade tests). `tools/release_gate.sh`
 passes.
 
+## Follow-up, 2026-10-11 (sec6-tools): the worker's Go tools (SC-12 fixed)
+
+Branch `sec6-tools`. Network traffic went only to the Go module proxy and checksum database (the
+builds, and `.info`, `.mod` and source `.zip` files of the tools and modules, read to choose versions
+and to check flags and behaviour), Docker Hub (the pinned base images), GitHub (the worker build's
+pinned downloads) and Anchore's vulnerability database. No target was contacted: the lab runs below
+had no way out.
+
+**Versions.** Each tool: the newest release at least two weeks old on 2026-10-11 (subfinder 2.17.0
+and katana 1.8.0 are younger). No release of any of them requires `golang.org/x/net` 0.60.0
+(2026-10-08), the only version that fixes GO-2026-6603, -6610, -6611 and -6612, and nuclei and gau
+have no newer release at all; so each is built with the modules the scan names raised, to the newest
+version at least two weeks old that has the fix (`x/net` 0.60.0 is younger, taken under the rule's
+exception), by `worker/build_go_tool.sh` (`docs/SUPPLY_CHAIN.md`, "The Go recon tools"):
+
+| Tool | Before | After | Raised (from the release's own version) | Moved with them (minimal version selection) |
+|---|---|---|---|---|
+| subfinder | 2.6.7 | 2.16.0 (2026-08-22) | `x/net` 0.55.0 → 0.60.0, `x/text` 0.37.0 → 0.42.0 | `x/crypto` 0.57.0, `x/sys` 0.48.0, `x/term` 0.46.0, `x/sync` 0.23.0, `x/mod` 0.41.0, `x/tools` 0.49.0 |
+| dnsx | 1.2.1 | 1.3.1 (2026-08-31) | the same | the same |
+| httpx | 1.6.9 | 1.12.0 (2026-09-08) | `x/net` 0.58.0 → 0.60.0, `x/text` 0.41.0 → 0.42.0 | `x/crypto`, `x/sys`, `x/term`, `x/sync` as above |
+| katana | 1.1.2 | 1.7.0 (2026-08-05) | `x/net` 0.55.0 → 0.60.0, `x/text` 0.37.0 → 0.42.0, `jackc/pgx/v5` 5.7.2 → 5.11.0 (GHSA-xgrm-4fwx-7qm8, Critical, found in 1.7.0 only) | as subfinder |
+| nuclei | 3.11.1 | 3.11.1 (newest) | `x/net` 0.56.0 → 0.60.0, `x/text` 0.39.0 → 0.42.0, `x/crypto` 0.53.0 → 0.57.0, `grpc` 1.82.1 → 1.84.0, `go-git` 5.19.1 → 5.19.2 | `x/sys`, `x/term`, `x/sync`, `x/mod`, `x/tools` as above; `genproto/googleapis/rpc` 2026-07-06, `go-spiffe` 2.8.1, `otelhttp` 0.69.0, `httpsnoop` 1.1.0 |
+| gau | 2.2.4 | 2.2.4 (newest, 2024-10) | `fasthttp` 1.31.0 → 1.74.0, `x/net` 0.17.0 → 0.60.0, `x/text` 0.13.0 → 0.42.0 | `klauspost/compress` 1.20.0, `x/sys` 0.48.0 |
+| assetfinder, waybackurls | 0.1.1, 0.1.0 | the same, `go install` as before | none needed | |
+
+Every module moved is at least two weeks old but `x/net` 0.60.0 (read from the build log's
+`upgraded` lines and the proxy's `.info`). Built twice without a cache, the eight binaries were
+byte-identical (SHA-256). The build information of each raised tool lists the release as a
+dependency of the throwaway module (`attackledger.invalid/worker-tools/<tool>`), so the scan and the
+SBOM see the tool and its version; assetfinder and waybackurls are unchanged.
+
+**Scan.** `tools/scan_images.sh` on the rebuilt worker: `0 HIGH/CRITICAL with a fix, 0 accepted, 55
+without a fix` (the 55 are Debian's, as in the API image), exit 0; before, 35 with a fix and 56
+without. The Go modules' findings went from 117 rows (40 advisories: 5 Critical, 43 High, 49
+Medium, 14 Low, 6 unrated) to 5: `yuin/goldmark` 1.7.4 and 1.7.13 (GO-2026-5320, Medium, fixed in
+1.7.17; in subfinder, dnsx, katana and httpx: markdown rendering of the tools' own text) and
+GO-2026-5932 in `x/crypto` 0.57.0 (unrated, no fix). `mholt/archiver` 3.5.1 (GHSA-7vpp-9cxj-q8gv, no
+fix) is gone: no new release uses it. On the set the weekly workflow scans (this branch's api and
+worker, the web image, the pinned Postgres, nginx and Caddy): `0 HIGH/CRITICAL with a fix, 20
+accepted, 134 without a fix, 0 expired entries`, exit 0. `scan_ignore.txt` is unchanged but for its
+header: nothing in the worker had to be accepted.
+
+**Flags.** Each tool's `-h` from the old and new images (run with no network), for every flag the
+worker passes (`worker/worker.py`: `commands`, `_proxy_flags`, `nuclei_cmd`; `-duc` from
+`app/egress.py`): subfinder `-silent -all -timeout -proxy -duc`; dnsx `-silent -json -a -aaaa
+-cname -rl -r -duc`; httpx `-silent -json -status-code -title -tech-detect -web-server -ip -cdn
+-cname -location -rl -t -H -proxy -r -duc`; katana `-silent -j -d -jc -fs -cos -rl -c -ct -H -proxy
+-r -duc`; gau `--subs --threads --timeout --proxy`. All are there with the same description and
+default. What changed around them: httpx's `-proxy` now also falls back to `HTTP_PROXY` (the worker
+sets both to the gateway) and reads at most 50 MB of a response (was 2 GiB); dnsx has a `-timeout`
+(3 s default) and new filters that are off; katana has new crawling options, all off, and one
+change of output (next paragraph). nuclei, gau, assetfinder and waybackurls print the same help.
+Parsers: the server suite (the worker's parsers on recorded output) passes; the lab run exercised
+dnsx's, httpx's, katana's and nuclei's real JSON.
+
+**katana 1.7 leaves pages out.** It drops a fetched page whose body it has already seen (md5 of the
+body) and, unlike 1.1.2, no longer writes it to its output (`pkg/output/output.go`: "Skip empty
+responses"; 1.1.2 printed the request with an empty response, which is all the worker reads). On the
+lab, where `/about` and `/products?id=1` are the same page, both runs of the new image lost
+`/products?id=1`, so its `id` parameter never reached the parameter steps (`idor-prone parameter: id`,
+`sqli-prone parameter: id` missing). The crawl now passes `-duf` (disable that filter;
+`test_worker.py` checks it), which lists every page katana fetches again; URLs are still fetched
+once each.
+
+**The lab, old against new.** The development file with `tools/demo/compose.override.yml` and an
+override that removed every published port and made the default network internal (`docker network
+inspect`: `Internal: true`), compose project `al-sec6-tools`, `--profile lab`, the public development
+key, no timestamp authority, the API and gateway from this branch (`attackledger-api:sec6-tools`).
+"Old" is that image with the eight Go binaries of `attackledger-worker:latest` copied in
+(checksums equal to the image's), so that only the tools differ; "new" is
+`attackledger-worker:sec6-tools`. `tools/demo_stack.py` ran from a throwaway container on the
+stack's network against the API; one run at a time, the project's containers, networks and volumes
+removed after each.
+
+| Step (results) | old, 2 runs | new, before `-duf`, 2 runs | new, with `-duf` |
+|---|---|---|---|
+| subdomains, resolve, ports, probe, wellknown | 0, 2, 2, 4, 12 | 0, 2, 2, 4, 12 | 0, 2, 2, 4, 12 |
+| crawl (katana) | 10, 10 | 8, 7 | 36 |
+| archive, content | 0, 33 | 0, 34 / 0, 33 | 0, 32 |
+| jsanalyze, params, paramclass | 1, 1, 5 | 1, 2, 5 / 1, 1, 3 | 4, 2 (`partial`), 10 |
+| nuclei, dorks | 1, 19 | 1, 19 | 1, 19 |
+| leads | 34: robots 4, graphql 1, secret 2, sourcemap 1, parameter 1, param-class 5, nuclei 1, dork 19 (both runs) | 35 and 32 (param-class 5 and 3, parameter 2 and 1, the rest as old) | 44: robots 4, graphql 2, secret 4, sourcemap 2, parameter 2, param-class 10, nuclei 1, dork 19 |
+| endpoints | 53 | 51, 49 | 76 (all but one of old's 53: the same `/products?id=1` on another host and port) |
+
+With `-duf` the lead kinds and counts are those of the second follow-up's fullest run of the old
+tools (44, the same eight kinds and counts, `params` `partial` at its 20-target limit): katana now
+reached all four live services' pages in that run. The crawl's spread from run to run is known
+(10 to 28 with the same images, "Measured on a running copy"); the two old runs here happened to
+give 10 both times.
+
+Requests, from the gateway log (old → new with `-duf`): target `GET` 25,750 → 26,764 (feroxbuster
+18,976 and nuclei 5,353 in both; katana 11 → 40, Arjun 1,332 → 2,284, which follow from the
+crawl), `HEAD` 1 → 1, `OPTIONS` 2 → 2 (nuclei), port probes 198 allowed and 99 refused (the name that
+does not resolve) in both, DNS 30 → 32; no other method to a target. `CONNECT` 1 → 19, all refused
+(below). The lab's access log: 25,730 → 26,716 requests, only `GET`, `HEAD` and `OPTIONS`; every
+one carried the research identification except 78 in every run (79 in the old ones), each a `400`
+that nginx answered from the request line alone (path-traversal paths of nuclei templates, `GET
+/../../etc/passwd`, and in the old runs one TLS hello httpx sent to the plain port 8443), before it
+reads the headers it would log; the gateway adds the identification to every request. The other
+three demo engagements had no gateway row in any run.
+
+Two changes of behaviour, both through the gateway and both fail-closed:
+- **gau now reaches the gateway.** fasthttp 1.31's proxy dialer sent `CONNECT host:port HTTP/1.1`
+  with no `Host` header (read in its source); in the old runs gau left no row in the gateway log and
+  the archive step ended with 0 URLs and no error. fasthttp 1.74 sends `Host`: gau's HTTPS source
+  (`web.archive.org`) goes through the gateway, which on the lab answered "does not resolve" (30
+  attempts, no way out), and its plain-HTTP one is tunnelled as `CONNECT index.commoncrawl.org:80`,
+  which the gateway refuses (6 rows: passive sources are reached over HTTPS through a tunnel, or
+  plain HTTP through the proxy). On an install with internet, gau's archive results are therefore
+  new (they were lost before), from `web.archive.org` only.
+- **subfinder 2.16 has sources the gateway does not list** (`api.driftnet.io`, `scanmalware.com`,
+  `api.sub.md`, `anubisdb.com`, `cavalier.hudsonrock.com`, `ctl.shodan.io`, `ip.thc.org`,
+  `www.reconeer.com`, `ci-www.threatcrowd.org`): refused as out of scope, 14 rows, as the old
+  version's `dnsdumpster.com` was (1). Its listed sources are reached as before.
+
+**Tests.** 1 new in `test_supply_chain.py`, `test_go_tools_are_exact_releases_built_with_checked_modules`:
+the tools stage writes the checksum settings out (`GOPROXY`, `GOSUMDB`, empty `GONOSUMDB`,
+`GOPRIVATE`, `GOINSECURE`, `GOTOOLCHAIN=local`), has no `go install`, `-mod=vendor` or `-insecure` of
+its own, every `RUN` is `build_go_tool.sh` with an exact release and exact module versions, the eight
+tools are all there, and the script keeps its checks. It failed with each of four mutations (a tool at
+`@latest`, a module without a version, `GONOSUMDB=*`, a `go install` line). `test_worker.py` checks
+`-duf`. Counts: 1,173 passed and 1 skipped before; 1,174 passed and 1 skipped after, on the API image.
+`tools/release_gate.sh` passes.
+
 ## Gaps left
 
 Closed by the third follow-up (sec5-ci):
@@ -579,10 +705,14 @@ Closed by the third follow-up (sec5-ci):
   equivalence and its seeded fuzzing, the type check and a workflow lint as well.
 
 Still open:
-- **The worker's Go recon tools have 35 HIGH or CRITICAL rows with a fix** (SC-12): moving
-  subfinder, dnsx, httpx and katana to newer releases fixes most of them and needs the lab
-  pipeline; nuclei and gau have no newer release; four `x/net` advisories wait for every tool to
-  be rebuilt with `x/net` 0.60.0. Until then the weekly scan fails on them, on purpose.
+- ~~The worker's Go recon tools have 35 HIGH or CRITICAL rows with a fix~~ (SC-12): fixed in the
+  fourth follow-up (sec6-tools). What it leaves: the raised modules are ours to move until each
+  tool's authors release them (remove a module from its line in `worker/Dockerfile` once a release
+  requires that version); `goldmark` (Medium, fixed in 1.7.17) in four tools is not raised, since
+  the gate is HIGH and CRITICAL; gau 2.2.4 is from 2024-10 and its plain-HTTP archive source
+  (commoncrawl, tunnelled to port 80) is refused by the gateway; subfinder 2.16's sources missing
+  from the gateway's passive list are refused (an operator can add them with
+  `ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS`; whether to list them by default is a gateway decision).
 - **Caddy's 14 Go rows**, accepted until 2026-11-11, wait for a Caddy release built with Go 1.26.9;
   the third-party images' OS findings end the same day.
 - **The workflows have not run on GitHub yet.** They were checked with actionlint and each command

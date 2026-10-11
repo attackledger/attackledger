@@ -1,25 +1,34 @@
 # Base images are pinned by the digest of their multi-arch index (docs/SUPPLY_CHAIN.md); the
 # tag says what the digest was when it was pinned.
 #
-# The Go tools: `go install module@version` checks every module it downloads against the
-# module's go.sum and the public checksum database (sum.golang.org), and fails on a mismatch.
-# These settings are Go's defaults, written out so that a builder's environment cannot turn
-# them off; GOTOOLCHAIN=local keeps a module from fetching another Go toolchain, and
-# -trimpath keeps the build's paths out of the binaries. One toolchain for every tool: Go
-# 1.23, which built the older ones, has had no security fixes since August 2025.
+# The Go tools: each release, built by worker/build_go_tool.sh (docs/SUPPLY_CHAIN.md, "The Go
+# recon tools"). Every module it downloads is checked against the tool's go.sum or the public
+# checksum database (sum.golang.org), and the build fails on a mismatch. These settings are Go's
+# defaults, written out so that a builder's environment cannot turn them off; GOTOOLCHAIN=local
+# keeps a module from fetching another Go toolchain, and -trimpath keeps the build's paths out of
+# the binaries. One toolchain for every tool: Go 1.26.
 # golang:1.26.9-bookworm, pinned 2026-10-10.
 FROM golang:1.26-bookworm@sha256:d9c68c2c51161e12fd77e4c6320687c9cd86e1af1e3ad6e6cd63ff970641453c AS tools
 ENV GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org GONOSUMDB= GOPRIVATE= \
     GOINSECURE= GOFLAGS=-trimpath GOTOOLCHAIN=local
+COPY worker/build_go_tool.sh /usr/local/bin/build_go_tool.sh
+# Each tool: the newest release at least two weeks old (2026-10-11). The modules after it are
+# raised to fix advisories the release still carries (security review SC-12), each to the newest
+# version at least two weeks old that has the fix; golang.org/x/net v0.60.0 (2026-10-08) is
+# younger, as the only release that fixes GO-2026-6603, -6610, -6611 and -6612. Remove a module
+# from a line once a release of the tool requires that version or a newer one.
 # No naabu: port probes are made by the gateway (D-039), which can check them against scope.
-RUN go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.6.7 \
- && go install github.com/projectdiscovery/dnsx/cmd/dnsx@v1.2.1 \
- && go install github.com/projectdiscovery/httpx/cmd/httpx@v1.6.9 \
- && go install github.com/projectdiscovery/katana/cmd/katana@v1.1.2 \
- && go install github.com/tomnomnom/assetfinder@v0.1.1 \
- && go install github.com/tomnomnom/waybackurls@v0.1.0 \
- && go install github.com/lc/gau/v2/cmd/gau@v2.2.4 \
- && go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.11.1
+ARG XNET=golang.org/x/net@v0.60.0
+ARG XTEXT=golang.org/x/text@v0.42.0
+RUN build_go_tool.sh github.com/projectdiscovery/subfinder/v2/cmd/subfinder@v2.16.0 $XNET $XTEXT
+RUN build_go_tool.sh github.com/projectdiscovery/dnsx/cmd/dnsx@v1.3.1 $XNET $XTEXT
+RUN build_go_tool.sh github.com/projectdiscovery/httpx/cmd/httpx@v1.12.0 $XNET $XTEXT
+RUN build_go_tool.sh github.com/projectdiscovery/katana/cmd/katana@v1.7.0 $XNET $XTEXT github.com/jackc/pgx/v5@v5.11.0
+RUN build_go_tool.sh github.com/tomnomnom/assetfinder@v0.1.1 \
+ && build_go_tool.sh github.com/tomnomnom/waybackurls@v0.1.0
+RUN build_go_tool.sh github.com/lc/gau/v2/cmd/gau@v2.2.4 $XNET $XTEXT github.com/valyala/fasthttp@v1.74.0
+RUN build_go_tool.sh github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.11.1 $XNET $XTEXT \
+      golang.org/x/crypto@v0.57.0 google.golang.org/grpc@v1.84.0 github.com/go-git/go-git/v5@v5.19.2
 
 # Pinned downloads, each checked against a SHA-256 recorded when it was pinned.
 # debian:bookworm-slim (2026-10-05 build), pinned 2026-10-10.
