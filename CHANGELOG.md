@@ -416,8 +416,20 @@ must be rebuilt (`docker compose build web`) to get its Alpine package fixes.
   token and people sign-in and sign-out, roles, CSRF from a same-site sibling and from another
   site, both verifiers (good, tampered, unsealed, strict history, a receipt signed in the
   browser), drafts, and axe-core accessibility checks. The script removes what it started.
+- **The browser tests cover the public site and WebKit, and run in the CI** (`WEB_E2E.md`, second
+  pass). A first phase builds the site with `tools/build_pages.sh` inside the runner and serves it
+  with its `_headers` as Cloudflare Pages applies them: every page and every demo view in both
+  themes with no CSP violation and no outside request but Google Fonts, the `/verify` page giving
+  `verify_report.py`'s verdicts check by check on every published report in three modes, failing
+  tampered copies and showing hostile report content as text, and axe on every page. Every phase
+  runs in WebKit too. The `e2e` CI job runs `tools/test_e2e.sh` and uploads Playwright's report
+  when a test fails; `E2E_PROJECT` and `E2E_REPORT_DIR` are new options.
 
 ### Fixed
+- **Accessibility of the report and the landing page** (WE-7, WE-8, WE-9, Low): the HTML report's
+  wide tables can be scrolled from the keyboard (each is a named, focusable region), its contents
+  links are 24px apart (WCAG 2.5.8), and the landing page's sample verifier output meets AA
+  contrast in the light theme.
 - **A report download for an engagement named outside Latin-1 failed with a 500** (WE-1): the
   name went into `Content-Disposition` as UTF-8. It now has an ASCII copy and a UTF-8 `filename*`.
 - **The lane panel's signing area could not be scrolled from the keyboard** (WE-5): it is now a

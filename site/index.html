@@ -28,6 +28,7 @@
   --on-ink: #ffffff;
   --margin: #c9796f;
   --stamp: #2e7d4f;
+  --pass: #25683f;              /* the stamp green, darkened to AA on the code background for small text */
   --stamp-wash: #e3f0e6;
   --open: #b8322a;
   --code-bg: #e3ead8;
@@ -48,7 +49,7 @@
     --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
     --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
     --ink: #a9baf5; --ink-hover: #c3cff8; --on-ink: #14221a; --margin: #8a4b44;
-    --stamp: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --code-bg: #1d3226;
+    --stamp: #86d3a2; --pass: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --code-bg: #1d3226;
     --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
     color-scheme: dark;
   }
@@ -57,7 +58,7 @@
   --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
   --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
   --ink: #a9baf5; --ink-hover: #c3cff8; --on-ink: #14221a; --margin: #8a4b44;
-  --stamp: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --code-bg: #1d3226;
+  --stamp: #86d3a2; --pass: #86d3a2; --stamp-wash: #1f3a2b; --open: #ef8a78; --code-bg: #1d3226;
   --shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.7);
   color-scheme: dark;
 }
@@ -159,7 +160,7 @@ h2.section { font: 700 var(--step-2) / 1.15 var(--slab); margin: 0 0 1rem; text-
 .num { font-variant-numeric: tabular-nums; font-weight: 700; }
 
 pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border-radius: var(--radius); overflow-x: auto; font: 0.85rem / 1.55 var(--mono); }
-.verify-out { color: var(--stamp); }
+.verify-out { color: var(--pass); }
 .frameworks { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0 0; padding: 0; list-style: none; }
 .frameworks li { font-size: var(--step--1); padding: 0.25rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 999px; }
 .note { font-size: 0.8rem; color: var(--text-faint); margin-top: 0.75rem; }

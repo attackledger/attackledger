@@ -3,9 +3,12 @@
 #
 # Builds this tree's API and web images, starts the database, the API and the web app as
 # compose project "al-e2e" (its own containers, networks and volumes; no port published on
-# the host, no gateway, worker or lab), and runs the Playwright suite in e2e/ in Chromium and
-# Firefox, inside the Playwright image pinned in e2e/Dockerfile, on an internal network with
-# no route out. Two phases:
+# the host, no gateway, worker or lab), and runs the Playwright suite in e2e/ in Chromium,
+# Firefox and WebKit, inside the Playwright image pinned in e2e/Dockerfile, on an internal
+# network with no route out. Three phases:
+#   0. site: the public site, built by tools/build_pages.sh inside the runner (into its own
+#      /tmp, never into this checkout) and served with its _headers as Cloudflare Pages would
+#      (e2e/tests/pages-server.mjs); the stack is not needed.
 #   1. token: the operator token signs in; e2e/tests/seed.ts fills the stack with hostile
 #      content (and posts recon results as a worker would, with a worker token made here).
 #   2. people: the first owner is created on the server the way docs/INSTALL.md section 9
@@ -16,10 +19,23 @@
 # Usage: tools/test_e2e.sh [--keep] [playwright test arguments...]
 #   --keep   leave the stack running afterwards (tear it down with: tools/test_e2e.sh --down)
 #   --down   only tear down a stack left by --keep
-# Needs Docker with Compose 2.24 or later. About 3 minutes, more on the first build.
+# Environment (optional):
+#   E2E_PROJECT     the compose project name, default al-e2e (to run beside another copy)
+#   E2E_REPORT_DIR  a directory for Playwright's HTML report and the traces of failed tests,
+#                   one folder per phase (the CI uploads it when a test fails); by default
+#                   nothing is kept
+# Needs Docker with Compose 2.24 or later. About 7 minutes, more on the first build.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT=al-e2e
+PROJECT="${E2E_PROJECT:-al-e2e}"
+[[ "$PROJECT" =~ ^[a-z0-9][a-z0-9_-]{0,40}$ ]] || { echo "E2E_PROJECT: a compose project name, such as al-e2e" >&2; exit 2; }
+REPORT_DIR="${E2E_REPORT_DIR:-}"
+if [ -n "$REPORT_DIR" ]; then
+  mkdir -p "$REPORT_DIR"
+  REPORT_DIR="$(cd "$REPORT_DIR" && pwd)"
+  # The runner writes here as its own user (pwuser), whose uid is not the caller's.
+  chmod a+rwx "$REPORT_DIR"
+fi
 keep=0
 if [ "${1:-}" = "--keep" ]; then keep=1; shift; fi
 
@@ -76,14 +92,18 @@ down
 echo "[e2e] building the API, web and runner images"
 dc build --quiet api web runner
 
-echo "[e2e] starting the database, the API and the web app"
-dc up -d --wait --wait-timeout 180 db api web
-
 run_phase() {
   local phase="$1"; shift
-  echo "[e2e] phase $phase: Chromium and Firefox"
-  dc run --rm --no-deps -e E2E_PHASE="$phase" runner npx playwright test --pass-with-no-tests "$@"
+  local report=()
+  if [ -n "$REPORT_DIR" ]; then report=(-v "$REPORT_DIR:/report" -e E2E_REPORT="/report/$phase"); fi
+  echo "[e2e] phase $phase: Chromium, Firefox and WebKit"
+  dc run --rm --no-deps -e E2E_PHASE="$phase" ${report[@]+"${report[@]}"} runner npx playwright test --pass-with-no-tests "$@"
 }
+
+run_phase site "$@"
+
+echo "[e2e] starting the database, the API and the web app"
+dc up -d --wait --wait-timeout 180 db api web
 
 run_phase token "$@"
 

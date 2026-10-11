@@ -9,6 +9,8 @@ export const API = "http://web/api";
 export const SIBLING = "http://localhost:18181";   // same site as the app, another origin
 export const OTHER_SITE = "http://127.0.0.1:18181";  // another site
 export const VERIFY_PAGE = "http://localhost:18182/verify.html";
+/** The public site, as Cloudflare Pages serves it (the site phase, tests/pages-server.mjs). */
+export const SITE = "http://localhost:18183";
 
 export const TOKEN = need("E2E_API_TOKEN");
 export const WORKER_TOKEN = process.env.E2E_WORKER_TOKEN ?? "";
@@ -162,7 +164,7 @@ export async function dismissAccount(page: Page): Promise<void> {
 export async function openTab(page: Page, engId: number, tab: string): Promise<void> {
   // A load that hangs says which requests it waits for (a diagnostic for a slow test machine).
   const timer = setTimeout(() => console.log(`[e2e] ${page.url()} still loading after 20 s; in flight:`,
-    [...((page as unknown as { __pending?: Set<string> }).__pending ?? [])]), 20_000);
+    inFlight(page)), 20_000);
   await page.goto(`${APP}/#/e/${engId}/${tab}`).finally(() => clearTimeout(timer));
   await expect(page.getByRole("tab", { name: new RegExp(`^${tabLabel(tab)}`) })).toHaveAttribute("aria-selected", "true");
 }
@@ -195,6 +197,7 @@ const APP_CSP = [
 
 export function checkDocumentHeaders(r: Response): string[] {
   const url = new URL(r.url());
+  if (url.origin === SITE) return checkSiteHeaders(r);
   const h = r.headers();
   const bad: string[] = [];
   // A header the API and nginx both set arrives twice, joined with a comma; browsers read the
@@ -225,6 +228,43 @@ export function checkDocumentHeaders(r: Response): string[] {
   return bad;
 }
 
+/** The site's documents (attackledger.com): the headers tools/build_pages.sh writes into _headers,
+ *  as Cloudflare Pages applies them. Every path has the site's policy; /verify has the verifier
+ *  page's own as well (two policies, both enforced), which allows no connection at all. */
+export function checkSiteHeaders(r: Response): string[] {
+  const url = new URL(r.url());
+  if (r.status() >= 300 && r.status() < 400) return [];      // a redirect: no document
+  const h = r.headers();
+  const bad: string[] = [];
+  const where = url.pathname;
+  const want = (name: string, ok: (v: string) => boolean, what: string) => {
+    if (!ok(h[name] ?? "")) bad.push(`${where}: ${name} is ${JSON.stringify(h[name] ?? null)}, not ${what}`);
+  };
+  const policies = (h["content-security-policy"] ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  if (!policies.length) bad.push(`${where}: no Content-Security-Policy`);
+  const directive = (p: string, name: string) => p.split(";").map((d) => d.trim()).find((d) => d.split(/\s+/)[0] === name);
+  for (const p of policies) {
+    const script = directive(p, "script-src") ?? directive(p, "default-src") ?? "";
+    if (/'unsafe-(inline|eval)'|\*|https?:|data:/.test(script.replace(/^\S+/, ""))) bad.push(`${where}: script-src allows more than this origin and hashes: ${script}`);
+  }
+  for (const d of ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) {
+    if (!policies.some((p) => p.includes(d))) bad.push(`${where}: no policy has ${d}`);
+  }
+  if (!policies.some((p) => /form-action '(none|self)'/.test(p))) bad.push(`${where}: no policy limits form-action`);
+  if (where === "/verify") {
+    const own = policies.find((p) => p.includes("default-src 'none'"));
+    for (const d of ["connect-src 'none'", "require-trusted-types-for 'script'", "trusted-types 'none'"]) {
+      if (!own?.includes(d)) bad.push(`${where}: the verifier's policy lacks ${d}`);
+    }
+  }
+  want("x-content-type-options", (v) => v === "nosniff", "nosniff");
+  want("referrer-policy", (v) => v === "strict-origin-when-cross-origin" || v === "no-referrer", "strict-origin-when-cross-origin");
+  want("cross-origin-opener-policy", (v) => v === "same-origin", "same-origin");
+  want("permissions-policy", (v) => ["camera=()", "microphone=()", "geolocation=()"].every((x) => v.includes(x)), "camera, microphone and geolocation off");
+  want("strict-transport-security", (v) => Number(/max-age=(\d+)/.exec(v)?.[1] ?? 0) >= 31536000, "max-age of a year or more");
+  return bad;
+}
+
 /** The browser refusing Playwright's own helper script in a sandboxed document (raw evidence, served
  *  with CSP sandbox): the sandbox at work, not an error of the app. */
 function harness(page: Page, text: string): boolean {
@@ -239,11 +279,23 @@ function browserFavicon(text: string): boolean {
   return /favicon\.ico/.test(text) && /(FaviconLoader|at resource:)/.test(text);
 }
 
+/** WebKit styles a document it shows as text (text/plain, JSON) with a stylesheet of its own, and
+ *  reports that stylesheet as refused under default-src 'none', for any text at all (measured with a
+ *  two-word text/plain page). Not counted on such a document, and only there: an HTML page that
+ *  says the same has had a style injected. */
+const webkitTextStyle = (text: string) =>
+  text === "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' appears in neither the style-src directive nor the default-src directive of the Content Security Policy.";
+
+/** WebKit reports a cross-origin fetch it refuses as an uncaught error, even when the page catches
+ *  the rejection (the CSRF pages do). Counted as a console error, which a test can expect. */
+const webkitRefusedFetch = (message: string) => /^Fetch API cannot load .* due to access control checks\.$/.test(message);
+
 export const test = base.extend<{ guard: Guard }>({
   guard: [async ({ context }, use) => {
     const allowed: RegExp[] = [];
     const g: Guard = { csp: [], xss: [], dialogs: [], errors: [], documents: [], allowConsole: (re) => allowed.push(re) };
     const headerProblems: string[] = [];
+    const docType = new WeakMap<Page, string>();     // the type of each page's own document
     const failed: string[] = [];
     await context.exposeBinding("__e2eReport", ({ page }, kind: string, detail: string) => {
       const where = page?.url() ?? "?";
@@ -263,15 +315,23 @@ export const test = base.extend<{ guard: Guard }>({
       page.on("console", (m) => {
         const text = m.text();
         if (browserFavicon(text)) return;
+        if (webkitTextStyle(text) && !/^text\/html/.test(docType.get(page) ?? "")) return;
         if (/Content[- ]Security[- ]Policy|CSP/i.test(text)) g.csp.push(`${page.url()}: console: ${text}`);
         else if (m.type() === "error" && !allowed.some((re) => re.test(text)) && !harness(page, text)) g.errors.push(`${page.url()}: ${text}`);
       });
-      page.on("pageerror", (e) => g.errors.push(`${page.url()}: uncaught ${e.name}: ${e.message}`));
+      page.on("pageerror", (e) => {
+        // WebKit's text arrives split at its first colon, as name "Fetch API cannot load http" and
+        // the rest of the URL and sentence as the message.
+        const text = e.name && e.name !== "Error" ? `${e.name}:${e.message}` : e.message;
+        if (webkitRefusedFetch(text) && allowed.some((re) => re.test(text))) return;
+        g.errors.push(`${page.url()}: uncaught ${e.name}: ${e.message}`);
+      });
       // The console says only "Failed to load resource"; which one is here.
       page.on("response", (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
       page.on("dialog", (d) => { g.dialogs.push(`${d.type()}: ${d.message()}`); void d.dismiss().catch(() => undefined); });
       page.on("response", (r) => {
         if (r.request().resourceType() !== "document") return;
+        if (r.frame() === page.mainFrame()) docType.set(page, r.headers()["content-type"] ?? "");
         g.documents.push({ url: r.url(), status: r.status() });
         headerProblems.push(...checkDocumentHeaders(r));
       });
@@ -290,16 +350,24 @@ export const test = base.extend<{ guard: Guard }>({
 export { expect };
 
 // Requests in flight per page, so a test can wait until a view has loaded what it shows.
-const traffic = new WeakMap<Page, { inflight: number; last: number }>();
+// Each request is counted until it finishes or fails, by the request itself (two requests for the
+// same URL are two requests).
+const traffic = new WeakMap<Page, { pending: Map<import("@playwright/test").Request, string>; last: number }>();
+/** The URLs of the requests a page has in flight. */
+export const inFlight = (page: Page): string[] => [...(traffic.get(page)?.pending.values() ?? [])];
 function trackRequests(page: Page): void {
-  const t = { inflight: 0, last: Date.now() };
+  const t = { pending: new Map<import("@playwright/test").Request, string>(), last: Date.now() };
   traffic.set(page, t);
-  const pending = new Set<string>();
-  page.on("request", (r) => { t.inflight++; t.last = Date.now(); pending.add(r.url()); });
-  const done = (r: import("@playwright/test").Request) => { pending.delete(r.url()); t.inflight = Math.max(0, t.inflight - 1); t.last = Date.now(); };
-  (page as unknown as { __pending: Set<string> }).__pending = pending;
+  page.on("request", (r) => { t.pending.set(r, r.url()); t.last = Date.now(); });
+  const done = (r: import("@playwright/test").Request) => { t.pending.delete(r); t.last = Date.now(); };
   page.on("requestfinished", done);
   page.on("requestfailed", done);
+  // WebKit under Playwright 1.63 never reports the end of a document request whose URL has a
+  // fragment (every app route: /#/e/3/ledger), measured: the request stays in flight forever.
+  // Once the page has loaded, its documents have arrived.
+  page.on("load", () => {
+    for (const r of [...t.pending.keys()]) if (r.isNavigationRequest() && r.resourceType() === "document") done(r);
+  });
 }
 
 /** Waits until the page has had no request in flight for `ms` (the app's 10-second polls aside). */
@@ -308,10 +376,10 @@ export async function quiet(page: Page, ms = 400): Promise<void> {
   if (!t) return page.waitForLoadState("networkidle");
   const until = Date.now() + 15_000;
   while (Date.now() < until) {
-    if (t.inflight === 0 && Date.now() - t.last >= ms) return;
+    if (t.pending.size === 0 && Date.now() - t.last >= ms) return;
     await page.waitForTimeout(50);
   }
-  throw new Error(`requests still in flight on ${page.url()}`);
+  throw new Error(`requests still in flight on ${page.url()}: ${inFlight(page).join(", ")}`);
 }
 
 /** Whether the text of an element reads left to right on screen: its first letter left of its

@@ -1,6 +1,7 @@
 """Server-side regressions for what the browser end-to-end tests found
 (docs/security-review/WEB_E2E.md). The browser tests (e2e/, tools/test_e2e.sh) cover the same
 cases in Chromium and Firefox; these run with the rest of the server suite."""
+import re
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -59,3 +60,28 @@ def test_we2_a_probe_url_must_be_an_http_url_of_the_host_it_probed(stack):
     with stack.Session() as s:
         assert [o.data.get("url") for o in s.scalars(select(Observation).order_by(Observation.id))] == [
             "https://a.example.com:8443/", None]
+
+
+# ---- WE-7: the HTML report's wide tables scroll, and could not be scrolled from the keyboard -------
+
+def test_we7_every_scrolling_table_in_the_html_report_is_a_named_focusable_region(client):
+    from test_ledger import setup_asset
+    eng, asset = setup_asset(client)
+    assert client.post("/lanes", json={"asset_id": asset, "role": "recon"}).status_code == 201
+    page = client.get(f"/engagements/{eng}/report.html").text
+    wrappers = re.findall(r"<div class='tw[^']*'[^>]*>", page)
+    assert len(wrappers) >= 4                     # matrix, verification checks, controls, items
+    for w in wrappers:
+        assert re.fullmatch(r"<div class='tw( keep)?' tabindex='0' role='region' aria-label='[^']+'>", w), w
+    assert "aria-label='Items: app.example.com · " in page
+
+
+# ---- WE-8: the report's contents links were closer than the 24px target size ------------------------
+
+def test_we8_contents_rows_are_at_least_24px_apart():
+    from app import report
+    body = re.search(r"body\{[^}]*font:(\d+)px/([\d.]+)", report._CSS)
+    pad = re.search(r"\.toc li\{padding:([\d.]+)rem 0\}", report._CSS)
+    assert body and pad
+    # One row: the line height plus the padding above and below (1rem = 16px).
+    assert float(body[1]) * float(body[2]) + 2 * 16 * float(pad[1]) >= 24

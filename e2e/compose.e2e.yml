@@ -37,7 +37,10 @@ services:
       E2E_OWNER_PASSWORD: ${E2E_OWNER_PASSWORD:-}
       CI: "1"
     volumes:
-      - ./site:/site:ro               # the public verifier page, served as a static file
+      # The public site (the verifier page, and tools/build_pages.sh's input) and the script that
+      # builds it, read-only: the site phase builds into the runner's own /tmp.
+      - ./site:/repo/site:ro
+      - ./tools/build_pages.sh:/repo/tools/build_pages.sh:ro
     networks: [browser]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
