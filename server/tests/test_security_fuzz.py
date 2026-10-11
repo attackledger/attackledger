@@ -156,7 +156,7 @@ def test_fz6_spaces_inside_an_authorization_value_are_linear():
     "https://AKIA" + "ABCDEFGHIJKLMNOP.shop.example.com/x",            # a label shaped like an AWS key id
     "https://xox" + "b-1234567890-abc.shop.example.com/",              # like a Slack token
     "https://eyJabcdefghij.eyJabcdefghij.sig.shop.example.com/",       # like a JWT
-    "https://user:lab-fz7@shop.example.com/?token=lab-q",              # a password: its marker had brackets
+    "https://user:" + "lab-fz7@shop.example.com/?token=lab-q",        # a password: its marker had brackets
 ])
 def test_fz7_a_redacted_url_still_names_its_host(url):
     out = redact.url(url, redact.Report())
@@ -167,7 +167,7 @@ def test_fz7_a_redacted_url_still_names_its_host(url):
 
 def test_fz7_imported_rows_with_such_urls_can_be_opened(client):
     _, e, _ = team(client, receipt_info=False)
-    urls_in = ["https://AKIA" + "ABCDEFGHIJKLMNOP.shop.example.com/x", "https://user:lab-fz7@shop.example.com/"]
+    urls_in = ["https://AKIA" + "ABCDEFGHIJKLMNOP.shop.example.com/x", "https://user:" + "lab-fz7@shop.example.com/"]
     assert upload(client, e, har(*[har_entry(u) for u in urls_in]), "har").json()["accepted"] == 2
     for x in db(client).scalars(select(InboxEntry).where(InboxEntry.engagement_id == e)):
         assert urlsplit(x.url).hostname == x.host and "lab-fz7" not in x.url
