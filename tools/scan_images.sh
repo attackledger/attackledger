@@ -60,7 +60,7 @@ for image in "${images[@]}"; do
   [ -s "$dir/in/etc/os-release" ] || fail "$image: no /etc/os-release"
   [ -s "$dir/in/var/lib/dpkg/status" ] || [ -s "$dir/in/lib/apk/db/installed" ] || fail "$image: no dpkg or apk database"
   # The package lists go into the scanner's container by `docker cp` (an anonymous volume, removed with it).
-  cid="$(docker create --network none -v /scan "${HARDEN[@]}" -e GRYPE_DB_AUTO_UPDATE=false \
+  cid="$(docker create --network none --read-only --tmpfs /tmp:size=512m -v /scan "${HARDEN[@]}" -e GRYPE_DB_AUTO_UPDATE=false \
          "$GRYPE" dir:/scan -q -o json --name "$image")"
   docker cp "$dir/in/." "$cid:/scan/"
   docker start -a "$cid" > "$dir/grype.json" || fail "$image: the scan failed"

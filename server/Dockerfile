@@ -1,6 +1,7 @@
 # Base images are pinned by the digest of their multi-arch index (docs/SUPPLY_CHAIN.md); the
 # tag says what the digest was when it was pinned. tools/sbom.sh lists what each image holds.
 # python:3.12.15-slim, pinned 2026-10-10.
+# Kept on 2026-10-11: the tag's newer index (a6e34c59…) rebuilt its riscv64 image only.
 FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
 WORKDIR /srv
 # Every package is pinned with the SHA-256 of its files (tools/lock_requirements.sh): pip

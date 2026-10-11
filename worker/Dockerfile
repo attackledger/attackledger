@@ -46,6 +46,7 @@ RUN set -eux; mkdir -p /opt/wordlists; \
     echo "47fb86ca6fb3f97e5491161581900d6d99851fb16764eacddf16aa85617c956a  /opt/wordlists/common.txt" | sha256sum -c -
 
 # python:3.12.15-slim, pinned 2026-10-10 (the API image's base, server/Dockerfile).
+# Kept on 2026-10-11: the tag's newer index (a6e34c59…) rebuilt its riscv64 image only.
 FROM python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \

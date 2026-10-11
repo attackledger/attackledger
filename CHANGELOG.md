@@ -246,6 +246,19 @@ Containers and dependencies (`SUPPLY_CHAIN.md`):
 - **`tools/refresh_pins.sh`** shows, for every digest-pinned base image, the digest its tag points
   at today (`--write` moves the stale ones). `docs/SUPPLY_CHAIN.md` suggests running it monthly
   and whenever an advisory names a base image.
+- **Caddy 2.11.4's binary carried 33 known Go advisories** (SC-10, 2 critical): it was built with
+  Go 1.26.3 and older `golang.org/x/net`, `x/text` and `grpc`. Caddy is now 2.11.7 (Go 1.26.8),
+  which fixes 20 of them; it is younger than the two-week rule, taken for those fixes. The other
+  13 wait for a Caddy built with Go 1.26.9.
+- **OS-package vulnerability scan** (SC-11): `tools/scan_images.sh` scans each image's Debian or
+  Alpine packages with Grype (pinned by digest, no network during the scan) and fails on a HIGH
+  or CRITICAL finding that has a fix, unless `tools/scan_ignore.txt` accepts it with a reason and
+  an end date. The web image had four (zlib, pcre2, libexpat, tiff) and OpenSSL 3.5.8: those six
+  packages are now raised to minimum versions in `web/Dockerfile`, and it has none left. The API,
+  gateway and worker images have none with a fix; the Postgres, lab nginx and Caddy images have
+  one to four each, not reachable as used, accepted until 2026-11-11. OS packages stay unpinned
+  to exact versions, on purpose (`docs/SUPPLY_CHAIN.md`, "OS packages"). The Python base image
+  stays on its pin: the tag's newer build changed its riscv64 image only.
 
 Fuzzing (`FUZZING.md`): property-based and seeded mutation fuzzing of everything that parses
 hostile input, with the standard library only (`server/tests/fuzzing.py`, `test_fuzz.py`), and a
@@ -302,6 +315,8 @@ copies it as root), or Caddy cannot read it. The web container's memory limit is
 need a one-off `docker compose run --cap-add ...` instead, as `tools/backup.sh` does. The web app is built
 for Vite 8's default browsers (Chrome and Edge 111, Firefox 114, Safari 16.4 or later; before:
 Chrome 87, Firefox 78, Safari 14).
+Production: Caddy moves to 2.11.7 (`docker compose pull caddy` before `up -d`), and the web image
+must be rebuilt (`docker compose build web`) to get its Alpine package fixes.
 
 ### Fixed
 - **The gateway log's byte counts and durations are 64-bit** (migration `0025`, BIGINT on

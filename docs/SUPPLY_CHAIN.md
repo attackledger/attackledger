@@ -16,7 +16,7 @@ what was measured and the gaps left, is `docs/security-review/SUPPLY_CHAIN.md`.
 | feroxbuster, nuclei-templates, the SecLists word list | GitHub | a SHA-256 recorded in `worker/Dockerfile` when the version was pinned; the build fails on a mismatch |
 | npm packages (web build stage only) | the npm registry | `npm ci` from `web/package-lock.json`, each package against its SHA-512 there; `--ignore-scripts`, so no install script runs |
 | GitHub Actions (CI only: `.github/workflows/`) | GitHub | each `uses:` names the full commit SHA its tag pointed at when pinned, with the tag in a comment (`server/tests/test_supply_chain.py` checks) |
-| Debian packages (`ca-certificates`, `curl`, `unzip`) | Debian's mirrors | apt's signed release files. Versions are not pinned: they are whatever the pinned base image's release has that day (see the gaps in the review) |
+| Debian packages (`ca-certificates`, `curl`, `unzip`, in the worker's build stage; `ca-certificates` in its image is already the base image's) and Alpine packages (six raised to a minimum version in `web/Dockerfile`) | Debian's and Alpine's mirrors | apt's and apk's signed indexes. Not pinned to exact versions, on purpose ("OS packages" below); every other OS package is the pinned base image's |
 
 ## Changing a dependency
 
@@ -75,11 +75,67 @@ Suggested cadence: **monthly**, and **at once when an advisory names a base imag
 Alpine security announcements, the Docker Official Images' release notes) or one of its
 packages. After `--write`: update the version and date in the comment above each changed line
 (`docker run --rm IMAGE ...` shows the version, for example `python --version` or `nginx -v`),
-review `git diff`, rebuild the images (`docker compose build`), run the tests and
-`tools/test_postgres.sh`, and for the worker image the lab pipeline.
+review `git diff`, rebuild the images (`docker compose build`), run the tests,
+`tools/test_postgres.sh` and `tools/scan_images.sh`, and for the worker image the lab pipeline.
 
 To move to a new tag (a new minor or major), edit the tag in the file first, then run it with
 `--write`.
+
+Which digest: as for packages, a build at least two weeks old, unless only a younger one fixes a
+known advisory. `--write` takes the tag's newest build, so check its age first (the `created` of
+each platform's image config, or the tag's `last_updated` on Docker Hub, which also lists the
+patch-version tags, `2.11.6-alpine`, `3.12.14-slim`, each still on its last build). The registry
+keeps no history of a tag, so an older build of the same tag is reachable only through such a
+patch-version tag. A tag can also move for a platform AttackLedger does not build: compare the
+`linux/amd64` and `linux/arm64` manifest digests of the two indexes before rebuilding anything
+(on 2026-10-11, `python:3.12-slim` was stale because its riscv64 image alone was rebuilt). The
+binary inside an image counts too: Caddy's Go modules and Go version are in its binary, which
+`tools/scan_images.sh` does not read (it reads OS packages only); scan the whole image once by
+hand when Caddy moves (`docker save` it, and give the archive to Grype as `docker-archive:`).
+
+### OS packages
+
+Exact versions of Debian and Alpine packages (`apt-get install pkg=1.2-3`, `apk add pkg=1.2-r3`)
+are not pinned. Debian's and Alpine's mirrors keep only the newest build of each package in a
+release, so an exact pin stops building at the package's next security update, the moment a
+rebuild matters most; keeping old versions would mean snapshot.debian.org (Alpine has no
+equivalent), a new source for every build. Pinning would also add little: the images ship the
+pinned base image's packages, and the worker's `ca-certificates` is already in its base image
+(the same version). The signed indexes keep the download honest, `tools/sbom.sh` records what a
+build got, and `tools/scan_images.sh` says when a package needs to move.
+
+When a scan finds a fixable HIGH or CRITICAL in an image built here, and no base-image build old
+enough carries the fix, the Dockerfile raises that package to a minimum version:
+`apk add --no-cache 'zlib>=1.3.2-r1'` (Alpine; apt has no equivalent, so a Debian image would use
+`apt-get install --only-upgrade pkg` and a version check). The build fails if the mirror does not
+have at least that version, and keeps working when a newer one replaces it. The comment above it
+names the advisories; remove a package from the line once the pinned base image has that version.
+`server/tests/test_supply_chain.py` refuses exact pins and lines without `--no-cache` or
+`--no-install-recommends`.
+
+### Scanning the images for known vulnerabilities
+
+```sh
+tools/scan_images.sh                             # api, worker, web (tag latest), Postgres, nginx, Caddy
+ATTACKLEDGER_SCAN_TAG=v0.9.0 tools/scan_images.sh
+tools/scan_images.sh postgres:16-alpine@sha256:…  # chosen images only
+```
+
+It copies each image's package database out (as `tools/sbom.sh` does; the image is not run) and
+gives it to Grype (pinned by digest in the script), which runs with no network. Grype's
+vulnerability database is downloaded first from Anchore (`grype.anchore.io`), in a container of
+its own, into the Docker volume `attackledger-scan-db` (`docker volume rm attackledger-scan-db`
+drops it). It prints every HIGH and CRITICAL finding with its fix and exits 1 if one has a fix,
+that is, if an upgrade or a newer base image would remove it. Findings without one ("no fix yet",
+"will not be fixed": Debian marks many minor issues so) are listed and do not fail it; "fix state
+unknown" means the distribution has no record and the scanner matched the upstream version, so
+check by hand (`apk version -l '<'` or `apt list --upgradable` in a throwaway container).
+
+A fixable finding in a third-party image the compose files run as published (Postgres, nginx for
+the lab, Caddy) cannot be fixed in a Dockerfile here. If it is not reachable as AttackLedger uses
+the image, it goes into `tools/scan_ignore.txt` with the reason and an end date (a month, the
+refresh cadence); after that date the scan fails on it again. Run the scan with the base-image
+refresh (monthly), before a release, and after any rebuild.
 
 ### GitHub Actions
 

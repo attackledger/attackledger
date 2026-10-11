@@ -4,7 +4,9 @@ Date: 2026-10-10. Branch `sec3-supply`, from `cf286b5`. What the images are buil
 the containers run, and which known advisories affect the dependencies; the fixes, what was
 measured on a running copy, and what is left. How to maintain it is `docs/SUPPLY_CHAIN.md`.
 A follow-up on 2026-10-11 (branch `sec4-deps`) closed four of the gaps: FastAPI past 0.136, Vite 5,
-GitHub Actions by tag and the base-image refresh routine ("Follow-up" below).
+GitHub Actions by tag and the base-image refresh routine ("Follow-up" below). A second follow-up
+the same day (branch `sec5-pins`) refreshed the stale pins, added an OS-package vulnerability scan
+and decided on OS-package pinning (SC-10, SC-11; "Follow-up, 2026-10-11 (sec5-pins)").
 
 Network traffic in this review went only to Docker Hub, PyPI, the npm registry, the Go module
 proxy and checksum database, GitHub (the worker's pinned downloads, as the build already does)
@@ -26,6 +28,8 @@ was contacted.
 | SC-7 | No SBOM | Info | `tools/sbom.sh` (CycloneDX, per image) | run here: 18 files |
 | SC-8 (found while fixing SC-1) | `tools/backup.sh` and `tools/restore.sh` run root steps in the API's container. Without capabilities, root cannot read the engagement keys (`e/<id>/key.json`, uid 10001, mode 0600): measured, `tar` as root in the hardened container failed on each with `Permission denied` and exit 2, so every backup would have failed. Restore's delete and chown as root need capabilities too (not run without the change) | would have been a regression | each root step is a one-off `docker compose run` with only the capabilities it needs (`DAC_READ_SEARCH` to read; `CHOWN`, `DAC_OVERRIDE`, `FOWNER` to restore); the same for the pre-encryption upgrade command in INSTALL §7 | run here (below) |
 | SC-9 (found on the running copy) | Compose refuses inline `configs: content:` for a read-only service (`` `file` is the sole supported option ``): the lab proxy would not have started in production with `--profile lab` | would have been a regression | its nginx configuration moved, unchanged, to `deploy/lab-proxy.conf` | `test_configs_are_files` |
+| SC-10 (second follow-up) | Caddy 2.11.4, the internet-facing TLS terminator: its binary was built with Go 1.26.3 and older `golang.org/x/net`, `x/text` and `grpc`, with 33 known Go advisories (2 Critical, 20 High) | Medium (as SC-2: it faces clients; reachability of each advisory in Caddy was not analysed) | Caddy 2.11.7 (Go 1.26.8): 20 of them fixed, 13 left that no Caddy release fixes yet | image scan by hand (below) |
+| SC-11 (second follow-up) | The web image (nginx 1.30.5 on Alpine 3.24) had 4 HIGH findings with an Alpine fix (zlib, pcre2, libexpat, tiff) and OpenSSL 3.5.8, matched by 4 HIGH advisories; no newer nginx build exists. No OS-package scanner existed | Low (none reachable as used: no TLS, no gzip, no regex from clients, the modules that use expat and tiff are not loaded) | the six packages raised to minimum versions in `web/Dockerfile`; `tools/scan_images.sh` | `tools/scan_images.sh`: 0 HIGH left in web; `test_os_packages_are_installed_as_decided` and two more |
 
 Tests: 878 passed and 1 skipped before; 898 passed and 1 skipped after, on the rebuilt API image
 (20 new tests in `server/tests/test_supply_chain.py`). `tools/release_gate.sh` passes. `cd web && npm ci && npx tsc --noEmit`,
@@ -328,13 +332,132 @@ Run here, one day after the pins: 10 pins, 3 stale (`python:3.12-slim` in both D
 branch: the routine is for a maintainer to run, on the cadence in `docs/SUPPLY_CHAIN.md`. `--write`
 replaced exactly those three digests (checked, then reverted).
 
+## Follow-up, 2026-10-11 (sec5-pins): stale pins, an OS-package scan, OS-package pinning
+
+Branch `sec5-pins`. Network traffic went only to Docker Hub (manifest and tag lookups, base and
+scanner images), Alpine's and Debian's mirrors (the web build, and `apk version` in throwaway
+containers), PyPI and the npm registry (as the builds already do) and Anchore's vulnerability
+database (`grype.anchore.io`). The running copy had no published port and no way out.
+
+**Pins.** `tools/refresh_pins.sh` reported 3 of 10 pins stale. Decided by the two-week rule
+(`docs/SUPPLY_CHAIN.md`: a build at least two weeks old, unless only a younger one fixes a known
+advisory), with each image's age read from its platform image configs and from Docker Hub's tags:
+
+| Pin | Before | Newest build of the tag | Decision |
+|---|---|---|---|
+| `python:3.12-slim` (`server/Dockerfile`, `worker/Dockerfile`) | `05cda977…` (Python 3.12.15, Debian 13.7; amd64 and arm64 built 2026-10-06) | `a6e34c59…` (index pushed 2026-10-09) | **unchanged**. The two indexes name the same amd64, arm64, arm/v5, arm/v7, 386, ppc64le and s390x images; only riscv64 was rebuilt, which AttackLedger does not build. The current pin is itself younger than two weeks; the newest build at least two weeks old is `3.12.14-slim` (`f77ac9e4…`, 2026-09-25), which would go back to Python 3.12.14, before the 3.12.15 security release: the advisory exception keeps 3.12.15 |
+| `caddy:2.11-alpine` (`deploy/compose.prod.yml`) | `6aeddd44…` (Caddy 2.11.4, built 2026-09-17) | `d8542f48…` (Caddy 2.11.7, built 2026-10-05) | **moved to 2.11.7** under the advisory exception (SC-10). No newer build is two weeks old (2.11.6: 2026-10-04; 2.11.7 replaced it a day later, and their binaries match the same advisories). Both are Alpine 3.23.6, with the same OS findings as 2.11.4 |
+
+Every other pin is current (nginx 1.30.5, Postgres 16.15, Node 24.21.0, Go 1.26.9, Debian
+bookworm-slim). After the change `tools/refresh_pins.sh` reports 2 stale (the two Python lines, as
+decided).
+
+**SC-10: Caddy's binary.** The OS-package scan below cannot see what is compiled into a Go binary,
+so each Caddy image was scanned whole once (`docker save`, Grype on `docker-archive:`): 2.11.4
+(Go 1.26.3, `golang.org/x/net` 0.55.0, `x/text` 0.37.0, `grpc` 1.81.0, OpenTelemetry 1.43) had 33
+known Go advisories (2 Critical, 20 High, 7 Medium, 1 Low, 3 unrated), every one with a fixed
+version; 2.11.6 and 2.11.7 (Go 1.26.8, `x/net` 0.59.0) have 13 (2 Critical, 8 High, 3 unrated), all
+fixed only in Go 1.26.9 and `x/net` 0.60.0, which no Caddy release is built with yet. Whether each
+advisory is reachable through Caddy's configuration here was not analysed; Caddy terminates TLS
+and HTTP/2 for every client, so the release with fewer of them was taken.
+
+**SC-11: the OS-package scan.** `tools/scan_images.sh` copies each image's package database out
+(`/etc/os-release`, `/var/lib/dpkg/status`, `/lib/apk/db/installed`; the image is not run) into
+Grype 0.119.0 (`anchore/grype:v0.119.0-nonroot`, pinned by digest; released 2026-09-17, the newest
+release at least two weeks old), which scans with no network, no capability and a read-only root.
+The database (schema 6.1.10, built 2026-10-10) is downloaded first, in a container of its own.
+Grype rather than Trivy: one static binary in a distroless image with no shell, run as a
+non-root user, so the scanner brings no package of its own into the picture. Run on the
+rebuilt images, before and after the fix:
+
+| Image | Packages | HIGH or CRITICAL (all of them HIGH) | With a fix |
+|---|---|---|---|
+| api, worker (Debian 13, the same 87 packages) | 159 matches in 38 packages | 55 rows, 14 advisories | 0 |
+| web, before (nginx 1.30.5, Alpine 3.24.2) | 37 matches in 11 packages | 12 rows: zlib CVE-2026-85091, pcre2 CVE-2026-103111, libexpat CVE-2026-93990, tiff CVE-2026-4775; libssl3 and libcrypto3 3.5.8 with CVE-2026-54873, -72897, -84782, -84784 | 4 (OpenSSL: fix state unknown) |
+| web, after | 7 matches in 6 packages | 0 | 0 |
+| caddy 2.11.7 (Alpine 3.23.6) | 31 matches in 7 packages | 9 rows: zlib, and OpenSSL 3.5.8 as above | 1, accepted |
+| nginx 1.30.5 (lab, lab proxy) | 37 matches in 11 packages | 12 rows, as the web image before | 4, accepted |
+| postgres 16.15 (Alpine 3.24.2) | 30 matches in 6 packages | 9 rows: zlib, and OpenSSL 3.5.8 | 1, accepted |
+
+Final run: `0 HIGH/CRITICAL with a fix, 6 accepted, 134 without a fix`, exit 0. Without
+`tools/scan_ignore.txt` it exits 1 on Postgres's zlib; on a missing image, 2.
+
+*The web image.* No newer `nginx:1.30-alpine` build exists, so `web/Dockerfile` raises the six
+packages to minimum versions (`apk add --no-cache 'zlib>=1.3.2-r1' 'pcre2>=10.49-r0'
+'libexpat>=2.8.5-r0' 'tiff>=4.7.2-r0' 'libssl3>=3.5.9-r0' 'libcrypto3>=3.5.9-r0'`). Alpine
+published the fixes on 2026-09-24 (libexpat), 2026-10-02 (pcre2), 2026-10-07 (zlib) and 2026-10-09
+(tiff): all younger than two weeks except libexpat, taken under the advisory exception. OpenSSL
+3.5.9 was the version `apk version -l '<'` offered; the scanner had no Alpine record for the four
+OpenSSL advisories, and after the upgrade it matches none of them, so 3.5.9 is where they end.
+Other packages with a newer build (libpng, nghttp2-libs, tzdata) were left alone: nothing HIGH,
+and every package moved is one more that drifts between builds. nginx is still 1.30.5, the image
+builds and serves the app (the running copy below).
+
+*Accepted, in `tools/scan_ignore.txt` until 2026-11-11* (the images run as published, which a
+Dockerfile here cannot change; reviewed again at the next refresh):
+- zlib CVE-2026-85091 (heap overflow in `gz_vacate()`, through the `gzFile` API with non-blocking
+  writes) in Postgres, nginx and Caddy. Postgres is on the database network only, and `pg_dump`
+  writes the custom format with deflate streams (`tools/backup.sh`); nginx compresses with deflate
+  streams, and neither the lab nor the lab proxy enables gzip; Caddy is a static Go binary with its
+  own `compress/flate`, and libz is in its image for apk and curl.
+- pcre2 CVE-2026-103111 (JIT out-of-bounds write with an attacker-controlled pattern) in nginx: the
+  lab's and the lab proxy's patterns are their configuration files'.
+- libexpat CVE-2026-93990 and tiff CVE-2026-4775 in nginx: used by fontconfig and libgd for the
+  image-filter and xslt modules, which no configuration here loads (`load_module` appears nowhere).
+
+*Without a fix, listed.* OpenSSL 3.5.8 in Postgres, nginx and Caddy (fix state unknown; Alpine
+3.24 has 3.5.9): QUIC (-54873, -84784), DTLS (-84782) and `SSL_set_SSL_CTX` part way through a
+handshake (-72897). None of those images speaks TLS here: Postgres has no TLS configured, the lab
+and lab proxy listen on plain HTTP, and Caddy's TLS is Go's. Debian 13 (api, worker): glibc
+CVE-2026-19499 and -5435, util-linux CVE-2026-76642 and -78408 to -78410, perl-base CVE-2026-82560
+and -9538, gcc-14 runtime CVE-2026-102010 and -95619, ncurses CVE-2025-69720, acl CVE-2026-54369 and
+-54370, all marked "will not fix" by Debian (minor issues left to a point release); zlib
+CVE-2026-85091, not fixed in Debian yet. The scan lists them on every run; a point release or a
+security update moves them to "with a fix", and the scan then fails until the base image moves.
+
+**OS-package pinning: not pinned, decided.** Exact versions are not pinned in the Dockerfiles:
+Debian's and Alpine's mirrors keep only the newest build of each package, so an exact pin stops
+the build at the next security update, and pinning to snapshot.debian.org would add a source to
+every build (Alpine has no snapshot service). The pin would also buy little: the API, gateway and
+worker images ship only their base image's packages (the worker's `apt-get install
+ca-certificates` installs nothing new: the base image has 20250419, the same version), and the
+build stage's curl and unzip only download files that are then checked by SHA-256. What is
+installed is recorded by `tools/sbom.sh`. Where a scan finding needs a newer package than the base
+image has, the Dockerfile names a minimum version, as `web/Dockerfile` does now
+(`docs/SUPPLY_CHAIN.md`, "OS packages"). `test_supply_chain.py::test_os_packages_are_installed_as_decided`
+refuses exact pins (`pkg=version`) and installs without `--no-cache` or `--no-install-recommends`.
+
+**Measured on a running copy.** Images rebuilt as `attackledger-{api,worker,web}:sec5-pins`; the
+production file with `--profile lab` (`docker-compose.yml` + `deploy/compose.prod.yml` and an
+override that pointed at those images, removed every published port and made the default network
+internal), compose project `al-sec5-pins`, `ATTACKLEDGER_TLS=internal`, a throwaway master key and
+API token, no timestamp authority. All eight services up and healthy (`up --wait`); `CapEff`
+`0000000000000000` and `NoNewPrivs: 1` in each but Caddy (`0000000000000400`, as before), uids 0
+(Caddy), 101, 10001, 10002, 10001, 70, 101, 101. From a throwaway container on the default network,
+through Caddy 2.11.7 (TLS 1.3, HSTS) and the web container: `/api/health` answered; an engagement
+with scope `*.lab.test` and an attestation; a `probe` job on `shop.lab.test` ended `done` with 1
+result, and the lab's access log shows the request through the gateway with the research
+identification. The lab proxy answered `shop.lab.test` with the lab's page and `example.com` with
+`403 This proxy reaches shop.lab.test only.` The project's containers, networks and volumes were
+removed after.
+
+Tests: 1,050 passed and 1 skipped before; 1,055 passed and 1 skipped after, on the rebuilt API
+image (5 new in `test_supply_chain.py`: OS-package installs per Dockerfile, the scanner pinned by
+digest, the accepted findings' format; each failed with the rule broken).
+
 ## Gaps left
 
-- **OS packages are not version-pinned.** `apt-get install ca-certificates curl unzip` takes the
-  versions of that day; apt checks the signed release files, so the risk is drift, not
-  tampering. Pinning them would mean snapshot.debian.org, a source the build does not use.
-- **No image vulnerability scan of OS packages** (Trivy, Grype). The SBOM's OS files are the input
-  such a scanner needs; adding one means a scanner and its database as new sources.
+- **OS packages are not version-pinned** (decided in the second follow-up: an exact pin breaks the
+  build at the next security update; a scan finding gets a minimum version instead). apt and apk
+  check the signed indexes, so the risk is drift between builds, not tampering.
+- **The image scan reads OS packages only** (closed for those in the second follow-up). The Go
+  modules compiled into Caddy and the worker's recon tools are not scanned (Caddy's were, once,
+  by hand: 13 advisories left that wait for a Caddy built with Go 1.26.9 and `x/net` 0.60.0); the
+  Python and npm packages are covered by `pip-audit` and `npm audit`. Nothing runs the scan on a
+  schedule, and the third-party images' accepted findings end on 2026-11-11.
+- **OpenSSL 3.5.8 in the Postgres, nginx (lab) and Caddy images** matches four HIGH advisories that
+  Alpine has no record of; not reachable as used (no TLS through it), and gone at the next rebuild
+  of those images.
 - **feroxbuster, nuclei-templates and the word list** are checked against hashes recorded at pin
   time, not against signatures or checksums their publishers sign: feroxbuster publishes none.
 - **The images are not signed** (cosign or similar) and no build provenance is published. An
