@@ -128,6 +128,23 @@ def test_fz21_a_request_head_h11_refuses_is_answered_and_logged(gw, data, status
     assert b"\xb2" not in row["reason"].encode("latin-1", "replace")
 
 
+def test_fz21_inside_a_tunnel_the_row_names_the_job_and_the_host(gw):
+    import socket
+    import ssl
+    with socket.create_connection(("127.0.0.1", gw.port), timeout=10) as raw:
+        raw.sendall(f"CONNECT app.example.com:443 HTTP/1.1\r\nHost: app.example.com:443\r\n"
+                    f"Proxy-Authorization: {gw.auth()}\r\n\r\n".encode())
+        assert raw.recv(4096).startswith(b"HTTP/1.1 200")
+        ctx = ssl.create_default_context(cafile=gw.ca_file)
+        with ctx.wrap_socket(raw, server_hostname="app.example.com") as tls:
+            tls.sendall(b"GET /\xb2 HTTP/1.1\r\nHost: app.example.com\r\n\r\n")
+            status, _, _ = parse(tls.recv(65536))
+    assert status == 400
+    row = gw.rows(1)[-1]
+    assert row["job_id"] == 1 and row["host"] == "app.example.com" and row["port"] == 443
+    assert row["verdict"] == "refused" and "not valid HTTP/1.1" in row["reason"]
+
+
 def test_fz21_an_approved_writes_body_h11_refuses_is_logged_and_the_approval_is_not_used(gw):
     gw.api.add(6, kind="agent", traffic="agent")
     used = []
