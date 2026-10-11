@@ -688,6 +688,14 @@ Owners manage people. Everyone else sees only the engagements they have a role o
    who administer AttackLedger.
 2. **They choose their own password** at their first sign-in (**Your account**, **Change
    your password**). Nobody can set another person's password through the app (D-036).
+
+**A password is the only sign-in factor.** AttackLedger has no second factor (no TOTP, WebAuthn
+or SSO of its own; TM-2 in [THREAT_MODEL.md](THREAT_MODEL.md)). Whoever has an owner's or a
+reviewer's password can sign in as them; a reviewer's signature still needs the key in their own
+browser. If your policy asks for more than a password, put AttackLedger behind what your
+organisation already uses: its SSO, as an authenticating proxy in front of Caddy, or its VPN, with
+the server reachable only from there. A signed-in browser is signed out after 30 minutes without
+use (`ATTACKLEDGER_SESSION_IDLE_MINUTES`, section 4) and 12 hours after signing in.
 3. **Give roles per engagement:** open the engagement, **Team** tab, tick roles, **Save
    team**. On the same tab:
    - **Separation of duties**: whoever attached a lane's evidence cannot sign its receipt.
@@ -804,6 +812,9 @@ does.
 also by uid 10001, the containers' user). Docker shows environment variables
 to anyone who can run `docker inspect`, so membership of the `docker` group is the same as
 root on this server: give it to administrators only.
+
+People's passwords are protected by scrypt and a lockout after 5 failures, but a password is the
+only factor (section 10): for a second one, put the server behind your organisation's SSO or VPN.
 
 ## 14. Backup and restore
 

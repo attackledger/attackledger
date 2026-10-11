@@ -445,6 +445,11 @@ The gateway itself does not verify target certificates (as the tools did not), s
 between the gateway and a target a network attacker could read or change traffic. It verifies
 passive sources and the Claude API.
 
+This section models a compromised worker. The gateway itself is trusted for scope, rate,
+identification and the request log; what it holds and what an attacker who ran code in it could
+do, and what would still detect that, is in [THREAT_MODEL.md](THREAT_MODEL.md), B6, "A
+compromised gateway" (TM-6).
+
 ## Operations
 
 - `docker compose up` creates the CA, the gateway token and the volumes on first start. To

@@ -6,7 +6,9 @@ written for an IT auditor (a bank's internal audit, an external IT audit team) w
 whether a coverage report from AttackLedger can be relied on, and for a deployer who has to know
 what the product does not do for them.
 
-Status: written on 2026-10-11 against the code after commit `d589443`. It brings together what is
+Status: written on 2026-10-11 against the code after commit `d589443`; section 8's gaps TM-1,
+TM-3 and TM-5 were closed afterwards (commits `bef9636`, `02082a9`, `260fcd8`, `f30a4fd` and `a1e25ff`), TM-2,
+TM-4 and TM-6 are documented. It brings together what is
 spread over the design documents ([ARCHITECTURE.md](ARCHITECTURE.md), [GATEWAY.md](GATEWAY.md), [WORKER_API.md](WORKER_API.md),
 [ENCRYPTION.md](ENCRYPTION.md), [VERIFIER.md](VERIFIER.md), [APPROVALS.md](APPROVALS.md), [ORGANIZATIONS.md](ORGANIZATIONS.md), [DECISIONS.md](DECISIONS.md)) and the
 internal security review (`security-review/`). Every control it names was found in the code or in
@@ -56,6 +58,7 @@ of this document is about where that claim can fail.
                                                                        │
                                                                  [B6]  control network:
                                                                        │ /gateway/* and relayed /worker/*
+                                                                       │ (answered there only: TM-1)
                                                                        │
                                            worker ──[B5] internal ──► gateway ──[B7]──► targets (scope only)
                                            recon tools,  network      CA key,   ──[B8]──► passive sources (GET only)
@@ -155,8 +158,8 @@ and the risk that is left. Test files are in `server/tests/` unless the path say
 
 | ID | STRIDE | Threat | Controls (code; test) | Review | Residual risk |
 |---|---|---|---|---|---|
-| T2.1 | S | Guessing a person's password | scrypt hashes, at least 12 characters (`auth.py`); 5 failures in 15 minutes lock that email from that address (`auth.LOCKOUT_FAILURES`); unknown emails cost one scrypt. `test_people.py::test_sign_in_sessions_lockout_and_disabled` | AUTH (checked and sound) | **No second factor** (section 8, TM-2). The lockout is kept in memory and a restart clears it (AUTH, Info) |
-| T2.2 | S | Stealing or replaying a session | A random 32-byte cookie, only its SHA-256 stored; `HttpOnly`, `SameSite=Strict`, `Secure` in production (`ATTACKLEDGER_COOKIE_SECURE=1` in `deploy/compose.prod.yml`); 12 hours (`auth.SESSION_HOURS`); ended by sign-out, a password change or reset, or disabling the person; a token session is bound to the token and dies when it changes (D-056). `test_security_review_auth.py::test_auth6_signing_out_revokes_a_copied_token_mode_cookie`, `test_keytrust.py::test_disabling_a_person_ends_their_sessions`, `e2e/tests/people/session.spec.ts` | AUTH-6 | A session lasts 12 hours whatever its use; there is no idle timeout (TM-3) |
+| T2.1 | S | Guessing a person's password | scrypt hashes, at least 12 characters (`auth.py`); 5 failures in 15 minutes lock that email from that address (`auth.LOCKOUT_FAILURES`); unknown emails cost one scrypt. `test_people.py::test_sign_in_sessions_lockout_and_disabled` | AUTH (checked and sound) | **No second factor** (TM-2): a password alone opens an account; a reviewer's signature still needs their browser's key. Putting AttackLedger behind the organisation's SSO or VPN is left to the deployer (section 9). The lockout is kept in memory and a restart clears it (AUTH, Info) |
+| T2.2 | S | Stealing or replaying a session | A random 32-byte cookie, only its SHA-256 stored; `HttpOnly`, `SameSite=Strict`, `Secure` in production (`ATTACKLEDGER_COOKIE_SECURE=1` in `deploy/compose.prod.yml`); ended after 30 minutes without use (`ATTACKLEDGER_SESSION_IDLE_MINUTES`, `auth.session_over`; the web app's own polls carry `X-AttackLedger-Background` and do not count) and 12 hours after sign-in whatever its use (`auth.SESSION_HOURS`); and by sign-out, a password change or reset, or disabling the person; a token session is bound to the token and dies when it changes (D-056). `test_security_review_auth.py::test_auth6_signing_out_revokes_a_copied_token_mode_cookie`, `test_keytrust.py::test_disabling_a_person_ends_their_sessions`, `test_session_idle.py`, `e2e/tests/people/session.spec.ts` | AUTH-6, TM-3 (fixed) | A copied cookie that is used works until the 12 hours end. The idle limit relies on the web app to mark its own background requests; a client that never marks them keeps its session in use (it holds the cookie anyway). The last use is written at most once a minute, so a session can end up to a minute early |
 | T2.3 | E | Calling a route without the right role | One permission table for every route (`authz.RULES`, `authz.authorize`); a route without an entry is owner-only; non-members get 404. `test_people.py::test_every_route_has_a_permission_rule`, `test_principal_never_defaults_to_owner`, `e2e/tests/people/roles.spec.ts` | AUTH (permission table sound) | None known |
 | T2.4 | E | Becoming the first owner of a fresh production install over the network | Setup mode: with `ATTACKLEDGER_REQUIRE_SIGN_IN=1` (production) nothing opens until the first owner is made on the server (`auth.require_sign_in`, D-045). `test_setup_mode.py::test_nobody_can_become_the_first_owner_over_the_api`, `test_unknown_values_fail_closed` | AUTH (setup mode sound) | The development compose file runs open on localhost; it is not for real work |
 | T2.5 | S, E | An owner takes over a reviewer's identity to sign in their name | No one sets another person's password through the API (D-036); every key registration is in the key log, shown to the person at their next sign-in; the verifier fails a receipt whose signer lacked the reviewer role or had another name or email (D-037). `test_keytrust.py::test_owners_cannot_set_someone_elses_password`, `test_notice_lists_key_changes_since_the_previous_sign_in`, `test_key_log_chains_every_registration_and_revocation` | AUTH (people sound) | An owner can still create an account and give it the reviewer role; that is in the audit log the report carries. The reader compares signers' key fingerprints out of band |
@@ -166,7 +169,7 @@ and the risk that is left. Test files are in `server/tests/` unless the path say
 | T2.9 | I | Credentials left in the browser's storage | Unsent drafts that look like credentials are never written to `sessionStorage`, and drafts are cleared when another person signs in (`web/src/drafts.ts`, `SECRETISH`, D-053). `e2e/tests/token/drafts.spec.ts`, `e2e/tests/people/drafts.spec.ts` | EV-8, WE-4, WE-6 | A heuristic: some key formats are not recognised, and a credential typed key by key is kept until it is recognisable |
 | T2.10 | I | Eavesdropping on people's traffic | Caddy terminates TLS (Let's Encrypt or the organisation's certificate) and sends HSTS (`deploy/Caddyfile`). `test_web_headers.py::test_the_caddyfile_sends_the_same_values_and_no_policy_of_its_own` | (INSTALL §5) | Certificates and the TLS private key are the deployer's to manage. Option D (plain HTTP over an SSH tunnel) is for trials only |
 | T2.11 | D | Malformed input makes routes fail (500) or stall | NUL and lone surrogates refused before the database (`nulguard.py`); body limits; quadratic parsers made linear. `test_security_fuzz2.py::test_fz31_a_lone_surrogate_in_a_persons_json_is_a_422_not_a_500` and the FZ tests | FZ-5, FZ-14, FZ-31 to FZ-34 | There is no general request rate limit on the API besides the sign-in lockout; denial of service by a signed-in person is not addressed |
-| T2.12 | S | A leaked gateway or worker token is used from outside | Tokens are 256 bits, compared as bytes (`auth.same_secret`, `orgs.channel_org`); without a configured token the machine routes answer 503. `test_security_review_auth.py::test_auth4_non_ascii_tokens_and_cookies_are_refused_with_401`, `test_worker_api.py::test_worker_routes_need_the_worker_token` | AUTH-4 | **The machine routes (`/gateway/*`, `/worker/*`) are also reachable through the public front end**, since nginx forwards all of `/api/` (TM-1). A leaked gateway token would let someone outside write request-log rows; a leaked worker token, claim queued jobs |
+| T2.12 | S | A leaked gateway or worker token is used from outside | Tokens are 256 bits, compared as bytes (`auth.same_secret`, `orgs.channel_org`); without a configured token the machine routes answer 503. `test_security_review_auth.py::test_auth4_non_ascii_tokens_and_cookies_are_refused_with_401`, `test_worker_api.py::test_worker_routes_need_the_worker_token` | AUTH-4, TM-1 (fixed) | Fixed (TM-1): nginx refuses `/api/gateway/` and `/api/worker/` in every spelling (`web/nginx.conf`), and the API answers the machine routes only on its address on the control network, by the connection's local address, not a forwarded one (`authz.machine_channel`, `ATTACKLEDGER_CONTROL_LISTEN=api-control`); elsewhere they are 404 before any token is read. `test_machine_routes.py`, `test_web_headers.py::test_nginx_refuses_the_machine_routes_in_every_spelling`, `e2e/tests/token/machine.spec.ts`. A leaked token is then usable only from the control network, which only the gateway is on. Without `ATTACKLEDGER_CONTROL_LISTEN` (outside Compose) the token alone guards them |
 
 ### B3. Other origins in a person's browser
 
@@ -176,14 +179,14 @@ and the risk that is left. Test files are in `server/tests/` unless the path say
 | T3.2 | E | DNS rebinding reaches an install running in open mode on the operator's machine | Open mode answers only requests whose `Host` names the machine locally (`auth.local_request`). `test_security_recheck.py::test_auth2_open_mode_answers_only_local_names` | AUTH-2 (recheck) | Open mode exists for local trials; production refuses it (T2.4) |
 | T3.3 | T | The app is framed and the person tricked into clicking (clickjacking) | `frame-ancestors 'none'`, `X-Frame-Options: DENY` (`web/nginx.conf`, `deploy/Caddyfile`). `e2e/tests/token/csp.spec.ts` (the guard checks every document's headers) | WE (headers sound) | None known |
 | T3.4 | I | Another origin reads the API's answers | No CORS; `Cross-Origin-Resource-Policy: same-origin` and `Cross-Origin-Opener-Policy: same-origin` | WE (sound) | None known |
-| T3.5 | S | A script uses the reviewer's signing key to sign something they did not review | The key is created non-extractable and kept in the browser's storage for the app's origin (`web/src/signing.ts`); only script of that origin can use it, and the policy above admits no other script; the server accepts a signature only over a payload it issued for that lane in the last 10 minutes (`main._check_signed`) | (D-033) | **Code that the installation serves can use the key**: a dishonest operator or a tampered web image could make the browser sign without the reviewer seeing it (TM-4). A malicious browser extension is out of scope (`SECURITY.md`) |
+| T3.5 | S | A script uses the reviewer's signing key to sign something they did not review | The key is created non-extractable and kept in the browser's storage for the app's origin (`web/src/signing.ts`); only script of that origin can use it, and the policy above admits no other script; the server accepts a signature only over a payload it issued for that lane in the last 10 minutes (`main._check_signed`) | (D-033) | **Code that the installation serves can use the key**: a dishonest operator or a tampered web image could make the browser sign without the reviewer seeing it (TM-4, documented in `VERIFIER.md` and D-033). A malicious browser extension is out of scope (`SECURITY.md`) |
 
 ### B4. The API and its stores
 
 | ID | STRIDE | Threat | Controls (code; test) | Review | Residual risk |
 |---|---|---|---|---|---|
 | T4.1 | I | A copy of the blob volume or the disk is read | Raw evidence, summaries and test-account material are AES-256-GCM under a key per engagement, wrapped by the master key, with associated data binding each to its engagement and hash (`vault.py`, `blobs.py`, D-043). `test_encryption.py::test_wrong_engagement_key_is_refused`, `test_tampered_ciphertext_is_refused` | EVIDENCE (encryption sound) | Recon results, URLs, job logs, evidence URIs, N/A reasons and the audit log's free text are plaintext in the database (`ENCRYPTION.md`, "What is encrypted"). Full-disk encryption is the deployer's |
-| T4.2 | T | Someone with database access edits or deletes evidence or history | Evidence, audit log and key log are hash chains; a receipt binds the chain head; reports carry the heads, so a rewrite after a report was sent breaks that report's heads (`ledger.verify_chain`, `auditlog.verify`, `keylog.verify`). `test_report.py::test_deleting_evidence_breaks_the_chain`, `test_rewriting_the_whole_chain_still_breaks_the_receipt`, `test_auditlog.py::test_chain_detects_edits_deletions_and_reordering`; `python -m app.people audit-log` and `key-log` check the chains on the server | (D-036, D-037) | Detection, not prevention: append-only is enforced by the application, not by the database. The API connects as a database superuser, and no trigger or grant stops an update or delete (TM-5). A rewrite before any report left the server is detectable only by the signatures and timestamps it would break |
+| T4.2 | T | Someone with database access edits or deletes evidence or history | Evidence, audit log and key log are hash chains; a receipt binds the chain head; reports carry the heads, so a rewrite after a report was sent breaks that report's heads (`ledger.verify_chain`, `auditlog.verify`, `keylog.verify`). `test_report.py::test_deleting_evidence_breaks_the_chain`, `test_rewriting_the_whole_chain_still_breaks_the_receipt`, `test_auditlog.py::test_chain_detects_edits_deletions_and_reordering`; `python -m app.people audit-log` and `key-log` check the chains on the server | (D-036, D-037), TM-5 (fixed) | Since TM-5 the database refuses it too: triggers on `evidence`, `receipts`, `gateway_requests`, `audit_log` and `key_log` refuse every `DELETE` and `TRUNCATE` and every `UPDATE` but the three the product makes (migration 0026, `app/appendonly.py`; `test_appendonly.py` on SQLite and Postgres). **A database superuser can drop the triggers**, and the API connects as one (the role the Postgres image makes from `POSTGRES_USER`); so can anyone who can write the SQLite file. The triggers stop mistakes and SQL sent through the application; the chains remain the proof. A rewrite before any report left the server is detectable only by the signatures and timestamps it would break |
 | T4.3 | I | The master key leaks | A file mounted read-only into the API only, never in `.env`, the worker or the backups; startup fails if it is missing or wrong, with no fallback; the public development key is reported by `/health` (`vault.master_key`, `vault.check_store`). `test_encryption.py` | (D-043) | A plain file on the host: anyone with root reads it. No HSM or KMS. Rotation (`vault.rotate_master`) re-wraps keys, it does not re-encrypt content |
 | T4.4 | T | A blob is replaced on disk | `blobs.get` checks the SHA-256 again, and GCM's tag fails on any change. `test_agent.py::test_blob_store_rejects_tampered_bytes` | | None known |
 | T4.5 | I | Content survives its deletion | `vault.delete_content` deletes keys and blobs, blanks or deletes every database store that holds content, cancels running jobs, and the gateway purges its quarantine file. `test_retention.py::test_deleting_content_leaves_nothing_readable_in_any_store`, `test_the_sqlite_database_overwrites_what_it_deletes`, `test_security_evidence.py::test_ev6_deleting_content_removes_the_traffic_log_urls` | EV-6, RET-1 to RET-7 | **Deletion does not reach** backups made before it, Postgres's dead rows and write-ahead log, container logs, browsers and copies people made, or what the Claude API received. It keeps by design the audit log's free text and evidence URIs (`security-review/RETENTION.md`) |
@@ -216,8 +219,66 @@ answer covers the whole worker process.
 
 | ID | STRIDE | Threat | Controls (code; test) | Review | Residual risk |
 |---|---|---|---|---|---|
-| T6.1 | S | Something other than the gateway calls `/gateway/*` (rules, test-account headers, approvals, log) | The gateway token, one per organization, in a volume only the gateway and the API mount; job credentials checked per call, answered only for a running job (`gatewayapi._running_job`); test-account headers only for a running agent job and a host named for the account. `test_test_accounts.py::test_the_account_route_answers_the_gateway_only_for_agent_jobs_and_named_hosts`, `test_organizations.py::test_a_gateway_answers_for_its_organization_only` | AUTH (gateway routes), AUTH-4 | See T2.12: the routes are reachable through the public front end, protected by the token alone. Gateway and API talk plain HTTP on one Docker network (`WORKER_API.md`, "Not done here") |
-| T6.2 | E, T | The gateway itself is compromised (it parses every hostile response) | It holds no database credentials and no engagement key; it runs hardened (no capabilities, read-only root, its own user: SC-1); requests and responses go through h11 0.16; its TLS, HTTP and DNS handling were fuzzed; the API checks an approval's method, URL, body and account again before marking it sent (`approvals.consume`) | SC-1, FZ-20 to FZ-22, FZ-35 to FZ-40 | **The gateway is trusted** for scope, rate and the log. A compromised gateway could send anything anywhere, write false log rows, use the Anthropic key and the test-account sessions of running agent jobs, and read the HTTPS traffic it terminates. The design documents model a compromised worker, not a compromised gateway (TM-6) |
+| T6.1 | S | Something other than the gateway calls `/gateway/*` (rules, test-account headers, approvals, log) | The gateway token, one per organization, in a volume only the gateway and the API mount; job credentials checked per call, answered only for a running job (`gatewayapi._running_job`); test-account headers only for a running agent job and a host named for the account. `test_test_accounts.py::test_the_account_route_answers_the_gateway_only_for_agent_jobs_and_named_hosts`, `test_organizations.py::test_a_gateway_answers_for_its_organization_only` | AUTH (gateway routes), AUTH-4, TM-1 (fixed) | Since TM-1 the routes answer only on the control network (T2.12). Gateway and API talk plain HTTP on that Docker network (`WORKER_API.md`, "Not done here") |
+| T6.2 | E, T | The gateway itself is compromised (it parses every hostile response) | It holds no database credentials and no engagement key; it runs hardened (no capabilities, read-only root, its own user: SC-1); requests and responses go through h11 0.16; its TLS, HTTP and DNS handling were fuzzed; the API checks an approval's method, URL, body and account again before marking it sent (`approvals.consume`) | SC-1, FZ-20 to FZ-22, FZ-35 to FZ-40 | **The gateway is trusted** for scope, rate and the log. A compromised gateway could send anything anywhere, write false log rows, use the Anthropic key and the test-account sessions of running agent jobs, and read the HTTPS traffic it terminates: see "A compromised gateway" below (TM-6) |
+
+#### A compromised gateway (TM-6)
+
+The gateway parses every response a target sends (HTTP through h11, TLS, DNS), so a parser bug
+there is the most likely way in from outside. `GATEWAY.md` and `WORKER_API.md` model a
+compromised worker; this is what follows if the gateway itself runs an attacker's code.
+
+What it holds:
+
+| Held | Where | What it opens |
+|---|---|---|
+| The CA's private key | `gateway-private` volume, the gateway only | Certificates the worker's tools trust, for any host. People's browsers do not trust this CA |
+| The gateway token | `gateway-control` volume, shared with the API | The `/gateway/*` routes for its organization: job credentials checked (`session`), test-account headers for running agent jobs on named hosts (`account`), the exact approved write of a running job (`approval`), the DNS scopes of running jobs (`dns-scopes`), request-log rows (`log`), and purge notices (`content-deleted`) |
+| The Anthropic API key | its environment | The Claude API, billed to the deployer |
+| In memory, while jobs run | | Each job's gateway secret, the test-account sessions it adds to agent requests, the approved writes' bodies, and every request and response of the tools and agents in clear (it terminates their TLS) |
+| On the worker's relay | | The worker token and each job's token as they pass through |
+
+What it does not hold: the database credentials, the master key, any engagement key, the blob
+store, the report seal key, reviewers' keys, people's passwords or sessions, or the operator token.
+The routes its token opens write only request-log rows and an approval's outcome; none writes
+evidence, receipts, the audit log or the key log.
+
+What it could do:
+
+- Send any traffic anywhere it can route (it is on the default network): out of scope, write
+  methods, above the rate ceiling, without or with a forged research identification. Scope,
+  methods, rate and identification are its own checks (T5.1 to T5.4).
+- Leave rows out of the request log, or write false ones for its organization's engagements and
+  jobs: the log is its statement, and the API checks only each row's form (T5.5).
+- Alter what targets answered before the worker sees it, so tool and agent evidence records a
+  different answer; or send a write that differs from the one a person approved and report the
+  approved one as sent. The API cannot see what really went over the wire (T5.11).
+- Use the test-account sessions of running agent jobs beyond the approved requests, and the
+  Anthropic key for anything.
+- Act as the worker, with the tokens it relays: claim queued jobs of its organization and write
+  their results within each job kind's limits (T5.12).
+- Try the API's other routes from the control network: they need a person's session or the
+  operator token, which it does not have, and the sign-in lockout applies to its address.
+
+What still holds, or detects it:
+
+- Reports still verify or fail on their own: the evidence and history chains, reviewers'
+  signatures, timestamps and the seal are made without the gateway, and it can change none of
+  them. A reviewer still has to sign over evidence it may have falsified (section 6: the ledger
+  proves what was recorded, not that a target answered so).
+- The targets' own logs are the record it does not control: with the research identification,
+  the customer can compare what reached its servers with the report's request log. Traffic that
+  is not in the log, or rows with no traffic behind them, show there.
+- The Anthropic console shows the key's use; rotating the key, the gateway token (delete the
+  `gateway-control` file and restart) and the CA (`GATEWAY.md`, "Operations") ends what it held.
+- Its container has no capabilities, a read-only root and its own user (SC-1), no database
+  network, and no volume but its own and the token's: a compromise stays in the gateway unless
+  it escapes the container (T12.3).
+
+Not done: running the parsers in a separate, unprivileged process from the one that holds the
+keys; comparing an agent's recorded exchanges with the gateway's log rows (`GATEWAY.md`, "Not
+done here"); signing log rows with a key the gateway does not hold. Until then **the gateway is
+trusted** for scope, rate, identification and the request log.
 
 ### B7. The gateway and targets (a malicious target)
 
@@ -292,7 +353,7 @@ evidence of the review; the seal is only the server's statement** (D-036, D-037,
 | That the reviewer actually reviewed | A signature is a statement. Separation of duties (if on) only stops a person signing their own evidence |
 | That nothing happened after the newest signature | After the newest receipt signature, the history is bound by the seal alone |
 | That this is the latest report | A report sealed before a void is a valid report of its time (T1.10) |
-| That the browser signed only what the reviewer saw | The code that uses the reviewer's key is served by the installation (T3.5) |
+| That the browser signed only what the reviewer saw | The code that uses the reviewer's key is served by the installation (T3.5, TM-4, `VERIFIER.md`) |
 
 ## 7. Out of scope and accepted residual risk
 
@@ -325,23 +386,31 @@ Accepted residual risks (each is described in the table named):
 - OS packages are unpinned, images and tags unsigned, and the worker's Go tools carry known
   advisories (T12.1, T12.2, T7.4).
 - Tenant isolation is the ORM's, without database row-level security (T2.7).
+- People sign in with a password alone; there is no second factor (T2.1, TM-2). Deployers who
+  need one put AttackLedger behind their organisation's SSO or VPN.
+- Code served on the installation's origin can use a reviewer's signing key (T3.5, TM-4).
+- The gateway is trusted for scope, rate, identification and the request log; a compromised
+  gateway is described under B6 (T6.2, TM-6).
+- The append-only triggers stop changes sent through the application, not a database
+  superuser; the hash chains remain the proof (T4.2, TM-5).
 - **No independent third-party test** has been made. The security review was the author's, with
   AI agents (`security-review/README.md`).
 
 ## 8. Gaps noted while writing this model
 
 Writing this model meant looking for a control behind every threat. These are the places where an
-auditor might expect one and the code has none, or where the residual risk is not stated in the
-other documents. They are listed here so they are not lost; none has been triaged or fixed yet.
+auditor might expect one and the code had none, or where the residual risk was not stated in the
+other documents. Three were fixed in the code, each with tests that failed before the fix; the
+other three are documented, and one of them (TM-2) is the deployer's decision.
 
-| ID | Gap | Where seen | Suggested direction |
+| ID | Gap | Where seen | Status |
 |---|---|---|---|
-| TM-1 | The machine routes (`/gateway/*`, `/worker/*`, including `/worker/jobs/{id}/*`) are reachable through the public HTTPS front end: `web/nginx.conf` forwards all of `/api/` to the API, and `authz.authorize` checks only the token, not where the call came from. The gateway and worker reach them over the internal networks and never need the front end. A leaked gateway token would let someone outside write request-log rows (the record T5.5 relies on) and read the DNS scopes of running engagements; a leaked worker token would let them claim queued jobs, with their specifications, from outside. Found by reading the configuration, not tried on a running stack | `web/nginx.conf` (`location /api/`), `authz.RULES` | Refuse `/api/gateway/` and `/api/worker/` in nginx (or Caddy), with a test, as defence in depth |
-| TM-2 | No second sign-in factor for people (TOTP, WebAuthn or SSO). A password alone opens an owner's or a reviewer's account; the reviewer's signature still needs their browser key | `auth.py` | Decide whether to add one, or to document that the organisation's network access controls (VPN, SSO in front) are expected |
-| TM-3 | Sessions have a 12-hour absolute lifetime and no idle timeout | `auth.SESSION_HOURS` | Consider an idle limit, or document the choice |
-| TM-4 | The reviewer's key is non-extractable, but any code the installation serves on its origin can use it. A dishonest operator or a tampered web image could have the browser sign a payload the reviewer did not see. `DECISIONS.md` (D-033) and `VERIFIER.md` do not say this | `web/src/signing.ts`, D-033 | Document it in `VERIFIER.md` and section 6 here; a longer-term option is to show the reviewer the signed payload's facts before signing |
-| TM-5 | Append-only is enforced by the application only. The API connects as the role the Postgres image creates from `POSTGRES_USER` (`docker-compose.yml`), a superuser, and no trigger, rule or grant stops an `UPDATE` or `DELETE` on `evidence`, `receipts`, `audit_log` or `key_log` | `docker-compose.yml`, `deploy/compose.prod.yml`, `server/migrations/` | A database role for the API without `UPDATE`/`DELETE` on the chained tables (or triggers), as a second layer; tamper evidence through the chains stays the main control |
-| TM-6 | The design documents model a compromised worker but not a compromised gateway, which parses every hostile response and holds the CA key, the Anthropic key and the gateway token, and sees test-account sessions and approved writes in clear (T6.2) | `GATEWAY.md` "Threat model" | Add a section on what a compromised gateway can and cannot do |
+| TM-1 | The machine routes (`/gateway/*`, `/worker/*`, including `/worker/jobs/{id}/*`) were reachable through the public HTTPS front end: `web/nginx.conf` forwarded all of `/api/` to the API, and `authz.authorize` checked only the token, not where the call came from. A leaked gateway token would have let someone outside write request-log rows and read the DNS scopes of running engagements; a leaked worker token, claim queued jobs with their specifications | `web/nginx.conf` (`location /api/`), `authz.RULES` | **Fixed** (`bef9636`, `02082a9`). nginx refuses `/api/gateway/` and `/api/worker/` with the API's own 404, in every spelling (case, `//`, `%67`, `%2F`, dot segments), by a regular-expression location matched on the normalized path. The API answers the gateway, worker and job routes only on its control-network address (`ATTACKLEDGER_CONTROL_LISTEN=api-control`), judged by the connection's local address, which the kernel sets, never by `X-Forwarded-For`, which uvicorn trusts in production; the gateway calls the API by that alias. Tests: `test_machine_routes.py`, `test_web_headers.py` (the nginx variants), `e2e/tests/token/machine.spec.ts`. On a stack copy, every spelling through nginx and every call on the API's default-network address answered 404, while the worker claimed and ran a lab probe through the gateway's relay and the gateway wrote its log |
+| TM-2 | No second sign-in factor for people (TOTP, WebAuthn or SSO). A password alone opens an owner's or a reviewer's account; the reviewer's signature still needs their browser key | `auth.py` | **Documented; the deployer's decision.** AttackLedger has no second factor. `INSTALL.md` (sections 10 and 13) and section 9 here say so, and suggest putting AttackLedger behind the organisation's SSO (an authenticating proxy) or VPN, so that the password is the second step and not the only one |
+| TM-3 | Sessions had a 12-hour absolute lifetime and no idle timeout | `auth.SESSION_HOURS` | **Fixed** (`f30a4fd`, `a1e25ff`). Every session, a person's or the token's, ends after `ATTACKLEDGER_SESSION_IDLE_MINUTES` (default 30) without use, and 12 hours after sign-in in any case. The last use (`user_sessions.last_seen_at`, migration 0027) is written at most once a minute; requests the web app sends on its own while nobody has used the page for a minute carry `X-AttackLedger-Background` and do not count, so a page left open is signed out too. The web app shows "Your session expired" and keeps unsent drafts. Tests: `test_session_idle.py` (a fake clock), `e2e/tests/people/session.spec.ts`. On a stack copy with a one-minute limit, a session polled only in the background ended after the minute, and one used every 22 seconds stayed open once the write interval was scaled to the limit (`a1e25ff`, found there) |
+| TM-4 | The reviewer's key is non-extractable, but any code the installation serves on its origin can use it. A dishonest operator or a tampered web image could have the browser sign a payload the reviewer did not see. `DECISIONS.md` (D-033) and `VERIFIER.md` did not say this | `web/src/signing.ts`, D-033 | **Documented** in `VERIFIER.md` ("What a signature does not prove") and D-033, and in T3.5 and section 6 here. A longer-term option is to show the reviewer the signed payload's facts before signing, and to let reviewers check the web image they are served |
+| TM-5 | Append-only was enforced by the application only. The API connects as the role the Postgres image creates from `POSTGRES_USER`, a superuser, and no trigger, rule or grant stopped an `UPDATE` or `DELETE` on `evidence`, `receipts`, `audit_log` or `key_log` | `docker-compose.yml`, `deploy/compose.prod.yml`, `server/migrations/` | **Fixed** (`260fcd8`). Migration 0026 adds triggers, on Postgres and SQLite, to `evidence`, `receipts`, `gateway_requests`, `audit_log` and `key_log`: every `DELETE` (and `TRUNCATE`) is refused, and every `UPDATE` except the three changes the product makes (an evidence row's `summary_enc` set to NULL and a request-log row's `url` and `reason` set to `''` when the engagement's content is deleted; a receipt's four timestamp columns while it has no timestamp token). Tests: `test_appendonly.py` on a database made from the models and one migrated to head, on both backends; content deletion, retention, a later timestamp and a backup restored with `tools/restore.sh` work on a Postgres stack copy. **A database superuser can still drop the triggers**, so the hash chains remain the proof. A separate database role for the API without the right to alter these tables is the next step |
+| TM-6 | The design documents modelled a compromised worker but not a compromised gateway, which parses every hostile response and holds the CA key, the Anthropic key and the gateway token, and sees test-account sessions and approved writes in clear (T6.2) | `GATEWAY.md` "Threat model" | **Documented** under B6, "A compromised gateway": what it holds, what it could do, and what still holds or detects it |
 
 ## 9. Assumptions: what the deployer must do
 
@@ -350,6 +419,8 @@ The controls above hold only if the installation is set up as [INSTALL.md](INSTA
 | Assumption | Why it matters | Where |
 |---|---|---|
 | Use the production compose file (`deploy/compose.prod.yml`, set through `COMPOSE_FILE` in `.env`) | It turns on setup mode (`ATTACKLEDGER_REQUIRE_SIGN_IN=1`), secure cookies, the published ports through Caddy only, and turns off the development key | INSTALL §4, §8 |
+| Put AttackLedger behind the organisation's SSO (an authenticating proxy in front of Caddy) or VPN if a password alone is not enough for its policy | There is no second sign-in factor (TM-2) | INSTALL §10, §13 |
+| Keep `ATTACKLEDGER_CONTROL_LISTEN` and the gateway's `ATTACKLEDGER_API_URL` as `docker-compose.yml` sets them | The machine routes answer only on the control network (TM-1) | `docker-compose.yml`, [WORKER_API.md](WORKER_API.md) |
 | HTTPS with a real certificate (option A or B) for real work; protect the TLS private key | Session cookies and signing keys depend on a secure page; option D is for trials | INSTALL §5 |
 | Create the master key as INSTALL §7 says, readable only by the API's user, **kept apart from the backups**, and copied to a vault or safe; rotate it when someone who had it leaves | It opens every engagement's content and the seal key | INSTALL §7, §13, [ENCRYPTION.md](ENCRYPTION.md) |
 | Back up the database and the blob store together, store the backups securely (the dump is plaintext), and keep them no longer than the retention you promise; delete content again after restoring an older backup | Deletion does not reach backups | INSTALL §14, [security-review/RETENTION.md](security-review/RETENTION.md) |
