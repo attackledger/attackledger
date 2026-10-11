@@ -465,16 +465,28 @@ def test_fuzz_parsers_are_linear_on_pumped_input(name):
     take about four times as long (allowed: eight, plus 50 ms of noise), not sixteen. A
     catastrophic backtrack fails the time limit instead of hanging the run."""
     f, r = PARSERS[name], rng(f"pump-{name}")
-    for i, unit in enumerate(units(r)):
+
+    def measure(i, unit, runs):
         times = []
         for size in (SIZE // 4, SIZE):
             s = pumped(unit, size)
             try:
                 with time_limit(10 * BUDGET, name):
-                    times.append(elapsed(f, s)[1])
+                    times.append(min(elapsed(f, s)[1] for _ in range(runs)))
             except Exception as e:  # noqa: BLE001
                 fail(f"{name} on {unit!r} repeated to {size} characters", i, unit, e)
-        if times[1] > 8 * times[0] + 0.05 or times[1] > BUDGET:
+        return times
+
+    def too_slow(times):
+        return times[1] > 8 * times[0] + 0.05 or times[1] > BUDGET
+
+    for i, unit in enumerate(units(r)):
+        times = measure(i, unit, 1)
+        if too_slow(times):
+            # A busy machine can stall one measurement: the fastest of three runs of each size
+            # is what the parser itself takes. A quadratic parser stays about sixteen times slower.
+            times = measure(i, unit, 3)
+        if too_slow(times):
             fail(f"{name} is not linear on {unit!r} repeated: {times[0]:.3f} s for {SIZE // 4} characters, "
                  f"{times[1]:.3f} s for {SIZE}", i, unit)
 
