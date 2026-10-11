@@ -6,6 +6,9 @@ import { expect, test as base, type BrowserContext, type Page, type Response } f
 export const APP = "http://localhost:18180";
 /** The API as the runner reaches it without a browser (seeding, checks): straight to the web container. */
 export const API = "http://web/api";
+/** The worker's routes, as the gateway's relay reaches them: on the API's control-network alias. They
+ *  are refused through the web app (TM-1), and answer only on that address (authz.machine_channel). */
+export const WORKER_API = "http://api-control:8000";
 export const SIBLING = "http://localhost:18181";   // same site as the app, another origin
 export const OTHER_SITE = "http://127.0.0.1:18181";  // another site
 export const VERIFY_PAGE = "http://localhost:18182/verify.html";

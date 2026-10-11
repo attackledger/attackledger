@@ -441,7 +441,7 @@ proxy, resolver and relay listen on its `internal` address only (`ATTACKLEDGER_G
   docker compose exec worker python -c "import socket; socket.create_connection(('db', 5432), 5)"
   # socket.gaierror: ... (no network of the worker has the database on it)
   docker compose logs gateway | head -1
-  # gateway ready: proxy, dns and control on 172.x.0.y (ports 8080, 53, 8081), api http://api:8000,
+  # gateway ready: proxy, dns and control on 172.x.0.y (ports 8080, 53, 8081), api http://api-control:8000,
   #   claude key not set; own networks refused: ...; target networks: <the lab network's subnet>
   ```
 

@@ -83,6 +83,10 @@ services:
       ATTACKLEDGER_MASTER_KEY_FILE: ${ATTACKLEDGER_MASTER_KEY_FILE:-}
       ATTACKLEDGER_MASTER_KEY: ${ATTACKLEDGER_MASTER_KEY:-}
       ATTACKLEDGER_DEV_KEY: ${ATTACKLEDGER_DEV_KEY:-}
+      # The machine routes (/gateway/*, /worker/*) answer only on the API's address on the control
+      # network, which only the gateway shares with it; through the web app, the default network
+      # or the published port they are 404 (TM-1, authz.machine_channel).
+      ATTACKLEDGER_CONTROL_LISTEN: api-control
     volumes:
       - blobs:/data/blobs
       - gateway-control:/data/gateway-control:ro   # the gateway's token, for its routes only
@@ -133,7 +137,9 @@ services:
           pids: 512
           memory: 512m
     environment:
-      ATTACKLEDGER_API_URL: http://api:8000
+      # The API's alias on the control network: the machine routes answer there only (TM-1). "api"
+      # alone could resolve to its address on the default network.
+      ATTACKLEDGER_API_URL: http://api-control:8000
       # Extra passive-source hosts (comma-separated), for sources configured with your own keys.
       ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS: ${ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS:-}
       # Optional: enables Claude agents on hunt lanes. Put it in .env, never in this file. The

@@ -20,12 +20,24 @@ Permissions
              the second column: only while it runs. No person, operator or worker token opens
              them, and a job token opens no other job
 
+The machine routes (gateway, worker, job) answer only on the control network (TM-1): when
+ATTACKLEDGER_CONTROL_LISTEN names the API's address there (the compose files set it to the
+alias api-control), a call that reached the API on any other of its addresses (through nginx,
+from the default network, from a published port) is answered 404, exactly like a path that
+does not exist, before any token is looked at. See machine_channel.
+
 Organizations (D-042, docs/ORGANIZATIONS.md): before anything else the session is marked as
 not knowing its caller, so no query runs by accident; once the caller is known, the session is
 scoped to their organization (orgscope.py) and every query of the request sees that
 organization's rows only. Another organization's engagement, lane, job or blob therefore does
 not exist for the caller, and is answered 404 exactly like an id that was never used.
 """
+import ipaddress
+import os
+import socket
+import sys
+import time
+
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
 
@@ -191,10 +203,86 @@ def _not_found(kind: str, params: dict) -> HTTPException:
     return HTTPException(404, f"{name} {params.get(key)} not found" if name else "not found")
 
 
+# ---- the control network (TM-1) ---------------------------------------------------------------
+
+MACHINE = ("gateway", "worker", "job")
+_CONTROL_TTL = 30.0
+_control_cache: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+def _address(text: str) -> str | None:
+    """An IP address in one spelling (an IPv4 address mapped into IPv6 as plain IPv4), or None."""
+    try:
+        ip = ipaddress.ip_address(text.split("%", 1)[0])
+    except ValueError:
+        return None
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return str(mapped or ip)
+
+
+def control_addresses() -> frozenset[str] | None:
+    """The API's own addresses on the control network, the only ones the machine routes answer
+    on: ATTACKLEDGER_CONTROL_LISTEN, comma-separated names (the API's alias on that network) or
+    addresses, resolved and kept for 30 seconds. None when it is not set (outside the compose
+    stack: tests, a development server), and then the token alone guards these routes. A name
+    that does not resolve gives no address, so the routes are closed until it does (fail
+    closed)."""
+    setting = os.environ.get("ATTACKLEDGER_CONTROL_LISTEN", "").strip()
+    if not setting:
+        return None
+    hit = _control_cache.get(setting)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+    found: set[str] = set()
+    for name in (n.strip() for n in setting.split(",")):
+        if not name:
+            continue
+        literal = _address(name)
+        if literal:
+            found.add(literal)
+            continue
+        try:
+            infos = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError) as e:
+            print(f"authz: ATTACKLEDGER_CONTROL_LISTEN: {name!r} does not resolve ({e}); "
+                  "the machine routes are closed until it does", file=sys.stderr, flush=True)
+            continue
+        found.update(a for a in (_address(str(i[4][0])) for i in infos) if a)
+    result = frozenset(found)
+    _control_cache[setting] = (time.monotonic() + _CONTROL_TTL, result)
+    return result
+
+
+def machine_channel(request: Request) -> bool:
+    """Whether a call to a machine route arrived on the control network. The test is the local
+    address of the connection (the API's own address the caller connected to, from the socket,
+    ASGI's "server"), not the caller's address: in production uvicorn takes the caller's address
+    from X-Forwarded-For (--proxy-headers), which a caller writes itself, while the local
+    address is the kernel's and says which network the connection came in on. nginx, the
+    default network and a published port reach the API on other addresses than its control
+    one; only the gateway is on the control network with it (docker-compose.yml)."""
+    allowed = control_addresses()
+    if allowed is None:
+        return True
+    server = request.scope.get("server")
+    if not server:
+        return False
+    here = _address(str(server[0]))
+    return here is not None and here in allowed
+
+
+def _no_such_route() -> HTTPException:
+    """The answer to a machine route reached off the control network: what Starlette answers for
+    a path no route has, so it says nothing about the route or its token."""
+    return HTTPException(404, "Not Found")
+
+
 def authorize(request: Request, session=Depends(get_session)) -> None:
     route = request.scope.get("route")
     path = getattr(route, "path", request.url.path)
     rule = RULES.get((request.method, path))
+    if rule and rule[0] in MACHINE and not machine_channel(request):
+        raise _no_such_route()
     orgscope.pend(session)              # no query until the caller's organization is known
     # A change sent by a page of another site (CSRF), whoever the browser is signed in as; in open
     # mode too, where a web page the operator visits would otherwise act as the local operator.

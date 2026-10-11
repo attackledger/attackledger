@@ -248,6 +248,20 @@ token belongs to the job's organization. The token file above is the default org
 Another organization's worker, which would run in that customer's network, gets its own token
 from `python -m app.orgs worker-token` (`ORGANIZATIONS.md`). Job tokens are unchanged: one job.
 
+## Where the routes answer (TM-1)
+
+The worker's routes, like the gateway's, answer only on the API's address on the control
+network, which only the gateway shares with it. The compose file sets
+`ATTACKLEDGER_CONTROL_LISTEN=api-control` on the API and points the gateway at
+`http://api-control:8000`; a call that reaches the API on another of its addresses (through the
+web app, from the default network, on the published port 127.0.0.1:8000) is answered 404 like a
+path that does not exist, before any token is read (`authz.machine_channel`). The test is the
+connection's local address, which the kernel sets, not the caller's address, which uvicorn takes
+from `X-Forwarded-For` in production. nginx refuses `/api/gateway/` and `/api/worker/` as well
+(`web/nginx.conf`). Without the setting (tests, a development server outside Compose) the tokens
+alone guard these routes. Another organization's gateway in another network (above) would have to
+reach the API on an address named in that setting.
+
 ## Not done here
 
 - Several workers for one organization (per-worker job ownership). One token per organization,
