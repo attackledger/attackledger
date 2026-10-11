@@ -1,21 +1,73 @@
-# Weekly dependency update checks. Security updates come as soon as an advisory is
-# published (enable "Dependabot security updates" in the repository settings).
+# Weekly dependency update checks: one grouped pull request per kind of dependency, for releases
+# at least two weeks old (the cooldown: the project's rule, docs/SUPPLY_CHAIN.md, "Changing a
+# dependency"). Security updates come as soon as an advisory is published, without the cooldown
+# ("Dependabot security updates" in the repository settings, on since D-048).
+# Dependabot's pull requests run the tests workflow like any other, with a read-only token and no
+# secrets; cla.yml lets dependabot[bot] through. How a maintainer finishes each kind of update (a
+# Python bump needs a re-lock) is in docs/SUPPLY_CHAIN.md, "Dependabot".
 version: 2
 updates:
+  # The .in files are what people edit; the hashed .txt locks are made from them by
+  # tools/lock_requirements.sh. A Dependabot bump has to be re-locked by a maintainer:
+  # server/tests/test_supply_chain.py fails until each lock matches its .in file.
   - package-ecosystem: pip
-    directory: /server
-    schedule: { interval: weekly }
+    directories: [/server, /worker, /tools/ci]
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Etc/UTC }
+    cooldown: { default-days: 14 }
+    groups:
+      python:
+        patterns: ["*"]
     open-pull-requests-limit: 5
+
   - package-ecosystem: npm
     directory: /web
-    schedule: { interval: weekly }
-    open-pull-requests-limit: 5
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Etc/UTC }
+    cooldown: { default-days: 14 }
     groups:
+      npm-production:
+        dependency-type: production
       dev-tooling:
         dependency-type: development
+    open-pull-requests-limit: 5
+
+  # The digest-pinned FROM lines. The images run Python 3.12, which the locks are resolved for
+  # (tools/lock_requirements.sh), and Node 24: a new Python minor or Node major is a decision of
+  # its own, not a weekly bump.
   - package-ecosystem: docker
     directories: [/server, /worker, /web]
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Etc/UTC }
+    cooldown: { default-days: 14 }
+    groups:
+      base-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 5
+
+  # The digest-pinned compose `image:` lines (Postgres, nginx for the lab, Caddy). The weekly
+  # security workflow's tools/refresh_pins.sh reports every pin as well, whichever files
+  # Dependabot recognises as compose files.
+  - package-ecosystem: docker-compose
+    directories: [/, /deploy]
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Etc/UTC }
+    cooldown: { default-days: 14 }
+    groups:
+      compose-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 5
+
+  # The commit-pinned actions: Dependabot moves the SHA and the version in the comment together.
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: weekly, day: monday, time: "06:00", timezone: Etc/UTC }
+    cooldown: { default-days: 14 }
+    groups:
+      actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5

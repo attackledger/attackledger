@@ -259,6 +259,29 @@ Containers and dependencies (`SUPPLY_CHAIN.md`):
   one to four each, not reachable as used, accepted until 2026-11-11. OS packages stay unpinned
   to exact versions, on purpose (`docs/SUPPLY_CHAIN.md`, "OS packages"). The Python base image
   stays on its pin: the tag's newer build changed its riscv64 image only.
+- **The CI runs what a contributor runs** (`CONTRIBUTING.md`, "What the CI runs"): besides the
+  SQLite suite and the web build, every push now runs the Postgres suite and the migration-0022
+  upgrade (`tools/test_postgres.sh`, on the Postgres image the compose file pins), the verifier
+  equivalence with 500 seeded mutants, `npx tsc --noEmit` and actionlint with shellcheck on the
+  workflows (`tools/lint_workflows.sh`, pinned by digest). No job has a secret or a token that can
+  write, and `actions/checkout` no longer leaves the token in the clone.
+- **A weekly security workflow** (`.github/workflows/security.yml`, also on demand): it builds the
+  images, scans them, writes the SBOM (kept as the run's artifact), reports stale base-image
+  pins, and runs `pip-audit` on every hashed lock and `npm audit` on the web packages. It fails on
+  a HIGH or CRITICAL finding with a fix that `tools/scan_ignore.txt` does not accept, on an entry
+  there past its date, on any Python or production npm advisory and on a HIGH or CRITICAL
+  development npm one. Read-only, no secrets, no traffic to any target.
+- **The image scan reads Go binaries** (SC-12): Caddy's, the worker's eight recon tools and the
+  Postgres image's `gosu` are now scanned for the Go modules and Go release compiled into them.
+  Caddy 2.11.7's 14 findings need Go 1.26.9, which no Caddy release has yet: accepted until
+  2026-11-11. The worker's recon tools carry 35 HIGH or CRITICAL rows with a fix (old
+  `golang.org/x/net` and `x/text` in subfinder, dnsx, httpx and katana, `grpc`, `go-git` and
+  `x/crypto` in nuclei, `fasthttp` in gau): they are moved by upgrading the tools, not yet done,
+  so the weekly scan fails until then.
+- **Dependabot** covers the worker's and the CI's Python locks and the compose images as well, in
+  grouped weekly pull requests that wait 14 days after a release (the two-week rule); a Python
+  minor, a Node major and a Postgres major are left to a decision. `docs/SUPPLY_CHAIN.md` says how
+  to re-lock a Python bump.
 
 Fuzzing (`FUZZING.md`): property-based and seeded mutation fuzzing of everything that parses
 hostile input, with the standard library only (`server/tests/fuzzing.py`, `test_fuzz.py`), and a

@@ -1,0 +1,138 @@
+name: security
+
+# Weekly check of what the images are built from (docs/SUPPLY_CHAIN.md, "The weekly security
+# workflow"): known vulnerabilities in the images' OS packages and Go binaries, stale base-image
+# pins, Python and npm advisories, and an SBOM of each image as an artifact. It fails when an
+# image has a HIGH or CRITICAL finding with a fix that tools/scan_ignore.txt does not accept, when
+# an entry there is past its date, on any advisory in a Python lock or a production npm package,
+# and on a HIGH or CRITICAL one in a development npm package. A stale pin is a warning.
+#
+# Read-only: no secret, a token that can only read the repository, nothing pushed or published.
+# Network: the registries the build uses (Docker Hub, PyPI, the npm registry, the Go module proxy,
+# GitHub for the worker's pinned downloads), Anchore's vulnerability database (grype.anchore.io)
+# and the advisory services pip-audit and npm audit query. Nothing is sent to any target.
+on:
+  schedule:
+    - cron: "23 5 * * 1"        # Mondays, 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash                 # -eo pipefail: a failed command before `| tee` fails the step
+
+jobs:
+  # Builds the three images from this commit, scans them (tools/scan_images.sh: OS packages and
+  # the Go binaries' modules, with the pinned third-party images) and writes the SBOM.
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ATTACKLEDGER_SCAN_TAG: ci
+      ATTACKLEDGER_SBOM_TAG: ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - name: Build the images
+        run: |
+          docker build -q -t attackledger-api:ci -f server/Dockerfile .
+          docker build -q -t attackledger-worker:ci -f worker/Dockerfile .
+          docker build -q -t attackledger-web:ci web
+      - name: Scan the images (tools/scan_images.sh)
+        run: |
+          {
+            echo '## Image scan'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          ATTACKLEDGER_SCAN_JSON=out/scan tools/scan_images.sh | tee out-scan.txt || status=$?
+          { cat out-scan.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          case "$status" in
+            0) ;;
+            1) echo "::error title=Image scan::a HIGH or CRITICAL finding with a fix, or an expired entry in tools/scan_ignore.txt (the step log lists them)"; exit 1 ;;
+            *) echo "::error title=Image scan::the scan could not run (exit $status)"; exit "$status" ;;
+          esac
+      - name: Write the SBOM (tools/sbom.sh)
+        if: ${{ !cancelled() }}
+        run: tools/sbom.sh out/sbom
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: sbom-and-scan-${{ github.run_number }}
+          path: |
+            out/sbom
+            out/scan
+            out-scan.txt
+          if-no-files-found: error
+          retention-days: 90
+
+  # Report only: which digest-pinned base images have a newer build of their tag. A maintainer
+  # moves them by the two-week rule (docs/SUPPLY_CHAIN.md, "Refreshing the base images").
+  pins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - name: Stale base-image pins (tools/refresh_pins.sh)
+        run: |
+          status=0
+          tools/refresh_pins.sh | tee pins.txt || status=$?
+          { echo '## Base-image pins'; echo '```'; cat pins.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          case "$status" in
+            0) ;;
+            1) echo "::warning title=Base-image pins::at least one pinned base image is stale (the step log lists them)" ;;
+            *) echo "::error title=Base-image pins::a registry lookup failed (exit $status)"; exit "$status" ;;
+          esac
+
+  # Every hash-pinned Python lock against the Python advisory databases, without installing
+  # them: pip-audit reads the pins (--disable-pip). pip-audit comes from its own hashed lock.
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0 (tag v5)
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m venv "$RUNNER_TEMP/audit"
+          "$RUNNER_TEMP/audit/bin/pip" install -q --require-hashes --no-deps --only-binary :all: -r server/requirements-pip.txt
+          "$RUNNER_TEMP/audit/bin/pip" install -q --require-hashes --no-deps --only-binary :all: -r tools/ci/requirements-audit.txt
+      # One lock at a time: pip-audit refuses two files that pin one package at different versions.
+      - name: pip-audit on each lock
+        run: |
+          status=0
+          for lock in server/requirements.txt server/requirements-pip.txt \
+                      worker/requirements-arjun.txt worker/requirements-arjun-build.txt \
+                      tools/ci/requirements-audit.txt; do
+            echo "== $lock"
+            "$RUNNER_TEMP/audit/bin/pip-audit" --disable-pip --require-hashes --progress-spinner off --desc on -r "$lock" || status=1
+          done
+          exit "$status"
+
+  # The web lockfile against the npm advisory database, without installing it.
+  npm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (tag v4)
+        with:
+          node-version: "24"
+      - name: npm audit, production packages (what the image serves); any advisory fails
+        run: npm audit --omit=dev --package-lock-only
+      - name: npm audit, every package (the build tools too); HIGH or CRITICAL fails
+        if: ${{ !cancelled() }}
+        run: npm audit --package-lock-only --audit-level=high

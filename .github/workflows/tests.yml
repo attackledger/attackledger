@@ -1,5 +1,7 @@
 name: tests
 
+# What each job runs is in CONTRIBUTING.md ("What the CI runs"); every job is a command a
+# contributor can run the same way on their own machine.
 on:
   push:
   pull_request:
@@ -9,12 +11,18 @@ permissions:
 
 # Every action is pinned to the commit its tag pointed at, with the tag in a comment: a tag can be
 # moved, a commit cannot (docs/SUPPLY_CHAIN.md says how to move a pin; test_supply_chain.py checks).
+# No job uses a secret, and actions/checkout keeps no token in the clone (persist-credentials).
 
 jobs:
+  # The server suite on SQLite, with the fuzz tests at their default, seeded, small size
+  # (test_fuzz.py, test_security_fuzz.py; docs/security-review/FUZZING.md).
   server:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0 (tag v5)
         with:
           python-version: "3.12"
@@ -24,16 +32,66 @@ jobs:
         env:
           ATTACKLEDGER_HOME: ${{ github.workspace }}
 
+  # The same suite on Postgres 16, as production runs, then the migration-0022 upgrade of a
+  # database the 0.7.1 code filled: tools/test_postgres.sh, with the API image built from this
+  # commit and the Postgres image docker-compose.yml pins by digest.
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+          fetch-depth: 0          # the upgrade check needs the 0.7.1 commit (tools/test_postgres.sh)
+      - run: docker build -q -t attackledger-api:ci -f server/Dockerfile .
+      - run: tools/test_postgres.sh
+        env:
+          ATTACKLEDGER_TEST_IMAGE: attackledger-api:ci
+
+  # The browser verifier against tools/verify_report.py (D-046): every case, then a short run of
+  # seeded random mutants (the same seed always makes the same mutants).
+  verifier:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0 (tag v5)
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (tag v4)
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+        working-directory: web
+      - run: tools/verifier_equivalence/run.sh
+      - run: tools/verifier_equivalence/run.sh --fuzz 500 --seed 20261010
+
   web:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: web
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 (tag v4)
         with:
           node-version: "24"
       - run: npm ci --no-audit --no-fund --ignore-scripts
+      - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm run build
+
+  # The workflows themselves: actionlint (pinned by digest) with shellcheck on every run: script.
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0 (tag v4)
+        with:
+          persist-credentials: false
+      - run: tools/lint_workflows.sh

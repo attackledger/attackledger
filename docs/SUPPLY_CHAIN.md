@@ -33,6 +33,8 @@ container of the same Python image the Dockerfiles use, so the lock is resolved 
 Python 3.12 on any machine. It talks to PyPI only. `server/tests/test_supply_chain.py` fails if
 a lock no longer matches its `.in` file or a package has no hash.
 
+The pip-audit the weekly workflow uses is locked the same way (`tools/ci/requirements-audit.in`).
+
 npm: change `web/package.json`, run `npm install --package-lock-only` in `web/`, review the lock
 diff, then `npm ci --ignore-scripts && npx tsc --noEmit && npm run lint && npm run build`.
 `tools/build_verify.sh` and `tools/verifier_equivalence/run.sh` use the esbuild of
@@ -42,6 +44,52 @@ and check that `site/verify.html` is unchanged or that its change is intended.
 Which version: the newest release at least two weeks old (a release that is withdrawn or
 compromised is usually found within days), unless only a younger one fixes a known advisory.
 Check with `pip-audit` and `npm audit` (below).
+
+### Dependabot
+
+`.github/dependabot.yml` asks Dependabot for one grouped pull request a week per ecosystem: the
+Python `.in` files (`server/`, `worker/`, `tools/ci/`), the web's npm packages (production and
+development in two groups), the Dockerfiles' base images, the compose files' images and the
+GitHub Actions. Each waits 14 days after a release (`cooldown: default-days: 14`, the two-week
+rule); security updates (on in the repository settings) come at once and skip it. A new Python
+minor, a Node major and a Postgres major are left out of the weekly updates: each is a decision
+of its own (the locks are resolved for Python 3.12). Dependabot's pull requests get a read-only
+token and no secrets, like any pull request, and the CLA workflow lets `dependabot[bot]` through.
+
+What a maintainer does with each pull request:
+
+- **Python.** Dependabot edits a `.in` file or a lock, but the locks are made by
+  `tools/lock_requirements.sh` (with every transitive package and its hashes, for Linux and
+  Python 3.12), so `test_supply_chain.py` fails until the lock matches the `.in` file again. Check
+  out the branch; for a package named in the `.in` file, make sure the new version is there (put
+  it there if Dependabot changed only the lock); then re-lock. pip-compile keeps the versions
+  already in the lock where it can, so a transitive package Dependabot raised in the lock stays
+  raised, now with its full set of hashes:
+
+  ```sh
+  gh pr checkout <number>
+  tools/lock_requirements.sh server/requirements.in     # or the .in file the pull request is about
+  git diff                                              # new packages, new hashes
+  git commit -am "Re-lock" && git push
+  ```
+
+  Once someone else has pushed to it, Dependabot stops rebasing the branch; rebase it yourself
+  or ask Dependabot to recreate it (`@dependabot recreate`) and re-lock again.
+- **npm.** Dependabot updates `package-lock.json` itself; the CI's `web` and `verifier` jobs
+  build and check it. A change to esbuild needs the check in "Changing a dependency" (the
+  verifier page).
+- **Docker.** Each base image moves to its tag's newest build that is two weeks old. Update the
+  version and date in the comment above the line, rebuild, run the tests, `tools/test_postgres.sh`
+  and `tools/scan_images.sh`, as in "Refreshing the base images". Dependabot may not read
+  `deploy/compose.prod.yml` (not a compose file name it looks for); the weekly
+  `tools/refresh_pins.sh` covers every pin either way.
+- **GitHub Actions.** Dependabot moves the commit SHA and the version in the comment together.
+  Read the release notes before a new major, and check that `test_supply_chain.py` still passes
+  (the tag comment).
+
+If Dependabot ever refuses the configuration (a key it does not support for an ecosystem), it
+says so on the repository's Insights, Dependency graph, Dependabot tab and stops that ecosystem's
+updates; `cooldown` is the newest key here.
 
 A base image: pull the new tag, read its index digest and put both in the file:
 
@@ -89,9 +137,9 @@ keeps no history of a tag, so an older build of the same tag is reachable only t
 patch-version tag. A tag can also move for a platform AttackLedger does not build: compare the
 `linux/amd64` and `linux/arm64` manifest digests of the two indexes before rebuilding anything
 (on 2026-10-11, `python:3.12-slim` was stale because its riscv64 image alone was rebuilt). The
-binary inside an image counts too: Caddy's Go modules and Go version are in its binary, which
-`tools/scan_images.sh` does not read (it reads OS packages only); scan the whole image once by
-hand when Caddy moves (`docker save` it, and give the archive to Grype as `docker-archive:`).
+binary inside an image counts too: Caddy's Go modules and Go version are in its binary, and
+`tools/scan_images.sh` reports their advisories with the OS packages'; a Caddy release built with
+a newer Go is a reason to move its pin even when Alpine has nothing new.
 
 ### OS packages
 
@@ -121,8 +169,12 @@ ATTACKLEDGER_SCAN_TAG=v0.9.0 tools/scan_images.sh
 tools/scan_images.sh postgres:16-alpine@sha256:…  # chosen images only
 ```
 
-It copies each image's package database out (as `tools/sbom.sh` does; the image is not run) and
-gives it to Grype (pinned by digest in the script), which runs with no network. Grype's
+It copies each image's package database out (as `tools/sbom.sh` does; the image is not run), and
+every Go binary in it: any executable file carrying Go's build information, found by reading the
+image's filesystem as `docker export` writes it (Caddy, the worker's eight Go recon tools, `gosu`
+in the Postgres image). It gives both to Grype (pinned by digest in the script), which runs with
+no network and reports the binaries' Go modules and the Go release each was built with (`stdlib`)
+next to the OS packages, with the binary each was found in. Grype's
 vulnerability database is downloaded first from Anchore (`grype.anchore.io`), in a container of
 its own, into the Docker volume `attackledger-scan-db` (`docker volume rm attackledger-scan-db`
 drops it). It prints every HIGH and CRITICAL finding with its fix and exits 1 if one has a fix,
@@ -133,9 +185,20 @@ check by hand (`apk version -l '<'` or `apt list --upgradable` in a throwaway co
 
 A fixable finding in a third-party image the compose files run as published (Postgres, nginx for
 the lab, Caddy) cannot be fixed in a Dockerfile here. If it is not reachable as AttackLedger uses
-the image, it goes into `tools/scan_ignore.txt` with the reason and an end date (a month, the
-refresh cadence); after that date the scan fails on it again. Run the scan with the base-image
-refresh (monthly), before a release, and after any rebuild.
+the image, or no release of the image has the fix yet, it goes into `tools/scan_ignore.txt` with
+the reason and an end date (a month, the refresh cadence). For a Go binary the package is the Go
+module (`golang.org/x/net`) or `stdlib`. After the end date the scan fails on it again, and it
+also fails on the expired line itself, even once the finding is gone, until someone deletes or
+renews it; an entry that matches nothing in the scanned images is printed as a note (the fix has
+arrived: delete the line).
+
+The worker's Go tools are built here (`go install module@version`), but with their own `go.mod`:
+a module inside one of them is fixed by a release of that tool built with the fixed module, which
+means moving the version in `worker/Dockerfile` (and running the lab pipeline), not an entry in
+`scan_ignore.txt`.
+
+The weekly security workflow runs the scan; run it by hand as well with the base-image refresh,
+before a release, and after any rebuild.
 
 ### GitHub Actions
 
@@ -151,14 +214,45 @@ gh api repos/actions/checkout/git/tags/<sha> --jq .object.sha     # only when th
 Put the commit SHA and the tag in the file. Check the actions at the same time as the base
 images, and read the action's release notes before moving to a new major.
 
-Advisories, before a release:
+Advisories (the weekly security workflow runs these on the locks; by hand before a release):
 
 ```sh
 docker run --rm --user 0 --entrypoint sh attackledger-api:latest -c \
   'python -m venv /tmp/pa >/dev/null && /tmp/pa/bin/pip install -q pip-audit &&
    /tmp/pa/bin/pip-audit --path /usr/local/lib/python3.12/site-packages'
-(cd web && npm audit --omit=dev)
+(cd web && npm audit --omit=dev --package-lock-only && npm audit --package-lock-only --audit-level=high)
 ```
+
+## The CI and the weekly security workflow
+
+`.github/workflows/tests.yml` runs on every push and pull request: the server suite on SQLite
+(with the default fuzz tests), the same suite on Postgres 16 (`tools/test_postgres.sh`, which
+also upgrades a database the 0.7.1 code filled), the verifier equivalence with 500 seeded mutants,
+the web type check, lint and build, and `tools/lint_workflows.sh` (actionlint with shellcheck,
+pinned by digest, run with no network). `CONTRIBUTING.md` lists each job's command.
+
+`.github/workflows/security.yml` runs every Monday at 05:23 UTC and on demand (Actions, security,
+Run workflow; or `gh workflow run security.yml`). Its jobs:
+
+| Job | Runs | Fails when |
+|---|---|---|
+| `images` | builds the api, worker and web images from the commit, `tools/scan_images.sh` on them and on the pinned Postgres, nginx and Caddy images, then `tools/sbom.sh`; the SBOM files and Grype's full reports are uploaded as the run's artifact `sbom-and-scan-<run>` (kept 90 days) | a HIGH or CRITICAL finding with a fix that `scan_ignore.txt` does not accept; an entry there past its date; the scan cannot run. The SBOM is written either way |
+| `pins` | `tools/refresh_pins.sh`, report only | a registry lookup fails. A stale pin is a warning on the run |
+| `python` | `pip-audit` on every hashed lock, one at a time (`--disable-pip`: it reads the pins, nothing is installed); pip-audit comes from its own hashed lock | any known advisory |
+| `npm` | `npm audit --package-lock-only` on `web/`: the production packages, then every package | any advisory in a production package; a HIGH or CRITICAL one in a development package |
+
+Each job's findings are in its log; the scan's and the pin report's are in the run's summary as
+well. Nothing in it uses a secret; its
+token can only read the repository; it pushes and publishes nothing, and it talks to the
+registries the build uses, Anchore's database and the advisory services only. GitHub stops the
+schedule of a public repository with no activity for 60 days (it says so on the Actions tab;
+re-enable it there). A failed run mails whoever last changed the schedule line, by GitHub's
+default notification settings.
+
+The scanner (`GRYPE` in `tools/scan_images.sh`) and the linter (`ACTIONLINT` in
+`tools/lint_workflows.sh`) are pinned by digest outside a `FROM` or `image:` line, so neither
+`tools/refresh_pins.sh` nor Dependabot moves them: check them with the base images, by the same
+two-week rule.
 
 ## A software bill of materials (SBOM)
 
@@ -183,4 +277,5 @@ The gateway runs the API image, so `api.*` covers it. The generators are pinned 
 fetched from PyPI, the npm registry and the Go module proxy into throwaway containers. Not listed:
 feroxbuster (a Rust binary without embedded dependency data; its version and SHA-256 are in
 `worker/Dockerfile`), nuclei-templates and the word list (data, pinned the same way), and the
-Caddy binary's Go modules.
+Caddy binary's Go modules (`tools/scan_images.sh` reads those for advisories). The weekly
+security workflow keeps each run's SBOM as an artifact for 90 days.

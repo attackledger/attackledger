@@ -26,7 +26,7 @@ Thank you for your interest. Issues and pull requests are welcome.
 - **Server tests:** `cd server && python -m pytest -q tests`. The CI runs them as a non-root
   user, so please do the same.
 - **Server tests on Postgres:** `tools/test_postgres.sh` (below).
-- **Web:** `cd web && npm ci && npm run lint && npm run build`.
+- **Web:** `cd web && npm ci --ignore-scripts && npx tsc --noEmit && npm run lint && npm run build`.
 - **Verifier changes:** a change to `tools/verify_report.py` needs the same change in
   `web/src/verify_report.ts`, and a case in `tools/verifier_equivalence/cases.json`
   (D-046).
@@ -35,11 +35,34 @@ Thank you for your interest. Issues and pull requests are welcome.
 - **Plain English** in user-facing text: short sentences, sentence case, and say what
   happens.
 
+## What the CI runs
+
+Every push and pull request runs `.github/workflows/tests.yml`. Each job is a command you can
+run yourself first:
+
+| Job | Runs | On your machine |
+|---|---|---|
+| `server` | the server suite on SQLite, with the fuzz tests at their default, seeded size | `cd server && python -m pytest -q tests` |
+| `postgres` | the same suite on Postgres 16 and the migration-0022 upgrade check | `tools/test_postgres.sh` |
+| `verifier` | the browser verifier against `tools/verify_report.py`, then 500 seeded mutants | `tools/verifier_equivalence/run.sh`, then `--fuzz 500 --seed 20261010` |
+| `web` | type check, lint, build | `cd web && npm ci --ignore-scripts && npx tsc --noEmit && npm run lint && npm run build` |
+| `workflows` | actionlint and shellcheck on the workflows | `tools/lint_workflows.sh` (Docker) |
+
+The jobs have a read-only token and no secrets, so a pull request from a fork runs them all.
+`server/tests/test_supply_chain.py` keeps it that way: actions pinned by commit, read-only
+permissions, no `pull_request_target` outside the CLA workflow.
+
+A second workflow, `.github/workflows/security.yml`, runs weekly and on demand (not on pull
+requests): the image scan, the base-image pin report, `pip-audit`, `npm audit` and the SBOM
+(`docs/SUPPLY_CHAIN.md`, "The weekly security workflow"). Dependabot opens grouped update pull
+requests weekly; a Python one needs a re-lock before it can pass (same document, "Dependabot").
+
 ## Testing on Postgres
 
 Production runs on Postgres 16; `python -m pytest` runs on SQLite, which forgives things Postgres
 does not. `tools/test_postgres.sh` runs the whole server suite on a throwaway Postgres in one
-command (Docker, the `postgres:16-alpine` image and the API image; it removes what it started).
+command (Docker, the API image and the Postgres image `docker-compose.yml` pins by digest, which
+it pulls if missing; it removes what it started).
 Each test gets new, empty databases, and the server is in a time zone other than UTC. It then
 upgrades a database that the 0.7.1 code filled (migration 0022 with data).
 

@@ -15,12 +15,15 @@
 #     0021) fills a database through its API (make_fixture.py), and test_org_migration.py
 #     upgrades it with this code. Skipped, with a note, in a clone without that commit.
 #
-# Needs Docker, the postgres:16-alpine image and the API image (ATTACKLEDGER_TEST_IMAGE,
-# default attackledger-api:latest; only its Python packages are used: the code is this tree).
+# Needs Docker, the API image (ATTACKLEDGER_TEST_IMAGE, default attackledger-api:latest; only its
+# Python packages are used: the code is this tree) and the Postgres image docker-compose.yml pins
+# by digest, as production runs it (pulled if missing; ATTACKLEDGER_TEST_PG_IMAGE for another).
+# The CI runs it on every push (.github/workflows/tests.yml, job "postgres").
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${ATTACKLEDGER_TEST_IMAGE:-attackledger-api:latest}"
-PG_IMAGE="${ATTACKLEDGER_TEST_PG_IMAGE:-postgres:16-alpine}"
+PG_IMAGE="${ATTACKLEDGER_TEST_PG_IMAGE:-$(grep -m1 -oE 'postgres:16-alpine@sha256:[0-9a-f]{64}' "$ROOT/docker-compose.yml" || true)}"
+[ -n "$PG_IMAGE" ] || { echo "[pg] no digest-pinned postgres:16-alpine in docker-compose.yml" >&2; exit 2; }
 RUN_AS="${ATTACKLEDGER_TEST_USER:-$(id -u):$(id -g)}"
 OLD_CODE=ac64591                    # the commit at migration 0021 (make_fixture.py)
 
