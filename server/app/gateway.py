@@ -124,6 +124,12 @@ PURGE_IDS = 5000                           # ids per question (gatewayapi.PURGE_
 CONNECT_TIMEOUT = 10.0
 PROBE_TIMEOUT = 3.0
 READ_TIMEOUT = 60.0      # between two reads from either side
+# A head as a whole, a target's informational (1xx) answers included: each read coming within
+# READ_TIMEOUT did not bound it, so a target sending a line at a time, or 100 Continue for ever,
+# held the connection as long as it liked (fuzzing, FZ-22).
+HEAD_TIMEOUT = 90.0
+MAX_INFORMATIONAL = 32
+SCRUBBED_BODY_TIMEOUT = 300.0    # a test account's response, read whole before anything goes back
 HANDSHAKE_TIMEOUT = 10.0
 MAX_HEAD = 64 * 1024
 MAX_SERVICE_BODY = 20 * 1024 * 1024
@@ -1167,7 +1173,7 @@ class Gateway:
         conn = h11.Connection(h11.SERVER, max_incomplete_event_size=MAX_HEAD)
         while True:
             try:
-                ev = await _next(conn, reader)
+                ev = await asyncio.wait_for(_next(conn, reader), HEAD_TIMEOUT)
             except h11.RemoteProtocolError as e:
                 await self._unreadable(conn, writer, tunnel, e)
                 return
@@ -1412,12 +1418,10 @@ class Gateway:
             sent = len(out)           # the request as it left: head and body, in bytes
             await upw.drain()
             try:
-                while True:
-                    resp = await _next(upc, upr)
-                    if isinstance(resp, h11.InformationalResponse):
-                        continue
-                    break
-            except (h11.ProtocolError, OSError, asyncio.TimeoutError) as e:
+                resp = await asyncio.wait_for(_final_head(upc, upr, host), HEAD_TIMEOUT)
+            except asyncio.TimeoutError:
+                raise Refused(502, f"{host} did not send its response head in time")
+            except (h11.ProtocolError, OSError) as e:
                 if upc.their_state is h11.SEND_RESPONSE and isinstance(e, h11.RemoteProtocolError):
                     raise Refused(502, f"{host} closed the connection without a response")
                 raise Refused(502, f"{host} sent no valid response: {str(e)[:120] or type(e).__name__}")
@@ -1470,19 +1474,24 @@ class Gateway:
         """A response to a request sent as a test account: read whole, scrubbed, then sent on with
         its new length. (keep the client connection, reason, bytes received)."""
         chunks, size, reason = [], 0, ""
-        while True:
-            ev = await _next(upc, upr)
-            if isinstance(ev, h11.Data):
-                size += len(ev.data)
-                if size > MAX_SCRUBBED_BODY:
-                    reason = f"the response is larger than {MAX_SCRUBBED_BODY} bytes; it was cut off"
-                    break
-                chunks.append(ev.data)
-            elif isinstance(ev, h11.EndOfMessage):
-                break
-            else:
-                reason = "the response ended early"
-                break
+
+        async def read() -> str:
+            nonlocal size
+            while True:
+                ev = await _next(upc, upr)
+                if isinstance(ev, h11.Data):
+                    size += len(ev.data)
+                    if size > MAX_SCRUBBED_BODY:
+                        return f"the response is larger than {MAX_SCRUBBED_BODY} bytes; it was cut off"
+                    chunks.append(ev.data)
+                elif isinstance(ev, h11.EndOfMessage):
+                    return ""
+                else:
+                    return "the response ended early"
+        try:        # nothing goes back before the end, so the whole body is bounded in time (FZ-22)
+            reason = await asyncio.wait_for(read(), SCRUBBED_BODY_TIMEOUT)
+        except asyncio.TimeoutError:
+            reason = f"the response body did not arrive in time ({SCRUBBED_BODY_TIMEOUT:g} s); it was cut off"
         head = [(k, v) for k, v in resp.headers if k.decode("latin-1") not in HOP_BY_HOP]
         body = b"".join(chunks)
         # Accept-Encoding: identity was asked for, but a target may compress anyway, and the
@@ -1752,6 +1761,15 @@ async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
         if ev is h11.PAUSED:
             return h11.ConnectionClosed()
         return ev
+
+
+async def _final_head(upc: h11.Connection, upr, host: str):
+    """The response to a request, after at most MAX_INFORMATIONAL informational (1xx) answers."""
+    for _ in range(MAX_INFORMATIONAL + 1):
+        resp = await _next(upc, upr)
+        if not isinstance(resp, h11.InformationalResponse):
+            return resp
+    raise Refused(502, f"{host} sent more than {MAX_INFORMATIONAL} informational (1xx) responses")
 
 
 def _not_checked(e: Exception) -> Refused:

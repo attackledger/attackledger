@@ -131,3 +131,98 @@ def test_fz21_an_approved_writes_body_h11_refuses_is_logged_and_the_approval_is_
     assert status == 400 and used == [] and gw.up.requests == []
     row = gw.rows(1)[-1]
     assert row["verdict"] == "refused" and row["approval_id"] == 7 and "not valid HTTP/1.1" in row["reason"]
+
+
+# ---- FZ-22: a target that never finishes its response head ---------------------------------------
+
+def _hung_up(reader):
+    """Done once the gateway closes its side of the connection to a stub."""
+    f = asyncio.ensure_future(reader.read())
+    f.add_done_callback(lambda f: f.cancelled() or f.exception())
+    return f
+
+
+async def _endless_1xx(reader, writer):
+    await reader.readuntil(b"\r\n\r\n")
+    closed = _hung_up(reader)      # the gateway hung up: stop
+    try:
+        for _ in range(10_000_000):
+            if closed.done():
+                break
+            writer.write(b"HTTP/1.1 100 Continue\r\n\r\n" * 50)
+            await writer.drain()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        writer.close()
+
+
+async def _dripping_head(reader, writer):
+    await reader.readuntil(b"\r\n\r\n")
+    closed = _hung_up(reader)
+    try:
+        writer.write(b"HTTP/1.1 200 OK\r\n")
+        for _ in range(300):
+            await asyncio.sleep(0.1)
+            if closed.done():
+                break
+            writer.write(b"X-Slow: a\r\n")
+            await writer.drain()
+    except (ConnectionError, OSError):
+        pass
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("handle, why", [(_endless_1xx, "informational"), (_dripping_head, "in time")])
+def test_fz22_a_target_that_never_ends_its_head_is_a_failed_row_in_bounded_time(gw, monkeypatch, handle, why):
+    """Endless 100 Continue answers, or a head sent a line at a time, held the gateway's
+    connection (and the tool's) for as long as the target liked: each read came within
+    READ_TIMEOUT, and nothing bounded the head as a whole. No row was written until it ended."""
+    monkeypatch.setattr(gateway, "HEAD_TIMEOUT", 1.5)
+    _upstream(gw, handle)
+    start = time.monotonic()
+    with time_limit(15):
+        status, headers, body = parse(gw.raw(_head(gw, "http://app.example.com/", "GET", "X-AttackLedger-Errors: 1"),
+                                             timeout=15))
+    assert time.monotonic() - start < 8
+    assert status == 502 and headers["x-attackledger-gateway"] == "refused"
+    row = gw.rows(1)[-1]
+    assert row["verdict"] == "failed" and row["status"] == 502 and why in row["reason"]
+    time.sleep(0.3)
+
+
+def test_fz22_a_test_accounts_response_body_is_read_in_bounded_time(gw, monkeypatch):
+    """A response sent as a test account is read whole before anything goes back (to scrub it), so
+    a body sent a byte at a time held the connection with nothing sent to the tool."""
+    monkeypatch.setattr(gateway, "SCRUBBED_BODY_TIMEOUT", 1.5)
+    gw.api.add(6, kind="agent", traffic="agent")
+
+    async def account(job_id, secret, label, host):
+        return 200, {"label": "alice", "headers": [["Cookie", "sid=lab-fz22-session"]]}
+    gw.api.account = account
+
+    async def drip(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        closed = _hung_up(reader)
+        try:
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+            for _ in range(300):
+                await asyncio.sleep(0.1)
+                if closed.done():
+                    break
+                writer.write(b"a")
+                await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            writer.close()
+    _upstream(gw, drip)
+    start = time.monotonic()
+    with time_limit(15):
+        gw.raw(_head(gw, "http://app.example.com/", "GET", "X-AttackLedger-As: alice", auth=gw.auth(job=6, tool="agent")),
+               timeout=15)
+    assert time.monotonic() - start < 8
+    time.sleep(0.3)             # the stub sees the gateway hang up
+    row = gw.rows(1)[-1]
+    assert row["account"] == "alice" and "in time" in row["reason"]
