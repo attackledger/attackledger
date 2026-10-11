@@ -76,7 +76,7 @@ def find(s, ref: str | None) -> Organization | None:
     """An organization by id or exact name; the default one when none is named."""
     if ref is None:
         return s.get(Organization, orgscope.default_id(s))
-    org = s.get(Organization, int(ref)) if ref.isdigit() else None
+    org = s.get(Organization, int(ref)) if ref.isascii() and ref.isdigit() and len(ref) <= 18 else None
     return org or s.scalar(select(Organization).where(Organization.name == ref))
 
 

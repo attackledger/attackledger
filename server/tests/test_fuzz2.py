@@ -23,6 +23,8 @@ from fuzzing import (INTERESTING, NUMBERS, STRINGS, Obj, Raw, dumps, elapsed, it
                      mutate_tree, rng, show, time_limit, value)
 from harness import stack  # noqa: F401  (fixture)
 from test_gateway import Stack as GatewayStack
+from test_import import db, team, upload
+from test_people import client  # noqa: F401  (fixture)
 
 
 @pytest.fixture()
@@ -423,3 +425,154 @@ def test_fuzz_the_gateway_reads_any_answer_to_a_log_batch():
         out = gateway._unlogged(data, r.randint(0, 40))
         assert all(isinstance(k, int) for k, _ in out)
         assert isinstance(gateway._detail(data if isinstance(data, dict) else {}), str)
+
+
+# ---- the inbox mapping and the report builder ----------------------------------------------------
+
+TEXT = STRINGS + ["</script><script>alert(1)</script>", "\u2028\u2029", "\x1b[31mred", "e\u0301", "\u202egnp.exe",
+                  "𝕏" * 50, "a\tb\r\nc", "{\"json\": 1}", "<!--", "]]>", "&amp;&#0;", "%s%n", "\\x00", "\ufeffBOM",
+                  "ﬁ", "İ", "ß", "\U0010FFFF", "line\n" * 50, "y" * 3000]
+
+
+def _text(r) -> str:
+    return "".join(r.choice(TEXT) for _ in range(r.randint(1, 3)))[:r.choice([20, 200, 5000])] or "x"
+
+
+def _q(s: str, safe: str = "") -> str:
+    return quote(s.encode("utf-8", "surrogatepass"), safe=safe)       # a lone surrogate too, as %ED%A0%80
+
+
+def _har(r, n: int) -> bytes:
+    hosts = ["shop.example.com", "api.shop.example.com", "a.b.shop.example.com", "elsewhere.example.net"]
+    entries = []
+    for _ in range(n):
+        url = f"https://{r.choice(hosts)}/{_q(_text(r)[:60], safe='/')}?q={_q(_text(r)[:30])}"
+        entries.append({"request": {"method": r.choice(["GET", "POST", "PUT"]), "url": url,
+                                    "headers": [{"name": "X-Note", "value": _text(r)[:100].replace("\r", "")
+                                                 .replace("\n", "")}],
+                                    "postData": {"mimeType": "text/plain", "text": _text(r)}},
+                        "response": {"status": r.choice([200, 302, 403, 500]), "headers": [],
+                                     "content": {"text": _text(r), "mimeType": "text/html"}},
+                        "comment": _text(r)[:200]})
+    return json.dumps({"log": {"version": "1.2", "creator": {"name": "fuzz"}, "entries": entries}}).encode()
+
+
+def _send_json(c, method: str, url: str, body: dict):
+    """JSON with \\u escapes, so a lone surrogate (which JSON can spell) reaches the API."""
+    return c.request(method.upper(), url, content=json.dumps(body), headers={"content-type": "application/json"})
+
+
+def _ops(c, r, e: int, pack: str, seen: dict) -> None:
+    """A random but valid-shaped history: hosts, lanes, notes, item states, receipts, imports
+    mapped to items, dismissed entries. Requests the API refuses (4xx) are part of it; a 5xx
+    never is."""
+    from app import packs
+    roles = [l.key for l in packs.get_pack(pack).lanes]
+    from app.models import Asset
+    assets = list(db(c).scalars(select(Asset.id).where(Asset.engagement_id == e)))
+    lanes: list[dict] = []
+    for _ in range(r.randint(4, 14)):
+        op, res = r.choice([0, 1, 1, 2, 2, 3, 4, 5, 5, 6, 6, 6, 7]), None
+        if op == 0 or not assets:
+            res = _send_json(c, "post", f"/engagements/{e}/assets", {"host": r.choice(["x", "api", "b.c", "WWW"]) +
+                                                           f"{r.randrange(9)}.shop.example.com",
+                                                           "in_scope": r.random() < 0.9})
+            if res.status_code == 201:
+                assets.append(res.json()["id"])
+        elif op == 1 or not lanes:
+            res = _send_json(c, "post", "/lanes", {"asset_id": r.choice(assets), "role": r.choice(roles)})
+            if res.status_code == 201:
+                lanes.append(res.json())
+        elif op == 2:
+            lane = r.choice(lanes)
+            res = _send_json(c, "post", f"/lanes/{lane['id']}/evidence", {
+                "item_idx": r.choice([None] + [i["idx"] for i in lane["items"]]), "kind": r.choice(["note", "file"]),
+                "sha256": "%064x" % r.getrandbits(256), "summary": _text(r),
+                "uri": r.choice([None, "https://shop.example.com/" + _q(_text(r)[:100])])})
+        elif op == 3:
+            lane = r.choice(lanes)
+            for it in r.sample(lane["items"], min(len(lane["items"]), r.randint(1, 6))):
+                state = r.choice(["done", "na", "open"])
+                res = _send_json(c, "patch", f"/lanes/{lane['id']}/items/{it['idx']}",
+                              {"state": state, "na_reason": _text(r) if state == "na" else None})
+                assert res.status_code < 500, res.text[:300]
+        elif op == 4:
+            lane = r.choice(lanes)
+            for it in lane["items"]:        # notes and done or N/A on every item, then the receipt
+                _send_json(c, "post", f"/lanes/{lane['id']}/evidence", {"item_idx": it["idx"], "kind": "note",
+                                                              "sha256": "%064x" % r.getrandbits(256), "summary": _text(r)})
+                _send_json(c, "patch", f"/lanes/{lane['id']}/items/{it['idx']}", {"state": "done"})
+            res = _send_json(c, "post", f"/lanes/{lane['id']}/close", {"closed_by": _text(r)[:200], "reviewed": True})
+        elif op == 5:
+            res = upload(c, e, _har(r, r.randint(1, 6)), "har", name=f"{r.randrange(10**9)}.har", reimport=True)
+        elif op == 6:
+            entries = [x for x in c.get(f"/engagements/{e}/inbox").json()["entries"] if x["state"] != "dismissed"]
+            if not entries or not lanes:
+                continue
+            host = r.choice(entries)["host"]      # entries of one host, so a lane can be named by its role
+            ids = [x["id"] for x in entries if x["host"] == host or r.random() < 0.1]
+            lane = r.choice(lanes)
+            targets = [{"lane_id": lane["id"], "item_idx": r.choice(lane["items"])["idx"]} if r.random() < 0.6 else
+                       {"role": r.choice(roles), "item_idx": r.choice([0, 1, 1, 2, 3])} for _ in range(r.randint(1, 3))]
+            res = _send_json(c, "post", f"/engagements/{e}/inbox/map", {
+                "entry_ids": r.sample(ids, min(len(ids), r.randint(1, 4))), "targets": targets,
+                "note": r.choice([None, _text(r)[:2000]]), "mark_done": r.random() < 0.5,
+                "confirm_void": r.random() < 0.5})
+        else:
+            ids = [x["id"] for x in c.get(f"/engagements/{e}/inbox").json()["entries"]]
+            if ids:
+                what = r.choice(["dismiss", "restore"])
+                res = _send_json(c, "post", f"/engagements/{e}/inbox/{what}",
+                                 {"entry_ids": r.sample(ids, min(2, len(ids))), "reason": _text(r)[:500]})
+        if res is not None:
+            assert res.status_code < 500, f"op {op}: {res.status_code} {res.text[:300]}"
+            seen[(op, res.status_code)] = seen.get((op, res.status_code), 0) + 1
+        lanes = [c.get(f"/lanes/{l['id']}").json() for l in lanes]
+
+
+def test_fuzz_the_report_always_builds_verifies_and_is_byte_stable(client, tmp_path, monkeypatch):
+    """Random histories, inbox mapping included: the report (JSON and HTML) builds, both verify
+    with tools/verify_report.py, the HTML is the JSON rendered, and the same state gives the same
+    bytes (the clock fixed)."""
+    import datetime as dt
+    import importlib.util
+    from pathlib import Path
+    from app import report, seal
+    spec = importlib.util.spec_from_file_location("verify_report_fz2", Path(__file__).resolve().parents[2] / "tools" /
+                                                  "verify_report.py")
+    verify = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verify)
+
+    class Fixed(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime(2026, 10, 11, 12, 0, 0, tzinfo=tz)
+    _, e, _ = team(client)
+    r = rng("report")
+    seen: dict = {}
+    for i in range(iterations(8)):
+        with time_limit(60, f"iteration {i}"):
+            if i:
+                made = _send_json(client, "post", "/engagements", {"name": _text(r)[:200], "pack_id": "web-pentest-wstg"})
+                assert made.status_code < 500, made.text[:300]
+                if made.status_code != 201:
+                    continue
+                e = made.json()["id"]
+                client.put(f"/engagements/{e}/scope", json={"include": ["shop.example.com", "*.shop.example.com"]})
+            _ops(client, r, e, "web-pentest-wstg", seen)
+            with monkeypatch.context() as m:
+                m.setattr(report, "datetime", Fixed)
+                m.setattr(seal, "datetime", Fixed)
+                first = client.get(f"/engagements/{e}/report")
+                second = client.get(f"/engagements/{e}/report")
+                html = client.get(f"/engagements/{e}/report.html")
+        assert first.status_code == 200 and html.status_code == 200, f"iteration {i}: {first.text[:300]}"
+        assert first.content == second.content, f"iteration {i}: the same state gave other bytes"
+        assert html.text == report.render_html(json.loads(first.content)), f"iteration {i}: HTML is not the JSON"
+        for name, data in (("r.json", first.content), ("r.html", html.content)):
+            p = tmp_path / name
+            p.write_bytes(data)
+            assert verify.main(["verify_report.py", str(p)]) == 0, f"iteration {i}: {name} does not verify"
+    # The histories did what they are for: entries mapped onto items, lanes receipted, files imported.
+    ok = {op for (op, code), n in seen.items() if code < 300}
+    assert {4, 5, 6} <= ok, sorted(seen.items())

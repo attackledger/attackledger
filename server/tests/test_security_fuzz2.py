@@ -435,3 +435,83 @@ def test_fz30_the_log_task_survives_an_error_and_sends_the_rows_later(tmp_path, 
     with time_limit(10):
         asyncio.run(run())
     assert len(calls) >= 2 and len(api.logged) == 1 and not gw.log_rows
+
+
+# ---- FZ-31 to FZ-33: text the database cannot hold, and the inbox filter --------------------------
+
+from test_import import team, upload  # noqa: E402
+from test_people import client  # noqa: E402,F401  (fixture)
+
+
+def _json(c, method, url, body: str):
+    return c.request(method, url, content=body, headers={"content-type": "application/json"})
+
+
+@pytest.mark.parametrize("spelled", ['"\\ud800"', '"a\\uDFFFb"', '"\\udc80\\ud83d\\ude00"'])
+def test_fz31_a_lone_surrogate_in_a_persons_json_is_a_422_not_a_500(client, spelled):
+    """JSON can spell a lone surrogate and Python's reader accepts it; UTF-8, and so the database
+    driver, cannot hold one: the commit raised and every route that stores text answered 500 (the
+    report fuzz found it in an item's N/A reason). Refused like a NUL now."""
+    _, e, a = team(client)
+    r = _json(client, "POST", "/engagements", '{"name": %s, "pack_id": "web-pentest-wstg"}' % spelled)
+    assert r.status_code == 422 and "surrogate" in r.text
+    lane = client.post("/lanes", json={"asset_id": a, "role": "conf"}).json()["id"]
+    r = _json(client, "PATCH", f"/lanes/{lane}/items/1", '{"state": "na", "na_reason": %s}' % spelled)
+    assert r.status_code == 422 and "surrogate" in r.text
+    r = client.request("POST", f"/lanes/{lane}/evidence", headers={"content-type": "application/json"},
+                       content=b'{"kind": "note", "sha256": "' + b"a" * 64 + b'", "summary": "raw \xed\xa0\x80"}')
+    assert r.status_code == 422 and "surrogate" in r.text           # the same, as raw (invalid) UTF-8 bytes
+    ok = _json(client, "POST", "/engagements", '{"name": "pair \\ud83d\\ude00", "pack_id": "web-pentest-wstg"}')
+    assert ok.status_code == 201 and ok.json()["name"] == "pair \U0001F600"         # a valid pair is text
+
+
+def test_fz31_a_lone_surrogate_from_the_machine_channels_becomes_the_replacement_character(stack, monkeypatch):
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", GATEWAY_TOKEN)
+    body = '{"rows": [{"at": "2026-10-10T12:00:00+00:00", "tool": "httpx", "kind": "target", "method": "GET", ' \
+           '"url": "https://app.example.com/\\ud800", "host": "app.example.com", "verdict": "allowed"}]}'
+    r = stack.api.post("/gateway/log", content=body.encode(), headers={"authorization": f"Bearer {GATEWAY_TOKEN}",
+                                                                      "content-type": "application/json"})
+    assert r.status_code == 200 and r.json()["written"] == 1
+
+
+def test_fz32_a_json_body_without_a_content_type_is_guarded_too(client):
+    """FastAPI reads a body without Content-Type as JSON; the NUL guard only looked at bodies that
+    said they were JSON, so a NUL got through to the database (a 500 on Postgres)."""
+    team(client)
+    r = client.request("POST", "/engagements", content=b'{"name": "a\\u0000b", "pack_id": "web-pentest-wstg"}')
+    assert r.status_code == 422 and "NUL" in r.text
+
+
+@pytest.mark.parametrize("status", ["\xb2", "1" * 5000, "99999999999999999999"])
+def test_fz33_an_inbox_status_filter_that_is_not_a_status_is_a_422(client, status):
+    _, e, _ = team(client)
+    r = client.get(f"/engagements/{e}/inbox", params={"status": status})
+    assert r.status_code == 422 and "status is a code" in r.text
+
+
+# ---- FZ-34: a lone surrogate in an export -----------------------------------------------------------
+
+@pytest.mark.parametrize("where", ["postData", "content", "header", "comment", "creator", "statusText", "url"])
+def test_fz34_a_lone_surrogate_in_a_har_is_imported_not_a_500(client, where):
+    """The HAR adapter encoded body text with surrogateescape, which takes \\udc80 to \\udcff only:
+    "\\ud800" raised and the whole import was a 500. Text fields kept the surrogate, and the commit
+    raised. Each becomes U+FFFD; a URL with one is one unreadable row."""
+    _, e, _ = team(client)
+    s = "lab\ud800fz34"
+    entry = {"request": {"method": "POST", "url": "https://shop.example.com/a",
+                         "headers": [{"name": "X-Note", "value": s if where == "header" else "n"}],
+                         "postData": {"mimeType": "text/plain", "text": s if where == "postData" else "p"}},
+             "response": {"status": 200, "statusText": s if where == "statusText" else "OK", "headers": [],
+                          "content": {"text": s if where == "content" else "ok"}},
+             "comment": s if where == "comment" else "c"}
+    if where == "url":
+        entry["request"]["url"] = "https://shop.example.com/" + s
+    har = {"log": {"version": "1.2", "creator": {"name": s if where == "creator" else "fz"},
+                   "entries": [entry, {"request": {"method": "GET", "url": "https://shop.example.com/b"},
+                                       "response": {"status": 200}}]}}
+    r = upload(client, e, json.dumps(har).encode(), "har", name="s.har")
+    assert r.status_code == 201, r.text[:300]
+    got = client.get(f"/engagements/{e}/inbox").json()["entries"]
+    assert len(got) == (1 if where == "url" else 2)
+    for x in got:
+        assert client.get(f"/engagements/{e}/inbox/{x['id']}").status_code == 200

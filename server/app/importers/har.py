@@ -20,7 +20,7 @@ import json
 import re
 
 from . import (Adapter, Entry, ImportRefused, MAX_ENTRIES, Parsed, RowError, b64, cut, head, http_url, http_version,
-               message, method, status, target, text)
+               message, method, status, storable, target, text)
 
 
 _START = re.compile(r'^\{\s*"log"\s*:\s*\{')
@@ -44,7 +44,7 @@ def _headers(value) -> list[tuple[str, str]]:
 
 
 def _body_text(value: str, part: str, truncated: list[str]) -> bytes:
-    return cut(value.encode("utf-8", "surrogateescape"), part, truncated)
+    return cut(storable(value).encode("utf-8"), part, truncated)
 
 
 def _entry(row: int, e) -> Entry:
@@ -102,7 +102,8 @@ def parse(data: bytes) -> Parsed:
     if len(entries) > MAX_ENTRIES:
         raise ImportRefused(f"the file has {len(entries)} entries; the limit is {MAX_ENTRIES} per file")
     creator = log.get("creator") if isinstance(log.get("creator"), dict) else {}
-    name = " ".join(str(creator.get(k, "")).strip() for k in ("name", "version")).replace("\x00", "\ufffd").strip()
+    name = storable(" ".join(str(creator.get(k, "")).strip() for k in ("name", "version")).replace("\x00", "\ufffd")
+                    ).strip()
     out = Parsed(creator=name[:200] or None)
     for n, e in enumerate(entries, start=1):
         try:
