@@ -14,6 +14,7 @@ The API makes the placeholder for a row it refuses on its own (POST /gateway/log
 the gateway makes it for a row the API refused with the whole batch (a body limit in front of the
 API, a row that breaks the request), once the API has taken that placeholder by itself.
 """
+import re
 from datetime import datetime, timezone
 
 UNLOGGED = "unlogged"                      # fits gateway_requests.verdict (8 characters)
@@ -23,12 +24,17 @@ INT4_MAX = 2**31 - 1                       # INTEGER: ids, ports, statuses
 INT8_MAX = 2**63 - 1                       # BIGINT: byte counts and durations (migration 0025)
 
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
 def _an_id(v):
     return v if type(v) is int and 1 <= v <= INT4_MAX else None
 
 
 def _text(v, n: int) -> str:
-    return v[:n] if isinstance(v, str) else ""
+    """Text the database can hold: a lone surrogate (JSON can spell one, UTF-8 cannot) becomes
+    U+FFFD, so the placeholder is valid whatever it repeats (fuzzing, FZ-29)."""
+    return _SURROGATE.sub("\ufffd", v[:n]) if isinstance(v, str) else ""
 
 
 def _time(v) -> str:
@@ -52,6 +58,6 @@ def placeholder(row, why: str) -> dict:
             "tool": _text(d.get("tool"), 32) or "unknown", "kind": d.get("kind") if d.get("kind") in KINDS else "target",
             "method": _text(d.get("method"), 16), "url": "", "host": _text(d.get("host"), 255), "port": None,
             "status": None, "verdict": UNLOGGED,
-            "reason": f"not stored ({why[:200]}){was}; the gateway set the row aside in its quarantine file"[:300],
+            "reason": _text(f"not stored ({why[:200]}){was}; the gateway set the row aside in its quarantine file", 300),
             "bytes_sent": 0, "bytes_received": 0, "duration_ms": None,
             "account": _text(d.get("account"), 16) or None, "approval_id": _an_id(d.get("approval_id"))}

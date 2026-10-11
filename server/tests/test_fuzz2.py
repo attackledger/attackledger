@@ -15,8 +15,13 @@ from urllib.parse import quote, unquote
 
 import pytest
 
-from app import gateway, redact
-from fuzzing import INTERESTING, elapsed, iterations, mutate_bytes, rng, show, time_limit
+from sqlalchemy import func, select
+
+from app import gateway, gatewayapi, gatewaylog, redact
+from app.models import GatewayRequest
+from fuzzing import (INTERESTING, NUMBERS, STRINGS, Obj, Raw, dumps, elapsed, iterations, loads, mutate_bytes,
+                     mutate_tree, rng, show, time_limit, value)
+from harness import stack  # noqa: F401  (fixture)
 from test_gateway import Stack as GatewayStack
 
 
@@ -327,3 +332,94 @@ def test_fuzz_redaction_of_bodies_is_linear(where):
                 times.append(elapsed(f, s)[1])
         assert times[1] <= 8 * times[0] + 0.05 and times[1] <= BUDGET, \
             f"{where} is not linear on {unit!r}: {times[0]:.3f} s, then {times[1]:.3f} s"
+
+
+# ---- the gateway log: POST /gateway/log --------------------------------------------------------
+
+GATEWAY_TOKEN = "gateway-token-for-fuzz-0000000000"
+FIELDS = {"at": ["2026-10-10T12:00:00+00:00", "2026-10-10T12:00:00", "0001-01-01T00:00:00+01:00",
+                 "9999-12-31T23:59:59-01:00", "2026-13-40", 1791540000, 1e20, "", None],
+          "engagement_id": [None, 0, -1, 2**31, 2**63, 10**30, "1", 1.5, True], "job_id": [None, 0, 2**40, "x"],
+          "tool": ["httpx", "", "t" * 33, "\x00", "\ud800", "é" * 32, 5], "kind": ["target", "dns", "TARGET", "", None],
+          "method": ["GET", "", "M" * 17, "\u202e"], "url": ["https://app.example.com/", "x" * 2001, "\x00", "\udc80"],
+          "host": ["app.example.com", "h" * 256, ""], "port": [443, -1, 65536, 2**70, "443", None, 1e400],
+          "status": [200, 1000, -1, 2**70, None, "200"], "verdict": ["allowed", "refused", "failed", "unlogged",
+                                                                        "maybe", None],
+          "reason": ["", "r" * 301, "\ud800\x00"], "bytes_sent": [0, -1, 2**63, 2**80, 1.0],
+          "bytes_received": [0, 10**40], "duration_ms": [None, -5, 2**64, 0.5],
+          "account": [None, "alice", "a" * 17, 3], "approval_id": [None, 7, 0, 2**33]}
+
+
+def _log_row(r):
+    row = Obj()
+    for k, choices in FIELDS.items():
+        if r.random() < 0.9:
+            v = choices[0] if r.random() < 0.6 else r.choice(choices)
+            row.append((k, Raw("1e400") if v == float("inf") else v))
+    if r.random() < 0.2:
+        row = mutate_tree(r, row)
+    return row if r.random() < 0.95 else value(r)
+
+
+def test_fuzz_the_gateway_log_answers_per_row_and_never_fails_a_batch_for_one(stack, monkeypatch):
+    """Random rows (types, sizes, characters, missing fields): the API answers 200, writes every
+    row it can and a placeholder (verdict "unlogged", no URL) for each it cannot, so the gateway
+    never has to keep resending a batch for a row in it."""
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", GATEWAY_TOKEN)
+    r = rng("gateway-log")
+    stack.engagement()
+    for i in range(iterations(25)):
+        rows = [_log_row(r) for _ in range(r.randint(1, 30))]
+        body = dumps(Obj([("rows", rows)]), r).encode("utf-8", "surrogatepass")
+        try:
+            json.loads(body)
+        except (ValueError, RecursionError):
+            continue            # the body itself cannot be read: a 400 or 422 for the batch is right
+        with stack.Session() as s:
+            before = s.scalar(select(func.count()).select_from(GatewayRequest))
+        with time_limit(10, f"iteration {i}"):
+            resp = stack.api.post("/gateway/log", content=body, headers={
+                "authorization": f"Bearer {GATEWAY_TOKEN}", "content-type": "application/json"})
+        assert resp.status_code == 200, f"iteration {i}: {resp.status_code} {resp.text[:300]} {show(body)}"
+        out = resp.json()
+        bad = [u["index"] for u in out["unlogged"]]
+        assert sorted(set(bad)) == bad and all(0 <= b < len(rows) for b in bad)
+        assert out["written"] + len(bad) == len(rows)
+        with stack.Session() as s:
+            got = s.scalars(select(GatewayRequest).order_by(GatewayRequest.id).offset(before)).all()
+        assert len(got) == len(rows), f"iteration {i}: {len(got)} stored for {len(rows)} rows"
+        for b in bad:
+            assert got[b].verdict == "unlogged" and got[b].url == "" and got[b].reason.startswith("not stored ("), b
+        assert all(g.verdict != "unlogged" for k, g in enumerate(got) if k not in bad and not
+                   (isinstance(rows[k], Obj) and ("verdict", "unlogged") in rows[k]))
+
+
+def test_fuzz_a_placeholder_is_always_a_row_the_api_stores():
+    """gatewaylog.placeholder, from anything at all, passes the API's own row check."""
+    r = rng("gateway-placeholder")
+    for i in range(iterations(2000)):
+        try:
+            raw = json.loads(dumps(_log_row(r)))
+        except ValueError:
+            continue
+        p = gatewaylog.placeholder(gatewayapi._clean(raw), r.choice(STRINGS))
+        gatewayapi._checked(p)
+        assert p["url"] == "" and p["verdict"] == "unlogged"
+
+
+def test_fuzz_the_gateway_reads_any_answer_to_a_log_batch():
+    """_unlogged and _detail read the API's answer (JSON of any shape) without raising."""
+    r = rng("gateway-answers")
+    for i in range(iterations(2000)):
+        try:
+            tree = json.loads(dumps(value(r)))
+        except ValueError:
+            continue            # a number Python will not read: never an answer the gateway gets
+        data = tree if r.random() < 0.5 else {
+            "unlogged": [r.choice([{"index": value(r), "reason": value(r)}, value(r), {"index": r.randint(-2, 40)}])
+                         for _ in range(r.randint(0, 5))],
+            "detail": r.choice([value(r), [{"loc": value(r), "msg": value(r)}], [value(r)]])}
+        data = json.loads(json.dumps(data, default=str))
+        out = gateway._unlogged(data, r.randint(0, 40))
+        assert all(isinstance(k, int) for k, _ in out)
+        assert isinstance(gateway._detail(data if isinstance(data, dict) else {}), str)

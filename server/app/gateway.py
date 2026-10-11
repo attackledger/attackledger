@@ -1925,7 +1925,8 @@ def _env_hosts(name: str, base) -> frozenset:
 def _unlogged(data, n: int) -> list[tuple[int, str]]:
     """The rows of a batch of n that the API answered as not stored (POST /gateway/log)."""
     out = {}
-    for u in (data.get("unlogged") if isinstance(data, dict) else None) or []:
+    unlogged = data.get("unlogged") if isinstance(data, dict) else None
+    for u in unlogged if isinstance(unlogged, list) else []:      # any other shape: none (FZ-30)
         i = u.get("index") if isinstance(u, dict) else None
         if type(i) is int and 0 <= i < n:
             out[i] = str(u.get("reason") or "")[:200]
@@ -1937,7 +1938,9 @@ def _detail(data) -> str:
     value it repeats as "input")."""
     detail = data.get("detail") if isinstance(data, dict) else None
     if isinstance(detail, list) and detail and isinstance(detail[0], dict):
-        loc = ".".join(x for x in (detail[0].get("loc") or []) if isinstance(x, str) and x not in ("body", "rows"))
+        where = detail[0].get("loc")
+        loc = ".".join(x for x in (where if isinstance(where, list) else []) if isinstance(x, str)
+                       and x not in ("body", "rows"))
         return f" ({loc}: {str(detail[0].get('msg', ''))[:120]})"
     return f" ({detail[:120]})" if isinstance(detail, str) else ""
 

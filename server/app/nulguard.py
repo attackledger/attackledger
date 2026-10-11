@@ -93,7 +93,10 @@ class NulGuard:
                 if not path.startswith(MACHINE):
                     return await _respond(send, 422, "text in the request contains a NUL character (U+0000), "
                                                      "which is not stored; remove it and send the request again")
-                body = json.dumps(replace(data), ensure_ascii=False).encode()
+                # ASCII, with escapes: a lone surrogate ("\udc80", which JSON can spell) cannot be
+                # encoded as UTF-8, and the whole request was a 500 (fuzzing, FZ-28). Read back,
+                # the escapes are the same text; the route deals with the surrogate.
+                body = json.dumps(replace(data)).encode()
                 scope = {**scope, "headers": [(n, str(len(body)).encode() if n == b"content-length" else v)
                                               for n, v in scope["headers"]]}
         return await self.app(scope, _replay([{"type": "http.request", "body": body, "more_body": False}], receive),

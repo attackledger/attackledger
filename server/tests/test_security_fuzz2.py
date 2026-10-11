@@ -7,12 +7,16 @@ after it. The gateway ones use the in-process gateway of test_gateway.py on 127.
 of local stub upstreams; nothing leaves the machine.
 """
 import asyncio
+import json
 import time
 
 import pytest
+from sqlalchemy import select
 
-from app import gateway, redact
+from app import gateway, gatewayapi, gatewaylog, redact
+from app.models import GatewayRequest
 from fuzzing import time_limit
+from harness import stack  # noqa: F401  (fixture)
 from test_gateway import Stack as GatewayStack, parse
 
 
@@ -359,3 +363,46 @@ def test_fz27_graphql_that_holds_no_secret_is_kept():
     for body in ['{"query":"mutation($password: String!) { login(password: $password) { ok } }"}',
                  'query { country(code: "FR") { name } }', '{"query":"{ a(token: 5) }"}']:
         assert redacted(body) == body
+
+
+# ---- FZ-28 and FZ-29: the gateway log ----------------------------------------------------------------
+
+GATEWAY_TOKEN = "gateway-token-for-tests-000000000"
+
+
+def _log_row(**change) -> dict:
+    return {"at": "2026-10-10T12:00:00+00:00", "tool": "httpx", "kind": "target", "method": "GET",
+            "url": "https://app.example.com/", "host": "app.example.com", "verdict": "allowed", **change}
+
+
+def test_fz28_a_nul_and_a_lone_surrogate_in_one_batch_is_not_a_500(stack, monkeypatch):
+    """The NUL guard rewrites a machine route's JSON (a NUL becomes U+FFFD) and wrote it back with
+    ensure_ascii=False, which cannot encode a lone surrogate: the whole batch was a 500, which the
+    gateway sends again for ever (and the worker's channel the same)."""
+    monkeypatch.setenv("ATTACKLEDGER_GATEWAY_TOKEN", GATEWAY_TOKEN)
+    body = json.dumps({"rows": [_log_row(url="https://app.example.com/\x00"), _log_row(reason="r\udc80")]})
+    r = stack.api.post("/gateway/log", content=body, headers={"authorization": f"Bearer {GATEWAY_TOKEN}",
+                                                              "content-type": "application/json"})
+    assert r.status_code == 200 and r.json() == {"written": 2, "unlogged": []}
+    with stack.Session() as s:
+        got = s.scalars(select(GatewayRequest).order_by(GatewayRequest.id)).all()
+    assert [g.url for g in got] == ["https://app.example.com/�", "https://app.example.com/"]
+    assert got[1].reason == "r�"
+
+
+@pytest.mark.parametrize("why", ["\ud800", "x\udfff\x00"])
+def test_fz29_a_placeholder_is_storable_whatever_the_reason_says(why):
+    """placeholder() is meant to be valid by construction; a reason (the API's own words, from an
+    answer the gateway read) with a lone surrogate made the API refuse it, so the row stayed queued."""
+    p = gatewaylog.placeholder({"verdict": "allowed", "tool": "a\ud800"}, why)
+    gatewayapi._checked(p)
+    assert "\ud800" not in p["reason"] + p["tool"]
+
+
+@pytest.mark.parametrize("data", [{"unlogged": True}, {"unlogged": {"index": 0}}, {"unlogged": "0"},
+                                  {"detail": [{"loc": 5, "msg": "m"}]}, {"detail": [{"loc": "body", "msg": 1}]}])
+def test_fz30_the_gateway_reads_an_answer_of_any_shape(data):
+    """A log answer of another shape (a proxy in front of the API) raised TypeError in the task that
+    sends the log, which then stopped for good: rows queued up and the gateway refused all traffic."""
+    assert gateway._unlogged(data, 3) == []
+    assert isinstance(gateway._detail(data), str)
