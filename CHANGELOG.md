@@ -247,6 +247,31 @@ Containers and dependencies (`SUPPLY_CHAIN.md`):
   at today (`--write` moves the stale ones). `docs/SUPPLY_CHAIN.md` suggests running it monthly
   and whenever an advisory names a base image.
 
+Fuzzing (`FUZZING.md`): property-based and seeded mutation fuzzing of everything that parses
+hostile input, with the standard library only (`server/tests/fuzzing.py`, `test_fuzz.py`), and a
+random-mutation mode for the two verifiers (`run.sh --fuzz N`). 19 findings, each with a test.
+- **Scope rules written with a line end before the last dot matched nothing** (FZ-4, Medium).
+  `$` in the host name pattern also matches before a final line end, so an exclude rule such as
+  `"admin.example.com\n."` was stored as `admin.example.com\n` and excluded nothing under a
+  wildcard. Host names and rules are now matched whole and normalised idempotently.
+- **Quadratic parsing of hostile pages and bundles** (FZ-6, FZ-11, FZ-12, FZ-13, Medium): spaces
+  inside an Authorization value, unclosed `<!--`, `<script` or `<title`, long runs of digits in
+  a JavaScript file and unclosed `children:[` arrays took minutes to hours on a few megabytes.
+  All are linear now.
+- **Multipart form fields with secret names were stored unredacted** (FZ-15, Medium), and so were
+  cookies without a name (FZ-9), JSON keys written with `\u` escapes (FZ-10) and the first part
+  of a head line that only looks like a header (FZ-8).
+- **A browser and the inbox could read different hosts from one URL** (FZ-3): a backslash before
+  the path is now refused in imports and recon, as the gateway already did. A stored URL keeps its
+  host (FZ-7): a host label shaped like a key, or a password marker, made it unreadable.
+- **Crashes instead of a message** (FZ-1, FZ-2, FZ-5, FZ-14): a status of `1e400`, a
+  5,000-digit Content-Length, a lone surrogate in any JSON request (now a 422) and a scope CSV
+  with one bad row or a stray CR.
+- **The command-line verifier stops with exit code 2 and one line, never a traceback** (FZ-16),
+  both verifiers refuse JSON nested more than 500 levels the same way (FZ-17), lone surrogates are
+  printed escaped (FZ-18), and an item without its text fails a check instead of stopping it
+  (FZ-19). 2,600 mutants: no difference between the verifiers.
+
 ### Upgrade note
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
