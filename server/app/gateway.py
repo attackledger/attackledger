@@ -53,7 +53,6 @@ Run: python -m app.gateway
 """
 import asyncio
 import base64
-import binascii
 import hashlib
 import html
 import ipaddress
@@ -482,7 +481,7 @@ def credential(auth: str | None) -> tuple[int, str, str]:
         raise Refused(407, "use Basic proxy authentication with the job credential")
     try:
         user, sep, secret = base64.b64decode(value.strip(), validate=True).decode().partition(":")
-    except (binascii.Error, UnicodeDecodeError):
+    except ValueError:      # binascii.Error, UnicodeDecodeError, and a value that is not ASCII (FZ-20)
         raise Refused(407, "the job credential is malformed")
     m = USER_RE.match(user)
     if not sep or not m or not secret:

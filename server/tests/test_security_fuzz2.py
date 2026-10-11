@@ -77,6 +77,14 @@ def test_fz20_a_port_of_superscript_digits_is_refused(authority):
         gateway.split_authority(authority)
 
 
+def test_fz20_a_credential_that_is_not_ascii_is_a_407_row(gw):
+    """base64.b64decode raises ValueError, not binascii.Error, for text that is not ASCII (test_fuzz2)."""
+    status, headers, _ = parse(gw.raw(_head(gw, auth="Basic am9iLTEuaHR0cHg6\xe9")))
+    assert status == 407 and headers["proxy-authenticate"].startswith("Basic")
+    row = gw.rows(1)[-1]
+    assert row["verdict"] == "refused" and row["status"] == 407 and "malformed" in row["reason"]
+
+
 def test_fz20_a_bug_in_the_checks_is_still_a_row(gw, monkeypatch):
     """Whatever raises while a request is checked, the request is refused and logged, not dropped."""
     def broken(*a, **k):
