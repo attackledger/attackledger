@@ -179,8 +179,9 @@ for d in sorted((p for p in work.iterdir() if p.is_dir()), key=lambda p: int(p.n
 for line in expired:
     print(f"[scan] FAIL: entry of scan_ignore.txt past its date (review it: delete the line, or renew "
           f"it with a new date and reason): {line}")
+scanned = [(d / "image").read_text().strip() for d in work.iterdir() if d.is_dir()]
 for entry in ignores:
-    if entry not in used:
+    if entry not in used and any(fnmatch.fnmatch(i, entry[1]) for i in scanned):
         print(f"[scan] note: scan_ignore.txt entry matched no finding in these images: {' '.join(entry)}")
 print(f"\n[scan] {fixable} HIGH/CRITICAL with a fix, {accepted} accepted, {unfixed} without a fix, "
       f"{len(expired)} expired entries")

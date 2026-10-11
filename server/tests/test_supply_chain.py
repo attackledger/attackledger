@@ -284,7 +284,7 @@ def test_every_lock_is_made_by_the_lock_script_and_tested():
     assert {f[:-3] + ".txt" for f in tracked} == set(LOCKS)
     audit = next(str(s["run"]) for s in _steps(_workflow("security.yml")) if "pip-audit\" --disable-pip" in str(s.get("run")))
     for lock in LOCKS:
-        assert f"-r {lock}" in audit, f"pip-audit does not read {lock}"
+        assert re.search(rf"(^|\s){re.escape(lock)}(\s|;|$)", audit), f"pip-audit does not read {lock}"
 
 
 # ---- the GitHub workflows ---------------------------------------------------------------------

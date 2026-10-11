@@ -105,12 +105,17 @@ jobs:
           python -m venv "$RUNNER_TEMP/audit"
           "$RUNNER_TEMP/audit/bin/pip" install -q --require-hashes --no-deps --only-binary :all: -r server/requirements-pip.txt
           "$RUNNER_TEMP/audit/bin/pip" install -q --require-hashes --no-deps --only-binary :all: -r tools/ci/requirements-audit.txt
-      - name: pip-audit on the locks
+      # One lock at a time: pip-audit refuses two files that pin one package at different versions.
+      - name: pip-audit on each lock
         run: |
-          "$RUNNER_TEMP/audit/bin/pip-audit" --disable-pip --require-hashes --progress-spinner off --desc on \
-            -r server/requirements.txt -r server/requirements-pip.txt \
-            -r worker/requirements-arjun.txt -r worker/requirements-arjun-build.txt \
-            -r tools/ci/requirements-audit.txt
+          status=0
+          for lock in server/requirements.txt server/requirements-pip.txt \
+                      worker/requirements-arjun.txt worker/requirements-arjun-build.txt \
+                      tools/ci/requirements-audit.txt; do
+            echo "== $lock"
+            "$RUNNER_TEMP/audit/bin/pip-audit" --disable-pip --require-hashes --progress-spinner off --desc on -r "$lock" || status=1
+          done
+          exit "$status"
 
   # The web lockfile against the npm advisory database, without installing it.
   npm:
