@@ -121,3 +121,98 @@ after (`test_fuzz.py`, `test_security_fuzz.py`). `tools/verifier_equivalence/run
 before, 134 after (8 new `fuzz-*` cases), 107 building blocks, 0 differences.
 `site/verify.html` was rebuilt with `tools/build_verify.sh`, `site/verify_report.py` is again a
 copy of `tools/verify_report.py`, and `tools/build_pages.sh` accepts the page's hashes.
+
+# Second pass
+
+Date: 2026-10-11. Branch `sec5-fuzz2`, from `33f1144`. The same agent setup and harness
+(`server/tests/fuzzing.py`), aimed at what the first pass listed as not covered: redaction of XML,
+multipart, form and GraphQL bodies; the gateway's own HTTP parsing; the gateway log ingestion; the
+inbox mapping and the report builder. Everything ran in-process or in a throwaway API container;
+the gateway tests use the in-process gateway of `test_gateway.py` on 127.0.0.1 in front of local
+stub upstreams. No traffic left the machine.
+
+```sh
+python -m pytest -q tests/test_fuzz2.py tests/test_security_fuzz2.py      # about 25 s
+ATTACKLEDGER_FUZZ_ITERATIONS=1000 ATTACKLEDGER_FUZZ_SEED=7 python -m pytest -q tests/test_fuzz2.py -k gateway
+```
+
+## Targets and properties (`server/tests/test_fuzz2.py`)
+
+| Target | Property | Inputs per default run |
+|---|---|---|
+| Gateway, requests from a tool | Mutated request heads and bodies (absolute form, HEAD, OPTIONS, approved writes chunked and not, CONNECT and probes, pipelined requests; tokens such as `\xb9`, `[`, `//`, obs-fold, chunk sizes, `Upgrade`, overrides): the handler never ends by an error, every input holding a whole head leaves a row, nothing reaches the upstream without an `allowed` row, all within 15 s | 120 |
+| Gateway, responses from a target | Mutated responses (1xx floods, 101, `Transfer-Encoding: gzip`, both lengths, trailers, obs-fold, latin-1, NUL): one row per request, verdict `allowed` or `failed`, within 15 s | 120 |
+| Gateway resolver | Mutated DNS queries: `dns_answer` never raises; every packet it forwards asks, label for label (read by an independent parser), a name in scope | 3,000 |
+| Gateway log, `POST /gateway/log` | Batches of 1 to 30 random rows (each field of another type, size or character, missing, NaN, `1e400`, huge integers, lone surrogates, NUL; whole rows mutated or not objects): always 200, one stored row per row, a placeholder (verdict `unlogged`, no URL) for each refused one; `gatewaylog.placeholder` of anything passes the API's own row check; the gateway reads an answer of any shape | 25 batches; 2,000; 2,000 |
+| Redaction of bodies | A secret with a secret name in random XML (elements, CDATA, attributes, XML-RPC members, plists, `<input>`/`<meta>`/`<add>` pairs, SOAP and HTML wrappers), multipart (one and several lines, quoted or not), form (percent-encoded names, values with `; , ) ' # " < >`) and GraphQL (JSON, raw, URL-encoded GET) documents: it never survives `text` or `http_message`, a second pass changes nothing; the same documents with a name that is not secret come back unchanged; 30 pumped tokens (alone, followed by `y`, and 25 random combinations) are linear, as in the first pass | 400 and 200 per format |
+| Inbox mapping and the report | Random histories through the API (hosts, lanes, notes and files with random text, item states and N/A reasons, receipts, HAR imports with random entries, mapping onto items by lane or by role, dismiss and restore): no request answers 5xx; the JSON and HTML reports build and both verify with `tools/verify_report.py` (exit 0); the HTML is the JSON rendered; the same state gives the same bytes, with the clock fixed; at least one mapping, receipt and import succeeded | 8 histories |
+
+Runs made, besides the default suite: seeds 1 to 5 (gateway, 500 to 800 inputs each), 1 and 2
+(redaction, 3,000 per format), 1 to 7 (report, 40 to 80 histories), and seed 7 at 1,000 gateway
+inputs, 5,000 redaction placements and 300 histories after the fixes, with no failure.
+
+## Findings
+
+Severity in AttackLedger's threat model, as in the first pass. Each has a regression test in
+`server/tests/test_security_fuzz2.py` (FZ-*) that failed before its fix; "found by" says whether
+a fuzzer of `test_fuzz2.py` found it or a probe written while building one did.
+
+| ID | Severity | Where | What | Found by | Fix |
+|---|---|---|---|---|---|
+| FZ-20 | Low | `gateway._request`, `split_authority`, `credential` | A request whose checks raised anything but `Refused` was dropped: no answer, no row in the request log (only a line on stderr). `http://[shop/` (urlsplit: Invalid IPv6 URL), a path such as `//[x/` in the `_method` check, a port or an approval number in superscript digits (`"²".isdigit()` is True, `int("²")` raises), a Proxy-Authorization value that is not ASCII (`b64decode` raises `ValueError`, not `binascii.Error`). Nothing was forwarded | probe; request fuzz (credential) | ASCII digits only; the query read without urlsplit; `ValueError` is a 407; anything else that stops a check is a refusal and a row (500 and verdict `failed` for a bug) |
+| FZ-21 | Low | `gateway._serve` | A request head h11 refuses (a non-ASCII target, a bad Content-Length, a line that is not a header, a head over the limit), and a body it refuses (an approved write's bad chunk), closed the connection without an answer or a row | probe | h11's status (400 or 431) is sent and a row without the URL is logged; inside a tunnel it names the job and the host; body errors are refusals (FZ-20's path) |
+| FZ-22 | Medium | `gateway._forward`, `_scrubbed` | A target answering with endless `100 Continue`, a response head sent a line at a time, or (as a test account) a body sent a byte at a time held the gateway's connection, and the tool's, for as long as it liked: only the time between two reads was bounded (60 s). No row was written until it ended, and a scanner hitting such a host kept opening connections the gateway never closed | probe | The response head has 90 s in all (`HEAD_TIMEOUT`) and at most 32 informational answers; a request head 90 s; a scrubbed body 300 s |
+| FZ-23 | Medium | `redact.text` (`_xml`) | Secrets in XML and HTML were stored: `<wsse:Password>` and `<wsse:BinarySecurityToken>` (SOAP WS-Security), `<password>` in CDATA, `<apiKey>`, XML-RPC `<name>password</name><value>`, plist `<key>password</key><string>`, `.NET <add key="DbPassword" value=...>`, `<input name="csrf_token" value=...>`, `<meta name="csrf-token" content=...>`, and `password = "..."` with spaces around `=`. Only `name="value"` attributes were read | placements | One forward scan of opening tags: the text of a leaf element with a secret name (`<Code>` and `<Key>` excepted: S3 errors and object names), secret attributes, the value after a secret XML-RPC name or plist key, `value`/`content` of a tag whose `name`, `key` or `property` is secret |
+| FZ-24 | Low | `redact.SECRET_NAMES` | `SAMLResponse` and `SAMLart` were stored as they were: a signed SAML response logs its bearer in until it expires, and holds their identity | placements | Both are secret names (and in the Caido tool's copy) |
+| FZ-25 | Low | `redact._multipart` | Only the first line of a multipart field was redacted, and only with a quoted name: the rest of a multi-line secret (`private_key`), or a field written `name=password`, was stored | placements | The value runs to the part's boundary (the `--` line that opened it, searched forward once and remembered when missing); unquoted names count |
+| FZ-26 | Low | `redact._kv`, `url`, `http_message` | A form value stopped at `; , ) ' # " <` (the text rules end a value there, as code and prose do), so the rest of a password a client sent unencoded was kept; a percent-encoded name (`pass%77ord`) was not recognised | placements | `redact.params`: in a URL's query, the request line's query and a form body (by its Content-Type), each secret value whole up to the next `&`; names decoded first. The Caido tool's vendored rules do the same for the request line; the equivalence test covers it |
+| FZ-27 | Medium | `redact.text` (`_graphql`) | A secret GraphQL argument written in the query was stored: `login(password: "...")` in a JSON body, a GraphQL body, or URL-encoded in a GET query. Variables were already redacted (they are JSON) | placements | String arguments with a secret name in all three spellings; `$name: Type` (a definition) and `code` are not values |
+| FZ-28 | Low | `nulguard` | On the machine channels, a JSON body with a NUL was rewritten with `ensure_ascii=False`, which cannot encode a lone surrogate: a batch with both was a 500, which the gateway sends again for ever (and its traffic then stops) | log fuzz | Written with escapes |
+| FZ-29 | Info | `gatewaylog.placeholder` | A placeholder repeating a lone surrogate (a reason, a tool name) failed the API's own row check, so it was not valid by construction | log fuzz | Surrogates become U+FFFD |
+| FZ-30 | Info | `gateway._unlogged`, `_detail`, `flush_forever` | An answer of another shape to a log batch (`unlogged` not a list, `loc` not a list: a proxy in front of the API) raised `TypeError` in the task that sends the log, which then stopped for good | log fuzz | Any shape is read; the task prints an error and tries again |
+| FZ-31 | Low | `nulguard` (every JSON route) | A lone surrogate in a person's JSON (`"\ud800"`, or the bytes `ED A0 80`, both of which Python's reader accepts) reached the database driver, which cannot encode it: a 500 on every route that stores text. FZ-5 had made the 422 printable; a valid request still failed | report fuzz (an N/A reason) | Refused with a 422 like a NUL; on the machine channels replaced with U+FFFD |
+| FZ-32 | Low | `nulguard._is_json` | A body without a Content-Type was not checked, but FastAPI reads it as JSON: a NUL reached the database (a 500 on Postgres) | review while fixing FZ-31 | Checked as JSON |
+| FZ-33 | Low | `GET /engagements/{id}/inbox` | A status filter of `²` or 5,000 digits passed `isdigit()` and raised in `int()` or the database driver: a 500 | probe while writing the inbox fuzz | ASCII and at most three digits; otherwise the usual 422 |
+| FZ-34 | Low | `importers.har`, `importers.text`, `message` | A lone surrogate in a HAR (body text, a header, the comment, the creator, the status text) made the import a 500: `surrogateescape` takes `\udc80` to `\udcff` only, and text fields kept it for the database to refuse | report fuzz | U+FFFD, as for NUL; a URL with one is one unreadable row |
+| FZ-35 | Low | `gateway.parse_question` | DNS labels may hold dots. Joined with dots, the question for the labels `x`, `shop.example`, `com` was checked as `x.shop.example.com`, in scope of `*.shop.example.com`, and the packet forwarded asked a name that is not under `shop.example.com`. Such a name is not delegated anywhere a target or an attacker controls, so it was not a way out, but the name checked was not the name forwarded | resolver fuzz | Dots and backslashes in a label are escaped as DNS writes them (the scope check then refuses the name) |
+
+## What held
+
+- h11 refused every malformed head and chunk the fuzzers produced (chunk sizes over 20 hex
+  digits, a Content-Length that is not digits, NUL and lone CR in headers, 101 without an upgrade,
+  `Transfer-Encoding: gzip`), and re-framed every body it passed on: a request with both
+  Content-Length and chunked was refused as a read-only request with a body, a response with both
+  was sent on chunked, trailers were dropped, obs-fold was joined into one line. Nothing reached an
+  upstream without an `allowed` row.
+- The API's per-row log check held: no random row made it refuse a batch, and every refused row
+  had a placeholder without its URL, apart from FZ-28 (a batch-level rewrite before the check). A
+  body Python cannot read at all (a number of more than 4,300 digits) is a 400 for the batch, which
+  the gateway halves until the row is alone, as designed.
+- The report always built and verified, JSON and HTML, from every random history, and was the
+  same bytes for the same state: no set or dictionary order leaks into it.
+- The new redaction rules stayed linear on every pumped input, and idempotent; the first pass's
+  placement and pumped tests still pass on them.
+
+## Still not covered
+
+- XML-RPC parameters known only by their position (`wp.getUsersBlogs(username, password)`), a
+  SAML assertion held inside other XML, unquoted HTML attribute values, and JSON values under a
+  secret key that are objects are still not redacted (`redact.py` lists them).
+- The gateway's TLS layer (handshakes, ALPN, the CA's leaf certificates for odd names) was not
+  fuzzed; only plain HTTP and requests inside an established tunnel were. HTTP/2 is not spoken.
+- A partial request head that times out leaves no row (the client stopped, nothing was read to
+  check); a CONNECT tunnel that never carries a request has no row of its own.
+- The report fuzz drives the API with one person and the WSTG pack; signed receipts, the timestamp
+  authority, separation of duties and content deletion were not part of its histories, and
+  byte-stability was checked within one process with the clock fixed, not across processes.
+- The verifiers were not changed in this pass, so the equivalence run was not repeated (134
+  reports, 0 differences, from the first pass). The web app is the subject of the end-to-end tests.
+
+## Counts
+
+Server suite (SQLite): 1,050 passed and 1 skipped before; 1,154 passed and 1 skipped after
+(`test_fuzz2.py`, `test_security_fuzz2.py`, and one more case in `test_caido_pull.py` and
+`test_security_fuzz.py`). Postgres (`tools/test_postgres.sh`): 1,154 passed and 1 skipped, and the
+migration-0022 upgrade check passes. One run of the whole suite on a loaded machine failed the
+first pass's linearity check for `pagetext.view` (code this pass did not change; 8 times plus
+50 ms is a tight margin under load); it passed alone and in the next full runs.

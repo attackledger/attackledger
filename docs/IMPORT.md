@@ -74,8 +74,10 @@ Notes:
   request and response goes through the header rules whatever its name (Cookie,
   Set-Cookie, Authorization, Proxy-Authorization, X-Api-Key and other secret names, and
   tokens or secret parameters inside other headers); the request line and body go through
-  the text rules (secret query and form parameters, JSON keys, JWTs, bearer tokens, key
-  formats; email addresses and card numbers). Binary or compressed bodies are kept and noted.
+  the text rules (secret query and form parameters, each value whole up to the next `&`;
+  JSON keys; XML and HTML elements and attributes, multipart fields and GraphQL arguments
+  with secret names; JWTs, bearer tokens, key formats; email addresses and card numbers).
+  Binary or compressed bodies are kept and noted.
   A Content-Length that matched the body is rewritten to the stored body's length.
   The URL and label are redacted too. The engagement's `redact_evidence` setting applies.
   The uploaded file itself is never stored, only its SHA-256.
@@ -194,7 +196,8 @@ What goes where:
   `--redact-locally` the tool applies the same rules before writing the file, so cookies,
   authorization headers and other secrets never reach the disk: `server/app/redact.py`
   itself when the tool runs from the repository (the raw request and response through
-  `http_message`, as the import does, and the `path` and `query` fields through `text`;
+  `http_message`, as the import does, the `path` field through `text` and the `query` field
+  through `params` and `text`, as the URL is at import;
   this needs Python 3.10 or later, like the server); otherwise, a minimal copy of its header and parameter rules inside the tool
   (cookies, authorization, secret header names, secret query and form parameters; not
   bodies, JWT and key formats elsewhere, or personal data, which the server still redacts).
