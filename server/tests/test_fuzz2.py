@@ -576,3 +576,54 @@ def test_fuzz_the_report_always_builds_verifies_and_is_byte_stable(client, tmp_p
     # The histories did what they are for: entries mapped onto items, lanes receipted, files imported.
     ok = {op for (op, code), n in seen.items() if code < 300}
     assert {4, 5, 6} <= ok, sorted(seen.items())
+
+
+# ---- the gateway's resolver -------------------------------------------------------------------------
+
+def _labels(packet: bytes) -> list[bytes] | None:
+    """The question's labels, read independently of gateway.parse_question."""
+    i, out = 12, []
+    while i < len(packet) and packet[i]:
+        n = packet[i]
+        if n & 0xC0:
+            return None
+        out.append(packet[i + 1:i + 1 + n])
+        i += 1 + n
+    return out
+
+
+def test_fuzz_dns_only_forwards_questions_for_names_in_scope():
+    """Mutated DNS queries: dns_answer never raises, and every packet it forwards asks, label for
+    label, a name in scope."""
+    import struct
+    from app import scope
+    from test_gateway import FakeApi
+    api = FakeApi()
+    api.scopes = [{"engagement_id": 1, "include": ["*.shop.example.com"], "exclude": ["admin.shop.example.com"],
+                   "rate_limit_rps": 10_000}]
+    g = gateway.Gateway(api, None, deny_hosts=())
+    forwarded = []
+
+    async def forward(q):
+        forwarded.append(q)
+        return q[:2] + b"\x81\x80" + q[4:]
+    g._dns_forward = forward
+    r = rng("dns")
+    seeds = [struct.pack("!HHHHHH", 7, 0x0100, 1, 0, 0, 0) + b"".join(bytes([len(p)]) + p for p in name) + b"\0"
+             + struct.pack("!HH", t, 1)
+             for name, t in (([b"app", b"shop", b"example", b"com"], 1), ([b"x.y", b"shop", b"example", b"com"], 28),
+                             ([b"admin", b"shop", b"example", b"com"], 1), ([b"shop", b"example", b"com"], 5))]
+    for i in range(iterations(3000)):
+        q = mutate_bytes(r, r.choice(seeds), r.randint(1, 3))
+        before = len(forwarded)
+
+        async def one():
+            return await g.dns_answer(q)
+        with time_limit(5, f"iteration {i}"):
+            asyncio.run(one())
+        g.log_rows.clear()
+        for f in forwarded[before:]:
+            labels = _labels(f)
+            assert labels is not None and all(b"." not in x and x for x in labels), f"iteration {i}: {show(f)}"
+            name = b".".join(labels).decode("ascii").lower()
+            assert scope.in_scope(name, ["*.shop.example.com"], ["admin.shop.example.com"]), f"iteration {i}: {name!r}"

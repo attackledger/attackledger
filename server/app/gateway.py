@@ -1850,7 +1850,10 @@ def parse_question(data: bytes):
             break
         if n & 0xC0 or i + n > len(data) or len(labels) > 127:
             return None
-        labels.append(data[i:i + n])
+        # A label may hold a dot: escaped as DNS writes it, so the name checked is the name the
+        # forwarded packet asks; joined as they were, ["x.shop", "example", "com"] read as
+        # x.shop.example.com, in scope of *.shop.example.com (fuzzing, FZ-35).
+        labels.append(data[i:i + n].replace(b"\\", b"\\\\").replace(b".", b"\\."))
         i += n
     if i + 4 > len(data):
         return None

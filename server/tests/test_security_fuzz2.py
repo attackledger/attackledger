@@ -532,3 +532,34 @@ def test_fz34_a_lone_surrogate_in_a_har_is_imported_not_a_500(client, where):
     assert len(got) == (1 if where == "url" else 2)
     for x in got:
         assert client.get(f"/engagements/{e}/inbox/{x['id']}").status_code == 200
+
+
+# ---- FZ-35: a DNS label with a dot in it ------------------------------------------------------------
+
+def _dns(labels: list[bytes], qtype: int = 1) -> bytes:
+    import struct
+    q = b"".join(bytes([len(p)]) + p for p in labels) + b"\0"
+    return struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + q + struct.pack("!HH", qtype, 1)
+
+
+@pytest.mark.parametrize("labels", [[b"x.shop", b"example", b"com"], [b"x", b"shop.example", b"com"],
+                                    [b"x", b"shop", b"example.com"], [b"x\\", b"shop", b"example", b"com"]])
+def test_fz35_the_dns_name_checked_is_the_name_forwarded(labels):
+    """A label may hold any byte, a dot too. The labels were joined with dots, so the question
+    for the two labels "x.shop" and "example.com"... read as x.shop.example.com, in scope of
+    *.shop.example.com, and the packet forwarded asked another name, which is not under
+    shop.example.com at all. A dot (or backslash) in a label is now escaped as DNS writes it."""
+    from test_gateway import FakeApi
+    api = FakeApi()
+    api.scopes = [{"engagement_id": 1, "include": ["*.shop.example.com"], "exclude": [], "rate_limit_rps": 5}]
+    g = gateway.Gateway(api, None, deny_hosts=())
+    forwarded = []
+
+    async def forward(q):
+        forwarded.append(q)
+        return q[:2] + b"\x81\x80" + q[4:]
+    g._dns_forward = forward
+    reply = asyncio.run(g.dns_answer(_dns(labels)))
+    assert reply[3] & 0x0F == 5 and forwarded == []                       # REFUSED, nothing forwarded
+    assert g.log_rows[-1]["verdict"] == "refused" and "\\" in g.log_rows[-1]["host"]
+    assert asyncio.run(g.dns_answer(_dns([b"x", b"shop", b"example", b"com"])))[3] & 0x0F == 0
