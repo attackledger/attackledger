@@ -15,9 +15,11 @@ import socket
 import ssl
 import sys
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
+from sqlalchemy import select
 
 from app import gateway, redact
 from fuzzing import INTERESTING, elapsed, iterations, mutate_bytes, rng, show, time_limit
@@ -413,3 +415,272 @@ def test_fuzz_redaction_of_the_new_forms_is_linear(where):
             times = measure(unit, 3)
         assert times[1] <= 8 * times[0] + 0.05 and times[1] <= BUDGET, \
             f"{where} is not linear on {unit!r}: {times[0]:.3f} s, then {times[1]:.3f} s"
+
+
+# ---- the report: signed receipts, voids, revoked keys, content deletion, the seal ---------------------
+
+ROOT = Path(__file__).resolve().parents[2]
+SIGNERS = {"owner": "owner@lab.test", "rita": "rita@lab.test", "tess": "tess@lab.test"}   # tess may not sign
+
+# Run in a separate process: the reports of the given engagements, from the database alone, with
+# the clock fixed. Two of these, with different hash seeds, must write the same bytes.
+EXPORT = r"""
+import datetime as dt, hashlib, json, sys
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse
+from app import main, report, seal
+
+class Fixed(dt.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return dt.datetime(2026, 10, 11, 12, 0, 0, tzinfo=tz)
+report.datetime = seal.datetime = Fixed
+url, out = sys.argv[1], sys.argv[2]
+engine = create_engine(url)
+with Session(engine) as s:
+    for e in json.loads(sys.argv[3]):
+        r = main._report(e, s)
+        with open(f"{out}/{e}.json", "wb") as f:
+            f.write(JSONResponse(r).body)
+        with open(f"{out}/{e}.html", "wb") as f:
+            f.write(report.render_html(r).encode())
+engine.dispose()
+"""
+
+
+@pytest.fixture()
+def file_client(tmp_path, monkeypatch):
+    """The API on a database file (Postgres under tools/test_postgres.sh) another process can read."""
+    import testdb
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import sessionmaker
+    from app import auth, db, people
+    from app.main import app
+    monkeypatch.delenv("ATTACKLEDGER_API_TOKEN", raising=False)
+    auth._failures.clear()
+    eng = testdb.file_engine(tmp_path / "report-fuzz.db")
+    db.Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
+
+    def _session():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+    app.dependency_overrides[db.get_session] = _session
+    monkeypatch.setattr(people, "SessionLocal", Session)
+    with TestClient(app) as c:
+        yield c, eng
+    app.dependency_overrides.clear()
+    eng.dispose()
+
+
+def _lanes_of(c, e: int) -> list[int]:
+    from app.models import Asset, Lane
+    from test_import import db
+    return list(db(c).scalars(select(Lane.id).join(Asset).where(Asset.engagement_id == e).order_by(Lane.id)))
+
+
+def _as(c, email: str) -> bool:
+    """Signed in as this person; False (and signed in as the owner) when they cannot sign in now:
+    disabled, which is part of the history."""
+    from test_people import sign_in
+    got = sign_in(c, email)
+    assert got.status_code in (200, 401), got.text[:300]
+    if got.status_code != 200:
+        assert sign_in(c, "owner@lab.test").status_code == 200
+    return got.status_code == 200
+
+
+def _key(c, r, keys: dict, who: str):
+    """The person's signing key, registered (as the person signed in now)."""
+    from test_signing import BrowserKey
+    k = keys.get(who)
+    if k is None:
+        k = BrowserKey(r.choice(["Ed25519", "ECDSA-P256"]))
+        res = c.post("/auth/keys", json={"algorithm": k.algorithm, "public_key": k.spki})
+        assert res.status_code == 201, res.text
+        k.fingerprint, k.id = res.json()["fingerprint"], res.json()["id"]
+        keys[who] = k
+    return k
+
+
+def _ops3(c, r, e: int, name: str, keys: dict, seen: dict, why: dict, emails: dict, disabled: set) -> None:
+    """Signed closes (by a reviewer, an owner, and a tester who may not), unsigned ones, voids
+    (an item reopened, evidence added to a receipted lane), keys revoked after signing, and, now
+    and then, the engagement's content deleted. Refusals (4xx) are part of it; a 5xx never is."""
+    from test_fuzz2 import _send_json, _text
+    for _ in range(r.randint(2, 6)):
+        lanes = [c.get(f"/lanes/{x}").json() for x in _lanes_of(c, e)]
+        if not lanes:
+            return
+        op = r.choice(["sign", "sign", "sign", "close", "void", "void", "revoke", "delete", "person", "roles"])
+        # Other lanes sign only once their host's information lane is receipted: that one first, mostly.
+        first = [x for x in lanes if x.get("role") == "info" and x.get("status") != "closed"]
+        lane = r.choice(first if first and op in ("sign", "close") and r.random() < 0.7 else lanes)
+        who = r.choice(sorted(w for w in emails if w not in disabled))
+        if not _as(c, emails[who]):
+            continue
+        res = None
+        if op in ("sign", "close"):
+            for it in lane["items"]:
+                if it["state"] == "open":
+                    if r.random() < 0.6:
+                        _send_json(c, "post", f"/lanes/{lane['id']}/attach",
+                                   {"item_idx": it["idx"], "kind": "note", "text": _text(r)[:2000]})
+                        _send_json(c, "patch", f"/lanes/{lane['id']}/items/{it['idx']}", {"state": "done"})
+                    else:
+                        _send_json(c, "patch", f"/lanes/{lane['id']}/items/{it['idx']}",
+                                   {"state": "na", "na_reason": _text(r)})
+            for it in c.get(f"/lanes/{lane['id']}").json()["items"]:      # what the random text could not settle
+                if it["state"] == "open":
+                    c.patch(f"/lanes/{lane['id']}/items/{it['idx']}", json={"state": "na", "na_reason": "lab"})
+            if op == "sign":
+                k = _key(c, r, keys, who)
+                got = c.get(f"/lanes/{lane['id']}/receipt-payload", params={"key": k.fingerprint})
+                assert got.status_code < 500, got.text[:300]
+                if got.status_code != 200:
+                    why[str(got.json().get("detail", ""))[:80]] = why.get(str(got.json().get("detail", ""))[:80], 0) + 1
+                if got.status_code == 200:
+                    payload = got.json()["payload"]
+                    res = c.post(f"/lanes/{lane['id']}/close", json={"reviewed": True, "payload": payload,
+                                                                    "signature": k.sign(payload),
+                                                                    "key_fingerprint": k.fingerprint})
+            else:
+                res = c.post(f"/lanes/{lane['id']}/close", json={"reviewed": True})
+        elif op == "void":
+            items = lane["items"]
+            it = r.choice(items)
+            if r.random() < 0.5:
+                res = _send_json(c, "patch", f"/lanes/{lane['id']}/items/{it['idx']}", {"state": "open"})
+            else:
+                res = _send_json(c, "post", f"/lanes/{lane['id']}/attach",
+                                 {"item_idx": it["idx"], "kind": "note", "text": _text(r)[:2000]})
+        elif op == "revoke" and who in keys:
+            res = c.post(f"/auth/keys/{keys.pop(who).id}/revoke")
+        elif op == "person":
+            # The signer renamed, given another email, disabled or enabled again after signing: the
+            # verifier checks each receipt against who the signer was when it was issued.
+            _as(c, "owner@lab.test")
+            change = r.choice([{"name": _text(r)[:200]}, {"name": "Rita " + str(r.randrange(99))},
+                               {"email": f"rita{r.randrange(99)}@lab.test"}, {"disabled": True}, {"disabled": False}])
+            res = _send_json(c, "patch", "/people/3", change)
+            if res.status_code == 200 and "email" in change:
+                emails["rita"] = change["email"]
+            if res.status_code == 200 and change.get("disabled") is True and r.random() < 0.7:
+                res = _send_json(c, "patch", "/people/3", {"disabled": False})
+                change = {"disabled": False}
+            if res.status_code == 200 and "disabled" in change:
+                (disabled.add if change["disabled"] else disabled.discard)("rita")
+        elif op == "roles":
+            _as(c, "owner@lab.test")
+            res = c.put(f"/engagements/{e}/members", json={"members": [
+                {"user_id": 3, "roles": r.choice([["reviewer"], ["tester"], ["tester", "reviewer"], ["viewer"]])},
+                {"user_id": 2, "roles": ["tester"]}]})
+        elif op == "delete" and r.random() < 0.3:
+            _as(c, "owner@lab.test")
+            res = c.post(f"/engagements/{e}/content/delete", json={"confirm_name": name})
+        if res is not None:
+            assert res.status_code < 500, f"{op}: {res.status_code} {res.text[:300]}"
+            seen[(op, res.status_code)] = seen.get((op, res.status_code), 0) + 1
+    _as(c, "owner@lab.test")
+
+
+def _verify(verify, tmp_path, data: bytes, ext: str, *flags) -> tuple[int, str]:
+    import contextlib
+    import io
+    p = tmp_path / f"r.{ext}"
+    p.write_bytes(data)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = verify.main(["verify_report.py", str(p), *flags])
+    return code, out.getvalue()
+
+
+def test_fuzz_the_report_with_signatures_voids_and_deletion_verifies_strictly_and_is_byte_stable(
+        file_client, tmp_path, monkeypatch):
+    """Random histories (the second pass's, plus signed and unsigned receipts, voids, keys revoked
+    after signing, content deleted): the JSON and HTML reports build and verify; in strict mode
+    (--require-history) exactly when every receipt in force is signed; and two other processes,
+    with other hash seeds, reading the same database with the clock fixed, write the same bytes."""
+    import datetime as dt
+    import importlib.util
+    import subprocess
+    from app import report, seal
+    from test_fuzz2 import _ops, _send_json, _text
+    from test_import import team
+    c, engine = file_client
+    spec = importlib.util.spec_from_file_location("verify_report_fz3", ROOT / "tools" / "verify_report.py")
+    verify = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verify)
+
+    class Fixed(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return dt.datetime(2026, 10, 11, 12, 0, 0, tzinfo=tz)
+    _, e, _ = team(c)
+    names = {e: "Import"}
+    r = rng("report3")
+    seen: dict = {}
+    why: dict = {}              # why a receipt payload was refused
+    keys: dict = {}
+    emails, disabled = dict(SIGNERS), set()
+    engagements = []
+    for i in range(iterations(5)):
+        with time_limit(90, f"iteration {i}"):
+            if i:
+                name = _text(r)[:200]
+                made = _send_json(c, "post", "/engagements", {"name": name, "pack_id": "web-pentest-wstg"})
+                assert made.status_code < 500, made.text[:300]
+                if made.status_code != 201:
+                    continue
+                e = made.json()["id"]
+                names[e] = made.json()["name"]
+                c.put(f"/engagements/{e}/scope", json={"include": ["shop.example.com", "*.shop.example.com"]})
+                c.put(f"/engagements/{e}/members", json={"members": [
+                    {"user_id": 3, "roles": ["reviewer"]}, {"user_id": 2, "roles": ["tester"]}]})
+            engagements.append(e)
+            _ops(c, r, e, "web-pentest-wstg", seen)
+            _ops3(c, r, e, names[e], keys, seen, why, emails, disabled)
+            _ops(c, r, e, "web-pentest-wstg", seen)
+            _ops3(c, r, e, names[e], keys, seen, why, emails, disabled)
+            with monkeypatch.context() as m:
+                m.setattr(report, "datetime", Fixed)
+                m.setattr(seal, "datetime", Fixed)
+                first = c.get(f"/engagements/{e}/report")
+                html = c.get(f"/engagements/{e}/report.html")
+        assert first.status_code == 200 and html.status_code == 200, f"iteration {i}: {first.text[:300]}"
+        assert html.text == report.render_html(json.loads(first.content)), f"iteration {i}: HTML is not the JSON"
+        rep = json.loads(first.content)
+        in_force = [l for l in rep["lanes"] if l["receipt"] and l["status"] == "closed"]
+        all_signed = all(l["receipt"].get("signature") for l in in_force)
+        for ext, data in (("json", first.content), ("html", html.content)):
+            code, out = _verify(verify, tmp_path, data, ext)
+            assert code == 0, f"iteration {i}: {ext} does not verify:\n{out[-3000:]}"
+            code, out = _verify(verify, tmp_path, data, ext, "--require-history")
+            assert code == (0 if all_signed else 1), f"iteration {i}: {ext} strict {code}, all signed {all_signed}:\n" \
+                                                      f"{out[-3000:]}"
+            if not all_signed:
+                assert "the receipt is not signed" in out, out[-2000:]
+    ok = {op for (op, code), n in seen.items() if code < 300}
+    assert {"sign", "void", "person", "roles", 4, 5, 6} <= ok, "; ".join(map(str, sorted(seen.items(), key=str))) + f" {why}"
+
+    # The same database, read by two other processes with other hash seeds and the clock fixed.
+    with monkeypatch.context() as m:
+        m.setattr(report, "datetime", Fixed)
+        m.setattr(seal, "datetime", Fixed)
+        here = {e: (c.get(f"/engagements/{e}/report").content, c.get(f"/engagements/{e}/report.html").content)
+                for e in engagements}
+    url = engine.url.render_as_string(hide_password=False)
+    for seed in ("1", "4242"):
+        out = tmp_path / f"export-{seed}"
+        out.mkdir()
+        env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONDONTWRITEBYTECODE": "1"}
+        done = subprocess.run([sys.executable, "-c", EXPORT, url, str(out), json.dumps(engagements)],
+                              cwd=ROOT / "server", env=env, capture_output=True, text=True, timeout=180)
+        assert done.returncode == 0, done.stderr[-3000:]
+        for e, (j, h) in here.items():
+            assert (out / f"{e}.json").read_bytes() == j, f"engagement {e}: the JSON differs in a process seeded {seed}"
+            assert (out / f"{e}.html").read_bytes() == h, f"engagement {e}: the HTML differs in a process seeded {seed}"
