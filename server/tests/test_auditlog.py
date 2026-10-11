@@ -177,9 +177,11 @@ def test_chain_detects_edits_deletions_and_reordering(env, capsys):
         assert rows[0].prev_hash == auditlog.GENESIS and rows[1].prev_hash == rows[0].entry_hash
 
         def problems(*sql):
-            for q in sql:
-                s.execute(text(q))
-            s.commit()
+            # What the database's superuser could do: the append-only triggers (TM-5) refuse it otherwise.
+            with testdb.append_only_off(s):
+                for q in sql:
+                    s.execute(text(q))
+                s.commit()
             s.expire_all()
             return auditlog.verify(s)
         # An edited change, an edited actor, then put back.

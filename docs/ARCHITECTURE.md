@@ -118,6 +118,13 @@ which compose derives from the key.
 
 - Evidence is append-only and chained per engagement:
   `chain_hash = sha256(prev_hash + record)`.
+- The database refuses changes to the append-only tables too (migration 0026,
+  `app/appendonly.py`, TM-5): triggers on `evidence`, `receipts`, `gateway_requests`,
+  `audit_log` and `key_log` refuse every `DELETE` (and `TRUNCATE`) and every `UPDATE` but the
+  three the product makes: an evidence row's encrypted summary and a request-log row's URL and
+  reason are removed when the engagement's content is deleted, and a receipt without a
+  timestamp gets one later. A database superuser can drop the triggers; the hash chains are
+  what proves that nothing changed.
 - A receipt is the hash of a lane's manifest (items and evidence), **signed by the
   person who reviewed and closed the lane** (D-018). Any later change makes it stale
   (shown as VOID). Only people close lanes; executors cannot.

@@ -589,3 +589,9 @@ class InboxEntry(OrgOwned, Base):
 
 
 from . import orgscope  # noqa: E402,F401  (scopes every session to its organization)
+
+# Append-only tables refuse other changes in the database too (TM-5): migration 0026 makes the
+# triggers for migrated databases, this for databases made from the models.
+from . import appendonly  # noqa: E402
+
+appendonly.attach(Base.metadata)
