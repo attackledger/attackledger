@@ -224,7 +224,7 @@ h3{font-size:1.05rem;margin:1.6rem 0 .4rem}p{margin:.6rem 0}
 .cover{border-bottom:3px solid var(--accent);padding-bottom:1.5rem}.cover+section>h2{border-top:0}.kicker{margin:0;color:var(--soft);font-size:.9rem}
 .meta{display:grid;grid-template-columns:14rem minmax(0,1fr);gap:.4rem 1.25rem;margin:1rem 0 0}
 .meta dt{color:var(--soft)}.meta dd{margin:0;overflow-wrap:anywhere}
-.toc{margin:1.5rem 0 0}.toc ol{margin:.3rem 0 0;padding-left:1.4rem;columns:2;column-gap:2rem}.toc a{color:var(--accent)}
+.toc{margin:1.5rem 0 0}.toc ol{margin:.3rem 0 0;padding-left:1.4rem;columns:2;column-gap:2rem}.toc li{padding:.1rem 0}.toc a{color:var(--accent)}
 .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin:1rem 0 1.25rem}
 .tile{border:1px solid var(--rule);border-top:3px solid var(--accent);background:var(--panel);padding:.7rem .85rem}
 .tile b{display:block;font:700 1.6rem/1.15 Georgia,serif}.tile span{display:block;font-size:13px;color:var(--soft)}

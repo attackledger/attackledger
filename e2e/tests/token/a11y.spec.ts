@@ -53,6 +53,20 @@ for (const theme of ["light", "dark"] as const) {
       expect(problems).toEqual([]);
     });
 
+    test("the printable report of each engagement", async ({ page, context }) => {
+      // The server's own HTML report (server/app/report.py), as the app opens it and as it is
+      // downloaded and published (site/sample-report.html). Its own colours: one look for both themes.
+      await signInToken(context);
+      const problems: string[] = [];
+      for (const name of [NAMES.cleanEng, NAMES.hostileEng, NAMES.unicodeEng]) {
+        const engId = await api.engagementId(name);
+        await page.goto(`${APP}/api/engagements/${engId}/report.html`);
+        await expect(page.locator("h1")).toBeVisible();
+        problems.push(...await axe(page, `report.html of ${name.slice(0, 16)}`));
+      }
+      expect(problems).toEqual([]);
+    });
+
     test("the public verifier page", async ({ page }) => {
       await page.goto(VERIFY_PAGE);
       expect(await axe(page, "verify.html")).toEqual([]);
