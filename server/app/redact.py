@@ -19,37 +19,48 @@ Rules, in the order they run:
                X-CSRF-Token, ...). The engagement's identification header is kept.
                In text, "Name: value" lines are checked too when the name is one of these
                headers or looks like an identifier (contains "-" or "_").
-  JSON         "key": value at any depth when the key is secret (strings, numbers and flat
-               arrays of them), and HAR-style {"name": <secret header>, "value": ...}.
-               "code" counts in query strings and forms only: in JSON it is a status code.
+  JSON         "key": value at any depth when the key is secret: strings, numbers, and every
+               string and number inside an object or array under it, keys kept
+               ("credentials": {...}, "password": [["..."]]); and HAR-style {"name": <secret
+               header>, "value": ...}. "code" counts in query strings and forms only: in JSON
+               it is a status code (and "assertion" is WebAuthn's).
   XML, HTML    the text of an element with a secret name (<wsse:Password>, <apiKey>, in
                CDATA too) when it holds no other element; an attribute with a secret name
-               (spaces around "=" too); the value after a secret <name> (XML-RPC) or <key>
-               (plist); value= or content= of a tag whose name=, key= or property= is secret
-               (<input name="csrf_token" value=...>, <add key="DbPassword" value=...>).
+               (spaces around "=" too, unquoted in HTML, data-* by what follows); the value
+               after a secret <name> (XML-RPC) or <key> (plist); value= or content= of a tag
+               whose name=, key= or property= is secret (<input name=csrf_token value=...>,
+               <add key="DbPassword" value=...>); the whole content of a SAML <Assertion>,
+               <EncryptedAssertion> or <Artifact> wherever it is (SOAP, WS-Security, ECP).
+  XML-RPC      every string parameter of a call whose parameters are credentials by position:
+               the WordPress, Blogger, MetaWeblog and Movable Type APIs (wp.getUsersBlogs(
+               username, password)) and methods named for a login (system.login, auth.*,
+               *Token, *Session), in system.multicall too.
   multipart    a field with a secret name, up to its boundary (every line of it).
   GraphQL      a string argument with a secret name written in the query, as it appears in
                JSON, in a GraphQL body and URL-encoded in a GET query.
   parameters   name=value in query strings, form bodies and text, when the name is secret
                (percent-encoded too). In a URL's query and a form body, the whole value up to
                the next "&"; in other text, the value ends where code or prose ends it.
-  formats      JWTs, PEM private keys, bearer tokens, passwords in URLs (user:pass@), and
-               the credential formats recon already looks for (jsanalysis.REAL: AWS access
-               key ids, Stripe, Slack, GitHub, GitLab, npm, ... tokens).
+  formats      JWTs, PEM private keys, bearer tokens, passwords in URLs (user:pass@), a SAML
+               message in base64 under any name (it is decoded to see), and the credential
+               formats recon already looks for (jsanalysis.REAL: AWS access key ids, Stripe,
+               Slack, GitHub, GitLab, npm, ... tokens).
   personal     (response bodies and attached files only) email addresses, and runs of 13
                to 19 digits that pass the Luhn check and start like a card number.
 
 What this does not do: general detection of personal data (names, addresses, phone
-numbers), values under a secret key that are nested objects (in JSON, or an XML element
-holding other elements, such as a SAML assertion), secrets with no telling name or format
-(XML-RPC parameters known only by their position, unquoted HTML attribute values), and
-binary content (images, PDFs, compressed bodies), which is stored as it is and recorded as
-not redacted. A marker is a short hash: it does not reveal a strong secret,
+numbers), an XML element with a secret name that holds other elements (other than a SAML
+assertion), JSON written as JavaScript (unquoted keys), secrets with no telling name, method
+or format (an XML-RPC call of another API, a deflated SAML message under another name than
+SAMLResponse), and binary content (images, PDFs, compressed bodies), which is stored as it is
+and recorded as not redacted. A marker is a short hash: it does not reveal a strong secret,
 but someone who guesses a weak value (a short password) can confirm the guess.
 
 Everything here is linear in the size of the input: each rule is one regular expression
 pass whose repetitions are bounded or anchored (measured at about 5 MB per second).
 """
+import base64
+import functools
 import hashlib
 import json
 import re
@@ -65,16 +76,20 @@ from . import jsanalysis
 SECRET_NAMES = frozenset({
     "key", "pwd", "pass", "sid", "sig", "code", "auth", "jwt", "otp",
     "cookie", "setcookie", "authorization", "proxyauthorization",
-    # A signed SAML response logs its bearer in, and the artifact fetches one (FZ-24).
-    "samlresponse", "samlart",
+    # A signed SAML response logs its bearer in, and the artifact fetches one (FZ-24). A SAML
+    # assertion also travels as "assertion" (OAuth's SAML and JWT bearer grants) and inside
+    # WS-Federation's "wresult"; "credentials" holds a login (third pass, FZ-41).
+    "samlresponse", "samlart", "assertion", "wresult", "credential", "credentials",
 })
 SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey",
                 "subscriptionkey", "functionskey", "masterkey")
 # In JSON, "code" is nearly always a status or error code; it stays secret in query strings
 # and form bodies, where it is the OAuth authorization code.
-JSON_NOT_SECRET = frozenset({"code"})
+# A JSON "assertion" is WebAuthn's: bound to one challenge, and evidence of how a login was made.
+JSON_NOT_SECRET = frozenset({"code", "assertion"})
 # In XML, <Code> is an error code (S3, SOAP faults) and <Key> an object's name (an S3 listing).
-XML_NOT_SECRET = frozenset({"code", "key"})
+# A SAML <Assertion> is replaced whole by its own rule (_xml), which knows it is SAML's.
+XML_NOT_SECRET = frozenset({"code", "key", "assertion"})
 
 MARKER_PREFIX = "[redacted:sha256:"
 MARKER_RE = re.compile(r"\[redacted:sha256:[0-9a-f]{12}\]")
@@ -238,6 +253,14 @@ _KV = re.compile(r"""(?<![\w.\-\[\]%])([A-Za-z0-9_.\-\[\]%]{1,64})=(?!=)("[^"\r\
 _JSON_KV = re.compile(r'("((?:[^"\\\r\n]|\\.){1,100})")(\s*:\s*)'
                       r'("(?:[^"\\]|\\.)*"|-?\d[0-9.eE+\-]{0,40}|\[[^\[\]{}]{0,20000}\])')
 _JSON_SCALAR = re.compile(r'"(?:[^"\\]|\\.)*"|-?\d[0-9.eE+\-]{0,40}')
+# A secret key whose value is an object or an array that holds more than scalars (FZ-44):
+# "credentials": {"user": ..., "pin": ...}, "password": [["..."]]. Strings never cross a line end
+# and an unclosed one ends there, so each search moves forward only.
+_JSON_NESTED = re.compile(r'"((?:[^"\\\r\n]|\\.){1,100})"\s*:\s*([\[{])')
+_JSON_STRING = r'"(?:[^"\\\r\n]|\\[^\r\n])*(?:"|(?=[\\\r\n])|\Z)'
+_JSON_STRUCT = re.compile(_JSON_STRING + r'|[\[\]{}]')
+_JSON_SPAN = re.compile(rf'({_JSON_STRING})(\s*:)?|(?<![\w.\-])-?\d[0-9.eE+\-]{{0,40}}')
+JSON_NESTED_MAX = 1_000_000     # characters of one value looked through for its end
 _HAR_HEADER = re.compile(r'("name"\s*:\s*"((?:[^"\\\r\n]|\\.){1,100})"\s*,\s*"value"\s*:\s*")((?:[^"\\]|\\.)*)(")')
 # A form field in a multipart/form-data body: its headers (the name quoted or not), a blank
 # line, then its value, which ends at the part's boundary. A file part is not a field.
@@ -249,10 +272,15 @@ MULTIPART_MAX = 64_000          # characters of one field's value that are looke
 # between two angle brackets, so each match reads at most up to the next "<" (linear).
 _XML_OPEN = re.compile(r"<((?:[A-Za-z_][\w.\-]{0,63}:)?([A-Za-z_][\w.\-]{0,63}))((?:\s[^<>]{0,4000})?)>")
 _XML_ATTR = re.compile(r"""(?<![\w.\-:])((?:[A-Za-z_][\w.\-]{0,63}:)?([A-Za-z_][\w.\-]{0,63}))([ \t\r\n]*=[ \t\r\n]*)"""
-                       r"""("[^"<]{0,4000}"|'[^'<]{0,4000}')""")
+                       r"""("[^"<]{0,4000}"|'[^'<]{0,4000}'|[^\s"'=<>`]{1,4000})""")      # HTML: unquoted too (FZ-43)
 # After <name>password</name> (XML-RPC) or <key>password</key> (a plist): the value element.
 _XML_NEXT = re.compile(r"\s{0,200}(?:<value>\s{0,200})?<(string|value|base64|data)>([^<]{1,20000})</\1\s{0,20}>")
 XML_MAX = 20_000                # characters of one element's text
+# A SAML assertion (signed, it logs its subject in until it expires; encrypted, the service
+# provider decrypts and accepts it as it is) and an artifact, which fetches one: their whole
+# content is replaced, wherever the XML holds them (SOAP, WS-Security, ECP; FZ-41).
+SAML_ELEMENTS = frozenset({"assertion", "encryptedassertion", "artifact"})
+SAML_MAX = 200_000              # characters of one assertion looked through for its end
 _XML_PAIR_NAMES = ("name", "key", "property")
 _XML_PAIR_VALUES = ("value", "content")
 
@@ -272,6 +300,14 @@ _PEM_LINES = re.compile(r"(?:[ \t]*(?:\r?\n|\\n)[A-Za-z0-9+/=]{4,100})*")
 PEM_MAX = 12_000        # an 8192-bit RSA key is about 6,500 characters
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*(?:\.[A-Za-z0-9_\-]+){0,2}")
 _BEARER = re.compile(r"(?i)\b(bearer)(\s+)([A-Za-z0-9\-._~+/]{16,4000}=*)")
+# A SAML message or assertion in base64, under any name (a form field, a JSON value; FZ-41):
+# base64 of XML starts with "P" ("<"). The start of each run is decoded, and the run is replaced
+# when that names SAML's namespace. (The redirect binding's deflated messages travel as
+# SAMLResponse and SAMLRequest, which the name rules cover.)
+_B64_RUN = re.compile(r"(?<![A-Za-z0-9+/%])P(?:[A-Za-z0-9+/=]|%2[BbFfDd]|%3[Dd]|\r?\n|%0[Dd]%0[Aa]|%0[Aa]"
+                      r"|(?:\\r)?\\n|\\/){99,}")         # wrapped, percent-encoded, or in a JSON string
+SAML_B64_PEEK = 6000            # characters of a run that are decoded to look for SAML
+_SAML_NS = b"urn:oasis:names:tc:SAML"
 _URL_PASSWORD = re.compile(r"(?<=://)([^\s:@/\"'<>\[\]]{1,200}):([^\s@/\"'<>]{1,400})@")
 # Recon's credential formats (jsanalysis.REAL), except the ones covered above or that are
 # not secrets themselves: the private key header, the service account marker, credentials
@@ -346,21 +382,40 @@ def _xml_secret(local: str) -> bool:
     return secret_name(local) and _norm(local) not in XML_NOT_SECRET
 
 
+def _attr_value(m, attrs: str) -> tuple[int, int]:
+    """Where an attribute's value is, without its quotes. Unquoted (HTML: name=password value=x,
+    FZ-43), it ends before a "/" that closes the tag (<input value=x/>)."""
+    a, b = m.start(4), m.end(4)
+    if attrs[a] in "\"'":
+        return a + 1, b - 1
+    if b == len(attrs) and attrs[b - 1] == "/" and b - 1 > a:
+        b -= 1
+    return a, b
+
+
 def _xml_attrs(attrs: str, rep: Report) -> str:
     found = list(_XML_ATTR.finditer(attrs))
     if not found:
         return attrs
+    spans = [_attr_value(m, attrs) for m in found]
     # <input name="csrf_token" value=...>, <meta name="csrf-token" content=...>, <add key="DbPassword" value=...>
-    pair = next((m.group(4)[1:-1] for m in found
-                 if m.group(2).lower() in _XML_PAIR_NAMES and secret_name(m.group(4)[1:-1])), None)
+    pair = next((attrs[a:b] for m, (a, b) in zip(found, spans)
+                 if m.group(2).lower() in _XML_PAIR_NAMES and secret_name(attrs[a:b])), None)
     out, pos = [], 0
-    for m in found:
-        local, value = m.group(2), m.group(4)
-        secret = _xml_secret(local)
-        if secret or (pair and local.lower() in _XML_PAIR_VALUES):
-            out += [attrs[pos:m.start(4)], value[0], _mask(value[1:-1], local if secret else pair, rep), value[0]]
-            pos = m.end(4)
+    for m, (a, b) in zip(found, spans):
+        local = m.group(2)
+        # HTML's data-* attributes are named by what follows: data-pwd, data-sid (FZ-43).
+        secret = _xml_secret(local[5:] if local[:5].lower() == "data-" else local)
+        if (secret or (pair and local.lower() in _XML_PAIR_VALUES)) and b > a:
+            out += [attrs[pos:a], _mask(attrs[a:b], local if secret else pair, rep)]
+            pos = b
     return "".join(out) + attrs[pos:] if out else attrs
+
+
+@functools.lru_cache(maxsize=64)
+def _saml_tags(qname: str) -> tuple[re.Pattern, re.Pattern]:
+    """An element's opening and closing tags, and not those of a longer name (AssertionIDRef)."""
+    return re.compile(re.escape("<" + qname) + r"[\s>/]"), re.compile(re.escape("</" + qname) + r"[\s>]")
 
 
 def _xml(s: str, rep: Report) -> str:
@@ -371,6 +426,8 @@ def _xml(s: str, rep: Report) -> str:
         return s
     out, pos, i = [], 0, 0
     no_cdata_end = -1                   # no "]]>" before this index
+    saml = "urn:oasis:names:tc:SAML" in s
+    no_close: dict[str, int] = {}       # "</saml:Assertion" -> not found before this index
     while True:
         m = _XML_OPEN.search(s, i)
         if not m:
@@ -385,6 +442,29 @@ def _xml(s: str, rep: Report) -> str:
         if attrs.endswith("/"):
             continue
         low = local.lower()
+        if low in SAML_ELEMENTS and (saml or "saml" in qname.lower()):
+            opener, closer = _saml_tags(qname)
+            a, hi = m.end(), m.end() + SAML_MAX
+            c = closer.search(s, max(a, no_close.get(qname, a)), hi)      # not </saml:AssertionIDRef
+            if c is None:
+                no_close[qname] = min(len(s), hi)
+                continue
+            j = c.start()
+            if a < pos:
+                continue
+            # An assertion inside this one's <Advice>: the end is the close that balances them.
+            depth = len(opener.findall(s, a, j))
+            while depth:
+                c = closer.search(s, j + 1, hi)
+                if c is None:
+                    break
+                depth += len(opener.findall(s, j + 1, c.start())) - 1
+                j = c.start()
+            if s[a:j].strip():
+                out += [s[pos:a], _mask(s[a:j], local, rep)]
+                pos = j
+            i = max(i, j)
+            continue
         if not (_xml_secret(local) or low in ("name", "key")):
             continue
         start = m.end()
@@ -426,6 +506,51 @@ def _xml(s: str, rep: Report) -> str:
         lead = text[:len(text) - len(text.lstrip())]
         out += [s[pos:v0], lead, _mask(core, kind, rep), text[len(lead) + len(core):]]
         pos = v1
+    return "".join(out) + s[pos:] if out else s
+
+
+# XML-RPC calls whose parameters are credentials by position (FZ-42): the WordPress, Blogger,
+# MetaWeblog and Movable Type APIs take a user name and a password in every call
+# (wp.getUsersBlogs(username, password), metaWeblog.newPost(blogid, username, password, ...)), and
+# a method named for a login (system.login, auth.authenticate, user.getToken) takes its secret
+# that way too. In such a call every string parameter is replaced: a parameter's own value, and
+# each value of an array (system.multicall's params) directly in it. Numbers, booleans, dates and
+# struct members with names that are not secret stay.
+_RPC_METHOD = re.compile(r"<methodName>\s{0,200}([^<\s]{1,200})\s{0,200}</methodName>"
+                         r"|<name>\s{0,200}methodName\s{0,200}</name>\s{0,200}<value>\s{0,200}(?:<string>)?"
+                         r"\s{0,200}([^<\s]{1,200})\s{0,200}(?:</string>)?\s{0,200}</value>")
+_RPC_SCALAR = re.compile(r"(?:(?<=<param>)|(?<=<data>)|(?<=</value>))\s{0,200}<value>(?:\s{0,200}<(string|base64)>([^<]{0,20000})"
+                         r"</\1\s{0,20}>\s{0,200}|([^<]{1,20000}))</value>")
+_RPC_APIS = ("wp.", "blogger.", "metaweblog.", "mt.")
+_RPC_WORDS = ("login", "logon", "signin", "auth", "password", "passwd", "credential", "token", "session",
+              "secret", "apikey")
+
+
+def rpc_secret_method(name: str) -> bool:
+    """A method whose parameters are credentials by position (FZ-42)."""
+    low = name.lower()
+    return low.startswith(_RPC_APIS) or any(w in _norm(low) for w in _RPC_WORDS)
+
+
+def _xmlrpc(s: str, rep: Report) -> str:
+    if "ethodName" not in s:
+        return s
+    calls = list(_RPC_METHOD.finditer(s))
+    out, pos = [], 0
+    for k, m in enumerate(calls):
+        name = m.group(1) or m.group(2)
+        if not rpc_secret_method(name):
+            continue
+        end = calls[k + 1].start() if k + 1 < len(calls) else len(s)
+        for v in _RPC_SCALAR.finditer(s, m.end(), end):
+            g = 2 if v.group(1) else 3
+            text = v.group(g)
+            core = text.strip()
+            if not core or v.start(g) < pos:
+                continue
+            lead = text[:len(text) - len(text.lstrip())]
+            out += [s[pos:v.start(g)], lead, _mask(core, name, rep), text[len(lead) + len(core):]]
+            pos = v.end(g)
     return "".join(out) + s[pos:] if out else s
 
 
@@ -481,7 +606,47 @@ def params(q: str, rep: Report) -> str:
     return "&".join(out)
 
 
+def _json_nested(s: str, rep: Report) -> str:
+    """Every string and number inside an object or array under a secret key, keys kept (FZ-44).
+    Its end is found by counting brackets outside strings, at most JSON_NESTED_MAX characters on;
+    one that does not end there (a body cut off) is replaced up to where the search stopped. The
+    spans replaced never overlap, so each character is looked at a bounded number of times."""
+    if "{" not in s and "[" not in s:
+        return s
+    out, pos = [], 0
+    for m in _JSON_NESTED.finditer(s):
+        key = _json_name(m.group(1))
+        if m.start() < pos or not secret_name(key) or _norm(key) in JSON_NOT_SECRET:
+            continue
+        start, depth, end = m.start(2), 0, -1
+        limit = min(len(s), start + JSON_NESTED_MAX)
+        for t in _JSON_STRUCT.finditer(s, start, limit):
+            c = t.group(0)
+            if c in "[{":
+                depth += 1
+            elif c in "]}":
+                depth -= 1
+                if depth == 0:
+                    end = t.end()
+                    break
+        end = limit if end < 0 else end
+
+        def sub(x, key=key):
+            if x.group(2):                          # a key
+                return x.group(0)
+            if x.group(1) is None:                  # a number, replaced by a string as _json does
+                return f'"{_mask(x.group(0), key, rep)}"'
+            lit = x.group(1)
+            close = '"' if len(lit) > 1 and lit.endswith('"') else ""
+            return '"' + _mask(lit[1:len(lit) - len(close)], key, rep) + close
+        out += [s[pos:start], _JSON_SPAN.sub(sub, s[start:end])]
+        pos = end
+    return "".join(out) + s[pos:] if out else s
+
+
 def _json(s: str, rep: Report) -> str:
+    s = _json_nested(s, rep)
+
     def scalar(lit: str, kind: str) -> str:
         if lit.startswith('"'):
             return f'"{_mask(lit[1:-1], kind, rep)}"'
@@ -518,8 +683,26 @@ def _pem(s: str, rep: Report) -> str:
     return "".join(out) + s[pos:] if out else s
 
 
+def saml_base64(run: str) -> bool:
+    """Whether a base64 run (percent-encoded or not, wrapped or not) starts a SAML message."""
+    head = re.sub(r"\s|\\[rn]", "", unquote(run[:SAML_B64_PEEK])).replace("\\/", "/")
+    head = head[:len(head) - len(head) % 4]
+    try:
+        raw = base64.b64decode(head)
+    except ValueError:
+        return False
+    return _SAML_NS in raw
+
+
+def _saml_runs(s: str, rep: Report) -> str:
+    if "P" not in s:
+        return s
+    return _B64_RUN.sub(lambda m: _mask(m.group(0), "SAML message (base64)", rep) if saml_base64(m.group(0))
+                        else m.group(0), s)
+
+
 def _formats(s: str, rep: Report) -> str:
-    s = _pem(s, rep)
+    s = _saml_runs(_pem(s, rep), rep)
     s = _JWT.sub(lambda m: _mask(m.group(0), "JWT", rep), s)
 
     def bearer(m):
@@ -547,7 +730,8 @@ def text(s: str, rep: Report, *, personal: bool = False) -> str:
     """Every rule over one piece of text: a URL, a note, a body, a summary."""
     if not s:
         return s
-    s = _formats(_kv(_graphql(_json(_xml(_header_lines(_multipart(s, rep), rep), rep), rep), rep), rep), rep)
+    s = _formats(_kv(_graphql(_json(_xml(_xmlrpc(_header_lines(_multipart(s, rep), rep), rep), rep), rep), rep), rep),
+                 rep)
     return _personal(s, rep) if personal else s
 
 

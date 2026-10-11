@@ -75,8 +75,13 @@ Notes:
   Set-Cookie, Authorization, Proxy-Authorization, X-Api-Key and other secret names, and
   tokens or secret parameters inside other headers); the request line and body go through
   the text rules (secret query and form parameters, each value whole up to the next `&`;
-  JSON keys; XML and HTML elements and attributes, multipart fields and GraphQL arguments
-  with secret names; JWTs, bearer tokens, key formats; email addresses and card numbers).
+  JSON keys, with every value inside an object or array under a secret key; XML and HTML
+  elements and attributes (quoted or not), multipart fields and GraphQL arguments with
+  secret names; the string parameters of XML-RPC calls that carry credentials by position
+  (`wp.*`, `blogger.*`, `metaWeblog.*`, `mt.*`, methods named for a login, in
+  `system.multicall` too); SAML assertions and artifacts inside other XML, and SAML messages
+  in base64 under any name; JWTs, bearer tokens, key formats; email addresses and card
+  numbers).
   Binary or compressed bodies are kept and noted.
   A Content-Length that matched the body is rewritten to the stored body's length.
   The URL and label are redacted too. The engagement's `redact_evidence` setting applies.

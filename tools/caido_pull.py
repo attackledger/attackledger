@@ -495,7 +495,7 @@ class Vendored:
 
     SECRET_NAMES = frozenset({"key", "pwd", "pass", "sid", "sig", "code", "auth", "jwt", "otp",
                               "cookie", "setcookie", "authorization", "proxyauthorization",
-                              "samlresponse", "samlart"})
+                              "samlresponse", "samlart", "assertion", "wresult", "credential", "credentials"})
     SECRET_PARTS = ("token", "secret", "password", "passwd", "apikey", "session", "signature", "privatekey",
                     "subscriptionkey", "functionskey", "masterkey")
     MARKER_PREFIX = "[redacted:sha256:"

@@ -13,7 +13,7 @@ report or an attestation.
 **How.** Each suspected issue was first proven with a test that failed, then fixed, and the test
 was kept as a regression test. Traffic went only to localhost, local stubs and the bundled lab,
 apart from package registries, the timestamp authority, and the passive-source queries one lab
-run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,154 tests, and it now also runs
+run made (`SUPPLY_CHAIN.md`). The server suite went from 758 to 1,222 tests, and it now also runs
 on Postgres 16 (`tools/test_postgres.sh`), as production does. The Python and browser verifiers
 give identical results on 134 reports and on 2,600 random mutants (`tools/verifier_equivalence/run.sh`).
 
@@ -27,7 +27,7 @@ give identical results on 134 reports and on 2,600 random mutants (`tools/verifi
 | [RECHECK.md](RECHECK.md) | An adversarial second pass over every fix above | 4 bypasses (2 Medium), 1 new Low |
 | [RETENTION.md](RETENTION.md) | Whether deleting an engagement's content reaches every store | 3 Medium, 4 Low |
 | [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) | Container privileges, image and package pinning, known advisories, OS-package scan, SBOM | 3 Medium, 5 Low |
-| [FUZZING.md](FUZZING.md) | Property-based and mutation fuzzing of the importers, redaction, scope and URL parsing, page and bundle parsers, and both verifiers; a second pass on the gateway's HTTP and DNS parsing, the gateway log, redaction of XML, multipart, form and GraphQL bodies, the inbox mapping and the report | 9 Medium, 23 Low, 3 Info |
+| [FUZZING.md](FUZZING.md) | Property-based and mutation fuzzing of the importers, redaction, scope and URL parsing, page and bundle parsers, and both verifiers; a second pass on the gateway's HTTP and DNS parsing, the gateway log, redaction of XML, multipart, form and GraphQL bodies, the inbox mapping and the report; a third on the gateway's TLS layer and connections that carry no request, positional XML-RPC, SAML, unquoted HTML and nested JSON redaction, and the report with signatures, voids and deletion across processes | 11 Medium, 28 Low, 5 Info |
 | [WEB_E2E.md](WEB_E2E.md) | The web app in Chromium and Firefox (Playwright): hostile content in every view, the CSP and headers, sessions, roles, CSRF, both verifiers, drafts, accessibility | 5 Low, 1 Info |
 
 Severities are the reviewers' own and describe impact in AttackLedger's threat model, mainly a
@@ -61,6 +61,12 @@ compromised or misled tool or agent in the worker and a malicious page in the op
   (`<wsse:Password>`), XML-RPC and plist values, hidden form tokens and inline GraphQL arguments
   were stored unredacted; so were multi-line multipart values and the rest of a form value after
   a `;` (FZ-25, FZ-26).
+- **FZ-41, FZ-42 (Medium): WordPress XML-RPC passwords and SAML assertions reached evidence.**
+  `wp.getUsersBlogs(username, password)` passes the password by position, with no name to
+  recognise, and an encrypted SAML assertion inside SOAP, or one in base64 under another name than
+  `SAMLResponse`, was stored whole. The third fuzzing pass also gave every gateway connection that
+  carried no request a row in the request log, and refuses TLS server names other than the
+  CONNECT host (FZ-36 to FZ-40).
 - **RET-2, RET-3 (Medium): content deletion missed running jobs and job targets.** The backup
   documentation also overstated what master-key rotation does (RET-7).
 

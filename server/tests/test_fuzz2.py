@@ -115,9 +115,9 @@ def test_fuzz_gateway_requests_are_answered_and_logged_never_dropped(gw, capfd):
         before, sent_before = len(gw.gw.log_rows), len(gw.up.requests)
         with time_limit(15, f"iteration {i}"):
             out = _send(gw, data)
-            # A tunnel that was opened and never carried a request sent nothing: it has no row of its own.
-            tunnel = out.startswith(b"HTTP/1.1 200 Connection established")
-            whole = b"\r\n\r\n" in data and not tunnel
+            # Since the third pass, every connection that sent anything has a row: a tunnel that never
+            # carried a request has one of its own, and so has a head cut off (FZ-36, FZ-38).
+            whole = bool(data)
             rows = _settle(gw, before, 1 if whole else 0, timeout=2.0 if whole else 0.05)
         allowed = [x for x in rows if x["verdict"] == "allowed" and x["method"] != "PROBE"]
         if whole:
