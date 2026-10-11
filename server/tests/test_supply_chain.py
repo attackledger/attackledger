@@ -412,6 +412,38 @@ def test_image_scan_reads_go_binaries_and_fails_on_expired_entries():
     assert "sys.exit(1 if fixable or expired else 0)" in text
 
 
+GO_TOOLS = {"subfinder", "dnsx", "httpx", "katana", "assetfinder", "waybackurls", "gau", "nuclei"}
+_EXACT = r"[a-z0-9][\w.~-]*(/[\w.~-]+)+@v\d+\.\d+\.\d+"
+
+
+def test_go_tools_are_exact_releases_built_with_checked_modules():
+    """Each of the worker's Go recon tools is an exact release, built by worker/build_go_tool.sh
+    in a stage that writes Go's checksum settings out (docs/SUPPLY_CHAIN.md, "The Go recon
+    tools"); every module raised for an advisory names an exact version, and the script checks
+    that the build selected that version and that release."""
+    text = _run_lines("worker/Dockerfile")
+    stage = text.split(" AS tools\n", 1)[1].split("\nFROM ", 1)[0]
+    env = " ".join(re.findall(r"^ENV (.*)$", stage, re.M)) + " "
+    for setting in ("GOPROXY=https://proxy.golang.org ", "GOSUMDB=sum.golang.org ", "GONOSUMDB= ",
+                    "GOPRIVATE= ", "GOINSECURE= ", "GOTOOLCHAIN=local "):
+        assert setting in env, setting
+    assert "go install" not in stage and "-mod=vendor" not in stage and "-insecure" not in stage
+    args = dict(re.findall(r"^ARG (\w+)=(\S+)$", stage, re.M))
+    built = set()
+    calls = [c.strip() for run in re.findall(r"^RUN (.*)$", stage, re.M) for c in run.split("&&")]
+    assert calls and all(c.startswith("build_go_tool.sh ") for c in calls), calls
+    for call in calls:
+        tool, *modules = [args[w[1:]] if w.startswith("$") else w for w in call.split()[1:]]
+        assert re.fullmatch(_EXACT, tool), tool
+        for m in modules:
+            assert re.fullmatch(_EXACT, m), f"{tool}: {m}"
+        built.add(tool.split("@")[0].rsplit("/", 1)[-1])
+    assert built == GO_TOOLS
+    script = (ROOT / "worker/build_go_tool.sh").read_text()
+    assert 'go install "$tool"' in script and 'go get -tool "$tool"' in script
+    assert "asked for, $got selected" in script and "set -eu" in script
+
+
 def test_dependabot_covers_every_dependency_with_the_two_week_rule():
     """Weekly, grouped, with a cooldown of at least 14 days (the newest release at least two
     weeks old, docs/SUPPLY_CHAIN.md), for every place a dependency is declared."""

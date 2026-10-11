@@ -12,7 +12,7 @@ what was measured and the gaps left, is `docs/security-review/SUPPLY_CHAIN.md`.
 | Python packages (API, gateway, worker) | PyPI | `server/requirements.txt`: every package, transitive ones too, pinned with the SHA-256 of each of its files; installed with `pip --require-hashes --no-deps --only-binary :all:` (wheels only: no package's build code runs) |
 | pip itself | PyPI | `server/requirements-pip.txt`, hashed; installed first |
 | Arjun (worker) | PyPI | `worker/requirements-arjun.txt`, hashed, in its own folder. Arjun and ratelimit are published as source only; they are built with the hash-pinned setuptools of `worker/requirements-arjun-build.txt`, without pip's build isolation (which would fetch an unpinned one) |
-| Go recon tools (subfinder, dnsx, httpx, katana, nuclei, assetfinder, waybackurls, gau) | the Go module proxy | `go install module@version`: each module against the tool's `go.sum` and the public checksum database (sum.golang.org). `worker/Dockerfile` writes these settings out (`GOSUMDB`, `GOPROXY`, no `GONOSUMDB`/`GOPRIVATE`/`GOINSECURE`) and sets `GOTOOLCHAIN=local`, so no other Go toolchain is fetched |
+| Go recon tools (subfinder, dnsx, httpx, katana, nuclei, assetfinder, waybackurls, gau) | the Go module proxy | `worker/build_go_tool.sh`, each tool an exact release: `go install module@version` (each module against the tool's `go.sum` and the public checksum database, sum.golang.org), or, for a tool with dependencies raised to fix advisories, the release built with those modules at exact versions, every module checked against the checksum database ("The Go recon tools" below). `worker/Dockerfile` writes these settings out (`GOSUMDB`, `GOPROXY`, no `GONOSUMDB`/`GOPRIVATE`/`GOINSECURE`) and sets `GOTOOLCHAIN=local`, so no other Go toolchain is fetched |
 | feroxbuster, nuclei-templates, the SecLists word list | GitHub | a SHA-256 recorded in `worker/Dockerfile` when the version was pinned; the build fails on a mismatch |
 | npm packages (web build stage only) | the npm registry | `npm ci` from `web/package-lock.json`, each package against its SHA-512 there; `--ignore-scripts`, so no install script runs |
 | GitHub Actions (CI only: `.github/workflows/`) | GitHub | each `uses:` names the full commit SHA its tag pointed at when pinned, with the tag in a comment (`server/tests/test_supply_chain.py` checks) |
@@ -192,13 +192,53 @@ also fails on the expired line itself, even once the finding is gone, until some
 renews it; an entry that matches nothing in the scanned images is printed as a note (the fix has
 arrived: delete the line).
 
-The worker's Go tools are built here (`go install module@version`), but with their own `go.mod`:
-a module inside one of them is fixed by a release of that tool built with the fixed module, which
-means moving the version in `worker/Dockerfile` (and running the lab pipeline), not an entry in
-`scan_ignore.txt`.
+The worker's Go tools are built here, so a finding in one of them is fixed in `worker/Dockerfile`
+(a newer release of the tool, or the release with the module raised: "The Go recon tools"
+below), not accepted in `scan_ignore.txt`, which takes images run as published only.
 
 The weekly security workflow runs the scan; run it by hand as well with the base-image refresh,
 before a release, and after any rebuild.
+
+### The Go recon tools
+
+Each tool in `worker/Dockerfile` is one line of `worker/build_go_tool.sh`: the tool's package at an
+exact release, then, when needed, modules at exact versions.
+
+```dockerfile
+RUN build_go_tool.sh github.com/tomnomnom/waybackurls@v0.1.0
+RUN build_go_tool.sh github.com/lc/gau/v2/cmd/gau@v2.2.4 $XNET $XTEXT github.com/valyala/fasthttp@v1.74.0
+```
+
+With the release alone, the script runs `go install package@release`: the tool exactly as its
+`go.mod` and `go.sum` say. With modules after it, it builds the same release with those
+dependencies raised: in a throwaway module it runs `go get -tool package@release`, `go get` of
+each module, `go mod tidy` and `go build`. Go's minimal version selection keeps every other
+dependency at the version the release asks for, or the lowest one a raised module needs (the
+build log prints each `upgraded` line). Each module downloaded is checked against the public
+checksum database, as `go install` checks the ones not in the tool's `go.sum`. The script fails
+if a raised module or the release ends up at any other version than the one given. The binary's
+build information lists the release as a dependency of the throwaway module, so
+`tools/scan_images.sh` and `tools/sbom.sh` still see the tool's version and every module.
+
+Which version: for the tool, the newest release at least two weeks old; for a raised module, the
+newest version at least two weeks old that has the fix, or a younger one when only it has the fix
+(the rule above). Raise a module only when a scan finding has a fix that no release of the tool
+old enough carries, and only the modules named by the findings (with what their own `go.mod`
+pulls in). Remove a module from a line once a release of the tool requires that version or a
+newer one. A finding no version fixes yet stays listed, and fails nothing.
+
+After any change to a tool or a module, before the commit:
+
+1. `docker run --rm --network none --entrypoint /opt/pd/bin/<tool> <new worker image> -h` for
+   each tool changed, against the same output of the image before: every flag the worker passes
+   (`worker/worker.py`, `commands`, `nuclei_cmd`, `ferox_cmd`, `_proxy_flags`; `-duc` from
+   `app/egress.py`) still there with the same meaning.
+2. The server tests (the worker's parsers are tested on recorded tool output).
+3. The lab pipeline, before and after, on a stack whose default network is internal: the same
+   steps finish, the same kinds of leads, only GET, HEAD and OPTIONS requests, DNS questions and
+   port probes in the gateway log, the research identification on every request in the lab's
+   access log (`docs/security-review/SUPPLY_CHAIN.md`, SC-12, has the commands).
+4. `tools/scan_images.sh` on the new worker image.
 
 ### GitHub Actions
 
