@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, EndpointRow, Job, Lead, ObservationRow, ReconModule, ReconPhase, ReconSummary, Scope, ScopeImport,
          TriageReport } from "./api";
 import { AddHost } from "./AddHost";
-import { When } from "./display";
+import { webHref, When } from "./display";
 import { latestLine, secondsSince, shownStatus, skipReason, STATUS_WORD } from "./jobs";
 import { duration, plural, termsFor, type Terms } from "./words";
 
@@ -679,7 +679,7 @@ function Hosts({ engId, version }: { engId: number; version: number }) {
             <tbody>
               {shown.slice(0, 500).map((r) => (
                 <tr key={r.host}>
-                  <th scope="row">{r.url ? <a href={r.url} target="_blank" rel="noreferrer noopener">{r.host}</a> : r.host}</th>
+                  <th scope="row">{webHref(r.url) ? <a href={webHref(r.url)} target="_blank" rel="noreferrer noopener">{r.host}</a> : r.host}</th>
                   <td className="clip" title={(r.a ?? []).join(", ")}>{(r.a ?? []).slice(0, 2).join(", ") || <span className="muted">–</span>}</td>
                   <td className="clip" title={(r.cname ?? []).join(", ")}>{(r.cname ?? [])[0] ?? <span className="muted">–</span>}</td>
                   <td>{r.status_code ? <span className={`code c${String(r.status_code)[0]}`}>{r.status_code}</span> : <span className="muted">–</span>}</td>
@@ -728,7 +728,7 @@ function GoldenTargets({ report }: { report: TriageReport }) {
                 <tr key={h.host} className={h.golden ? "golden" : undefined}>
                   <td><span className="score">{h.score}</span></td>
                   <th scope="row">
-                    {h.urls[0] ? <a href={h.urls[0]} target="_blank" rel="noreferrer noopener">{h.host}</a> : h.host}
+                    {webHref(h.urls[0]) ? <a href={webHref(h.urls[0])} target="_blank" rel="noreferrer noopener">{h.host}</a> : h.host}
                   </th>
                   <td>{h.signals.map((s) => <span key={s} className={`sig sig-${s}`} title={SIGNAL_HINT[s]}>{s}</span>)}</td>
                   <td>{h.statuses.map((c) => <span key={c} className={`code c${c[0]}`}>{c} </span>)}</td>
@@ -791,7 +791,9 @@ function Leads({ engId, version, module, terms }: { engId: number; version: numb
                 {open === l.id && (
                   <dl className="lead-detail">
                     <div><dt>Host</dt><dd>{l.host}</dd></div>
-                    <div><dt>Found in</dt><dd><a href={l.source_url} target="_blank" rel="noreferrer noopener">{l.source_url}</a></dd></div>
+                    <div><dt>Found in</dt><dd>{webHref(l.source_url)
+                      ? <a href={webHref(l.source_url)} target="_blank" rel="noreferrer noopener">{l.source_url}</a>
+                      : l.source_url}</dd></div>
                     {l.detail.value_sha256 && <div><dt>Value SHA-256</dt><dd><code>{l.detail.value_sha256}</code></dd></div>}
                     {l.detail.map_url && <div><dt>Map</dt><dd>{l.detail.map_url}</dd></div>}
                     {l.detail.template && <div><dt>Template</dt><dd><code>{l.detail.template}</code> ({l.detail.pass} pass)</dd></div>}
@@ -847,7 +849,9 @@ function Endpoints({ engId, version, module }: { engId: number; version: number;
             {rows.map((e) => (
               <li key={e.url}>
                 <span className={`ep-src ${e.js ? "js" : ""}`}>{e.js ? "JS" : e.source}</span>
-                <a href={e.url} target="_blank" rel="noreferrer noopener" className="ep-url">{e.url}</a>
+                {webHref(e.url)
+                  ? <a href={webHref(e.url)} target="_blank" rel="noreferrer noopener" className="ep-url">{e.url}</a>
+                  : <span className="ep-url">{e.url}</span>}
               </li>
             ))}
           </ul>

@@ -44,3 +44,15 @@ export function Fingerprint({ fp, full = false }: { fp: string | null | undefine
     ? <code className="hash-wrap">{group(fp)}</code>
     : <code title={group(fp)}>{shortFingerprint(fp)}</code>;
 }
+
+/** A URL from recon or an import as a link target: http(s) only, so a javascript: or data: URL that a
+ *  tool or a compromised worker recorded is shown as text and never becomes a link (web e2e tests). */
+export function webHref(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}

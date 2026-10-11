@@ -1,0 +1,60 @@
+# The browser test stack (tools/test_e2e.sh), on top of docker-compose.yml:
+#   docker compose -p al-e2e --project-directory . -f docker-compose.yml -f e2e/compose.e2e.yml ...
+# Its own project, so its own containers, networks and volumes (al-e2e_*), built from this
+# tree. Only the database, the API and the web app run: no gateway, worker or lab, so nothing
+# here sends traffic anywhere. No port is published on the host: the runner reaches the web
+# app over its own internal network, which has no route out, and its browsers open
+# http://localhost:18180, a port the runner forwards to the web container (e2e/tests/servers.mjs).
+# The tokens and the owner's password are made for each run by tools/test_e2e.sh.
+services:
+  api:
+    ports: !reset []
+    environment:
+      ATTACKLEDGER_API_TOKEN: ${E2E_API_TOKEN:?run tools/test_e2e.sh}
+      # The worker's token, which the runner uses to post recon results as a worker would.
+      ATTACKLEDGER_WORKER_TOKEN: ${E2E_WORKER_TOKEN:?run tools/test_e2e.sh}
+      ATTACKLEDGER_DEV_KEY: "1"        # fictional data only: the public development key
+      ATTACKLEDGER_MASTER_KEY: ""
+      ATTACKLEDGER_MASTER_KEY_FILE: ""
+      ATTACKLEDGER_TSA_URL: "off"      # no timestamp authority: nothing leaves the stack
+      ATTACKLEDGER_AGENTS_ENABLED: ""
+
+  web:
+    ports: !reset []
+    networks:
+      default: {}
+      browser: {}
+
+  runner:
+    profiles: [runner]
+    build:
+      context: e2e
+    environment:
+      E2E_PHASE: ${E2E_PHASE:-token}
+      E2E_API_TOKEN: ${E2E_API_TOKEN:?run tools/test_e2e.sh}
+      E2E_WORKER_TOKEN: ${E2E_WORKER_TOKEN:?run tools/test_e2e.sh}
+      E2E_OWNER_EMAIL: ${E2E_OWNER_EMAIL:-}
+      E2E_OWNER_PASSWORD: ${E2E_OWNER_PASSWORD:-}
+      CI: "1"
+    volumes:
+      - ./site:/site:ro               # the public verifier page, served as a static file
+    networks: [browser]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777,nosuid,nodev
+    shm_size: 1g
+    init: true
+    deploy:
+      resources:
+        limits:
+          pids: 2048
+          memory: 4g
+
+networks:
+  # The runner and the web app only, with no route out (internal) and no address for the host.
+  browser:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.inhibit_ipv4: "true"
