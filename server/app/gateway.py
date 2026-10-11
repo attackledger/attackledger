@@ -360,10 +360,30 @@ class CA:
         ctx.load_cert_chain(path)
         os.unlink(path)
         ctx.set_alpn_protocols(["http/1.1"])
+        ctx.sni_callback = _keep_server_name
         self._contexts[host] = (time.time() + (self.LEAF_DAYS - 1) * 86400, ctx)
         while len(self._contexts) > 1024:
             self._contexts.popitem(last=False)
         return ctx
+
+
+def _keep_server_name(ssl_object, server_name, _ctx):
+    """The TLS server name (SNI) a client asked for, kept on its connection so the tunnel can
+    compare it with the CONNECT host once the handshake is done (server_name_of). The leaf is the
+    CONNECT host's whatever is asked; OpenSSL has already refused an empty, overlong or
+    NUL-holding name, and Python one that is not ASCII, before this is called. Never raises:
+    an exception here would be printed and fail the handshake with an internal error."""
+    try:
+        ssl_object.attackledger_server_name = server_name
+    except Exception:                       # noqa: BLE001  (an object that takes no attribute)
+        pass
+    return None
+
+
+def server_name_of(ssl_object) -> str | None:
+    """The SNI a client sent in this TLS connection's handshake, or None (it sent none)."""
+    name = getattr(ssl_object, "attackledger_server_name", None)
+    return name if isinstance(name, str) else None
 
 
 def _client_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
@@ -763,6 +783,11 @@ class Tunnel:
     host: str
     port: int
     auth: str | None
+    rules: "Rules | None" = None
+    tool: str = "unknown"
+    kind: str = "target"
+    rows: int = 0               # rows logged for what the tunnel carried; none: the tunnel gets one
+    idle: bool = False          # it ended because no request came within HEAD_TIMEOUT
 
 
 class Gateway:
@@ -1176,16 +1201,22 @@ class Gateway:
     async def _serve(self, reader, writer, tunnel: Tunnel | None) -> None:
         conn = h11.Connection(h11.SERVER, max_incomplete_event_size=MAX_HEAD)
         while True:
+            waited = self.clock()
             try:
                 ev = await asyncio.wait_for(_next(conn, reader), HEAD_TIMEOUT)
             except h11.RemoteProtocolError as e:
                 await self._unreadable(conn, writer, tunnel, e)
+                return
+            except asyncio.TimeoutError:
+                await self._head_timed_out(conn, writer, tunnel, waited)
                 return
             if not isinstance(ev, h11.Request):
                 return
             if tunnel is None and ev.method == b"CONNECT":
                 await self._connect(conn, reader, writer, ev)
                 return
+            if tunnel is not None:
+                tunnel.rows += 1            # _request logs it, whatever happens to it
             keep = await self._request(conn, reader, writer, ev, tunnel)
             if not keep or conn.our_state is not h11.DONE or conn.their_state is not h11.DONE:
                 return
@@ -1197,6 +1228,7 @@ class Gateway:
         (FZ-21). Before, the connection was closed with no answer and no row."""
         started, rules, tool = self.clock(), None, "unknown"
         if tunnel is not None:
+            rules, tool = tunnel.rules, tunnel.tool
             try:
                 rules, tool = await self.identify(tunnel.auth)
             except Refused:
@@ -1204,10 +1236,32 @@ class Gateway:
         hint = getattr(e, "error_status_hint", 400)
         refusal = Refused(hint if 400 <= hint < 500 else 400,
                           f"the request is not valid HTTP/1.1 ({str(e).split(':')[0][:80]})")
+        self._unread_row(tunnel, rules, tool, refusal, started)
+        await self._refuse(conn, writer, b"GET", refusal)
+
+    def _unread_row(self, tunnel: Tunnel | None, rules, tool: str, refusal: Refused, started: float) -> None:
+        if tunnel is not None:
+            tunnel.rows += 1
         self.record(rules=rules, tool=tool, kind="target", method="", url="", host=tunnel.host if tunnel else "",
                     port=tunnel.port if tunnel else None, status=refusal.status, verdict="refused",
                     reason=refusal.reason, started=started)
-        await self._refuse(conn, writer, b"GET", refusal)
+
+    async def _head_timed_out(self, conn, writer, tunnel: Tunnel | None, waited: float) -> None:
+        """No whole request head within HEAD_TIMEOUT (or READ_TIMEOUT between two reads). If part
+        of one had arrived, the connection is answered 408 and logged like a head h11 refuses: before,
+        it was closed with no row (fuzzing, third pass). An idle connection (a keep-alive between two
+        requests, the healthcheck's connect) has nothing to log and is closed."""
+        conn.receive_data(b"")                  # as if the client had closed: h11 says what it holds
+        try:
+            conn.next_event()
+        except h11.RemoteProtocolError:
+            refusal = Refused(408, "the request head did not arrive in time; nothing was sent")
+            rules, tool = (tunnel.rules, tunnel.tool) if tunnel else (None, "unknown")
+            self._unread_row(tunnel, rules, tool, refusal, waited)
+            await self._refuse(conn, writer, b"GET", refusal)
+            return
+        if tunnel is not None:
+            tunnel.idle = True
 
     async def _refuse(self, conn, writer, req_method: bytes, e: Refused) -> None:
         body = b"" if req_method == b"HEAD" else (f"AttackLedger gateway: {e.reason}\n").encode()
@@ -1247,18 +1301,66 @@ class Gateway:
                         verdict="refused", reason=e.reason, started=started)
             await self._refuse(conn, writer, b"CONNECT", e)
             return
-        ev2 = await _next(conn, reader)
-        if not isinstance(ev2, h11.EndOfMessage):
+        def row(verdict: str, status: int | None, reason: str) -> None:
+            self.record(rules=rules, tool=tool, kind=kind, method="CONNECT", url=f"{host}:{port}", host=host,
+                        port=port, status=status, verdict=verdict, reason=reason, started=started)
+        try:
+            # A CONNECT has no content (RFC 9110 9.3.6), and nothing may come before the 200. Both
+            # ended the connection with no answer and no row before (fuzzing, third pass).
+            try:
+                end = await asyncio.wait_for(_next(conn, reader), HEAD_TIMEOUT)
+            except Exception as e:                  # cut off, timed out, unreadable
+                raise _not_checked(e)
+            if not isinstance(end, h11.EndOfMessage):
+                raise Refused(400, "a CONNECT request has no body; nothing was relayed")
+            data, closed = conn.trailing_data
+            if data:
+                raise Refused(400, EARLY_BYTES)
+        except Refused as e:
+            row("failed" if e.status >= 500 else "refused", e.status, e.reason)
+            await self._refuse(conn, writer, b"CONNECT", e)
+            return
+        if closed:
+            row("failed", None, "the client closed the connection before the tunnel was open; nothing was relayed")
             return
         writer.write(conn.send(h11.Response(status_code=200, headers=[], reason=b"Connection established")))
         await writer.drain()
-        data, closed = conn.trailing_data
-        if data or closed or conn.our_state is not h11.SWITCHED_PROTOCOL:
-            return      # bytes sent before the tunnel was open: not supported, nothing relayed
-        # Every tunnel is TLS with the gateway's certificate. A client that sends anything else,
-        # or does not trust the CA, fails the handshake and is disconnected: nothing is relayed.
-        await writer.start_tls(self.ca.server_context(host), ssl_handshake_timeout=HANDSHAKE_TIMEOUT)
-        await self._serve(reader, writer, Tunnel(host, port, auth))
+        # From here on, the tunnel has one row of its own unless a request in it was logged: a tunnel
+        # that never carried one (a failed handshake, a TLS scanner, a client that went away) was not
+        # in the log at all before (fuzzing, third pass). One row per connection, never more.
+        tunnel = Tunnel(host, port, auth, rules=rules, tool=tool, kind=kind)
+        verdict, why = "failed", "the client closed the tunnel before sending a request; nothing was relayed"
+        try:
+            # Bytes read from the client but not yet consumed would be read inside the tunnel as if
+            # they had come through TLS (fuzzing, third pass). No await between this check and
+            # start_tls, which stops reading before it gives the loop a turn.
+            if conn.our_state is not h11.SWITCHED_PROTOCOL or _buffered(reader):
+                verdict, why = "refused", EARLY_BYTES
+                return
+            # Every tunnel is TLS with the gateway's certificate. A client that sends anything else,
+            # or does not trust the CA, fails the handshake and is disconnected: nothing is relayed.
+            try:
+                await writer.start_tls(self.ca.server_context(host), ssl_handshake_timeout=HANDSHAKE_TIMEOUT)
+            except (ssl.SSLError, OSError, asyncio.TimeoutError) as e:
+                verdict, why = "refused", _tls_failure(e) + "; nothing was relayed"
+                return
+            sni = server_name_of(writer.get_extra_info("ssl_object"))
+            if sni is not None and sni.lower().rstrip(".") != host:
+                # The certificate was the CONNECT host's, and every request must name it in Host:
+                # nothing could reach another host. Refused all the same, and said so.
+                verdict, why = "refused", (f"the TLS server name (SNI) {sni[:100]} is not the tunnel's host "
+                                           f"{host[:100]}; nothing was relayed")
+                return
+            try:
+                await self._serve(reader, writer, tunnel)
+            except (ssl.SSLError, OSError, asyncio.TimeoutError, h11.ProtocolError) as e:
+                why = f"the tunnel ended before a request ({_tls_failure(e, handshake=False)}); nothing was relayed"
+                raise
+            if tunnel.idle:
+                why = f"the tunnel carried no request in {HEAD_TIMEOUT:g} s; nothing was relayed"
+        finally:
+            if not tunnel.rows:
+                row(verdict, None, why)
 
     async def _probe(self, conn, writer, rules: Rules, tool: str, host: str, port: int, started: float) -> None:
         # A probe is a connection too: it waits for the connection limiter like a request does, so
@@ -1313,6 +1415,11 @@ class Gateway:
                 scheme, path = "http", (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
             else:
                 auth, host, port, scheme, path = tunnel.auth, tunnel.host, tunnel.port, "https", target
+                # The tunnel's job and host, named in every row its requests leave, refusals too.
+                rules, tool, kind = tunnel.rules, tunnel.tool, tunnel.kind
+                rules, tool = await self.identify(auth)
+                if method == "PRI" and target == "*":
+                    raise Refused(400, "HTTP/2 is not spoken here: the gateway offers HTTP/1.1 only (ALPN http/1.1)")
                 if not path.startswith("/"):
                     raise Refused(400, "requests inside a tunnel use a path")
                 h = _header(ev.headers, b"host")
@@ -1754,6 +1861,31 @@ def _bindable(address: str) -> bool:
             return False
 
 
+EARLY_BYTES = "the client sent bytes before the tunnel was open (wait for the 200 answer); nothing was relayed"
+
+
+def _buffered(reader: asyncio.StreamReader) -> bool:
+    """Whether the stream holds bytes nobody has read yet. asyncio has no public way to ask: this
+    is the buffer StreamReader.read takes from (CPython 3.8 to 3.13)."""
+    return bool(getattr(reader, "_buffer", b""))
+
+
+def _tls_failure(e: Exception, handshake: bool = True) -> str:
+    """Why a TLS handshake, or the TLS connection after it, failed, for the log."""
+    if isinstance(e, ssl.SSLError):
+        why = (e.reason or "").upper()
+        if why in ("TLSV1_ALERT_UNKNOWN_CA", "SSLV3_ALERT_BAD_CERTIFICATE", "SSLV3_ALERT_CERTIFICATE_UNKNOWN"):
+            return "the client refused the gateway's certificate: does it trust the gateway CA?"
+        if why == "HTTP_REQUEST":
+            return "the client sent plain HTTP, not TLS"
+        return f"the TLS {'handshake ' if handshake else ''}failed: {(e.reason or type(e).__name__)[:80]}"
+    if isinstance(e, asyncio.TimeoutError) or (isinstance(e, ConnectionAbortedError) and "longer than" in str(e)):
+        return f"no TLS handshake within {HANDSHAKE_TIMEOUT:g} s" if handshake else "timed out"
+    if isinstance(e, h11.ProtocolError):
+        return "not valid HTTP/1.1"
+    return f"the client closed the connection{' during the TLS handshake' if handshake else ''}"
+
+
 async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
     """The next h11 event, reading as needed. EOF gives ConnectionClosed (or an error)."""
     while True:
@@ -1953,7 +2085,24 @@ def _detail(data) -> str:
     return f" ({detail[:120]})" if isinstance(detail, str) else ""
 
 
+def quiet_unraisable(previous=None):
+    """An unraisable-exception hook for the gateway's process. Python decodes a TLS server name
+    (SNI) as ASCII before the gateway's callback sees it; a client sending another one fails the
+    handshake (the tunnel's row says so) and Python prints a traceback for it, which a job's tool
+    could repeat at will. That case is one line here; anything else goes to the previous hook."""
+    previous = previous or sys.unraisablehook
+
+    def hook(u):
+        if isinstance(u.exc_value, UnicodeDecodeError) and isinstance(u.object, bytes):
+            print("gateway: a TLS client sent a server name (SNI) that is not ASCII; the handshake was refused",
+                  file=sys.stderr, flush=True)
+            return
+        previous(u)
+    return hook
+
+
 def main() -> None:
+    sys.unraisablehook = quiet_unraisable()
     token = gateway_token(create=True)
     state = os.environ.get("ATTACKLEDGER_GATEWAY_STATE", "/data/gateway")
     ca = CA(state, os.environ.get("ATTACKLEDGER_GATEWAY_PUBLIC", "/data/gateway-public"))
