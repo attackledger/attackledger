@@ -556,7 +556,8 @@ def split_authority(authority: str, default_port: int | None = None) -> tuple[st
         if default_port is None:
             raise Refused(400, "a port is required")
         port = str(default_port)
-    if not port.isdigit() or not 0 < int(port) < 65536:
+    # ASCII digits only: "²".isdigit() is True and int("²") raises (fuzzing, FZ-20).
+    if not (port.isascii() and port.isdigit()) or not 0 < int(port) < 65536:
         raise Refused(400, "not a valid port")
     return host.lower().rstrip("."), int(port)
 
@@ -620,7 +621,9 @@ class Policy:
         # _method=DELETE and the like. Only a value that can be a method name counts: parameter
         # discovery (Arjun) and scanners send _method with numbers or payloads, which no
         # framework reads as a method.
-        query = urlsplit(path).query
+        # What urlsplit reads as the query, without urlsplit: a path such as "//[x/" made it
+        # raise (Invalid IPv6 URL) and the request was dropped without a row (FZ-20).
+        query = path.partition("#")[0].partition("?")[2]
         for k, v in parse_qsl(query, keep_blank_values=True):
             m = v.strip().upper()
             if k.lower() == "_method" and m.isalpha() and m not in READ_ONLY and m != method:
@@ -1268,7 +1271,10 @@ class Gateway:
                     return await self._answer_self_check(conn, reader, writer)
                 if not target.lower().startswith("http://"):
                     raise Refused(400, "send http:// URLs in absolute form, and https:// through CONNECT")
-                parts = urlsplit(target)
+                try:
+                    parts = urlsplit(target)
+                except ValueError:              # "http://[shop/": Invalid IPv6 URL (FZ-20)
+                    raise Refused(400, "not a valid URL")
                 if parts.username is not None or parts.password is not None:
                     raise Refused(403, "URLs with credentials are not sent")
                 host, port = split_authority(parts.netloc, 80)
@@ -1287,7 +1293,7 @@ class Gateway:
             if (label or approval_text) and kind != "target":
                 raise Refused(403, "test accounts and approved writes are for target requests only")
             if approval_text is not None:
-                if not approval_text.isdigit() or len(approval_text) > 12:
+                if not (approval_text.isascii() and approval_text.isdigit()) or len(approval_text) > 12:
                     raise Refused(400, "X-AttackLedger-Approval names an approval by its number")
                 approval_id = int(approval_text)
             self.policy.check(rules, kind, method, path, ev.headers, write=approval_id is not None)
@@ -1315,10 +1321,15 @@ class Gateway:
                                       account=account, approved=approved["headers"] if approved else None)
             if body:
                 out.append((b"Content-Length", str(len(body)).encode()))
-        except Refused as e:
+        except Exception as e:
+            # Every request that gets here is answered and logged, whatever stopped it: a refusal,
+            # a request h11 could not read to the end, or a bug in a check (FZ-20, FZ-21). Before,
+            # anything but Refused ended the connection with no answer and no row.
+            if not isinstance(e, Refused):
+                e = _not_checked(e)
             self.record(rules=rules, tool=tool, kind=kind, method=method, url=url, host=host, port=port,
-                        status=e.status, verdict="refused", reason=e.reason, started=started,
-                        account=account["label"] if account else label, approval_id=approval_id)
+                        status=e.status, verdict="failed" if e.status >= 500 else "refused", reason=e.reason,
+                        started=started, account=account["label"] if account else label, approval_id=approval_id)
             await self._refuse(conn, writer, ev.method, e)
             return False
         return await self._forward(conn, writer, rules, tool, kind, method, scheme, host, port, path, out, body,
@@ -1719,6 +1730,20 @@ async def _next(conn: h11.Connection, reader: asyncio.StreamReader):
         if ev is h11.PAUSED:
             return h11.ConnectionClosed()
         return ev
+
+
+def _not_checked(e: Exception) -> Refused:
+    """The refusal for a request whose checks stopped with something other than Refused: the
+    client's message could not be read to the end, or a check has a bug. Never the exception's
+    text for a bug: it may quote the request."""
+    if isinstance(e, h11.RemoteProtocolError):
+        return Refused(400, f"the request is not valid HTTP/1.1 ({str(e).split(':')[0][:80]})")
+    if isinstance(e, asyncio.TimeoutError):
+        return Refused(408, "the request did not arrive in time")
+    if isinstance(e, (ConnectionError, asyncio.IncompleteReadError)):
+        return Refused(400, "the client closed the connection before the request was complete")
+    print(f"gateway: a request could not be checked: {type(e).__name__}: {str(e)[:300]}", file=sys.stderr, flush=True)
+    return Refused(500, f"the gateway could not check this request ({type(e).__name__}); nothing was sent")
 
 
 def _decode(coding: str, body: bytes, limit: int) -> bytes:
