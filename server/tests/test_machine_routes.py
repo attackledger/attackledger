@@ -147,6 +147,12 @@ def test_the_compose_stack_reaches_the_api_on_its_control_alias():
     prod = _load(ROOT / "deploy" / "compose.prod.yml")["services"]
     assert "ATTACKLEDGER_CONTROL_LISTEN" not in (prod["api"].get("environment") or {})    # inherited, not reset
     assert "ATTACKLEDGER_API_URL" not in (prod["gateway"].get("environment") or {})
+    # Every other stack that replaces the API's networks keeps its control alias (the benchmark's).
+    for f in ("tools/benchmark/compose.override.yml", "tools/demo/compose.override.yml", "e2e/compose.e2e.yml",
+              "deploy/compose.prod.yml"):
+        nets = (_load(ROOT / f)["services"].get("api") or {}).get("networks")
+        if nets is not None:
+            assert isinstance(nets, dict) and alias in ((nets.get("control") or {}).get("aliases") or []), f
     # The browser tests' runner posts a worker's results as the gateway's relay would: on the control network.
     e2e = _load(ROOT / "e2e" / "compose.e2e.yml")["services"]
     assert "control" in e2e["runner"]["networks"]
