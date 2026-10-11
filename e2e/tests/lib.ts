@@ -279,11 +279,23 @@ function browserFavicon(text: string): boolean {
   return /favicon\.ico/.test(text) && /(FaviconLoader|at resource:)/.test(text);
 }
 
+/** WebKit styles a document it shows as text (text/plain, JSON) with a stylesheet of its own, and
+ *  reports that stylesheet as refused under default-src 'none', for any text at all (measured with a
+ *  two-word text/plain page). Not counted on such a document, and only there: an HTML page that
+ *  says the same has had a style injected. */
+const webkitTextStyle = (text: string) =>
+  text === "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' appears in neither the style-src directive nor the default-src directive of the Content Security Policy.";
+
+/** WebKit reports a cross-origin fetch it refuses as an uncaught error, even when the page catches
+ *  the rejection (the CSRF pages do). Counted as a console error, which a test can expect. */
+const webkitRefusedFetch = (message: string) => /^Fetch API cannot load .* due to access control checks\.$/.test(message);
+
 export const test = base.extend<{ guard: Guard }>({
   guard: [async ({ context }, use) => {
     const allowed: RegExp[] = [];
     const g: Guard = { csp: [], xss: [], dialogs: [], errors: [], documents: [], allowConsole: (re) => allowed.push(re) };
     const headerProblems: string[] = [];
+    const docType = new WeakMap<Page, string>();     // the type of each page's own document
     const failed: string[] = [];
     await context.exposeBinding("__e2eReport", ({ page }, kind: string, detail: string) => {
       const where = page?.url() ?? "?";
@@ -303,15 +315,23 @@ export const test = base.extend<{ guard: Guard }>({
       page.on("console", (m) => {
         const text = m.text();
         if (browserFavicon(text)) return;
+        if (webkitTextStyle(text) && !/^text\/html/.test(docType.get(page) ?? "")) return;
         if (/Content[- ]Security[- ]Policy|CSP/i.test(text)) g.csp.push(`${page.url()}: console: ${text}`);
         else if (m.type() === "error" && !allowed.some((re) => re.test(text)) && !harness(page, text)) g.errors.push(`${page.url()}: ${text}`);
       });
-      page.on("pageerror", (e) => g.errors.push(`${page.url()}: uncaught ${e.name}: ${e.message}`));
+      page.on("pageerror", (e) => {
+        // WebKit's text arrives split at its first colon, as name "Fetch API cannot load http" and
+        // the rest of the URL and sentence as the message.
+        const text = e.name && e.name !== "Error" ? `${e.name}:${e.message}` : e.message;
+        if (webkitRefusedFetch(text) && allowed.some((re) => re.test(text))) return;
+        g.errors.push(`${page.url()}: uncaught ${e.name}: ${e.message}`);
+      });
       // The console says only "Failed to load resource"; which one is here.
       page.on("response", (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.request().method()} ${r.url()}`); });
       page.on("dialog", (d) => { g.dialogs.push(`${d.type()}: ${d.message()}`); void d.dismiss().catch(() => undefined); });
       page.on("response", (r) => {
         if (r.request().resourceType() !== "document") return;
+        if (r.frame() === page.mainFrame()) docType.set(page, r.headers()["content-type"] ?? "");
         g.documents.push({ url: r.url(), status: r.status() });
         headerProblems.push(...checkDocumentHeaders(r));
       });

@@ -108,6 +108,18 @@ test.describe("the public verifier page", () => {
     await expect(status).toHaveText("unsealed.json: verification failed. 2 checks failed: Change history, Report seal.");
   });
 
+  test("the hostile engagement's HTML report verifies, and what its JSON says is shown as text", async ({ page }) => {
+    const id = await api.engagementId(NAMES.hostileEng);
+    const r = await fetch(`http://web/api/engagements/${id}/report.html`, { headers: { authorization: `Bearer ${process.env.E2E_API_TOKEN}` } });
+    expect(r.status).toBe(200);
+    await page.goto(VERIFY_PAGE);
+    await check(page, "hostile.html", await r.text());
+    await expect(page.locator("#status")).toHaveText("hostile.html: verified. No check failed.");
+    // The facts list (what the verified JSON says): the hostile name as typed, nothing made from it.
+    await expect(page.locator("#result .facts li").first()).toContainText(`Engagement: ${NAMES.hostileEng} (id ${id})`);
+    expect(await injected(page)).toEqual([]);
+  });
+
   test("a hostile report renders its names as text", async ({ page }) => {
     const hostile = await reportOf(await api.engagementId(NAMES.hostileEng));
     await page.goto(VERIFY_PAGE);

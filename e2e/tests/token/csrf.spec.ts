@@ -24,7 +24,7 @@ async function formPost(page: Page, url: string, apiPath: string): Promise<{ sta
 
 for (const [label, origin] of [["a sibling on the same site", SIBLING], ["another site", OTHER_SITE]] as const) {
   test(`changes sent from ${label} are refused`, async ({ page, context, browserName, guard }) => {
-    guard.allowConsole(/status of 40[13]|Failed to load resource|CORS|Cross-Origin Request Blocked|Cross-Origin-Resource-Policy|NetworkError/i);
+    guard.allowConsole(/status of 40[13]|Failed to load resource|CORS|Cross-Origin Request Blocked|Cross-Origin-Resource-Policy|NetworkError|due to access control checks|Preflight response is not successful|is not allowed by Access-Control-Allow-Origin/i);
     await signInToken(context);
     const tag = `csrf-${browserName}-${origin === SIBLING ? "sibling" : "site"}`;
 
@@ -48,9 +48,10 @@ for (const [label, origin] of [["a sibling on the same site", SIBLING], ["anothe
     expect(out["cors json"]).toMatch(/^error:TypeError/);
     expect(out["cors read"]).toMatch(/^error:TypeError/);
     for (const k of ["no-cors text/plain", "no-cors form", "no-cors logout"]) expect(out[k]).toMatch(/^(error:TypeError|sent:opaque:0)$/);
-    // Each no-cors POST was answered 403 (Firefox shows the answer, Chromium only that CORP hid it);
-    // none was accepted.
-    const refused = (path: string) => answers.filter((a) => a === `POST ${path} 403` || a.startsWith(`POST ${path} net::ERR_BLOCKED_BY_RESPONSE`));
+    // Each no-cors POST was answered 403 (Firefox shows the answer, Chromium and WebKit only that
+    // CORP hid it); none was accepted.
+    const refused = (path: string) => answers.filter((a) => a === `POST ${path} 403` || a.startsWith(`POST ${path} net::ERR_BLOCKED_BY_RESPONSE`)
+      || (a.startsWith(`POST ${path} Cancelled load to `) && a.endsWith("because it violates the resource's Cross-Origin-Resource-Policy response header.")));
     expect(refused("/api/engagements"), answers.join("; ")).toHaveLength(2);
     expect(refused("/api/auth/logout"), answers.join("; ")).toHaveLength(1);
     expect(answers.filter((a) => /^POST .* [23]\d\d$/.test(a))).toEqual([]);
