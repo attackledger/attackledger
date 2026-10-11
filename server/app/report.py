@@ -197,9 +197,15 @@ def _status(status: str | None) -> str:
     return f"<span class='st st-{_e(status or 'none')}'>{_e(_STATUS.get(status, status))}</span>"
 
 
-def _table(head: list[str], rows: list[str], cls: str = "") -> str:
+def _scroller(label: str, cls: str = "tw") -> str:
+    """A table's wrapper, which scrolls sideways when the table is wider than the page: a named
+    region that takes the keyboard focus, so it can be scrolled from the keyboard (WCAG 2.1.1)."""
+    return f"<div class='{cls}' tabindex='0' role='region' aria-label='{_e(label)}'>"
+
+
+def _table(head: list[str], rows: list[str], cls: str = "", label: str = "Table") -> str:
     th = "".join(f"<th>{h}</th>" for h in head)
-    return f"<div class='tw'><table class='{cls}'><thead><tr>{th}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    return f"{_scroller(label)}<table class='{cls}'><thead><tr>{th}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
 
 
 def _dl(rows: list[tuple[str, str]]) -> str:
@@ -425,7 +431,7 @@ def _coverage(r: dict, hosts: list) -> str:
         foot = "<tfoot><tr><td>Receipted</td>" + "".join(
             f"<td>{sum(1 for k, _ in order if status.get((h, k)) == 'closed')} of {len(order)}</td>" for h in chunk) + "</tr></tfoot>"
         head = "".join(f"<th><code>{_e(h)}</code></th>" for h in chunk)
-        out.append(f"<div class='tw keep'><table class='matrix'><thead><tr><th>Lane</th>{head}</tr></thead>"
+        out.append(f"{_scroller('Coverage matrix', 'tw keep')}<table class='matrix'><thead><tr><th>Lane</th>{head}</tr></thead>"
                    f"<tbody>{''.join(rows)}</tbody>{foot}</table></div>")
     out.append("</section>")
     return "".join(out)
@@ -469,7 +475,7 @@ authority shows it existed at that time.</p>"""]
         rows.append(f"<tbody><tr><td>{lane}</td><td data-label='Signed by'>{signer}</td>"
                     f"<td data-label='Time'>Issued <span class='nw'>{_e(_when(rc.get('issued_at')))}</span><br>{stamp}</td></tr>"
                     f"<tr class='hashes'><td colspan='3' class='small'>{hashes}</td></tr></tbody>")
-    out.append(f"<div class='tw'><table class='receipts'><thead><tr><th>Lane</th><th>Signed by</th><th>Time</th></tr></thead>"
+    out.append(f"{_scroller('Receipts')}<table class='receipts'><thead><tr><th>Lane</th><th>Signed by</th><th>Time</th></tr></thead>"
                f"{''.join(rows)}</table></div>")
     unclosed = sum(1 for l in r["lanes"] if not l["receipt"])
     if unclosed:
@@ -500,7 +506,7 @@ def _history(r: dict) -> str:
 who work on it or signed its receipts, from the server’s audit log. Each entry is hash-chained to the one before it, like the
 evidence; the verifier checks the links and uses them to say, for each receipt, which scope was in force and whether its
 signer held the reviewer role when it was issued.</p>
-{_table(["Time", "By", "Change"], rows, "history") if rows else "<p class='muted'>No changes were recorded.</p>"}
+{_table(["Time", "By", "Change"], rows, "history", "Change history") if rows else "<p class='muted'>No changes were recorded.</p>"}
 <p class="note">{plural(len(rows) - people, 'engagement entry', 'engagement entries')} and
 {plural(people, 'person entry', 'person entries')}. Entries made by “recorded when the audit log was added” are the state
 at that time; who set it before then is not known. Passwords are never recorded, only that one was set.</p>
@@ -574,7 +580,7 @@ any receipt that is not signed, and <code>--require-history</code> to fail a rep
 missing or not bound to every receipt’s signature, or that is not sealed. <code>NOTE</code> lines are information, such as who signed and which
 receipts are not timestamped. For this HTML file, a verified result is followed by what its embedded data says: the
 engagement, scope, receipted lanes, signers and dates. Compare them with this page, whose text the checks do not cover.</p>
-{_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks])}
+{_table(["Check", "What it means"], [f"<tr><td>{_e(c)}</td><td>{_e(m)}</td></tr>" for c, m in checks], label="Verification checks")}
 <h3>Where the timestamp root comes from</h3>
 <p><code>tsa-roots/{_e(file)}</code> is {_e(name)}, the root of DigiCert’s public timestamp service
 (<code>timestamp.digicert.com</code>), taken from the macOS root store and matched against DigiCert’s download. Before you
@@ -618,7 +624,7 @@ def _controls(r: dict) -> str:
                     f"<td>{_e(x['framework_name'])}</td><td>{_e(x.get('strength', 'supporting')).capitalize()}</td>"
                     f"<td>{counts}</td>"
                     f"<td class='{cls}'>{_e(_CONTROL_STATUS.get(x['status'], x['status']))}</td></tr>")
-    body = _table(["Control", "Framework", "Evidence strength", "Receipted items", "Status"], rows) if rows else \
+    body = _table(["Control", "Framework", "Evidence strength", "Receipted items", "Status"], rows, label="Control evidence") if rows else \
         "<p class='muted'>This pack maps no items to controls.</p>"
     scale = "".join(f"<li><strong>{_e(k.capitalize())}</strong>: {_e(v)}</li>" for k, v in (c.get("strengths") or {}).items())
     scale = f"<p>Evidence strength:</p><ul>{scale}</ul>" if scale else ""
@@ -671,7 +677,7 @@ def _items(r: dict) -> str:
                 + (f"<br><span class='muted small'>{_e(e['uri'])}</span>" if e.get("uri") else "") for e in evs)
             rows.append(f"<tr><td><span class='muted'>{_e(i['key'])}</span><br>{_e(i['text'])}</td>"
                         f"<td>{result}</td><td>{ev_html or '<span class=muted>none</span>'}</td></tr>")
-        out.append(_table(["Item", "Result", "Evidence"], rows))
+        out.append(_table(["Item", "Result", "Evidence"], rows, label=f"Items: {l['host']} · {l['name']}"))
     out.append("</section>")
     return "".join(out)
 
@@ -682,7 +688,7 @@ def _recon(r: dict) -> str:
             f"<td>{_e(j['result_count'])}</td><td>{_e(_when(j['started_at']))}<br>{_e(_when(j['finished_at']))}</td>"
             f"<td><code>{_e(j['output_sha256'] or '')}</code></td></tr>" for j in r["jobs"]]
     return ("<section id='recon'><h2>Recon runs</h2>"
-            + _table(["Run", "Status", "Targets", "Results", "Started, finished", "Output SHA-256"], rows) + "</section>")
+            + _table(["Run", "Status", "Targets", "Results", "Started, finished", "Output SHA-256"], rows, label="Recon runs") + "</section>")
 
 
 def _json_for_html(r: dict) -> str:
