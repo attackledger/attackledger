@@ -1166,7 +1166,11 @@ class Gateway:
     async def _serve(self, reader, writer, tunnel: Tunnel | None) -> None:
         conn = h11.Connection(h11.SERVER, max_incomplete_event_size=MAX_HEAD)
         while True:
-            ev = await _next(conn, reader)
+            try:
+                ev = await _next(conn, reader)
+            except h11.RemoteProtocolError as e:
+                await self._unreadable(conn, writer, tunnel, e)
+                return
             if not isinstance(ev, h11.Request):
                 return
             if tunnel is None and ev.method == b"CONNECT":
@@ -1176,6 +1180,24 @@ class Gateway:
             if not keep or conn.our_state is not h11.DONE or conn.their_state is not h11.DONE:
                 return
             conn.start_next_cycle()
+
+    async def _unreadable(self, conn, writer, tunnel: Tunnel | None, e: h11.RemoteProtocolError) -> None:
+        """A request head h11 refuses (not ASCII, a bad Content-Length, a line that is not a header,
+        too large): answered with h11's status and logged, without the URL, which was not read
+        (FZ-21). Before, the connection was closed with no answer and no row."""
+        started, rules, tool = self.clock(), None, "unknown"
+        if tunnel is not None:
+            try:
+                rules, tool = await self.identify(tunnel.auth)
+            except Refused:
+                pass
+        hint = getattr(e, "error_status_hint", 400)
+        refusal = Refused(hint if 400 <= hint < 500 else 400,
+                          f"the request is not valid HTTP/1.1 ({str(e).split(':')[0][:80]})")
+        self.record(rules=rules, tool=tool, kind="target", method="", url="", host=tunnel.host if tunnel else "",
+                    port=tunnel.port if tunnel else None, status=refusal.status, verdict="refused",
+                    reason=refusal.reason, started=started)
+        await self._refuse(conn, writer, b"GET", refusal)
 
     async def _refuse(self, conn, writer, req_method: bytes, e: Refused) -> None:
         body = b"" if req_method == b"HEAD" else (f"AttackLedger gateway: {e.reason}\n").encode()

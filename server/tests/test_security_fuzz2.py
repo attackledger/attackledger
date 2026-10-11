@@ -87,3 +87,47 @@ def test_fz20_a_bug_in_the_checks_is_still_a_row(gw, monkeypatch):
     row = gw.rows(1)[-1]
     assert row["verdict"] == "failed" and row["status"] == 500 and "KeyError" in row["reason"]
     assert gw.up.requests == []
+
+
+# ---- FZ-21: a request h11 cannot read --------------------------------------------------------------
+
+@pytest.mark.parametrize("data, status", [
+    (b"GET http://app.example.com/\xb2 HTTP/1.1\r\nHost: app.example.com\r\n\r\n", 400),     # not ASCII
+    (b"GET http://app.example.com/ HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 1x\r\n\r\n", 400),
+    (b"GET http://app.example.com/ HTTP/1.1\r\nHost: app.example.com\r\nno colon here\r\n\r\n", 400),
+    (b"GET http://app.example.com/ HTTP/1.1\r\nHost: app.example.com\r\nX-A: b\r\n c\r\n\r\n", None),   # obs-fold: read
+    (b"GET http://app.example.com/ HTTP/1.1\r\nHost: app.example.com\r\nX-Big: " + b"a" * 200_000 + b"\r\n\r\n", 431),
+])
+def test_fz21_a_request_head_h11_refuses_is_answered_and_logged(gw, data, status):
+    """The connection was closed without an answer and without a row: a tool saw an empty reply
+    and the request log did not show that anything was tried."""
+    with time_limit(10):
+        try:
+            got, headers, body = parse(gw.raw(data))
+        except ConnectionResetError:        # the gateway closed with the rest of a huge head unread
+            got, headers, body = status, {"x-attackledger-gateway": "refused"}, b"HTTP/1.1"
+    if status is None:          # h11 reads it; no credential, so a 407 like any other
+        assert got == 407
+        return
+    assert got == status and headers["x-attackledger-gateway"] == "refused" and b"HTTP/1.1" in body
+    row = gw.rows(1)[-1]
+    assert row["verdict"] == "refused" and row["status"] == status and "not valid HTTP/1.1" in row["reason"]
+    assert row["url"] == "" and gw.up.requests == [] and gw.connects == []
+    assert b"\xb2" not in row["reason"].encode("latin-1", "replace")
+
+
+def test_fz21_an_approved_writes_body_h11_refuses_is_logged_and_the_approval_is_not_used(gw):
+    gw.api.add(6, kind="agent", traffic="agent")
+    used = []
+
+    async def approval(*a):
+        used.append(a)
+        return 200, {}
+    gw.api.approval = approval
+    data = _head(gw, "http://app.example.com/api/basket", "POST", "X-AttackLedger-Approval: 7",
+                 "Transfer-Encoding: chunked", auth=gw.auth(job=6, tool="agent")) + b"zz\r\n{}\r\n0\r\n\r\n"
+    with time_limit(10):
+        status, _, _ = parse(gw.raw(data))
+    assert status == 400 and used == [] and gw.up.requests == []
+    row = gw.rows(1)[-1]
+    assert row["verdict"] == "refused" and row["approval_id"] == 7 and "not valid HTTP/1.1" in row["reason"]
