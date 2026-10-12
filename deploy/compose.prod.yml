@@ -156,7 +156,7 @@ services:
   lab-proxy:
     profiles: ["lab"]
     # nginx:1.30.5-alpine, pinned by its multi-arch index digest on 2026-10-10.
-    image: nginx:1.30-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    image: nginx:1.31-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
     <<: *hardening
     user: "101:101"
     tmpfs:
