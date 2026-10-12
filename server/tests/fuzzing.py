@@ -10,6 +10,7 @@ A failure names the seed, the iteration and a short repr of the input. Each one 
 was minimised by hand and kept as a deterministic test in test_security_fuzz.py.
 """
 import contextlib
+import datetime as _dt
 import json
 import os
 import random
@@ -18,6 +19,24 @@ import time
 
 SEED = int(os.environ.get("ATTACKLEDGER_FUZZ_SEED") or 20261010)
 ITERATIONS = int(os.environ.get("ATTACKLEDGER_FUZZ_ITERATIONS") or 0)
+
+
+# What the report fuzz pins report.datetime and seal.datetime to. It must come after every real event
+# the test records (a seal key registered, an audit entry), or the seal's key looks registered after
+# the report was sealed: a fixed date did that the day after it was written. Fixed for the run, so
+# the report is the same bytes in every process (passed to them in ATTACKLEDGER_TEST_FIXED_NOW).
+FIXED_NOW = (_dt.datetime.fromisoformat(os.environ["ATTACKLEDGER_TEST_FIXED_NOW"])
+             if os.environ.get("ATTACKLEDGER_TEST_FIXED_NOW") else
+             (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=2)).replace(minute=0, second=0, microsecond=0))
+
+
+def fixed_clock() -> type:
+    """A datetime whose now() is FIXED_NOW (its wall-clock fields, in the zone asked for)."""
+    class Fixed(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return FIXED_NOW.replace(tzinfo=tz)
+    return Fixed
 
 
 def iterations(default: int) -> int:

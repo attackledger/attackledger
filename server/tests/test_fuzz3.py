@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import select
 
 from app import gateway, redact
-from fuzzing import INTERESTING, elapsed, iterations, mutate_bytes, rng, show, time_limit
+from fuzzing import FIXED_NOW, INTERESTING, elapsed, fixed_clock, iterations, mutate_bytes, rng, show, time_limit
 from test_gateway import Stack as GatewayStack
 from test_fuzz2 import NAMES, _secret
 from tlsfuzz import ALPNS, SNIS, client_hello, connect, drain
@@ -434,10 +434,12 @@ from sqlalchemy.orm import Session
 from fastapi.responses import JSONResponse
 from app import main, report, seal
 
+FIXED = dt.datetime.fromisoformat(sys.argv[4])
+
 class Fixed(dt.datetime):
     @classmethod
     def now(cls, tz=None):
-        return dt.datetime(2026, 10, 11, 12, 0, 0, tzinfo=tz)
+        return FIXED.replace(tzinfo=tz)
 report.datetime = seal.datetime = Fixed
 url, out = sys.argv[1], sys.argv[2]
 engine = create_engine(url)
@@ -619,10 +621,7 @@ def test_fuzz_the_report_with_signatures_voids_and_deletion_verifies_strictly_an
     verify = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(verify)
 
-    class Fixed(dt.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return dt.datetime(2026, 10, 11, 12, 0, 0, tzinfo=tz)
+    Fixed = fixed_clock()
     _, e, _ = team(c)
     names = {e: "Import"}
     r = rng("report3")
@@ -681,7 +680,7 @@ def test_fuzz_the_report_with_signatures_voids_and_deletion_verifies_strictly_an
         out = tmp_path / f"export-{seed}"
         out.mkdir()
         env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONDONTWRITEBYTECODE": "1"}
-        done = subprocess.run([sys.executable, "-c", EXPORT, url, str(out), json.dumps(engagements)],
+        done = subprocess.run([sys.executable, "-c", EXPORT, url, str(out), json.dumps(engagements), FIXED_NOW.isoformat()],
                               cwd=ROOT / "server", env=env, capture_output=True, text=True, timeout=180)
         assert done.returncode == 0, done.stderr[-3000:]
         for e, (j, h) in here.items():

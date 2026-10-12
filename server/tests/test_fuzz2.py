@@ -19,8 +19,8 @@ from sqlalchemy import func, select
 
 from app import gateway, gatewayapi, gatewaylog, redact
 from app.models import GatewayRequest
-from fuzzing import (INTERESTING, NUMBERS, STRINGS, Obj, Raw, dumps, elapsed, iterations, loads, mutate_bytes,
-                     mutate_tree, rng, show, time_limit, value)
+from fuzzing import (INTERESTING, NUMBERS, STRINGS, Obj, Raw, dumps, elapsed, fixed_clock, iterations, loads,
+                     mutate_bytes, mutate_tree, rng, show, time_limit, value)
 from harness import stack  # noqa: F401  (fixture)
 from test_gateway import Stack as GatewayStack
 from test_import import db, team, upload
@@ -543,10 +543,7 @@ def test_fuzz_the_report_always_builds_verifies_and_is_byte_stable(client, tmp_p
     verify = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(verify)
 
-    class Fixed(dt.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return dt.datetime(2026, 10, 11, 12, 0, 0, tzinfo=tz)
+    Fixed = fixed_clock()
     _, e, _ = team(client)
     r = rng("report")
     seen: dict = {}
