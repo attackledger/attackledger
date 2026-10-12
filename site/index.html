@@ -200,6 +200,7 @@ pre { margin: 1rem 0 0; padding: 0.9rem 1rem; background: var(--code-bg); border
       <a href="#auditors">For auditors</a>
       <a href="demo/">Demo</a>
       <a href="#sample">Sample report</a>
+      <a href="#about">About</a>
       <a href="#licence">Licence</a>
     </nav>
   </header>
@@ -384,8 +385,30 @@ Verified.</code></pre>
         </ol>
       </div>
       <p class="note">Built: people with roles, separation of duties, receipts signed with a key held in the
-        reviewer's browser, and RFC 3161 timestamps from an authority you choose. Later: evidence import from tools
-        such as Caido, and compliance packs reviewed against the current standards.</p>
+        reviewer's browser, and RFC 3161 timestamps from an authority you choose, and evidence import from Burp, Caido and HAR
+        files. Later: compliance packs reviewed against the current standards.</p>
+    </section>
+
+    <section aria-labelledby="about-title" id="about">
+      <div class="cols">
+        <div class="prose">
+          <h2 class="section" id="about-title">About</h2>
+          <p>AttackLedger is built by Murat Kabak, a security researcher who has worked in bug bounty programs since
+            2022. Working through programs the same way, host after host, kept raising the same question: what did
+            this test actually cover, and how would anyone else know?</p>
+          <p>The idea took shape in March 2025, as a way to keep coverage as evidence instead of in notes and memory.
+            AttackLedger was founded in October 2026, when the domain, the source repository and the first public
+            release went live. It is self-funded and based in Turkey.</p>
+          <p>The code is open, and so is the work on its security: the <a href="https://github.com/attackledger/attackledger/tree/main/docs/security-review">internal
+            security review</a> and the <a href="https://github.com/attackledger/attackledger/blob/main/docs/THREAT_MODEL.md">threat model</a>
+            are published with the source. No independent third party has tested it yet.</p>
+        </div>
+        <ol class="roles" aria-label="Timeline">
+          <li><strong>2022</strong> Bug bounty work, and the methodology AttackLedger grew from.</li>
+          <li><strong>March 2025</strong> The idea: coverage recorded as evidence that others can verify.</li>
+          <li><strong>October 2026</strong> AttackLedger founded; site, source code and first release published.</li>
+        </ol>
+      </div>
     </section>
 
     <section aria-labelledby="licence-title" id="licence">
@@ -393,7 +416,7 @@ Verified.</code></pre>
         <h2 class="section" id="licence-title">Licence and status</h2>
         <p>AttackLedger is open source under the <strong>AGPL-3.0</strong>, with a commercial licence for teams that
           cannot use AGPL software. The current version is a preview: recon is complete, and agent-assisted hunting
-          has been tested on a local lab. The source code will be published here.</p>
+          has been tested on a local lab. The source code is on <a href="https://github.com/attackledger/attackledger">GitHub</a>.</p>
         <p>AttackLedger is for authorized testing only: programs whose scope you are in, or systems you own or have
           written permission to test.</p>
         <p style="margin-bottom:0">Questions, early access or a commercial licence:</p>
