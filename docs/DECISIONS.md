@@ -288,7 +288,10 @@ options considered and who decided.
 - **Settings:** `claude-opus-5-5` by default (`ATTACKLEDGER_AGENT_MODEL` also allows
   Sonnet 5.5 and Haiku 5.5), adaptive thinking at effort `high`, top-level prompt caching,
   and server-side refusal fallback (`fallbacks: "default"`; none on Haiku). Runs stop at
-  turn, request and estimated-cost limits (defaults 15, 30, $0.50). The conversation is
+  turn, request and estimated-cost limits (defaults 15, 30, $0.50). Since 2026-10-12 the cost
+  is bounded before each call (the next call's worst case must fit in what is left) and the
+  worker caps every run (`ATTACKLEDGER_AGENT_MAX_USD` $1.00, `_MAX_TURNS` 30, `_MAX_TOKENS`
+  2,000,000). The conversation is
   append-only. A refusal stops the run and fails the job.
 - **Not yet tested against the live API:** no API key was available. The loop is
   tested with a scripted fake model (shape-compatible responses) and the real

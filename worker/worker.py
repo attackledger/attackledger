@@ -953,6 +953,7 @@ def run_agent(job: "workerclient.JobChannel", client=None, transport=None) -> "R
     limits = spec.get("limits") or {}
     try:
         model = agentloop.configured_model()
+        agentloop.ceilings()                  # a malformed ceiling fails the run before any call
     except ValueError as e:
         raise RuntimeError(str(e))
     gw = egress.Egress(job.id, job.gateway_secret).check()     # fail closed: no gateway, nothing is sent

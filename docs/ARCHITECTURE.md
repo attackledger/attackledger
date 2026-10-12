@@ -110,6 +110,14 @@ prompt and in every tool result. The gates are checked when the run is queued an
 again when it starts. A run that ends without `finish`, at the turn limit or at the
 time limit is `partial`, never `done`; a model refusal fails the job.
 
+Budget: before each call the loop bounds what it can cost (the last measured prompt plus what
+was added since, at the dearest input rate, and `max_tokens` of output, which it lowers to what
+the budget left can pay for) and stops (`cost_limit`, partial) if even a small call would not
+fit. The run's limits are capped by the worker's ceilings: `ATTACKLEDGER_AGENT_MAX_USD`
+(default $1.00), `ATTACKLEDGER_AGENT_MAX_TURNS` (30) and `ATTACKLEDGER_AGENT_MAX_TOKENS`
+(2,000,000, independent of prices). Prices are kept in one table, `agentloop.MODELS`; check
+them against current pricing.
+
 The Anthropic API key is set on the gateway only, which adds it to the agent's Claude API
 calls (D-042). The API learns that agents are enabled from `ATTACKLEDGER_AGENTS_ENABLED`,
 which compose derives from the key.

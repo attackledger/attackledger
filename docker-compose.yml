@@ -188,6 +188,11 @@ services:
       ATTACKLEDGER_WORKER_API: http://gateway:8081
       # claude-opus-5-5 (default), claude-sonnet-5-5 or claude-haiku-5-5 (cheaper, for a first test).
       ATTACKLEDGER_AGENT_MODEL: ${ATTACKLEDGER_AGENT_MODEL:-}
+      # The worker's budget ceilings per agent run, whatever the run asked for (agentloop.CEILINGS):
+      # estimated USD (default 1.00), model calls (30) and tokens of every kind (2000000).
+      ATTACKLEDGER_AGENT_MAX_USD: ${ATTACKLEDGER_AGENT_MAX_USD:-}
+      ATTACKLEDGER_AGENT_MAX_TURNS: ${ATTACKLEDGER_AGENT_MAX_TURNS:-}
+      ATTACKLEDGER_AGENT_MAX_TOKENS: ${ATTACKLEDGER_AGENT_MAX_TOKENS:-}
     volumes:
       - worker-control:/data/worker-control       # its token for the API, made on first start
       - gateway-public:/data/gateway-public:ro

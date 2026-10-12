@@ -132,7 +132,7 @@ function AgentRuns({ lane, canWork, onLaneChanged }: {
       {canWork && <p className="hint">
         Read-only requests to {lane.host}, with your research identification and rate limit. The agent attaches
         evidence and marks items; you review it and sign the receipt. The run stops at the first limit it
-        reaches. Cost is an estimate, checked after each turn.
+        reaches. Cost is an estimate, bounded before each call; the worker's own ceiling also applies.
       </p>}
       {error && <p className="field-error" role="alert">{error}</p>}
       {runs.length > 0 && (

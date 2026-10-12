@@ -488,6 +488,17 @@ reaches them.
   tampered copies and showing hostile report content as text, and axe on every page. Every phase
   runs in WebKit too. The `e2e` CI job runs `tools/test_e2e.sh` and uploads Playwright's report
   when a test fails; `E2E_PROJECT` and `E2E_REPORT_DIR` are new options.
+- **A hard budget per agent run** (`agentloop.py`). The cost was checked after each turn, so a
+  run could go over its limit by a whole call (on Opus, 16,000 output tokens alone are $0.32). Now each call's worst case
+  (the last measured prompt plus what was added since at the dearest input rate, and `max_tokens`
+  of output) must fit in what is left: `max_tokens` is lowered to what the budget can pay for, and
+  the run stops before the call (`cost_limit`, partial, with a reviewer summary saying so) when
+  even 2,048 output tokens would not fit. The worker caps every run whatever it asked for:
+  `ATTACKLEDGER_AGENT_MAX_USD` (default $1.00), `ATTACKLEDGER_AGENT_MAX_TURNS` (30) and
+  `ATTACKLEDGER_AGENT_MAX_TOKENS` (2,000,000 tokens of every kind, a ceiling that does not depend on
+  prices); a malformed value fails the run before any call. A response from a model not in the
+  price table is priced at the dearest rates. The prices stay in one table (`agentloop.MODELS`,
+  "check against current pricing").
 
 ### Fixed
 - **Accessibility of the report and the landing page** (WE-7, WE-8, WE-9, Low): the HTML report's
