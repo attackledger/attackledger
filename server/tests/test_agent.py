@@ -673,8 +673,109 @@ def test_run_stops_at_the_cost_limit(session):
                    usage=(100_000, 10_000)) for n in range(5)]
     client = FakeClient(turns)
     res = agentloop.run(session, lane, job.id, client, transport=FakeTransport(), max_cost_usd=1.0)
-    assert res.status == "cost_limit" and res.turns == 2 and len(client.requests) == 2
-    assert res.cost_usd == 1.2 and "cost limit" in res.detail
+    # The second call could cost more than the $0.40 left (its prompt alone is over 100k tokens),
+    # so it is never made: the run stays under its budget instead of going over by a turn.
+    assert res.status == "cost_limit" and res.turns == 1 and len(client.requests) == 1
+    assert res.cost_usd == 0.6 and "cost limit" in res.detail and "before turn 2" in res.detail
+    assert res.summary.startswith("Partial run") and "nothing was closed" in res.summary
+
+
+class GreedyClient(FakeClient):
+    """Answers every call with the most it may cost: the whole request billed as a cache write
+    (the dearest input rate), and all of max_tokens as output."""
+
+    def __init__(self, model_name=None):
+        super().__init__([])
+        self.model_name = model_name
+
+    def _create(self, **params):
+        self.requests.append(copy.deepcopy(params))
+        n = len(self.requests)
+        r = reply(tool_use(f"t{n}", "record_lead", {"title": f"l{n}", "detail": "d", "severity": "", "url": ""}))
+        r.usage = SimpleNamespace(input_tokens=0, output_tokens=params["max_tokens"], cache_read_input_tokens=0,
+                                  cache_creation_input_tokens=len(json.dumps(params, default=str).encode()))
+        r.model = self.model_name or params["model"]
+        return r
+
+
+@pytest.mark.parametrize("model", list(agentloop.MODELS))
+@pytest.mark.parametrize("budget", [0.05, 0.5, 1.0])
+def test_the_estimated_cost_never_goes_over_the_budget(session, model, budget):
+    lane, job = make_lane(session)
+    client = GreedyClient()
+    res = agentloop.run(session, lane, job.id, client, model=model, transport=FakeTransport(), max_cost_usd=budget,
+                        max_turns=100, env={"ATTACKLEDGER_AGENT_MAX_TURNS": "100"})
+    assert res.cost_usd <= budget, (model, res.cost_usd, len(client.requests))
+    assert res.status in ("cost_limit", "turn_limit")
+    if res.status == "cost_limit":
+        assert "before turn" in res.detail
+    assert all(r["max_tokens"] <= agentloop.MAX_TOKENS for r in client.requests)
+
+
+def test_max_tokens_is_lowered_to_what_the_budget_left_can_pay_for(session):
+    lane, job = make_lane(session)
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
+    # $0.30 on Opus: the prompt bound takes a few cents, output at $20/M pays for under 15,000 tokens.
+    res = agentloop.run(session, lane, job.id, client, model="claude-opus-5-5", transport=FakeTransport(),
+                        max_cost_usd=0.30)
+    assert res.status == "finished"
+    assert agentloop.MIN_OUTPUT_TOKENS <= client.requests[0]["max_tokens"] < 15_000
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
+    lane2, job2 = make_lane(session, host="api.lab.test")
+    agentloop.run(session, lane2, job2.id, client, model="claude-haiku-5-5", transport=FakeTransport())
+    assert client.requests[0]["max_tokens"] == agentloop.MAX_TOKENS
+
+
+def test_a_response_from_a_model_not_in_the_table_is_priced_at_the_dearest_rates(session):
+    lane, job = make_lane(session)
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}), usage=(1_000_000, 0))])
+    client.script[0].model = "claude-unknown-9"          # say, a server-side fallback
+    res = agentloop.run(session, lane, job.id, client, model="claude-haiku-5-5", transport=FakeTransport(),
+                        max_cost_usd=20)
+    assert res.cost_usd == agentloop.DEAREST["input"] == 4.0      # not Haiku's $0.10
+    # A dated snapshot of a known model is that model; a lookalike name is not.
+    assert agentloop.price_of("claude-haiku-5-5-20261001") == agentloop.MODELS["claude-haiku-5-5"]["price"]
+    assert agentloop.price_of("claude-haiku-5-5-mini") == agentloop.DEAREST
+
+
+def test_the_workers_ceilings_cap_what_a_run_asked_for(session):
+    assert agentloop.ceilings({}) == {"max_cost_usd": 1.0, "max_turns": 30, "max_tokens_total": 2_000_000}
+    lane, job = make_lane(session)
+    turns = [reply(tool_use(f"t{n}", "record_lead", {"title": f"l{n}", "detail": "d", "severity": "", "url": ""}),
+                   usage=(1000, 100)) for n in range(10)]
+    client = FakeClient(turns)
+    lines = []
+    res = agentloop.run(session, lane, job.id, client, model="claude-haiku-5-5", transport=FakeTransport(),
+                        max_turns=15, env={"ATTACKLEDGER_AGENT_MAX_TURNS": "3"}, log=lines.append)
+    assert res.status == "turn_limit" and res.turns == 3 and "3 turns" in lines[0]
+    assert res.summary.startswith("Partial run")
+
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
+    res = agentloop.run(session, lane, job.id, client, model="claude-opus-5-5", transport=FakeTransport(),
+                        max_cost_usd=20, env={"ATTACKLEDGER_AGENT_MAX_USD": "0.01"})
+    assert res.status == "cost_limit" and client.requests == [] and "of $0.01" in res.detail
+
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
+    res = agentloop.run(session, lane, job.id, client, model="claude-haiku-5-5", transport=FakeTransport(),
+                        env={"ATTACKLEDGER_AGENT_MAX_TOKENS": "5000"})
+    assert res.status == "cost_limit" and client.requests == [] and "token ceiling" in res.detail
+
+
+@pytest.mark.parametrize("env", [{"ATTACKLEDGER_AGENT_MAX_USD": "lots"}, {"ATTACKLEDGER_AGENT_MAX_USD": "0"},
+                                 {"ATTACKLEDGER_AGENT_MAX_USD": "nan"}, {"ATTACKLEDGER_AGENT_MAX_USD": "inf"},
+                                 {"ATTACKLEDGER_AGENT_MAX_TURNS": "-1"}, {"ATTACKLEDGER_AGENT_MAX_TOKENS": "1.5"}])
+def test_a_malformed_ceiling_is_an_error_not_no_limit(env):
+    with pytest.raises(ValueError):
+        agentloop.ceilings(env)
+
+
+def test_worker_fails_the_run_on_a_malformed_ceiling_before_any_call(stack, monkeypatch):
+    worker = load_worker()
+    monkeypatch.setenv("ATTACKLEDGER_AGENT_MAX_USD", "unlimited")
+    job, _ = agent_job(stack)
+    client = FakeClient([reply(tool_use("t1", "finish", {"summary": "done"}))])
+    assert worker.execute(job, client=client)["status"] == "failed"
+    assert client.requests == [] and "ATTACKLEDGER_AGENT_MAX_USD" in stack.job(job.id).log
 
 
 def test_defaults_are_small():

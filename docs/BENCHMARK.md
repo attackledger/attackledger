@@ -393,3 +393,76 @@ One earlier run of the same images, before the rebase and while another stack ra
 the same machine, saw one window of 21 requests within 0.90 s at juice-proxy (calendar-second peak 20); the
 gateway's limiter is unchanged by this branch, and the run above peaked at 20. Delivery jitter between the gateway and juice-proxy under load is the likely cause; not investigated
 further.
+
+## Agent runs through the Messages API: how they are measured
+
+`tools/agent_live_run.sh` (`tools/agent_live.py run`, docs/INSTALL.md section 19, "A first live agent
+run") appends one dated section per run below, and writes the same numbers to
+`tools/benchmark/results-<date>-agent-live.json` (`agent-dryrun` for a dry run against the stub). Each
+section is one table:
+
+| Row | Source |
+|---|---|
+| Model | the job's result (the worker's `ATTACKLEDGER_AGENT_MODEL`; a first run uses the cheapest) |
+| Stack | the compose project, the commit, the date of the price table in `agentloop.MODELS` |
+| Lane | the lab engagement's `errh` lane on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run` |
+| Outcome | the job's status (`done` only if the agent finished) and the agent's (`finished`, `cost_limit`, ...) |
+| Limits | what the run asked for, and what the worker applied (the lower of that and its ceilings) |
+| Wall time | from queueing the run to its end, and the job's own start to finish |
+| Claude API calls | the gateway's log for the job, kind `service`, by host |
+| Target requests | the gateway's log for the job, kind `target`, by method and host; all must be `shop.lab.test` |
+| Refused or failed rows | every gateway row for the job that was not sent, with its reason |
+| Lab access log | the lab's own nginx log in the run's window (`lab/nginx.conf` logs the research header and user agent): an independent count |
+| Research header on every request | yes only if every request the lab saw carried it and the lab saw as many as the gateway sent |
+| Evidence | the lane's agent evidence since the job started, the items it is on, items marked, leads |
+| Tokens | the API's usage summed over the run: input, output, cache read, cache write |
+| Cost (estimate) | the loop's estimate from those tokens and the price table, against the budget the worker applied; the Console bill is authoritative |
+
+The script stops with an error, after writing the section, if a request went to another host, the lab saw
+a request without the header, or the job failed.
+
+## Agent run dry run against a stub Claude API (2026-10-12, fixed run)
+
+Not a measurement of the model: the Claude API was a local stub (`tools/agent_dryrun/claude_stub.py`) playing a fixed run, so the turns, tokens and cost are the stub's. It shows the path and the accounting end to end: the worker's SDK, the gateway's route, key swap and GW-1 body check, the budget, the tools, the evidence and this write-up.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `al-sec8-live`, commit `11af645`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `errh` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 1 |
+| Outcome | job `done`, agent `finished`, 6 turn(s) |
+| Limits | max_turns 15, max_requests 20, max_cost_usd 0.05; applied by the worker: $0.0500, 15 turns, 2,000,000 tokens |
+| Wall time | 3.0 s (job 1.2 s) |
+| Claude API calls (gateway log) | 6 to claude-stub.test |
+| Target requests (gateway log) | 2: GET 2; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 2 request(s), 2 with the research header, 2 with the user agent |
+| Research header on every request | yes |
+| Evidence | 2 entries on 1 item(s); 1 item(s) marked; 1 lead(s) |
+| Tokens | input 1,050, output 1,080, cache read 10,033, cache write 3,498 |
+| Cost (estimate) | $0.0012 of a $0.05 budget |
+
+Agent summary for the reviewer: "Stub run: one item tested with two read-only requests and marked done; the other items were left open."
+
+## Agent run dry run against a stub Claude API (2026-10-12, budget stop)
+
+Not a measurement of the model: the Claude API was a local stub (`tools/agent_dryrun/claude_stub.py`) playing a fixed run, so the turns, tokens and cost are the stub's. It shows the path and the accounting end to end: the worker's SDK, the gateway's route, key swap and GW-1 body check, the budget, the tools, the evidence and this write-up.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `al-sec8-live`, commit `11af645`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `errh` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 2 |
+| Outcome | job `partial`, agent `cost_limit`, 1 turn(s); stopped before turn 2 at the cost limit (about $0.0021 of $0.0040 spent): the next call could cost up to $0.0021 |
+| Limits | max_turns 15, max_requests 20, max_cost_usd 0.05; applied by the worker: $0.0040, 15 turns, 2,000,000 tokens |
+| Wall time | 3.0 s (job 0.6 s) |
+| Claude API calls (gateway log) | 1 to claude-stub.test |
+| Target requests (gateway log) | 1: GET 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 1 request(s), 1 with the research header, 1 with the user agent |
+| Research header on every request | yes |
+| Evidence | 0 entries on 0 item(s); 0 item(s) marked; 0 lead(s) |
+| Tokens | input 50, output 3,600, cache read 0, cache write 2,071 |
+| Cost (estimate) | $0.0021 of a $0.004 budget |
+
+Agent summary for the reviewer: "Partial run, stopped (cost limit) before the agent finished: 0 evidence entries, 0 items marked. The open items are left for a person; nothing was closed."

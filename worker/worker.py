@@ -953,6 +953,7 @@ def run_agent(job: "workerclient.JobChannel", client=None, transport=None) -> "R
     limits = spec.get("limits") or {}
     try:
         model = agentloop.configured_model()
+        agentloop.ceilings()                  # a malformed ceiling fails the run before any call
     except ValueError as e:
         raise RuntimeError(str(e))
     gw = egress.Egress(job.id, job.gateway_secret).check()     # fail closed: no gateway, nothing is sent
@@ -979,7 +980,7 @@ def run_agent(job: "workerclient.JobChannel", client=None, transport=None) -> "R
     r.kept = res.evidence_added
     r.log(f"agent {res.status}: {plural(res.turns, 'turn')}, {plural(res.requests, 'request')}, "
           f"{plural(res.evidence_added, 'evidence entry', 'evidence entries')}, {plural(res.items_marked, 'item')} marked, "
-          f"~${res.cost_usd:.2f} estimated" + (f"; {res.detail}" if res.detail else ""))
+          f"~{agentloop.usd(res.cost_usd)} estimated" + (f"; {res.detail}" if res.detail else ""))
     if res.status == "refused":
         raise RuntimeError(f"the model {res.detail}; nothing further was run")
     if res.status in AGENT_PARTIAL | {"timed_out"}:

@@ -277,7 +277,11 @@ from the lane. The agent:
 this work). Set a monthly spend limit in the Anthropic Console before the first run.
 
 Runs stop at the first limit they reach: turns (default 15), requests (30), an estimated
-cost (default $0.50, checked after each turn) and the worker time limit. The model sees
+cost (default $0.50) and the worker time limit. The cost is bounded before each call, from
+the token counts the API returns and the price table in `server/app/agentloop.py` (check it
+against current pricing), so a run stops before a call that could take it over. The worker
+caps every run whatever it asked for: `ATTACKLEDGER_AGENT_MAX_USD` (default $1.00),
+`ATTACKLEDGER_AGENT_MAX_TURNS` (30) and `ATTACKLEDGER_AGENT_MAX_TOKENS` (2,000,000). The model sees
 only the first 4,000 characters of each response, and 40,000 per run; the full response
 is kept as evidence. The loop has not yet run against the live API: try it on the lab first.
 

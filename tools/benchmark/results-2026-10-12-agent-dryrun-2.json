@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-12",
+  "dry_run": true,
+  "project": "al-sec8-live",
+  "job_id": 2,
+  "job_status": "partial",
+  "agent_status": "cost_limit",
+  "model": "claude-haiku-5-5",
+  "turns": 1,
+  "detail": "stopped before turn 2 at the cost limit (about $0.0021 of $0.0040 spent): the next call could cost up to $0.0021",
+  "summary": "Partial run, stopped (cost limit) before the agent finished: 0 evidence entries, 0 items marked. The open items are left for a person; nothing was closed.",
+  "limits": {
+    "max_turns": 15,
+    "max_requests": 20,
+    "max_cost_usd": 0.05
+  },
+  "claude_api_calls": 1,
+  "claude_api_hosts": [
+    "claude-stub.test"
+  ],
+  "target_requests": 1,
+  "target_by_method": {
+    "GET": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [],
+  "agent_requests": 1,
+  "lab_requests": 1,
+  "lab_with_header": 1,
+  "lab_with_user_agent": 1,
+  "header_on_every_request": true,
+  "evidence_entries": 0,
+  "items_evidenced": 0,
+  "items_marked": 0,
+  "leads": 0,
+  "usage": {
+    "input": 50,
+    "output": 3600,
+    "cache_read": 0,
+    "cache_write": 2071
+  },
+  "cost_usd_estimate": 0.0021,
+  "wall_seconds": 3.0,
+  "job_seconds": 0.6,
+  "budget": "$0.0040, 15 turns, 2,000,000 tokens",
+  "budget_usd": 0.004
+}

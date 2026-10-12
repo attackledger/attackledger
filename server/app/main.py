@@ -1431,7 +1431,7 @@ def lane_context(lane_id: int, limit: int = 200, session: Session = Depends(get_
 class AgentRunIn(BaseModel):
     max_turns: int = Field(default=15, ge=1, le=100)
     max_requests: int = Field(default=30, ge=1, le=1000)
-    max_cost_usd: float = Field(default=0.50, ge=0.05, le=20)   # estimated; checked after each turn
+    max_cost_usd: float = Field(default=0.50, ge=0.05, le=20)   # estimated; bounded before each call (agentloop)
     # A run made by an outside driver through the same tools (tools/agent_bridge.py, D-031), not
     # by the worker's Messages API loop: who drives it. The worker's loop never takes it.
     driver: str | None = Field(default=None, min_length=1, max_length=200)

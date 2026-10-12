@@ -488,6 +488,36 @@ reaches them.
   tampered copies and showing hostile report content as text, and axe on every page. Every phase
   runs in WebKit too. The `e2e` CI job runs `tools/test_e2e.sh` and uploads Playwright's report
   when a test fails; `E2E_PROJECT` and `E2E_REPORT_DIR` are new options.
+- **A hard budget per agent run** (`agentloop.py`). The cost was checked after each turn, so a
+  run could go over its limit by a whole call (on Opus, 16,000 output tokens alone are $0.32). Now each call's worst case
+  (the last measured prompt plus what was added since at the dearest input rate, and `max_tokens`
+  of output) must fit in what is left: `max_tokens` is lowered to what the budget can pay for, and
+  the run stops before the call (`cost_limit`, partial, with a reviewer summary saying so) when
+  even 2,048 output tokens would not fit. The worker caps every run whatever it asked for:
+  `ATTACKLEDGER_AGENT_MAX_USD` (default $1.00), `ATTACKLEDGER_AGENT_MAX_TURNS` (30) and
+  `ATTACKLEDGER_AGENT_MAX_TOKENS` (2,000,000 tokens of every kind, a ceiling that does not depend on
+  prices); a malformed value fails the run before any call. A response from a model not in the
+  price table is priced at the dearest rates. The prices stay in one table (`agentloop.MODELS`,
+  "check against current pricing").
+- **A pre-flight check for the first live agent run** (`tools/agent_preflight.sh`, `app.agentcheck`).
+  Without sending anything: the worker's real Claude API call for the configured model is built by
+  the SDK and captured by a transport that answers itself, then run through the gateway's own
+  policy in the gateway's process (service route, key swap, the GW-1 body filter); the key is
+  reported as set or missing with a length class, never its value; the model, the budget, the lab,
+  the lab engagement and its lane are checked. It exits 1 with a plain message on any failure.
+- **One command for a measured agent run on the lab** (`tools/agent_live_run.sh`,
+  `tools/agent_live.py`). It starts the lab if needed, creates or reuses an engagement scoped to
+  `shop.lab.test` with an `errh` lane, refuses to run if the pre-flight fails or the worker's model
+  is not the cheapest, runs one agent and appends a dated section to `docs/BENCHMARK.md`: turns,
+  Claude API calls and target requests from the gateway log by method and host, refusals, the lab's
+  own count of requests with the research header, evidence, leads, tokens by type, cost and wall
+  time. The API token comes from `.env` and is never printed. Steps in docs/INSTALL.md, section 19.
+- **A dry run of all of it without a key** (`python3 tools/agent_live.py dryrun`,
+  `tools/agent_dryrun/`): this tree in its own compose project with no route out, and a stub Claude
+  API that plays a fixed run through the same SDK, gateway checks and tools, then a second run whose
+  budget must stop it. The gateway trusts the stub's throwaway CA through
+  `ATTACKLEDGER_GATEWAY_TEST_SERVICE_CA`, for added service hosts only, never for
+  `api.anthropic.com`; it refuses to start with it next to a real key, and no compose file passes it.
 
 ### Fixed
 - **Accessibility of the report and the landing page** (WE-7, WE-8, WE-9, Low): the HTML report's

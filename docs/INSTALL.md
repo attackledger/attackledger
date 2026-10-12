@@ -1306,6 +1306,56 @@ The six steps that do run (resolve, find live web servers, well-known files, cra
 JavaScript analysis and parameter routing) finished in under a minute on a test install,
 and the gateway log listed 27 entries for them (requests and DNS questions).
 
+### A first live agent run
+
+The first run against the real Claude API is a small, measured one on the lab: one lane
+(**Error handling**, two items) on `shop.lab.test`, the cheapest model, and a budget the
+worker enforces. Set a monthly spend limit in the Anthropic Console first.
+
+1. In `.env`, set the key, the cheapest model and the budget for one run (US dollars, an
+   estimate from the token counts the API returns; the Console bill is authoritative):
+
+   ```sh
+   ANTHROPIC_API_KEY=sk-ant-...
+   ATTACKLEDGER_AGENT_MODEL=claude-haiku-5-5
+   ATTACKLEDGER_AGENT_MAX_USD=0.50
+   ```
+
+   `ATTACKLEDGER_API_TOKEN` must be set too (section 4, step 5): the scripts use it and never
+   print it.
+
+2. Then three commands, in this folder:
+
+   ```sh
+   docker compose up -d --build
+   bash tools/agent_preflight.sh
+   bash tools/agent_live_run.sh
+   ```
+
+   The first recreates the API, the gateway and the worker with the new settings. The second
+   sends nothing to the Claude API or the lab. It checks that the gateway holds a key (it
+   prints only "set" or "missing" and a length class), that the gateway would forward the
+   worker's real Claude API call and that its body filter accepts it, for the configured model.
+   It also checks that the lab answers and that the budget is set. It creates the lab
+   engagement (`Agent live run (lab)`, scope `shop.lab.test` only, header
+   `X-Bug-Bounty: agent-live-run`) and its lane if they do not exist. It stops with a plain
+   message if anything is wrong. The third runs the pre-flight again and stops if it fails.
+   Then it starts one agent run and waits for it (a few minutes at most). It prints what was
+   sent and spent: turns, Claude API calls and target requests from the gateway log by
+   method, refusals, the lab's own count of requests with the research header, evidence,
+   leads, tokens by type, the estimated cost and the wall time. It appends the same to
+   `docs/BENCHMARK.md`.
+
+The worker caps every run, whatever was asked for in the web app: `ATTACKLEDGER_AGENT_MAX_USD`
+(default $1.00), `ATTACKLEDGER_AGENT_MAX_TURNS` (30) and `ATTACKLEDGER_AGENT_MAX_TOKENS`
+(2,000,000). Before each call the loop bounds what the call can cost, and stops instead of
+making a call that could go over. The run then ends as partial, with no receipt. The prices it
+uses are in `server/app/agentloop.py` (`MODELS`); check them against current pricing.
+
+To rehearse all of it without a key, `python3 tools/agent_live.py dryrun` builds this tree into
+its own compose project with no route out. A stub Claude API there plays a fixed run, through
+the same SDK, gateway checks and tools. Then it removes the project.
+
 ### Capture a HAR of the lab from a browser
 
 The lab is not reachable from people's machines directly. Each person opens an SSH tunnel to
