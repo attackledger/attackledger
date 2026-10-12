@@ -150,6 +150,11 @@ PASSIVE_HOSTS = frozenset({
     "api.binaryedge.io", "app.netlas.io", "api.c99.nl", "api.passivetotal.org", "proapi.robtex.com",
 })
 SERVICE_HOSTS = frozenset({"api.anthropic.com"})
+# Test only: a dry run of an agent run against a stub Claude API (tools/agent_dryrun). The CA in
+# this file is trusted for service hosts added with ATTACKLEDGER_GATEWAY_SERVICE_HOSTS, never for
+# SERVICE_HOSTS above, and the gateway refuses to start with it and a real API key
+# (test_service_context). Neither compose file passes it, so .env cannot set it.
+TEST_SERVICE_CA_ENV = "ATTACKLEDGER_GATEWAY_TEST_SERVICE_CA"
 # The Claude API calls an agent run makes (agentloop: client.beta.messages.create).
 SERVICE_ROUTES = (("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"))
 # The deployment's own containers, by every name that resolves to one of their addresses. Docker
@@ -400,6 +405,16 @@ def _client_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
     for c in (verify, insecure):
         c.set_alpn_protocols(["http/1.1"])
     return verify, insecure
+
+
+def test_service_context(path: str, service_key: str | None) -> ssl.SSLContext:
+    """The verifying context for a stub Claude API (TEST_SERVICE_CA_ENV): its CA only."""
+    if (service_key or "").strip().startswith("sk-ant-"):
+        raise SystemExit(f"{TEST_SERVICE_CA_ENV} is for dry runs against a stub Claude API; it is refused "
+                         f"while ANTHROPIC_API_KEY holds a real key. Unset one of them.")
+    ctx = ssl.create_default_context(cafile=path)
+    ctx.set_alpn_protocols(["http/1.1"])
+    return ctx
 
 
 # ---- the API: rules in, log out ---------------------------------------------------
@@ -794,8 +809,11 @@ class Tunnel:
 class Gateway:
     def __init__(self, api: Api, ca: CA | None, *, policy: Policy | None = None,
                  deny_hosts=DENY_HOSTS, upstream_dns: str | None = None, clock=time.monotonic,
-                 networks=None, target_networks=(), quarantine: str | None = None):
+                 networks=None, target_networks=(), quarantine: str | None = None,
+                 test_service_ctx: ssl.SSLContext | None = None):
         self.api, self.ca, self.policy = api, ca, policy or Policy()
+        # Test only (TEST_SERVICE_CA_ENV): how a stub Claude API's certificate is verified.
+        self.test_service_ctx = test_service_ctx
         # Where request log rows the API refused are set aside (in the gateway's private volume).
         self.quarantine_path = quarantine
         self.deny_hosts = tuple(deny_hosts)
@@ -1505,6 +1523,8 @@ class Gateway:
             try:
                 ip = await self.resolve(host)
                 ctx = None if scheme == "http" else (self.insecure_ctx if kind == "target" else self.verify_ctx)
+                if kind == "service" and self.test_service_ctx is not None and host not in SERVICE_HOSTS:
+                    ctx = self.test_service_ctx       # a stub Claude API, in a dry run only
                 upr, upw = await asyncio.wait_for(
                     self.open_connection(ip, port, ssl=ctx, server_hostname=host if ctx else None),
                     CONNECT_TIMEOUT)
@@ -2109,6 +2129,11 @@ def main() -> None:
     ca = CA(state, os.environ.get("ATTACKLEDGER_GATEWAY_PUBLIC", "/data/gateway-public"))
     deny = tuple(h.strip() for h in os.environ.get("ATTACKLEDGER_GATEWAY_DENY_HOSTS", ",".join(DENY_HOSTS)).split(",")
                  if h.strip())
+    test_ca = os.environ.get(TEST_SERVICE_CA_ENV, "").strip()
+    test_ctx = test_service_context(test_ca, os.environ.get("ANTHROPIC_API_KEY")) if test_ca else None
+    if test_ctx is not None:
+        print(f"gateway: TEST ONLY: added service hosts are verified against {test_ca} (a stub Claude API)",
+              flush=True)
     gw = Gateway(Api(os.environ.get("ATTACKLEDGER_API_URL", "http://api:8000"), token), ca,
                  policy=Policy(_env_hosts("ATTACKLEDGER_GATEWAY_PASSIVE_HOSTS", PASSIVE_HOSTS),
                                _env_hosts("ATTACKLEDGER_GATEWAY_SERVICE_HOSTS", SERVICE_HOSTS),
@@ -2116,7 +2141,8 @@ def main() -> None:
                  deny_hosts=deny, upstream_dns=os.environ.get("ATTACKLEDGER_GATEWAY_UPSTREAM_DNS") or None,
                  target_networks=tuple(t.strip() for t in os.environ.get("ATTACKLEDGER_GATEWAY_TARGET_NETWORKS", "")
                                        .split(",") if t.strip()),
-                 quarantine=os.environ.get("ATTACKLEDGER_GATEWAY_QUARANTINE") or os.path.join(state, "log-quarantine.jsonl"))
+                 quarantine=os.environ.get("ATTACKLEDGER_GATEWAY_QUARANTINE") or os.path.join(state, "log-quarantine.jsonl"),
+                 test_service_ctx=test_ctx)
     dns_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_DNS_PORT", "53"))
     control_port = int(os.environ.get("ATTACKLEDGER_GATEWAY_CONTROL_PORT", "8081"))
     hosts = listen_addresses(os.environ.get("ATTACKLEDGER_GATEWAY_LISTEN", ""))
