@@ -214,6 +214,32 @@ def test_github_actions_are_pinned_by_commit():
     assert seen >= 5
 
 
+def test_action_pins_and_their_comments_match_the_recorded_tags():
+    """Dependabot moves an action's SHA but not always its comment (#21 moved checkout to v7 and
+    kept "v4.4.0"), so a reader would trust the wrong version. tools/ci/action-pins.txt records the
+    tag of each pinned commit (tools/ci/check_action_pins.sh confirms it against GitHub); every
+    uses: line must be in it, and its comment must start with that tag."""
+    pins = {}
+    for line in (ROOT / "tools/ci/action-pins.txt").read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            action, sha, tag = line.split()
+            pins[(action, sha)] = tag
+    used = set()
+    for wf in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+        for ref, rest in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$", wf.read_text(), re.M):
+            if ref.startswith("./"):
+                continue
+            path, sha = ref.split("@")
+            action = "/".join(path.split("/")[:2])
+            tag = pins.get((action, sha))
+            assert tag, f"{wf.name}: {ref} is not in tools/ci/action-pins.txt"
+            comment = re.match(r"\s+#\s*(v[\w.]+)", rest)
+            assert comment and comment.group(1) == tag, \
+                f"{wf.name}: {ref} says {comment and comment.group(1)}, its commit is {tag}"
+            used.add((action, sha))
+    assert used == set(pins), f"pins no workflow uses: {sorted(set(pins) - used)}"
+
+
 @pytest.mark.parametrize("files", FILES)
 def test_configs_are_files(files):
     """Compose writes a config's inline `content` into the container, which a read-only root

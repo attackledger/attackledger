@@ -83,9 +83,12 @@ What a maintainer does with each pull request:
   and `tools/scan_images.sh`, as in "Refreshing the base images". Dependabot may not read
   `deploy/compose.prod.yml` (not a compose file name it looks for); the weekly
   `tools/refresh_pins.sh` covers every pin either way.
-- **GitHub Actions.** Dependabot moves the commit SHA and the version in the comment together.
-  Read the release notes before a new major, and check that `test_supply_chain.py` still passes
-  (the tag comment).
+- **GitHub Actions.** Dependabot moves the commit SHA, but not always the version in the
+  comment: #21 moved checkout to v7 and kept "v4.4.0". On such a pull request, correct the comment,
+  record the new commit and tag in `tools/ci/action-pins.txt`, and run
+  `tools/ci/check_action_pins.sh`, which confirms each line against GitHub.
+  `test_supply_chain.py` fails until the pin, its comment and that file agree. Read the release
+  notes before a new major.
 
 If Dependabot ever refuses the configuration (a key it does not support for an ecosystem), it
 says so on the repository's Insights, Dependency graph, Dependabot tab and stops that ecosystem's
@@ -243,7 +246,8 @@ After any change to a tool or a module, before the commit:
 ### GitHub Actions
 
 Each `uses:` in `.github/workflows/` is pinned to a commit, with its tag in a comment
-(`uses: actions/checkout@<sha> # v4.4.0 (tag v4)`). To move one, read the commit a tag points at
+(`uses: actions/checkout@<sha> # v7.0.1 (tag v7)`), and `tools/ci/action-pins.txt` records the
+tag of every pinned commit. To move one, read the commit a tag points at
 from the GitHub API, dereferencing an annotated tag:
 
 ```sh
@@ -251,7 +255,8 @@ gh api repos/actions/checkout/git/ref/tags/v4 --jq '.object.type + " " + .object
 gh api repos/actions/checkout/git/tags/<sha> --jq .object.sha     # only when the type was "tag"
 ```
 
-Put the commit SHA and the tag in the file. Check the actions at the same time as the base
+Put the commit SHA and the tag in the workflow and in `tools/ci/action-pins.txt`, then run
+`tools/ci/check_action_pins.sh`. Check the actions at the same time as the base
 images, and read the action's release notes before moving to a new major.
 
 Advisories (the weekly security workflow runs these on the locks; by hand before a release):

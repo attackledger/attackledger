@@ -1,0 +1,10 @@
+# Each GitHub Action this repository uses: the commit it is pinned to and the release tag that
+# commit carries. server/tests/test_supply_chain.py checks every `uses:` line against this file,
+# so a pin and its comment cannot drift apart. tools/ci/check_action_pins.sh confirms each line
+# against GitHub (it needs network access and the gh CLI). Moving a pin: docs/SUPPLY_CHAIN.md.
+# action                              commit                                     tag
+actions/checkout                      3d3c42e5aac5ba805825da76410c181273ba90b1   v7.0.1
+actions/setup-python                  5fda3b95a4ea91299a34e894583c3862153e4b97   v7.0.0
+actions/setup-node                    820762786026740c76f36085b0efc47a31fe5020   v7.0.0
+actions/upload-artifact               043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   v7.0.1
+contributor-assistant/github-action   ca4a40a7d1004f18d9960b404b97e5f30a505a08   v2.6.1
