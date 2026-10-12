@@ -17,6 +17,11 @@ updates:
     groups:
       python:
         patterns: ["*"]
+    ignore:
+      # 0.142.x sets up OpenTelemetry exporters from OTEL_* variables by default; 0.143 makes
+      # it opt-in (docs/security-review/DEPENDABOT_2026-10-11.md, #8).
+      - dependency-name: fastapi
+        versions: ["0.142.x"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: npm
@@ -56,6 +61,10 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
       - dependency-name: node
         update-types: ["version-update:semver-major"]
+      # nginx: the project follows the stable branch (even minors); odd minors are mainline
+      # (docs/security-review/DEPENDABOT_2026-10-11.md, #20 and #22).
+      - dependency-name: nginx
+        versions: ["1.31.x", "1.33.x", "1.35.x"]
     open-pull-requests-limit: 5
 
   # The digest-pinned compose `image:` lines (Postgres, nginx for the lab, Caddy). The weekly
@@ -71,9 +80,15 @@ updates:
     ignore:
       - dependency-name: postgres
         update-types: ["version-update:semver-major"]
+      # nginx: the project follows the stable branch (even minors); odd minors are mainline
+      # (docs/security-review/DEPENDABOT_2026-10-11.md, #20 and #22).
+      - dependency-name: nginx
+        versions: ["1.31.x", "1.33.x", "1.35.x"]
     open-pull-requests-limit: 5
 
-  # The commit-pinned actions: Dependabot moves the SHA and the version in the comment together.
+  # The commit-pinned actions. Dependabot moves the SHA but not always the version in the comment
+  # (#21 moved v4 to v7 and kept "v4.4.0"): tools/ci/action-pins.txt records each SHA's tag, and
+  # test_supply_chain.py fails until the pin, its comment and that file agree.
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Etc/UTC }
