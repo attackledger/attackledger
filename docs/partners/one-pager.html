@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AttackLedger for Auditors</title>
+<meta name="description" content="A printable one-pager for IT auditors and pentest leads: what AttackLedger proves about a security test, how to verify it, and what it does not prove.">
+<meta name="color-scheme" content="light dark">
+<style>
+/* Tokens copied from site/index.html (green ledger paper). No web fonts are loaded:
+   the stacks fall back to local fonts, so the page needs no network and no script. */
+:root {
+  --paper: #eef3e6; --sheet: #f6f9f1; --rule: #c9d8bf; --rule-strong: #8e9c86;
+  --text: #2b2f2a; --text-soft: #5d6559; --text-faint: #5f6a5b;
+  --ink: #1f3a93; --margin: #c9796f; --stamp: #2e7d4f; --stamp-wash: #e3f0e6;
+  --open: #b8322a; --code-bg: #e3ead8;
+  --slab: "Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+  --body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 3px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+    --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+    --ink: #a9baf5; --margin: #8a4b44; --stamp: #86d3a2; --stamp-wash: #1f3a2b;
+    --open: #ef8a78; --code-bg: #1d3226;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #14221a; --sheet: #182a20; --rule: #2c4436; --rule-strong: #4f6b5a;
+  --text: #e4ebdd; --text-soft: #a9b8a6; --text-faint: #879885;
+  --ink: #a9baf5; --margin: #8a4b44; --stamp: #86d3a2; --stamp-wash: #1f3a2b;
+  --open: #ef8a78; --code-bg: #1d3226;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--paper); color: var(--text); font: 0.95rem / 1.5 var(--body); }
+a { color: var(--ink); text-underline-offset: 0.18em; }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 0.05em 0.3em; border-radius: var(--radius); overflow-wrap: anywhere; }
+.page { max-width: 52rem; margin: 0 auto; padding: 2rem 1rem 3rem; }
+.sheet { background: var(--sheet); border: 1px solid var(--rule); border-left: 3px solid var(--margin); border-radius: var(--radius); padding: 1.75rem 1.5rem; }
+header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.5rem 1.5rem; border-bottom: 1px solid var(--rule-strong); padding-bottom: 0.9rem; }
+.brand { display: flex; align-items: center; gap: 0.5rem; font: 700 1.15rem / 1 var(--slab); }
+.brand svg { width: 1.6rem; height: 1.6rem; color: var(--stamp); transform: rotate(-6deg); flex: none; }
+.meta { font-size: 0.8rem; color: var(--text-faint); }
+h1 { font: 700 clamp(1.7rem, 4.5vw, 2.3rem) / 1.1 var(--slab); margin: 1.1rem 0 0.4rem; text-wrap: balance; }
+.lede { font-size: 1.05rem; color: var(--text-soft); margin: 0 0 0.5rem; max-width: 40rem; }
+h2 { font: 700 1.15rem / 1.2 var(--slab); margin: 1.4rem 0 0.5rem; color: var(--text); }
+p { margin: 0 0 0.6rem; }
+ul, ol { margin: 0 0 0.6rem; padding-left: 1.2rem; }
+li { margin-bottom: 0.3rem; }
+li::marker { color: var(--text-faint); }
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 1.75rem; }
+@media (max-width: 40rem) { .cols { grid-template-columns: minmax(0, 1fr); } .sheet { padding: 1.25rem 1rem; } }
+.steps { list-style: none; padding: 0; counter-reset: step; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 1.25rem; }
+@media (max-width: 40rem) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.steps li { counter-increment: step; border-top: 1px solid var(--rule-strong); padding-top: 0.5rem; font-size: 0.88rem; }
+.steps li::before { content: counter(step); display: block; font: 700 1.15rem / 1 var(--slab); color: var(--ink); margin-bottom: 0.3rem; }
+.steps strong { display: block; }
+.cmd { white-space: nowrap; }
+.not { margin-top: 0.7rem; border: 1px solid var(--rule); border-left: 3px solid var(--open); border-radius: var(--radius); padding: 0.7rem 0.9rem 0.3rem; background: var(--paper); }
+.not h2 { margin-top: 0; }
+.ask { margin-top: 1.1rem; border: 1px solid var(--rule); border-left: 3px solid var(--stamp); border-radius: var(--radius); padding: 0.7rem 0.9rem 0.3rem; background: var(--stamp-wash); }
+.ask h2 { margin-top: 0; }
+.small { font-size: 0.8rem; color: var(--text-faint); }
+.links { margin-top: 0.9rem; }
+footer { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--rule-strong); display: flex; flex-wrap: wrap; gap: 0.3rem 1.5rem; justify-content: space-between; font-size: 0.8rem; color: var(--text-soft); }
+
+@page { size: A4; margin: 14mm 14mm 16mm; }
+@media print {
+  :root, :root:not([data-theme="light"]), :root[data-theme="dark"] {
+    --paper: #ffffff; --sheet: #ffffff; --rule: #c9d8bf; --rule-strong: #8e9c86;
+    --text: #1f221e; --text-soft: #464d43; --text-faint: #555f51;
+    --ink: #1f3a93; --margin: #c9796f; --stamp: #2e7d4f; --stamp-wash: #f1f7f2;
+    --open: #b8322a; --code-bg: #eef2e8;
+    color-scheme: light;
+  }
+  body { font-size: 9.6pt; line-height: 1.42; }
+  .page { max-width: none; padding: 0; }
+  .sheet { border: 0; padding: 0; }
+  h2 { break-after: avoid; }
+  .not, .ask, .steps li, li { break-inside: avoid; }
+  a { color: inherit; text-decoration: none; }
+  .print-url::after { content: " (" attr(href) ")"; color: var(--text-faint); }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <article class="sheet">
+    <header>
+      <span class="brand">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <rect x="4" y="4" width="32" height="32" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <rect x="8" y="8" width="24" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M13 20.5l4.5 4.5L27 15" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        AttackLedger
+      </span>
+      <span class="meta">For auditors · October 2026 · version 0.8.0 (preview)</span>
+    </header>
+
+    <h1>Proof of what a security test covered, that you check yourself.</h1>
+    <p class="lede">A penetration test report says what was found. It rarely shows what was checked. AttackLedger
+      records every check as evidence, a named reviewer signs off each part of the test, and you verify the report
+      offline without trusting the tester's tools.</p>
+
+    <div class="cols">
+      <section>
+        <h2>The problem</h2>
+        <p>An auditor usually gets a list of findings and a methodology statement. There is no record of which hosts
+          were tested, which checks ran, what the evidence was, or who signed off. "No findings" can mean the area was
+          sound, or that it was never reached.</p>
+        <p>AttackLedger follows an audit rule: a control without evidence is a control that was not performed. A test
+          area counts as done only when it has a receipt.</p>
+      </section>
+      <section>
+        <h2>What an auditor gets</h2>
+        <ul>
+          <li><strong>The rules:</strong> scope and the recorded authorization.</li>
+          <li><strong>Coverage per host and lane:</strong> each lane (one test area on one host) is a checklist, such as
+            the OWASP WSTG. Each item has evidence or a written not-applicable reason, shown apart and never counted as
+            evidence.</li>
+          <li><strong>Control mapping status:</strong> PCI DSS v4.0.1, ISO/IEC 27001:2022 and DORA; per control, how many
+            mapped items are receipted, and the strength: partial or supporting, none full.</li>
+          <li><strong>Who signed what, and when:</strong> each receipt is signed with a key in the reviewer's browser
+            and timestamped (RFC 3161). The change history shows who held the reviewer role and which scope was in
+            force.</li>
+        </ul>
+      </section>
+    </div>
+
+    <h2>How verification works</h2>
+    <ol class="steps">
+      <li><strong>Run the verifier</strong><code class="cmd">python3 verify_report.py report.json</code> <code class="cmd">--require-history</code>. Python
+        standard library only, no network, no shared code with AttackLedger. Or use attackledger.com/verify: nothing is
+        uploaded.</li>
+      <li><strong>Compare fingerprints</strong>Get the reviewers' and the server's seal key fingerprints from the tester
+        by another channel, and compare them with the report.</li>
+      <li><strong>Read what was verified</strong>Check the seal time, the engagement settings (separation of duties,
+        signatures required), and for HTML compare the page with the verifier's summary.</li>
+    </ol>
+    <p class="small">Checked: the report body hash, the evidence chain, each receipt against its rebuilt manifest, each
+      signature and timestamp, the change history and the server's seal.</p>
+
+    <div class="cols">
+      <section class="not">
+        <h2>What it does not prove</h2>
+        <ul>
+          <li>That the operator is honest. The server's seal is its own statement; the reviewers' signatures are the
+            evidence of the review.</li>
+          <li>That the evidence is genuine, or that the test was complete or good.</li>
+          <li>That the reviewer really reviewed: a signature is a statement.</li>
+          <li>Compliance. The mappings are indicative, reviewed by an AI assistant (Claude) against public sources, not
+            by a qualified assessor. DORA TLPT is not mapped.</li>
+          <li>Independent assurance of the tool. No independent third party has tested it; the security review was the
+            author's own, with AI agents.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Status today</h2>
+        <ul>
+          <li>Version 0.8.0, a preview. Self-hosted on your server; no telemetry.</li>
+          <li>Install tested end to end on a fresh Ubuntu server, including backup and restore.</li>
+          <li>One real use by its author: 117 requests from a real vulnerability disclosure program imported from Caido,
+            16 evidence entries, 2 lanes signed and timestamped, verified offline in strict mode.</li>
+          <li>Internal security review in October 2026 with an adversarial second pass; 1,289 server tests.</li>
+          <li>Imports HAR, Burp XML and Caido JSON. Recon and a Claude agent are optional; the agent has not yet run
+            against the live API.</li>
+          <li>No second sign-in factor: put it behind your SSO or VPN.</li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="ask">
+      <h2>What we ask of a design partner</h2>
+      <p>One internal or IT audit team, or one small pentest firm: install it on your own server (we help), run one real,
+        authorized test with your usual tools, verify the report as an auditor would, and join 2 to 3 feedback calls
+        over about 6 weeks. Free use, a commercial licence at no cost during the partnership if you need one, and
+        direct influence on what is built next.</p>
+    </section>
+
+    <p class="small links">No install needed to look first:
+      <a class="print-url" href="https://attackledger.com/demo/">demo</a>,
+      <a class="print-url" href="https://attackledger.com/sample-report.html">sample report</a>,
+      <a class="print-url" href="https://attackledger.com/verify">verifier</a>.
+      Details: <a class="print-url" href="https://github.com/attackledger/attackledger/blob/main/docs/partners/DESIGN_PARTNER.md">design partner programme</a>,
+      <a class="print-url" href="https://github.com/attackledger/attackledger/blob/main/docs/THREAT_MODEL.md">threat model</a>.</p>
+
+    <footer>
+      <span>Murat Kabak · security researcher in bug bounty programs since 2022 · self-funded, based in Turkey</span>
+      <span>murat@attackledger.com · attackledger.com</span>
+    </footer>
+  </article>
+</main>
+</body>
+</html>
