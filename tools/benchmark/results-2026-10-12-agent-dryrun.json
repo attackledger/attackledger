@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-12",
+  "dry_run": true,
+  "project": "al-sec8-live",
+  "job_id": 1,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 6,
+  "detail": "",
+  "summary": "Stub run: one item tested with two read-only requests and marked done; the other items were left open.",
+  "limits": {
+    "max_turns": 15,
+    "max_requests": 20,
+    "max_cost_usd": 0.05
+  },
+  "claude_api_calls": 6,
+  "claude_api_hosts": [
+    "claude-stub.test"
+  ],
+  "target_requests": 2,
+  "target_by_method": {
+    "GET": 2
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [],
+  "agent_requests": 2,
+  "lab_requests": 2,
+  "lab_with_header": 2,
+  "lab_with_user_agent": 2,
+  "header_on_every_request": true,
+  "evidence_entries": 2,
+  "items_evidenced": 1,
+  "items_marked": 1,
+  "leads": 1,
+  "usage": {
+    "input": 1050,
+    "output": 1080,
+    "cache_read": 10033,
+    "cache_write": 3498
+  },
+  "cost_usd_estimate": 0.0012,
+  "wall_seconds": 3.0,
+  "job_seconds": 1.2,
+  "budget": "$0.0500, 15 turns, 2,000,000 tokens",
+  "budget_usd": 0.05
+}

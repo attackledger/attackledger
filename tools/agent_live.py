@@ -320,8 +320,10 @@ def commit_of() -> str:
     try:
         head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
                               check=True).stdout.strip()
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
-                               capture_output=True, text=True, check=True).stdout.strip()
+        # The benchmark file this script appends to does not count as a change to what ran.
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", ".",
+                                ":!docs/BENCHMARK.md"], cwd=ROOT, capture_output=True, text=True,
+                               check=True).stdout.strip()
         return head + (" with uncommitted changes" if dirty else "")
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
