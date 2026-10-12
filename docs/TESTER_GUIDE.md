@@ -137,6 +137,12 @@ by you:
 4. Read its evidence and what it left open (**Show log** shows each step). The agent cannot
    close a lane: a reviewer signs it, as for a manual lane.
 
+The run's cost limit is an estimate, bounded before each call; the administrator's ceiling
+(`ATTACKLEDGER_AGENT_MAX_USD`) applies whatever you set here. A run that stops at a limit is
+partial, and its summary says what was left open. Before the first run on a new install, an
+administrator runs the pre-flight and one measured run on the lab (docs/INSTALL.md, section 19,
+"A first live agent run").
+
 ### Test accounts for the agent
 
 Authorization tests need signed-in sessions, often two (can A read B's order?). You create the

@@ -207,10 +207,12 @@ def test_the_measurements_count_hosts_methods_header_evidence_and_refusals():
     assert m["claude_api_calls"] == 2 and m["claude_api_hosts"] == ["api.anthropic.com"]
     assert m["target_by_method"] == {"GET": 2} and m["only_lab_host"] and m["header_on_every_request"]
     assert m["evidence_entries"] == 2 and m["items_evidenced"] == 1 and m["refused_rows"] == []
-    text = live.section(m, dry=False, today="2026-10-13", project="attackledger", prices="2026-10-09")
-    assert text.startswith("\n## First live agent run (2026-10-13)")
+    m["budget"], m["budget_usd"] = "$0.50, 15 turns, 2,000,000 tokens", 0.5      # from the job log (run())
+    text = live.section(m, dry=False, today="2026-10-13", project="attackledger", prices="2026-10-09",
+                        label="first")
+    assert text.startswith("\n## Live agent run (2026-10-13, first)")
     assert "| Research header on every request | yes |" in text and "cache write 40" in text
-    assert "$0.0012 of a $0.50 run limit" in text
+    assert "| Cost (estimate) | $0.0012 of a $0.5 budget |" in text and "applied by the worker: $0.50, 15 turns" in text
 
     # A request without the header, one the lab saw that the gateway did not log, another host.
     m = run_data(live, [lab_line("/"), lab_line("/x", research="")], rows)
@@ -231,3 +233,25 @@ def test_the_lab_logs_the_header_the_live_run_sends():
     name = live.HEADER.split(":")[0].lower().replace("-", "_")
     assert f'research="$http_{name}"' in conf and 'ua="$http_user_agent"' in conf
     assert live.LAB_LINE.match(lab_line("/a?b=1"))["path"] == "/a?b=1"
+
+
+def test_the_stubs_fixed_run_uses_the_agents_tools_as_their_schemas_say():
+    """The dry run's stub (tools/agent_dryrun/claude_stub.py) must stay in step with the tools,
+    or the dry run would test refusals instead of the path."""
+    from app import agenttools
+    spec = importlib.util.spec_from_file_location("claude_stub", ROOT / "tools" / "agent_dryrun" / "claude_stub.py")
+    stub = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stub)
+    schemas = {t["name"]: t["input_schema"] for t in agenttools.TOOLS}
+    ctx = {"host": "shop.lab.test", "items": [{"idx": 1, "state": "done"}, {"idx": 2, "state": "open"}]}
+    messages = [{"role": "user", "content": agentloop.first_message(ctx)}]
+    assert stub.lane_context(messages) == ctx
+    names = []
+    for turn in range(7):
+        uses = [b for b in stub.play(turn, ctx, messages) if b["type"] == "tool_use"]
+        assert len(uses) == 1
+        names.append(uses[0]["name"])
+        assert set(uses[0]["input"]) == set(schemas[uses[0]["name"]]["required"]), uses[0]
+        if uses[0]["name"] in ("add_evidence", "mark_item"):
+            assert uses[0]["input"]["item_idx"] == 2           # the first open item
+    assert names == ["http_request", "http_request", "add_evidence", "record_lead", "mark_item", "finish", "finish"]

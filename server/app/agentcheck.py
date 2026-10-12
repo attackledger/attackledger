@@ -101,7 +101,7 @@ def worker_checks(env=os.environ, live: bool = False) -> dict:
         cap = agentloop.ceilings(env)
         explicit = (env.get("ATTACKLEDGER_AGENT_MAX_USD") or "").strip()
         checks.append(_check("budget", bool(explicit),
-                             f"ATTACKLEDGER_AGENT_MAX_USD={cap['max_cost_usd']:.2f}, "
+                             f"ATTACKLEDGER_AGENT_MAX_USD={cap['max_cost_usd']:g}, "
                              f"MAX_TURNS={cap['max_turns']}, MAX_TOKENS={cap['max_tokens_total']:,}"
                              + ("" if explicit else "; set ATTACKLEDGER_AGENT_MAX_USD in .env for a measured run")))
     except ValueError as e:

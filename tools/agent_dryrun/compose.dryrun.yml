@@ -1,0 +1,74 @@
+# Dry run of an agent run against a stub Claude API (tools/agent_live.py dryrun), on top of
+# docker-compose.yml, in its own compose project (its own containers, networks and volumes),
+# built from this tree:
+#   docker compose -p al-agent-dryrun --project-directory . -f docker-compose.yml \
+#     -f tools/agent_dryrun/compose.dryrun.yml --env-file <generated> ...
+# Nothing here can reach the internet: the default network is internal too, so the gateway has
+# no way out at all, and the worker's Claude API calls go to claude-stub.test on the lab network
+# (ANTHROPIC_BASE_URL, which the production files never pass to the worker). The gateway trusts
+# the stub's throwaway CA for that host only (ATTACKLEDGER_GATEWAY_TEST_SERVICE_CA, which it
+# refuses next to a real key). The API alone is also on the "publish" network, for its port on
+# 127.0.0.1 (AL_DRYRUN_PORT); no other port is published, and the web app is not started.
+services:
+  api:
+    ports: !override ["127.0.0.1:${AL_DRYRUN_PORT:?set by tools/agent_live.py}:8000"]
+    environment:
+      ATTACKLEDGER_DEV_KEY: "1"        # fictional data only: the public development key
+      ATTACKLEDGER_MASTER_KEY: ""
+      ATTACKLEDGER_MASTER_KEY_FILE: ""
+      ATTACKLEDGER_TSA_URL: "off"      # no timestamp authority: nothing leaves the stack
+    networks:
+      publish: {}
+
+  gateway:
+    environment:
+      ATTACKLEDGER_GATEWAY_SERVICE_HOSTS: claude-stub.test
+      ATTACKLEDGER_GATEWAY_TEST_SERVICE_CA: /stub-ca/ca.pem
+    volumes:
+      - stub-ca:/stub-ca:ro
+    depends_on:
+      claude-stub:
+        condition: service_healthy
+
+  worker:
+    environment:
+      ANTHROPIC_BASE_URL: https://claude-stub.test
+
+  claude-stub:
+    image: ${AL_DRYRUN_STUB_IMAGE:?set by tools/agent_live.py}
+    pull_policy: never
+    command: ["python", "-u", "/stub/claude_stub.py"]
+    user: "10002:10002"               # owns /data/gateway-public in the image, so the new volume too
+    environment:
+      STUB_EXPECT_KEY: ${ANTHROPIC_API_KEY:?set by tools/agent_live.py}
+      STUB_USAGE_SCALE: ${AL_DRYRUN_USAGE_SCALE:-1}
+    volumes:
+      - ./tools/agent_dryrun/claude_stub.py:/stub/claude_stub.py:ro
+      - stub-ca:/data/gateway-public
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    deploy:
+      resources:
+        limits:
+          pids: 128
+          memory: 256m
+    networks:
+      lab:
+        aliases: [claude-stub.test]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, sys; sys.exit(not os.path.exists('/data/gateway-public/ca.pem'))"]
+      interval: 2s
+      retries: 30
+
+networks:
+  default:
+    internal: true
+  publish: {}
+
+volumes:
+  stub-ca:

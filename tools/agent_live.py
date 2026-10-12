@@ -318,18 +318,21 @@ def project_name(stack: Stack) -> str:
 
 def commit_of() -> str:
     try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
+        head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True,
                               check=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                               capture_output=True, text=True, check=True).stdout.strip()
+        return head + (" with uncommitted changes" if dirty else "")
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
 
-def section(m: dict, *, dry: bool, today: str, project: str, prices: str) -> str:
+def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label: str = "") -> str:
     u = m["usage"] or {}
     methods = ", ".join(f"{k} {v}" for k, v in sorted(m["target_by_method"].items())) or "none"
     refused = "; ".join(f"{r['kind']} {r['method']} {r['url']}: {r['reason']}" for r in m["refused_rows"]) or "none"
-    title = (f"## Agent run dry run against a stub Claude API ({today})" if dry
-             else f"## First live agent run ({today})")
+    title = (f"## Agent run dry run against a stub Claude API ({today}{', ' + label if label else ''})" if dry
+             else f"## Live agent run ({today}{', ' + label if label else ''})")
     lead = ("Not a measurement of the model: the Claude API was a local stub (`tools/agent_dryrun/claude_stub.py`) "
             "playing a fixed run, so the turns, tokens and cost are the stub's. It shows the path and the "
             "accounting end to end: the worker's SDK, the gateway's route, key swap and GW-1 body check, the "
@@ -342,7 +345,8 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str) -> str
         ("Lane", f"`{LANE_ROLE}` on `{LAB_HOST}`, scope `{LAB_HOST}` only, `{HEADER}`, job {m['job_id']}"),
         ("Outcome", f"job `{m['job_status']}`, agent `{m['agent_status']}`, {m['turns']} turn(s)"
                     + (f"; {m['detail']}" if m["detail"] else "")),
-        ("Limits", ", ".join(f"{k} {v}" for k, v in m["limits"].items()) or "defaults"),
+        ("Limits", (", ".join(f"{k} {v}" for k, v in m["limits"].items()) or "defaults")
+                   + (f"; applied by the worker: {m['budget']}" if m.get("budget") else "")),
         ("Wall time", f"{m['wall_seconds']} s (job {m['job_seconds']} s)"),
         ("Claude API calls (gateway log)", f"{m['claude_api_calls']} to {', '.join(m['claude_api_hosts']) or 'none'}"),
         ("Target requests (gateway log)", f"{m['target_requests']}: {methods}; hosts: "
@@ -357,8 +361,8 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str) -> str
                      f"{m['items_evidenced']} item(s); {m['items_marked']} item(s) marked; {m['leads']} lead(s)"),
         ("Tokens", f"input {u.get('input', 0):,}, output {u.get('output', 0):,}, cache read "
                    f"{u.get('cache_read', 0):,}, cache write {u.get('cache_write', 0):,}"),
-        ("Cost (estimate)", f"${(m['cost_usd_estimate'] or 0):.4f} of a ${m['limits'].get('max_cost_usd', 0):.2f} run "
-                            f"limit (the worker's ceiling may be lower; see the job log)"),
+        ("Cost (estimate)", f"${(m['cost_usd_estimate'] or 0):.4f} of a ${m['budget_usd']:.4g} budget"
+                            if m.get("budget_usd") is not None else f"${(m['cost_usd_estimate'] or 0):.4f}"),
     ]
     table = "\n".join(f"| {k} | {v} |" for k, v in rows)
     summary = (m["summary"] or "").replace("\n", " ")[:600]
@@ -384,7 +388,7 @@ def run(stack: Stack, args) -> dict:
                     {"max_turns": args.max_turns, "max_requests": args.max_requests,
                      "max_cost_usd": max(0.05, min(20.0, budget))})
     print(f"Agent run queued: job {job['id']} on lane {lane['id']}, model {worker['model']}, "
-          f"budget ${budget:.2f}. Waiting (up to {WAIT_SECONDS // 60} minutes).", flush=True)
+          f"budget ${budget:g}. Waiting (up to {WAIT_SECONDS // 60} minutes).", flush=True)
     while True:
         job = stack.api("GET", f"/jobs/{job['id']}")
         if job["status"] not in ("queued", "running"):
@@ -398,10 +402,13 @@ def run(stack: Stack, args) -> dict:
     lab = lab_requests(stack, started, ended)
     lane_now = stack.api("GET", f"/lanes/{lane['id']}")
     m = measure(job, log, lab, lane_now, started, ended, HEADER)
+    applied = re.search(r"budget: (\$([0-9.]+), .*?) \(worker", job.get("log") or "")
+    m["budget"], m["budget_usd"] = (applied[1], float(applied[2])) if applied else (None, None)
     prices = re.search(r"prices of ([0-9-]+)", job.get("log") or "")
     today = dt.date.today().isoformat()
     project = args.project or project_name(stack)
-    text = section(m, dry=args.dry_run, today=today, project=project, prices=prices[1] if prices else "?")
+    text = section(m, dry=args.dry_run, today=today, project=project, prices=prices[1] if prices else "?",
+                   label=getattr(args, "label", "") or "")
     print(text, flush=True)
     for line in (job.get("log") or "").splitlines()[-12:]:
         print(f"  log: {line[:200]}")
@@ -435,6 +442,19 @@ def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def stub_saw(stack: Stack) -> None:
+    """What the stub received: every call must pass the GW-1 check and carry the gateway's key."""
+    stub = stack.run("logs", "--no-log-prefix", "claude-stub", check=False).stdout or ""
+    calls = [json.loads(x) for x in stub.splitlines() if x.startswith('{"stub": "request"')]
+    print("The stub Claude API saw:", flush=True)
+    for c in calls:
+        print(f"  turn {c['turn']}: {c['model']}, max_tokens {c['max_tokens']}, GW-1 {c['gw1']}, key: {c['key']}, "
+              f"anthropic-beta {c['anthropic_beta']}, {c['bytes']} bytes, output tokens {c['usage']['output_tokens']}",
+              flush=True)
+    if not calls or any(c["gw1"] != "passes" or c["key"] != "the gateway's" for c in calls):
+        raise Failed("the stub saw a call that the GW-1 check refuses or that did not carry the gateway's key")
 
 
 def dryrun(args) -> None:
@@ -471,15 +491,28 @@ def dryrun(args) -> None:
                 break
             except Failed:
                 time.sleep(2)
-        run(stack, args)
-        stub = stack.run("logs", "--no-log-prefix", "claude-stub", check=False).stdout or ""
-        calls = [json.loads(x) for x in stub.splitlines() if x.startswith('{"stub": "request"')]
-        print("Stub Claude API saw:", flush=True)
-        for c in calls:
-            print(f"  turn {c['turn']}: {c['model']} max_tokens {c['max_tokens']}, GW-1 {c['gw1']}, key: {c['key']}, "
-                  f"anthropic-beta {c['anthropic_beta']}, {c['bytes']} bytes", flush=True)
-        if not calls or any(c["gw1"] != "passes" or c["key"] != "the gateway's" for c in calls):
-            raise Failed("the stub saw a call that the GW-1 check refuses or that did not carry the gateway's key")
+        args.label = "fixed run"
+        first = run(stack, args)
+        stub_saw(stack)
+        if first["agent_status"] != "finished":
+            raise Failed(f"the stub's fixed run should finish; it ended {first['agent_status']}")
+        # Then a budget that cannot pay for the run: the stub answers with long outputs (up to the
+        # call's max_tokens), and the worker's ceiling is a fraction of a cent. The run must stop
+        # before a call that could go over, as partial, and stay under the ceiling.
+        values |= {"ATTACKLEDGER_AGENT_MAX_USD": "0.004", "AL_DRYRUN_USAGE_SCALE": "20"}
+        fd = os.open(env_file, os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write("".join(f"{k}={v}\n" for k, v in values.items()))
+        print("Second run: worker ceiling $0.004, long stub outputs.", flush=True)
+        stack.run("--profile", "lab", "up", "-d", "--no-build", "--force-recreate", "claude-stub", "gateway", "worker",
+                  timeout=600)
+        args.label = "budget stop"
+        second = run(stack, args)
+        if second["agent_status"] != "cost_limit" or second["job_status"] != "partial" \
+                or (second["cost_usd_estimate"] or 0) > 0.004:
+            raise Failed(f"the budget did not stop the run as it should: {second['agent_status']}, job "
+                         f"{second['job_status']}, ${second['cost_usd_estimate']}")
+        stub_saw(stack)
     finally:
         if args.keep:
             print(f"Kept: docker compose -p {project} --env-file {env_file} ... down -v when done.", flush=True)
@@ -508,6 +541,7 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default="claude-haiku-5-5")
     ap.add_argument("--max-usd", default="0.05")
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--label", default="", help="added to the benchmark section's title")
     ap.add_argument("--no-build", action="store_true")
     args = ap.parse_args(argv)
     try:

@@ -226,6 +226,11 @@ def _plain(o):
     return vars(o) if hasattr(o, "__dict__") else str(o)
 
 
+def usd(x: float) -> str:
+    """Dollars as a log line shows them: cents, or four places below ten cents."""
+    return f"${x:.2f}" if x == 0 or x >= 0.1 else f"${x:.4f}"
+
+
 def _bytes(v) -> int:
     return len(json.dumps(v, ensure_ascii=False, default=_plain).encode())
 
@@ -266,8 +271,8 @@ def run_loop(tools, ctx: dict, client, *, model: str = MODEL, max_turns: int = D
     max_turns = min(max_turns, cap["max_turns"])
     max_cost_usd = min(max_cost_usd, cap["max_cost_usd"])
     max_tokens_total = cap["max_tokens_total"]
-    log(f"budget: ${max_cost_usd:.2f}, {max_turns} turns, {max_tokens_total:,} tokens "
-        f"(worker ceilings ${cap['max_cost_usd']:.2f}, {cap['max_turns']}, {max_tokens_total:,}; "
+    log(f"budget: {usd(max_cost_usd)}, {max_turns} turns, {max_tokens_total:,} tokens "
+        f"(worker ceilings {usd(cap['max_cost_usd'])}, {cap['max_turns']}, {max_tokens_total:,}; "
         f"prices of {PRICES_CHECKED})")
     messages = [{"role": "user", "content": first_message(ctx)}]
     result = RunResult(status="turn_limit", model=model, spent_usd=0.0)
@@ -293,9 +298,9 @@ def run_loop(tools, ctx: dict, client, *, model: str = MODEL, max_turns: int = D
             result.status = "cost_limit"
             which = (f"the token ceiling ({result.tokens:,} of {max_tokens_total:,} tokens used)"
                      if max_tokens_total - result.tokens - prompt < min(MAX_TOKENS, affordable)
-                     else f"the cost limit (about ${result.cost_usd:.2f} of ${max_cost_usd:.2f} spent)")
+                     else f"the cost limit (about {usd(result.cost_usd)} of {usd(max_cost_usd)} spent)")
             result.detail = (f"stopped before turn {turn} at {which}: the next call could cost up to "
-                             f"${call_bound(model, prompt, MIN_OUTPUT_TOKENS):.2f}")
+                             f"{usd(call_bound(model, prompt, MIN_OUTPUT_TOKENS))}")
             break
         result.turns = turn
         params = request_params(model, messages, definitions)

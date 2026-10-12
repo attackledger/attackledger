@@ -393,3 +393,30 @@ One earlier run of the same images, before the rebase and while another stack ra
 the same machine, saw one window of 21 requests within 0.90 s at juice-proxy (calendar-second peak 20); the
 gateway's limiter is unchanged by this branch, and the run above peaked at 20. Delivery jitter between the gateway and juice-proxy under load is the likely cause; not investigated
 further.
+
+## Agent runs through the Messages API: how they are measured
+
+`tools/agent_live_run.sh` (`tools/agent_live.py run`, docs/INSTALL.md section 19, "A first live agent
+run") appends one dated section per run below, and writes the same numbers to
+`tools/benchmark/results-<date>-agent-live.json` (`agent-dryrun` for a dry run against the stub). Each
+section is one table:
+
+| Row | Source |
+|---|---|
+| Model | the job's result (the worker's `ATTACKLEDGER_AGENT_MODEL`; a first run uses the cheapest) |
+| Stack | the compose project, the commit, the date of the price table in `agentloop.MODELS` |
+| Lane | the lab engagement's `errh` lane on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run` |
+| Outcome | the job's status (`done` only if the agent finished) and the agent's (`finished`, `cost_limit`, ...) |
+| Limits | what the run asked for, and what the worker applied (the lower of that and its ceilings) |
+| Wall time | from queueing the run to its end, and the job's own start to finish |
+| Claude API calls | the gateway's log for the job, kind `service`, by host |
+| Target requests | the gateway's log for the job, kind `target`, by method and host; all must be `shop.lab.test` |
+| Refused or failed rows | every gateway row for the job that was not sent, with its reason |
+| Lab access log | the lab's own nginx log in the run's window (`lab/nginx.conf` logs the research header and user agent): an independent count |
+| Research header on every request | yes only if every request the lab saw carried it and the lab saw as many as the gateway sent |
+| Evidence | the lane's agent evidence since the job started, the items it is on, items marked, leads |
+| Tokens | the API's usage summed over the run: input, output, cache read, cache write |
+| Cost (estimate) | the loop's estimate from those tokens and the price table, against the budget the worker applied; the Console bill is authoritative |
+
+The script stops with an error, after writing the section, if a request went to another host, the lab saw
+a request without the header, or the job failed.
