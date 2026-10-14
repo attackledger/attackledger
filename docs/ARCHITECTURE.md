@@ -75,7 +75,10 @@ is never `done`.
 ### Working a lane (`executors.py`)
 
 - **Read:** `GET /lanes/{id}/context` returns the lane's items, the engagement rules
-  and the recon output **for the lane's host only**.
+  and the recon output **for the lane's host only**, with `known_paths`: the paths already
+  seen answering on that host, from imported traffic, evidence and what recon requested
+  itself, as `METHOD /path status [source]` (at most 40, no query strings, identifiers
+  collapsed, redacted when the engagement redacts, none once its content was deleted; D-059).
 - **Write:** evidence (hash-chained), items marked done (with evidence) or N/A (with
   a reason), and leads for other lanes.
 - **Never:** issue a receipt or act outside the context's scope and rules.
@@ -106,7 +109,9 @@ opened and checked (`GET /blobs/{sha256}`, served as sandboxed plain text, only 
 hashes that evidence cites). Before an exchange is stored, credentials and some personal
 data are replaced by a hash marker (`redact.py`, D-038); the model sees the same redacted
 exchange. Target content is framed as untrusted data in the
-prompt and in every tool result. The gates are checked when the run is queued and
+prompt and in every tool result. The prompt also says never to probe a form's target or a URL
+naming an action (password change, delete, transfer) with GET or HEAD, since a badly built
+endpoint may act on it, but to treat it as a write (D-059). The gates are checked when the run is queued and
 again when it starts. A run that ends without `finish`, at the turn limit or at the
 time limit is `partial`, never `done`; a model refusal fails the job.
 
