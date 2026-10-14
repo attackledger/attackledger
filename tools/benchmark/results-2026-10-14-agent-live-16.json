@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 87,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 14,
+  "detail": "",
+  "summary": "Client-side lane (42) on http://shop.lab.test. HTTPS on 443 is refused, so all testing used http://shop.lab.test (port 80). I marked 12 items done and item 8 (Flash) N/A, because no Flash/SWF content or crossdomain policy exists on this host.\n\nKey findings (recorded as leads for validation):\n- DOM XSS source: /static/track.js writes location.hash, decoded, into innerHTML without escaping (high). Source-level only; I did not run a browser to confirm execution.\n- Reflected HTML/script injection: /search.php?q= returns the input unencoded in text/html with no CSP (high). Browser execution was not run.\n- Missing frame protection on / and /login (low).\n\nItems with no finding: CORS reflection, client-side redirect, WebSockets (/ws 404), web messaging, browser storage, XSSI/JSONP, CSS injection (no style-context reflection). Note on the WebSocket check: the gateway reserves the Upgrade header, so the handshake could not be fully sent; the item rests on /ws returning 404 and no WebSocket references in the scripts.\n\nSafety: I did NOT send GET /account/password, which a lead says changed alice's password state. The reviewer still needs to check and restore alice's password. I also did not re-send GET /account/logout. One HEAD request to /account/ as alice returned a Set-Cookie refresh; that is a read-only request but it did refresh the session cookie. The admin-users and cart endpoints were read again as alice only to check CORS and callback behaviour; they are the authorization and session lanes' concern. No writes were proposed (writes not allowed).",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 14,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 25,
+  "target_by_method": {
+    "HEAD": 1,
+    "GET": 23,
+    "OPTIONS": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 25,
+  "lab_requests": 24,
+  "lab_with_header": 24,
+  "lab_with_user_agent": 24,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 7
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 39,
+  "items_evidenced": 13,
+  "items_marked": 13,
+  "leads": 3,
+  "usage": {
+    "input": 30,
+    "output": 18370,
+    "cache_read": 210080,
+    "cache_write": 31227
+  },
+  "cost_usd_estimate": 0.0152,
+  "wall_seconds": 99.3,
+  "job_seconds": 96.0,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

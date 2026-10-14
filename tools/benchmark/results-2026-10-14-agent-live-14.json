@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 85,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 15,
+  "detail": "",
+  "summary": "Lane 40 (business logic) on http://shop.lab.test. HTTPS refused connections, so all testing used http. Items 1, 2, 3, 5, 6 and 7 are marked done with evidence. Main finding: GET /api/v1/checkout/quote accepts a client-supplied price, returning totals of 0.01, 0 and -5 EUR against a list price of 89.90 with status \"ready to pay\", and it ignores qty. This is recorded as a high lead; whether an order would be charged at that price is unverified because writes are disallowed. Also recorded: the cart check treats qty=6 (max 5 per order) and qty=-2 as valid, and the register and login forms have no anti-forgery token. Left open: item 4 (process timing), which needs timing or race tests that depend on state-changing requests, and items 8 and 9 (upload), because no upload feature is visible unauthenticated, the account area needs sign-in, no test accounts are provided, and uploads are POSTs that writes forbid. Not used: no order was placed, no login or forgot-password was attempted, and no brute-force or load traffic was sent. The forgot-password lead (idnt lane) was not re-probed because its GET sends a reset email.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 15,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 29,
+  "target_by_method": {
+    "GET": 29
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 29,
+  "lab_requests": 28,
+  "lab_with_header": 28,
+  "lab_with_user_agent": 28,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {},
+  "header_on_every_request": true,
+  "evidence_entries": 30,
+  "items_evidenced": 6,
+  "items_marked": 6,
+  "leads": 3,
+  "usage": {
+    "input": 32,
+    "output": 13996,
+    "cache_read": 212723,
+    "cache_write": 25865
+  },
+  "cost_usd_estimate": 0.0124,
+  "wall_seconds": 87.3,
+  "job_seconds": 83.3,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

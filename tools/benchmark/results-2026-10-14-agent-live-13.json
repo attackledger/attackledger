@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 84,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 11,
+  "detail": "",
+  "summary": "Lane 39 (identity management) on shop.lab.test. Only http://shop.lab.test:80 answers; https was refused by the gateway. No test accounts were provided and writes are disallowed, so no registration, login or provisioning was submitted.\n\nDone:\n- WSTG-IDNT-01 (role definitions): roles visible without auth are customer (hidden role field on /register) and an admin area at /admin/ (401). No role-listing endpoint was found; /api/v1/roles and /api/v1/users are catch-all stubs.\n- WSTG-IDNT-04 (enumeration): forgot-password gives a differential response. 'alice' returned 200 with a masked email, while admin, test, bob and a random name returned 404 \"No account uses that username.\" Recorded as a medium lead. The username-available endpoint returned available:true for every name, so it gives no signal. Side effect: the GET for alice triggered a reset email for that account; the reviewer should note this.\n\nLeft open (need writes or authenticated sessions, which this engagement does not allow):\n- WSTG-IDNT-02 (registration): the form and the hidden role field were read, but submission and verification need a POST.\n- WSTG-IDNT-03 (provisioning): admin and /api/v1/me require authentication; provisioning flows need an admin session and writes.\n- WSTG-IDNT-05 (username policy): the availability endpoint accepts any format, but registration enforcement needs a POST.\n\nLeads recorded: the forgot-password enumeration differential, and the hidden role=customer field on /register as a mass-assignment candidate for a write-approved test on a test account.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 11,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 26,
+  "target_by_method": {
+    "GET": 26
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 26,
+  "lab_requests": 25,
+  "lab_with_header": 25,
+  "lab_with_user_agent": 25,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {},
+  "header_on_every_request": true,
+  "evidence_entries": 26,
+  "items_evidenced": 5,
+  "items_marked": 2,
+  "leads": 2,
+  "usage": {
+    "input": 24,
+    "output": 11880,
+    "cache_read": 116304,
+    "cache_write": 21329
+  },
+  "cost_usd_estimate": 0.0098,
+  "wall_seconds": 75.2,
+  "job_seconds": 73.3,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}
