@@ -101,7 +101,7 @@ footer { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--
         </svg>
         AttackLedger
       </span>
-      <span class="meta">For auditors · October 2026 · version 0.8.0 (preview)</span>
+      <span class="meta">For auditors · October 2026 · version 0.9.0 (preview)</span>
     </header>
 
     <h1>Proof of what a security test covered, that you check yourself.</h1>
@@ -164,13 +164,13 @@ footer { margin-top: 1.25rem; padding-top: 0.75rem; border-top: 1px solid var(--
       <section>
         <h2>Status today</h2>
         <ul>
-          <li>Version 0.8.0, a preview. Self-hosted on your server; no telemetry.</li>
+          <li>Version 0.9.0, a preview. Self-hosted on your server; no telemetry.</li>
           <li>Install tested end to end on a fresh Ubuntu server, including backup and restore.</li>
           <li>One real use by its author: 117 requests from a real vulnerability disclosure program imported from Caido,
             16 evidence entries, 2 lanes signed and timestamped, verified offline in strict mode.</li>
           <li>Internal security review in October 2026 with an adversarial second pass; 1,289 server tests.</li>
-          <li>Imports HAR, Burp XML and Caido JSON. Recon and a Claude agent are optional; the agent has not yet run
-            against the live API.</li>
+          <li>Imports HAR, Burp XML and Caido JSON. Recon and a Claude agent are optional; the agent has run against
+            the real Claude API on the bundled lab only.</li>
           <li>No second sign-in factor: put it behind your SSO or VPN.</li>
         </ul>
       </section>

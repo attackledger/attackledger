@@ -106,10 +106,10 @@ agree a commercial licence at no cost if you need one. This is not legal advice;
 legal team.
 
 **Is it production ready?**
-Not yet, and we say so. It is version 0.8.0, a preview. Before 1.0, versions may change the data
+Not yet, and we say so. It is version 0.9.0, a preview. Before 1.0, versions may change the data
 model (migrations upgrade existing databases). The install has been tested end to end on a fresh
-Ubuntu server, and the author has used it on one real engagement. The Claude agent has not yet
-run against the live API. For a design partnership we suggest one engagement, run alongside your
+Ubuntu server, and the author has used it on one real engagement. The Claude agent has run
+against the real Claude API on the bundled lab only (`docs/BENCHMARK.md`). For a design partnership we suggest one engagement, run alongside your
 usual report, not instead of it.
 
 **Does it replace our pentest report?**

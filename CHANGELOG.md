@@ -5,6 +5,12 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-14
+
+An internal security review with its fixes, supply-chain hardening, browser end-to-end tests,
+and the first agent runs against the real Claude API, on a lab with planted issues for every
+WSTG lane.
+
 Tested on a real server: a fresh Ubuntu 22.04 VPS (Docker 29.1, Compose 2.40), with the
 production file, loopback-only option D and the lab profile. Lab recon ran through the
 gateway (22 requests, all GET or DNS). The worker could not reach the internet, the
@@ -426,6 +432,12 @@ before it:
   (TM-6, `THREAT_MODEL.md` B6).
 
 ### Upgrade note
+In short (INSTALL §15): back up with `tools/backup.sh`, check out `v0.9.0`, add the new settings
+from `deploy/.env.example` to `.env` (`ATTACKLEDGER_SESSION_IDLE_MINUTES` and the agent run
+ceilings `ATTACKLEDGER_AGENT_MAX_USD`, `_MAX_TURNS`, `_MAX_TOKENS`; all have defaults), then
+`docker compose build`, `docker compose down` (without `-v`) and `docker compose up -d --wait`.
+Migrations 0023 to 0028 run when the API starts. The details follow.
+
 The internal Docker networks changed (the host gets no address on them). Upgrade with
 `docker compose down` (without `-v`) before `docker compose up -d --wait`: a plain `up -d` left the
 database without a name on its recreated network, and the API failed to start (INSTALL §15).
@@ -472,7 +484,8 @@ than that are signed out at their first request after the upgrade.
 Migration **0028** (run when the API starts) adds three columns to `audit_log` (`record_version`,
 `text_sha256`, `texts`) and makes its append-only triggers again, so that `texts` may become NULL
 (D-058). Existing entries become record version 1 and verify as before. It can be downgraded only
-while no version 2 entry exists.
+while no version 2 entry exists. A verifier from before this version fails a report that has a
+version 2 entry: give reviewers this version's `verify_report.py`, or the `/verify` page.
 
 **nginx and the gateway (TM-1):** rebuild the web image (`docker compose build web`) for the new
 `web/nginx.conf`, and recreate the API and the gateway: `docker-compose.yml` now sets
@@ -530,6 +543,15 @@ reaches them.
   Claude API calls and target requests from the gateway log by method and host, refusals, the lab's
   own count of requests with the research header, evidence, leads, tokens by type, cost and wall
   time. The API token comes from `.env` and is never printed. Steps in docs/INSTALL.md, section 19.
+  `--role` picks another WSTG lane (`info`, `conf`, `inpv`, and the lanes below). A lab lane is
+  reused only while all its items are open, so every run measures the whole lane, and a request the
+  lab's nginx answers 400 before reading its headers is counted as not observable rather than as
+  one without the research header.
+- **The first live agent runs against the real Claude API** (`docs/BENCHMARK.md`), on the lab with
+  the cheapest model (`claude-haiku-5-5`), up to 60 requests each: one or more runs on each of the
+  12 WSTG lanes. Every target request went to the lab host, and every one the lab could read carried
+  the research header. The latest run of each lane found 25 of the 31 issues planted in the lab,
+  and each of those runs cost under two cents by the loop's estimate.
 - **A dry run of all of it without a key** (`python3 tools/agent_live.py dryrun`,
   `tools/agent_dryrun/`): this tree in its own compose project with no route out, and a stub Claude
   API that plays a fixed run through the same SDK, gateway checks and tools, then a second run whose
@@ -653,14 +675,30 @@ reaches them.
   (`recon.origins`), and the prompt says to find out which scheme answers before spending
   requests on the other when none is known. An origin that fails to connect before it has
   answered is refused for the rest of the run without using the request budget. Pack items may
-  carry a short `hint`, given to the agent on that item; the WSTG pack has six (metafiles, page
+  carry a short `hint`, given to the agent on that item; the WSTG pack has eight (metafiles, page
   content, entry points and hidden parameters, file extensions, backup and unreferenced files,
-  admin interfaces). The model's copy of the context leaves out the items' control ids, so the
-  first message is smaller on every WSTG lane even with the hints.
+  admin interfaces, and since the signed-in runs password policy, WSTG-ATHN-07, and CSRF,
+  WSTG-SESS-05, which three runs in a row had missed). The model's copy of the context leaves out
+  the items' control ids, so the first message is smaller on every WSTG lane even with the hints.
 - **The server tests run on Postgres too**: `tools/test_postgres.sh` starts a throwaway Postgres
   16 and runs the whole suite on it, each test on new databases (`ATTACKLEDGER_TEST_PG`,
   `server/tests/testdb.py`), then upgrades a database the 0.7.1 code filled (CONTRIBUTING.md).
   The race tests prove one winner there as well, and migrations 0001 to 0023 run from empty.
+- **Dependency updates** after the supply-chain work, each from a Dependabot pull request evaluated
+  in `docs/security-review/DEPENDABOT_2026-10-11.md`: React and react-dom 19.3.0 with their types,
+  @fontsource 5.3.0, ESLint 10.11.0 and eslint-plugin-react-hooks 7.1.1 (the built app is
+  unchanged, so the CSP is too); uvicorn 0.54.0, psycopg 3.3.6, pydantic 2.13.5, PyYAML 6.0.3,
+  SQLAlchemy 2.0.54, alembic 1.20.0 and cryptography 50.0.2, re-locked with hashes. SQLAlchemy
+  stays on 2.0.x: 2.1.1 frees cursors late when results are iterated directly, which the app does.
+  The CI's actions are on v7 (checkout 7.0.1, setup-python 7.0.0, setup-node 7.0.0), and
+  `tools/ci/action-pins.txt` records the tag of each pinned commit (`tools/ci/check_action_pins.sh`
+  confirms it). Dependabot no longer proposes nginx mainline releases or FastAPI 0.142.x.
+- **Docs.** `docs/INSTALL.md` checks out the newest release tag, warns that a Let's Encrypt
+  certificate for a name built from the server's IP address (`sslip.io`, `nip.io`) ties that address
+  to AttackLedger in the public Certificate Transparency logs, and says how to pick the tunnel's
+  local port. `docs/security-review/README.md` indexes the review reports, says who did the review
+  and how, and what is still open. `docs/partners/` has a one-pager for IT auditors on what a report
+  proves and how to verify it, and an outline of the design-partner offer.
 - **Recon workflow, redesigned** (ideas from the ars0n framework; no code taken).
   - A summary line ("6 steps, 13 tools; 13 done, last finished …") and one clear Run all
     button.
