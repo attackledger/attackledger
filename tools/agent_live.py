@@ -57,6 +57,8 @@ ROOT = Path(__file__).resolve().parents[1]
 LAB_HOST = "shop.lab.test"
 ENG_NAME = "Agent live run (lab)"
 LANE_ROLE = "errh"              # WSTG Error handling: two items, both testable with read-only requests
+# Lanes a run may take (--role): each has issues planted in lab/nginx.conf for an agent to find.
+ROLES = ("errh", "info", "conf", "inpv")
 PACK = "web-pentest-wstg"
 HEADER = "X-Bug-Bounty: agent-live-run"     # the lab's access log records this header (lab/nginx.conf)
 USER_AGENT = "AttackLedger agent live run"
@@ -534,6 +536,7 @@ def dryrun(args) -> None:
 
 
 def main(argv=None) -> int:
+    global LANE_ROLE
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("command", choices=["preflight", "run", "dryrun"])
     ap.add_argument("--project")
@@ -554,7 +557,9 @@ def main(argv=None) -> int:
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--label", default="", help="added to the benchmark section's title")
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--role", choices=ROLES, default=LANE_ROLE, help="the WSTG lane on the lab to run")
     args = ap.parse_args(argv)
+    LANE_ROLE = args.role
     try:
         if args.command == "preflight":
             preflight(Stack(args), live=not args.dry_run, prepare=not args.no_prepare)
