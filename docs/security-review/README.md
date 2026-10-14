@@ -92,7 +92,8 @@ Each report lists its own open items. The main ones:
   content (RETENTION.md, follow-up).
 - **Content deletion does not reach backups made before it,** Postgres WAL and dead rows, or
   container logs (RETENTION.md).
-- **OS packages are not version-pinned, and nothing scans them.** Images and tags are not signed.
+- **OS packages are not version-pinned.** Grype scans the built images, OS packages included
+  (`tools/scan_images.sh`, weekly in `security.yml`, SC-11). Images and tags are not signed.
   Pin refreshes are manual (`tools/refresh_pins.sh`).
 
 ## Reporting a vulnerability
