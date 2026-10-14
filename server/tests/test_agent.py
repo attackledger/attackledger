@@ -916,3 +916,102 @@ def test_lane_context_ranks_endpoints_and_lists_routes(session):
     assert ctx["spa_routes"] == [base + "/#/score-board"]
     assert ctx["endpoint_summary"]["junk_dropped"] == 3 and ctx["endpoint_summary"]["not_shown"] == 1
     assert ctx["leads"][0]["kind"] == "nuclei" and ctx["leads_total"] == 1
+
+
+# ---- known paths (D-059) ------------------------------------------------------------
+
+def _har(rows) -> bytes:
+    """A HAR file of (method, url, status) rows, each with its own response body."""
+    return json.dumps({"log": {"version": "1.2", "creator": {"name": "fixture", "version": "1"}, "entries": [
+        {"startedDateTime": "2026-10-14T00:00:00Z",
+         "request": {"method": m, "url": u, "httpVersion": "HTTP/1.1", "headers": []},
+         "response": {"status": s, "httpVersion": "HTTP/1.1", "headers": [], "content": {"text": f"body {n}"}}}
+        for n, (m, u, s) in enumerate(rows)]}}).encode()
+
+
+def _seed_known(session, lane, job):
+    from app import auditlog, inbox
+    from app.models import Endpoint
+    eng = lane.asset.engagement
+    base = f"https://{HOST}"
+    inbox.import_file(session, eng, _har([
+        ("GET", base + "/portal/api/items/1?token=s3cr3tvalue", 200),
+        ("GET", base + "/portal/api/items/2", 200),
+        ("POST", base + "/portal/login", 302),
+        ("GET", base + "/", 403),
+        ("GET", base + "/robots.txt", 403),
+        ("GET", base + "/portal/u/alice@example.com", 200),
+        ("GET", base + "/portal/app.css", 200),
+        ("GET", f"https://{HOST}:8443/admin", 200),
+        ("GET", "https://other.lab.test/other-host-path", 200),
+    ]), fmt="har", filename="traffic.har", actor=auditlog.CLI, user_id=None)
+    for uri in (base + "/portal/report?id=7#top", base + "/portal/login", "file:notes.txt"):
+        ledger.append_evidence(session, lane, kind="response", sha256_hex="a" * 64, summary="seen", uri=uri,
+                               source="manual")
+    for i, (path, source) in enumerate((("/portal/help", "katana"), ("/admin-x", "ferox-403"),
+                                        ("/old-page", "gau,wayback"), ("/app.js", "js"))):
+        session.add(Endpoint(engagement_id=eng.id, job_id=job.id, host=HOST, url=base + path,
+                             url_sha256=f"{i:064d}", source=source, is_js=path.endswith(".js")))
+    session.commit()
+
+
+def test_lane_context_lists_the_hosts_known_paths_deduped_redacted_and_ranked(session):
+    from app import executors
+    lane, job = make_lane(session)
+    _seed_known(session, lane, job)
+    ctx = executors.lane_context(session, lane, limit=1)
+    assert [e["url"] for e in ctx["recon"]["endpoints"]] == [f"https://{HOST}/admin-x"]    # shown there, not again
+    known = ctx["known_paths"]
+    redacted = next(p for p in known["paths"] if p.startswith("GET /portal/u/"))
+    assert "alice@example.com" not in redacted and "[redacted:sha256:" in redacted
+    assert known["paths"] == [
+        "GET /portal/api/items/{id} 200 [import x2]",          # two requests, one shape; query gone
+        f"GET https://{HOST}:8443/admin 200 [import]",          # a port that is not the default keeps its origin
+        redacted,
+        "POST /portal/login 302 [import,evidence]",             # evidence names no method: it joins the import
+        "/portal/report [evidence]",
+        "GET /portal/help [recon]",                             # crawled; archives and JS files are left out
+        "GET /robots.txt 403 [import]",
+        "GET / 403 [import]",
+        "GET /portal/app.css 200 [import]",                     # static files last
+    ]
+    assert known["total"] == 9
+    text = json.dumps(ctx)
+    assert "other-host-path" not in text and "s3cr3tvalue" not in json.dumps(known) and "#top" not in text
+
+    capped = executors.known_paths(session, lane.asset.engagement, HOST, cap=3)     # no recon given
+    assert capped["paths"] == known["paths"][:3] and capped["total"] == known["total"] - 1
+    assert executors.KNOWN_PATHS == 40
+
+
+def test_known_paths_keep_the_path_as_stored_when_the_engagement_does_not_redact(session):
+    from app import executors
+    lane, job = make_lane(session)
+    lane.asset.engagement.redact_evidence = False
+    session.commit()
+    _seed_known(session, lane, job)
+    paths = executors.lane_context(session, lane)["known_paths"]["paths"]
+    assert "GET /portal/u/alice@example.com 200 [import]" in paths
+    assert not any("token" in p or "?" in p for p in paths)     # query strings are never given
+
+
+def test_known_paths_are_empty_once_the_content_is_deleted(session):
+    from app import auditlog, executors
+    lane, job = make_lane(session)
+    _seed_known(session, lane, job)
+    before = executors.lane_context(session, lane)["known_paths"]
+    # The positive control. With limit 200 every recon endpoint is among the ranked ones, so none is repeated.
+    assert before["total"] == 8 and "/portal/report [evidence]" in before["paths"]
+    vault.delete_content(session, lane.asset.engagement, actor=auditlog.CLI, reason="operator")
+    session.expire_all()
+    ctx = executors.lane_context(session, lane)
+    assert ctx["known_paths"] == {"total": 0, "paths": []}
+    assert session.scalars(select(Evidence.uri).where(Evidence.uri.like("%/portal/report%"))).first()  # kept by design
+    assert "/portal/" not in json.dumps(ctx)
+
+
+def test_the_prompt_points_at_known_paths_and_forbids_probing_actions_with_get():
+    s = agentloop.SYSTEM
+    assert "known_paths" in s and "catch-all" in s and "reachable paths in your summary" in s
+    assert "Never GET or HEAD a form's target or a URL naming an action" in s and "write needing approval" in s
+    assert "logout link" in s
