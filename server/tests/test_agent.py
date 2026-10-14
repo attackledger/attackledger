@@ -402,6 +402,80 @@ def test_truncated_turn_runs_no_tools(session):
     assert client.requests[1]["messages"][-1]["content"][0]["is_error"] is True
 
 
+class DeadPort(FakeTransport):
+    """Answers on every origin but those listed, where the gateway could not connect."""
+
+    def __init__(self, dead=(), **kw):
+        super().__init__(**kw)
+        self.dead = set(dead)
+
+    def __call__(self, method, url, headers, timeout, body=None):
+        if agenttools.origin_of(url) in self.dead:
+            self.calls.append({"method": method, "url": url, "headers": dict(headers), "body": body})
+            raise agenttools.ToolError(f"refused by the gateway: could not connect to {HOST}:443: "
+                                       f"Connect call failed")
+        return super().__call__(method, url, headers, timeout, body)
+
+
+def test_an_origin_that_never_connected_is_refused_without_using_the_budget(session):
+    lane, job = make_lane(session)
+    t = DeadPort(dead={f"https://{HOST}:443"})
+    tb = toolbox(session, lane, job, transport=t, max_requests=5)
+    text, err = get(tb, f"https://{HOST}/")
+    assert err and f"Nothing answered at https://{HOST}:443" in text and tb.requests == 1
+    text, err = get(tb, f"https://{HOST}:443/robots.txt")       # the same origin, the port written out
+    assert err and text.startswith("not sent, and not counted") and tb.requests == 1 and len(t.calls) == 1
+    res, err = get(tb, f"http://{HOST}/")
+    assert not err and res["status"] == 200 and tb.requests == 2
+    assert agenttools.origin_of(f"HTTP://{HOST.upper()}/x") == f"http://{HOST}:80"
+
+
+def test_an_origin_that_answered_is_never_blocked_by_a_later_failure(session):
+    lane, job = make_lane(session)
+    t = DeadPort()
+    tb = toolbox(session, lane, job, transport=t)
+    assert not get(tb, f"https://{HOST}/")[1]
+    t.dead.add(f"https://{HOST}:443")              # a passing failure on a live origin
+    text, err = get(tb, f"https://{HOST}/a")
+    assert err and "Nothing answered" not in text
+    t.dead.clear()
+    assert not get(tb, f"https://{HOST}/b")[1] and tb.requests == 3
+
+
+def test_the_model_gets_the_items_without_their_control_mappings(session):
+    ctx = {"host": HOST, "items": [{"idx": 1, "key": "K-1", "text": "t", "state": "open",
+                                    "controls": ["ISO-A.8.8"], "hint": "h"}]}
+    msg = agentloop.first_message(ctx)
+    assert "ISO-A.8.8" not in msg and '"hint": "h"' in msg
+    assert ctx["items"][0]["controls"] == ["ISO-A.8.8"]         # the context itself is unchanged
+    assert "recon.origins" in agentloop.SYSTEM and "hint" in agentloop.SYSTEM
+
+
+def test_lane_context_lists_the_origins_a_probe_saw_and_the_packs_hints(session):
+    from app import executors
+    from app.models import Observation
+    lane, job = make_lane(session)
+    eng_id = lane.asset.engagement_id
+    for data in ({"url": f"http://{HOST}/", "live": True, "status_code": 301},     # an older probe
+                 {"url": f"http://{HOST}:8443", "live": True, "status_code": 404},
+                 {"url": f"http://{HOST}", "live": True, "status_code": 200},
+                 {"open_ports": [80, 8443]}, {"url": "not a url", "live": True}, {"url": f"ftp://{HOST}/", "live": True},
+                 {"url": "https://other.lab.test/", "live": True}, {"url": f"https://{HOST}/", "live": False}):
+        session.add(Observation(job_id=job.id, engagement_id=eng_id, host=HOST, data=data))
+    session.commit()
+    ctx = executors.lane_context(session, lane)
+    assert ctx["recon"]["origins"] == [{"origin": f"http://{HOST}:80", "status": 200},
+                                       {"origin": f"http://{HOST}:8443", "status": 404}]
+    assert all("hint" not in i for i in ctx["items"])            # the test pack's items have none
+
+    lane.asset.engagement.pack_id = "web-pentest-wstg"
+    lane.role = "conf"
+    lane.items[0].item_key = "WSTG-CONF-04"
+    session.commit()
+    items = executors.lane_context(session, lane)["items"]
+    assert "version-control" in items[0]["hint"] and all("hint" not in i for i in items[1:])
+
+
 def test_target_content_is_framed_as_data(session):
     lane, job = make_lane(session)
     ctx_msg = agentloop.first_message({"host": HOST})

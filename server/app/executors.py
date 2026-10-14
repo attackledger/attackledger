@@ -10,6 +10,9 @@ Read side (lane_context):
   observations, endpoints and leads. Endpoints are ranked by signal (surface.py), not
   listed alphabetically: junk is dropped, identifiers are collapsed, and a single-page
   app's client routes are listed on their own. Leads come first by kind and severity.
+  recon.origins is the scheme, host and port the probe module saw answering (empty
+  when no probe ran), so an agent does not spend requests finding out. An item carries
+  its pack's hint, when the pack gives one: the usual checks for that test.
 
 Write side (what an executor may do):
   - append evidence to the lane (ledger.append_evidence; hash-chained),
@@ -27,6 +30,7 @@ Executors
 """
 import os
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
@@ -45,6 +49,24 @@ _LEAD_KIND = {"secret": 0, "nuclei": 0, "listing": 1, "robots": 1, "security-txt
 def _lead_order(l: Lead, role: str) -> tuple:
     routed = (l.detail or {}).get("lane") == role
     return (_LEAD_KIND.get(l.kind, 3) - (2 if routed else 0), _SEVERITY.get(l.severity or "", 5), l.id)
+
+
+def origins(observations: list[dict], host: str) -> list[dict]:
+    """The origins of `host` a probe saw answering, from its observations (worker.parse_probe):
+    one entry per scheme://host:port, the most recent probe first, with the status it got."""
+    out: dict[str, dict] = {}
+    for data in observations:
+        if not isinstance(data, dict) or not data.get("live") or not isinstance(data.get("url"), str):
+            continue
+        try:
+            u = urlsplit(data["url"])
+            port = u.port or {"http": 80, "https": 443}.get(u.scheme)
+        except ValueError:
+            continue
+        if u.scheme not in ("http", "https") or u.hostname != host or port is None:
+            continue
+        out.setdefault(f"{u.scheme}://{u.hostname}:{port}", {"status": data.get("status_code")})
+    return [{"origin": o, **v} for o, v in out.items()]
 
 
 @dataclass(frozen=True)
@@ -95,6 +117,7 @@ def lane_context(session, lane: Lane, limit: int = 200) -> dict:
     ranked = surface.rank_endpoints([{"url": e.url, "source": e.source, "js": e.is_js} for e in eps],
                                     lead_rows, lane.role, limit=limit)
     triage_row = next((r for r in targets.ranked(session, eng) if r["host"] == host), None)
+    hints = {i.id: i.hint for i in lane_def.items if i.hint} if lane_def else {}
     return {
         "lane": {"id": lane.id, "role": lane.role, "name": lane_def.name if lane_def else lane.role,
                  "status": gates.lane_status(lane).value, "executor": lane.executor},
@@ -110,9 +133,11 @@ def lane_context(session, lane: Lane, limit: int = 200) -> dict:
                             "also needs their confirmation") if eng.allow_writes else
                            "this engagement allows read-only requests only"},
         "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,
-                   "controls": i.controls} for i in lane.items],
+                   "controls": i.controls, **({"hint": hints[i.item_key]} if i.item_key in hints else {})}
+                  for i in lane.items],
         "recon": {
             "triage": ({k: triage_row[k] for k in ("score", "signals", "golden")} if triage_row else None),
+            "origins": origins([o.data for o in obs], host),
             "observations": [o.data for o in obs],
             "endpoints": [{"url": e["url"], "source": e["source"], "js": e["js"], "shape": e["shape"],
                            "count": e["count"], "signals": e["signals"]} for e in ranked["endpoints"]],

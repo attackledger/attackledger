@@ -574,6 +574,15 @@ reaches them.
   local app through Caido.
 
 ### Changed
+- **Agents waste fewer requests and get how-to hints** (D-057), from the first live runs on the
+  lab: the lane context lists the origins (scheme, host, port) the probe saw answering
+  (`recon.origins`), and the prompt says to find out which scheme answers before spending
+  requests on the other when none is known. An origin that fails to connect before it has
+  answered is refused for the rest of the run without using the request budget. Pack items may
+  carry a short `hint`, given to the agent on that item; the WSTG pack has six (metafiles, page
+  content, entry points and hidden parameters, file extensions, backup and unreferenced files,
+  admin interfaces). The model's copy of the context leaves out the items' control ids, so the
+  first message is smaller on every WSTG lane even with the hints.
 - **The server tests run on Postgres too**: `tools/test_postgres.sh` starts a throwaway Postgres
   16 and runs the whole suite on it, each test on new databases (`ATTACKLEDGER_TEST_PG`,
   `server/tests/testdb.py`), then upgrades a database the 0.7.1 code filled (CONTRIBUTING.md).

@@ -35,6 +35,9 @@ class Item:
     controls: tuple[str, ...]
     # Control id -> strength, for every id in controls.
     strengths: dict = field(default_factory=dict, compare=False, hash=False)
+    # How the test is usually done, in a sentence or two: given to an agent working the item
+    # (executors.lane_context). Guidance only; the item's text is what is tested and evidenced.
+    hint: str = ""
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,23 @@ def _items_from_md(rel: str, prefix: str) -> list[Item]:
     return [Item(id=f"{prefix}-{i:02d}", text=t, controls=()) for i, t in enumerate(texts, start=1)]
 
 
+HINT_LIMIT = 400
+
+
+def _hint(raw: dict, where: str) -> str:
+    """An item's hint: one short paragraph of plain text, or nothing. It is sent to an agent on
+    every turn of a run, so it is kept short."""
+    hint = raw.get("hint")
+    if hint is None:
+        return ""
+    if not isinstance(hint, str):
+        raise PackError(f"{where}/{raw.get('id')}: hint must be text")
+    hint = " ".join(hint.split())
+    if len(hint) > HINT_LIMIT:
+        raise PackError(f"{where}/{raw.get('id')}: hint is longer than {HINT_LIMIT} characters")
+    return hint
+
+
 def _parse_pack(data: dict, known_controls: dict) -> Pack:
     pid = data.get("id", "")
     if not _KEY.match(pid):
@@ -159,14 +179,14 @@ def _parse_pack(data: dict, known_controls: dict) -> Pack:
         if "items_from" in raw:
             items = [(i, {}) for i in _items_from_md(raw["items_from"], f"{pid.upper()}-{key.upper()}")]
         else:
-            items = [(Item(id=str(i["id"]), text=str(i["text"]), controls=()),
+            items = [(Item(id=str(i["id"]), text=str(i["text"]), controls=(), hint=_hint(i, f"{pid}/{key}")),
                       _mappings(i.get("controls"), f"{pid}/{key}/{i.get('id')}"))
                      for i in raw.get("items", [])]
         if not items:
             raise PackError(f"{pid}/{key}: lane has no items")
         # An item evidences its lane's controls plus any of its own.
         items = [Item(id=i.id, text=i.text, controls=tuple(dict.fromkeys(lane_controls + tuple(own))),
-                      strengths={**lane_map, **own})
+                      strengths={**lane_map, **own}, hint=i.hint)
                  for i, own in items]
         for c in {c for i in items for c in i.controls}:
             if c not in known_controls:

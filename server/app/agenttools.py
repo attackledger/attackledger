@@ -10,6 +10,8 @@ never do more than a person working through the API:
                 - the research identification is always sent and cannot be overridden;
                 - redirects are never followed: a 3xx comes back as it is;
                 - requests are spaced to the engagement's rate limit and capped per run;
+                - an origin (scheme, host, port) that fails to connect before it has
+                  answered is not tried again in the run (send_request);
                 - every request goes through the traffic gateway (D-039), which enforces
                   scope, methods, rate and identification again.
                 The model is shown a reading view of the body (pagetext.view): an HTML
@@ -226,16 +228,51 @@ def account_label(args, accounts: dict[str, bool] | None) -> str | None:
     return label
 
 
+# The gateway's reason when nothing answered at the target's address and port (or no TLS
+# handshake there): gateway.Gateway, "could not connect to HOST:PORT: ...".
+CONNECT_FAILED = "could not connect to "
+
+
+def origin_of(url: str) -> str:
+    """scheme://host:port of a checked URL, the port always written out."""
+    u = urlsplit(url)
+    return f"{u.scheme}://{(u.hostname or '').lower()}:{u.port or (443 if u.scheme == 'https' else 80)}"
+
+
+def send_request(tb, method: str, url: str, headers: dict[str, str]) -> tuple[int, list, bytes]:
+    """One request through the toolbox's transport. An origin that has not answered in this run
+    and fails to connect (nothing listens there, or it speaks another scheme) is remembered, and
+    prepare_request refuses further requests to it before they use the budget: a model told
+    once tends to try the same scheme again on the next paths. An origin that answered earlier
+    is never blocked, so a passing failure on a live origin costs one request only."""
+    origin = origin_of(url)
+    try:
+        out = tb.transport(method, url, headers, REQUEST_TIMEOUT)
+    except ToolError as e:
+        if CONNECT_FAILED in str(e) and origin not in tb.answered:
+            tb.unreachable[origin] = str(e)[:200]
+            raise ToolError(f"{e}. Nothing answered at {origin}: further requests to it in this run are "
+                            f"refused without using the budget. Try the other scheme or a port that answers.")
+        raise
+    tb.answered.add(origin)
+    return out
+
+
 def prepare_request(args, host: str, include, exclude, ident: dict[str, str], requests: int,
-                    max_requests: int, writes_allowed: bool = False) -> tuple[str, str, dict[str, str], str]:
+                    max_requests: int, writes_allowed: bool = False,
+                    unreachable: dict[str, str] | None = None) -> tuple[str, str, dict[str, str], str]:
     """(method, url, headers to send, view) for an http_request call, or ToolError. The
-    identification goes last: it always wins."""
+    identification goes last: it always wins. unreachable: origins that did not connect in this
+    run (send_request), refused before the budget is counted."""
     method = _text(args.get("method"), "method").upper()
     if method not in READ_ONLY_METHODS:
         raise ToolError(f"{method} is not allowed; this version sends read-only requests only "
                         f"({', '.join(READ_ONLY_METHODS)})"
                         + ("; propose a write with propose_write, for a person to approve" if writes_allowed else ""))
     url = check_url(_text(args.get("url"), "url", limit=4000), host, include, exclude)
+    if unreachable and origin_of(url) in unreachable:
+        raise ToolError(f"not sent, and not counted: {origin_of(url)} did not answer earlier in this run "
+                        f"({unreachable[origin_of(url)]}). Use an origin that answers.")
     headers = check_headers(args.get("headers") or [], ident)
     mode = args.get("view") or "auto"
     if mode not in VIEWS:
@@ -484,6 +521,8 @@ class Toolbox:
         self.requests = 0
         self.body_shown = 0
         self.exchanges: dict[str, dict] = {}
+        self.unreachable: dict[str, str] = {}      # origin -> why it did not connect (send_request)
+        self.answered: set[str] = set()
         self.evidence_added = 0
         self.items_marked = 0
         self.leads_added = 0
@@ -535,13 +574,14 @@ class Toolbox:
             raise ToolError("requests are sent by the worker; this side records them only")
         method, url, sent_headers, mode = prepare_request(args, self.host, self.eng.scope_include,
                                                           self.eng.scope_exclude, self.ident, self.requests,
-                                                          self.max_requests, writes_allowed=self.eng.allow_writes)
+                                                          self.max_requests, writes_allowed=self.eng.allow_writes,
+                                                          unreachable=self.unreachable)
         account = self._usable(account_label(args, None))
         self.requests += 1
         self._pace()
         at = datetime.now(timezone.utc).isoformat()
         out = {**sent_headers, **({AS_HEADER: account} if account else {})}
-        status, resp_headers, body = self.transport(method, url, out, REQUEST_TIMEOUT)
+        status, resp_headers, body = send_request(self, method, url, out)
         return present(self, self.record_exchange(method, url, sent_headers, status, resp_headers, body, at, mode,
                                                   account=account))
 
@@ -850,6 +890,8 @@ class RemoteToolbox:
         self.interval = 1.0 / max(int(rules.get("rate_limit_rps") or 1), 1)
         self.max_requests = max_requests
         self.requests = self.body_shown = 0
+        self.unreachable: dict[str, str] = {}      # origin -> why it did not connect (send_request)
+        self.answered: set[str] = set()
         self.evidence_added = self.items_marked = self.leads_added = 0
         self.finished: str | None = None
         self._last_sent: float | None = None
@@ -897,13 +939,14 @@ class RemoteToolbox:
     def _http_request(self, args) -> dict:
         method, url, sent_headers, mode = prepare_request(args, self.host, self.include, self.exclude, self.ident,
                                                           self.requests, self.max_requests,
-                                                          writes_allowed=self.writes_allowed)
+                                                          writes_allowed=self.writes_allowed,
+                                                          unreachable=self.unreachable)
         account = account_label(args, self.accounts)
         self.requests += 1
         pace(self)
         at = datetime.now(timezone.utc).isoformat()
         out = {**sent_headers, **({AS_HEADER: account} if account else {})}
-        status, resp_headers, body = self.transport(method, url, out, REQUEST_TIMEOUT)
+        status, resp_headers, body = send_request(self, method, url, out)
         rec = self._api(lambda: self.job.agent_exchange(method=method, url=url, headers=sent_headers, status=status,
                                                         response_headers=resp_headers, body=body[:MAX_READ_BYTES],
                                                         at=at, view=mode, account=account))
