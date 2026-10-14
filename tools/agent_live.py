@@ -8,8 +8,9 @@
 
 tools/agent_preflight.sh and tools/agent_live_run.sh call the first two. Options for every
 command: --project NAME, --compose-file FILE (repeatable), --env-file FILE, --api URL (default
-http://127.0.0.1:8000), --benchmark FILE (default docs/BENCHMARK.md). Without them, the commands
-use this folder's compose setup (docker compose with its .env), like every other command here.
+http://127.0.0.1:8000), --benchmark FILE (default docs/BENCHMARK.md), --role LANE (default errh).
+Without them, the commands use this folder's compose setup (docker compose with its .env), like
+every other command here.
 
 preflight  checks, without sending anything to the Claude API or the target:
            - the stack's api, gateway and worker run, and the lab answers (TCP from the gateway);
@@ -24,6 +25,13 @@ preflight  checks, without sending anything to the Claude API or the target:
            --dry-run: a stub Claude API is expected (tools/agent_dryrun), so the checks that only
            a live setup passes (the SDK calls api.anthropic.com, no test CA, a real-looking key)
            are not applied. Exit status 1, with a plain message, if anything failed.
+
+           --role athn, sess or athz (the lanes that need a signed-in user) use their own lab
+           engagement, `Agent live run (lab, test accounts)`, with the lab's two fictional
+           accounts as test accounts (D-040): user (alice, a customer) and admin (carol). Without
+           --no-prepare, a missing one is signed in to the lab as a person would (POST /login,
+           from inside the lab container) and its session cookie added through the API; the
+           cookie is never printed. The other lanes use an engagement without test accounts.
 
 run        starts the lab if needed, prepares the engagement and lane, runs preflight (it stops
            if that fails), starts ONE agent run with the worker's model (it must be the cheapest
@@ -57,8 +65,18 @@ ROOT = Path(__file__).resolve().parents[1]
 LAB_HOST = "shop.lab.test"
 ENG_NAME = "Agent live run (lab)"
 LANE_ROLE = "errh"              # WSTG Error handling: two items, both testable with read-only requests
+# Lanes that need a signed-in user: their runs use the lab's fictional accounts as test accounts
+# (D-040), on an engagement of their own, so the other lanes' runs stay comparable (no accounts).
+ACCOUNT_ROLES = ("athn", "sess", "athz")
 # Lanes a run may take (--role): each has issues planted in lab/nginx.conf for an agent to find.
-ROLES = ("errh", "info", "conf", "inpv")
+ROLES = ("errh", "info", "conf", "inpv") + ACCOUNT_ROLES
+ACCOUNTS_ENG_NAME = "Agent live run (lab, test accounts)"
+# The lab's fictional accounts (lab/nginx.conf): test account label, its role in the shop, and the
+# username and password a person would sign in with. Fictional, and the lab is reachable only
+# inside the compose network.
+LAB_ACCOUNTS = (("user", "customer", "alice", "shop-alice-2026"),
+                ("admin", "admin", "carol", "shop-carol-admin-2026"))
+SESSION_COOKIE = "lab_session"
 PACK = "web-pentest-wstg"
 HEADER = "X-Bug-Bounty: agent-live-run"     # the lab's access log records this header (lab/nginx.conf)
 USER_AGENT = "AttackLedger agent live run"
@@ -165,15 +183,80 @@ def container_checks(stack: Stack, live: bool) -> tuple[list, dict]:
     return checks, worker
 
 
+def uses_accounts() -> bool:
+    return LANE_ROLE in ACCOUNT_ROLES
+
+
+def eng_name() -> str:
+    return ACCOUNTS_ENG_NAME if uses_accounts() else ENG_NAME
+
+
+def session_cookie(wget_output: str) -> str | None:
+    """The lab's session cookie ("lab_session=<value>") from a sign-in's response headers (busybox
+    wget -S), or None."""
+    m = re.search(rf"^\s*Set-Cookie:\s*({SESSION_COOKIE}=[^;\s]+)", wget_output, re.M | re.I)
+    return m[1] if m else None
+
+
+def sign_in(stack: Stack, username: str, password: str) -> str:
+    """Sign in to the lab as a person would, with its sign-in form (POST /login), from inside the lab's
+    own container (the lab has no other way in but the gateway, which sends no writes without an
+    approval). The session cookie it answers with; never printed."""
+    p = stack.run("exec", "-T", "lab", "wget", "-S", "-O", "/dev/null", "-U", USER_AGENT, "--header", HEADER,
+                  "--post-data", f"username={username}&password={password}", "http://127.0.0.1/login", check=False)
+    cookie = session_cookie((p.stderr or "") + (p.stdout or ""))
+    if not cookie:
+        status = re.search(r"HTTP/1\.[01] (\d{3})", (p.stderr or "") + (p.stdout or ""))
+        raise Failed(f"signing in to the lab as {username} gave no session cookie "
+                     f"({'HTTP ' + status[1] if status else 'no answer'}); is the lab running this tree's "
+                     f"lab/nginx.conf? (docker compose --profile lab up -d --force-recreate lab)")
+    return cookie
+
+
+def accounts_state(stack: Stack, eng_id: int) -> tuple[list, list]:
+    """(the engagement's test accounts, the labels of LAB_ACCOUNTS missing or not for the lab host only)."""
+    have = stack.api("GET", f"/engagements/{eng_id}/test-accounts")
+    by_label = {a["label"]: a for a in have}
+    missing = [label for label, *_ in LAB_ACCOUNTS
+               if label not in by_label or by_label[label]["hosts"] != [LAB_HOST]]
+    return have, missing
+
+
+def add_accounts(stack: Stack, eng_id: int, labels) -> None:
+    """Sign in to the lab for each label and add its session as a test account (D-040), or replace an
+    account of that label made for other hosts. The cookie goes to the API only."""
+    have = {a["label"]: a for a in stack.api("GET", f"/engagements/{eng_id}/test-accounts")}
+    for label, role, username, password in LAB_ACCOUNTS:
+        if label not in labels:
+            continue
+        body = {"role": f"{role} ({username})", "hosts": [LAB_HOST], "kind": "cookie",
+                "value": sign_in(stack, username, password)}
+        if label in have:
+            stack.api("PUT", f"/engagements/{eng_id}/test-accounts/{have[label]['id']}", body)
+        else:
+            stack.api("POST", f"/engagements/{eng_id}/test-accounts", {"label": label, **body})
+        print(f"  Signed in to the lab as {username} and added the session as test account {label} "
+              f"({role}).", flush=True)
+
+
 def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
     """The lab engagement and its lane: reused while every item of the lane is open and no run is active,
-    created otherwise (if prepare). (engagement, lane, what was done)."""
+    created otherwise (if prepare). (engagement, lane, what was done). A lane that needs a signed-in
+    user (ACCOUNT_ROLES) takes the engagement with the lab's test accounts, the others one without."""
+    name = eng_name()
     for e in stack.api("GET", "/engagements"):
-        if not e["name"].startswith(ENG_NAME):
+        if not e["name"].startswith(name):
             continue
         scope = stack.api("GET", f"/engagements/{e['id']}/scope")
         if scope["include"] != [LAB_HOST] or scope["exclude"] or not scope["authorized_at"] \
                 or scope["research_header"] != HEADER or scope["content_deleted"]:
+            continue
+        have, missing = accounts_state(stack, e["id"])
+        if not uses_accounts() and have:
+            continue
+        if uses_accounts() and (scope.get("redact_evidence") is False or (missing and not prepare)):
+            # The gateway uses test accounts only while redaction is on (D-038); missing ones are
+            # signed in below, once the lane is known to be usable.
             continue
         cov = stack.api("GET", f"/engagements/{e['id']}/coverage")
         asset = next((a for a in cov["assets"] if a["host"] == LAB_HOST), None)
@@ -188,12 +271,14 @@ def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
         # Only a lane no run has worked on: one with some items already done is not a comparable measurement.
         if all(i["state"] == "open" for i in lane["items"]) and lane["status"] != "closed" \
                 and not any(r["status"] in ("queued", "running") for r in runs):
+            if uses_accounts() and missing:
+                add_accounts(stack, e["id"], missing)
             return e, lane, "reused"
     if not prepare:
-        raise Failed(f"no usable engagement named {ENG_NAME!r} with a {LANE_ROLE} lane on {LAB_HOST}; "
-                     f"run without --no-prepare to create it")
-    n = sum(1 for e in stack.api("GET", "/engagements") if e["name"].startswith(ENG_NAME))
-    name = ENG_NAME if n == 0 else f"{ENG_NAME} {n + 1}"
+        raise Failed(f"no usable engagement named {name!r} with a {LANE_ROLE} lane on {LAB_HOST}"
+                     f"{' and its test accounts' if uses_accounts() else ''}; run without --no-prepare to create it")
+    n = sum(1 for e in stack.api("GET", "/engagements") if e["name"].startswith(name))
+    name = name if n == 0 else f"{name} {n + 1}"
     e = stack.api("POST", "/engagements", {"name": name, "pack_id": PACK, "engagement_type": "pentest"})
     stack.api("PUT", f"/engagements/{e['id']}/scope", {
         "include": [LAB_HOST], "exclude": [], "rate_limit_rps": 2, "research_header": HEADER,
@@ -202,12 +287,15 @@ def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
               {"operator": "agent_live.py (lab)", "policy_url": POLICY, "confirm": True})
     asset = next(a for a in stack.api("GET", f"/engagements/{e['id']}/coverage")["assets"] if a["host"] == LAB_HOST)
     lane = stack.api("POST", "/lanes", {"asset_id": asset["asset_id"], "role": LANE_ROLE})
+    if uses_accounts():
+        add_accounts(stack, e["id"], [label for label, *_ in LAB_ACCOUNTS])
     return e, lane, "created"
 
 
 def preflight(stack: Stack, live: bool, prepare: bool = True) -> dict:
     print(f"Pre-flight ({'live run' if live else 'dry run against a stub Claude API'}); nothing is sent "
-          f"to the Claude API or the target.", flush=True)
+          f"to the Claude API or the target" + (", but the lab's sign-in for a missing test account"
+                                                if uses_accounts() and prepare else "") + ".", flush=True)
     checks = []
     up = stack.running()
     missing = [s for s in ("api", "gateway", "worker", "lab") if s not in up]
@@ -232,6 +320,16 @@ def preflight(stack: Stack, live: bool, prepare: bool = True) -> dict:
         checks.append(("api lane", lane["executor"] == "agent",
                        f"lane {lane['id']} ({LANE_ROLE}) on {LAB_HOST}: {open_items} open item(s), no run active, "
                        f"executor {lane['executor']}"))
+        have, missing = accounts_state(stack, eng["id"])
+        if uses_accounts():
+            checks.append(("api test accounts", not missing,
+                           ", ".join(f"{a['label']} ({a['role']}, {a['kind']})" for a in have
+                                     if a["label"] in {x[0] for x in LAB_ACCOUNTS}) + f" for {LAB_HOST} only"
+                           if not missing else f"missing: {', '.join(missing)}"))
+        else:
+            checks.append(("api test accounts", not have, "none (this lane runs signed out)" if not have
+                           else f"the engagement has test accounts ({', '.join(a['label'] for a in have)}): "
+                                f"this lane's runs are measured signed out"))
     except Failed as e:
         checks.append(("api", False, str(e)))
     for name, ok, detail in checks:
@@ -246,7 +344,8 @@ def preflight(stack: Stack, live: bool, prepare: bool = True) -> dict:
 # ---- the run ---------------------------------------------------------------------------------
 
 LAB_LINE = re.compile(r'^(?P<port>\d+) "(?P<method>[A-Z]+) (?P<path>\S*) [^"]*" (?P<status>\d+) '
-                      r'ua="(?P<ua>[^"]*)" research="(?P<research>[^"]*)" t=(?P<t>[\d.]+)')
+                      r'ua="(?P<ua>[^"]*)" research="(?P<research>[^"]*)" t=(?P<t>[\d.]+)'
+                      r'(?: user="(?P<user>[^"]*)")?')
 
 
 def lab_requests(stack: Stack, since: float, until: float) -> list[dict]:
@@ -305,6 +404,9 @@ def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: 
         "lab_requests": len(lab), "lab_with_header": sum(1 for x in lab if x["research"] == value),
         "lab_with_user_agent": sum(1 for x in lab if x["ua"] == USER_AGENT),
         "lab_headers_unread": len(blind),
+        # The lab's own view of which fictional user each request was signed in as (lab/nginx.conf).
+        "lab_signed_in": {u: sum(1 for x in lab if x.get("user") == u)
+                          for u in sorted({x.get("user") for x in lab if x.get("user") not in (None, "", "-")})},
         # Every request whose headers the lab read carried it, and the lab saw as many as the gateway sent.
         "header_on_every_request": all(x["research"] == value for x in seen)
                                     and len(lab) == sum(1 for r in target if r["verdict"] == "allowed"),
@@ -352,7 +454,9 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
     rows = [
         ("Model", f"`{m['model']}`"),
         ("Stack", f"compose project `{project}`, commit `{commit_of()}`, prices of {prices} (`agentloop.MODELS`)"),
-        ("Lane", f"`{LANE_ROLE}` on `{LAB_HOST}`, scope `{LAB_HOST}` only, `{HEADER}`, job {m['job_id']}"),
+        ("Lane", f"`{LANE_ROLE}` on `{LAB_HOST}`, scope `{LAB_HOST}` only, `{HEADER}`, job {m['job_id']}"
+                 + (", test accounts " + ", ".join(f"`{label}` ({role}, {user})" for label, role, user, _ in LAB_ACCOUNTS)
+                    if uses_accounts() else "")),
         ("Outcome", f"job `{m['job_status']}`, agent `{m['agent_status']}`, {m['turns']} turn(s)"
                     + (f"; {m['detail']}" if m["detail"] else "")),
         ("Limits", (", ".join(f"{k} {v}" for k, v in m["limits"].items()) or "defaults")
@@ -366,7 +470,9 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
         ("Lab access log", f"{m['lab_requests']} request(s), {m['lab_with_header']} with the research header, "
                            f"{m['lab_with_user_agent']} with the user agent"
                            + (f"; {unread} answered 400 by the lab's nginx before it read the headers"
-                              if (unread := m.get("lab_headers_unread")) else "")),
+                              if (unread := m.get("lab_headers_unread")) else "")
+                           + ("; signed in as " + ", ".join(f"{u} {n}" for u, n in signed.items())
+                              if (signed := m.get("lab_signed_in")) else "")),
         ("Research header on every request", (("yes" if m["lab_requests"] else "yes (no request was sent)")
                                               + (f" (on the {m['lab_requests'] - unread} whose headers the lab "
                                                  f"read; {unread} not observable)" if unread else ""))
@@ -510,6 +616,10 @@ def dryrun(args) -> None:
         stub_saw(stack)
         if first["agent_status"] != "finished":
             raise Failed(f"the stub's fixed run should finish; it ended {first['agent_status']}")
+        # With test accounts, the stub sends its first request as one: the lab must have seen it signed in,
+        # so the gateway added the account's session (D-040).
+        if uses_accounts() and not first.get("lab_signed_in"):
+            raise Failed("the stub's request as a test account reached the lab signed out")
         # Then a budget that cannot pay for the run: the stub answers with long outputs (up to the
         # call's max_tokens), and the worker's ceiling is a fraction of a cent. The run must stop
         # before a call that could go over, as partial, and stay under the ceiling.

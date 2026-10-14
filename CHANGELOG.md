@@ -518,6 +518,28 @@ reaches them.
   budget must stop it. The gateway trusts the stub's throwaway CA through
   `ATTACKLEDGER_GATEWAY_TEST_SERVICE_CA`, for added service hosts only, never for
   `api.anthropic.com`; it refuses to start with it next to a real key, and no compose file passes it.
+- **The lab has a sign-in, so the Authentication, Session management and Authorization lanes can
+  be measured** (`lab/nginx.conf`, still nginx alone). Two fictional accounts, `alice` (customer)
+  and `carol` (admin), sign in at `/login` and get a `lab_session` cookie; signed-in pages and a
+  small order and admin API answer only with it. Planted for those lanes, and listed at the top of
+  the file: credentials over plain HTTP, cacheable signed-in pages, a four-character password
+  policy and a password change without the current password; a session cookie without HttpOnly,
+  Secure or SameSite that lasts a year, the session in a URL, a form without an anti-CSRF token and
+  a sign-out that does not end the session; an order any signed-in user can read (IDOR) and an
+  admin API that checks only that someone is signed in. Writes are accepted and change nothing.
+  The access log also names the user a request was signed in as (`user="alice"`), never the
+  session. Signed out, the lab answers as before, except that the home page now also links to the
+  sign-in and the new API paths (`/api/v1/me`, `/api/v1/orders...`, `/api/v1/admin/users`) answer
+  401 instead of the `/api/` catch-all's `{"ok":true}`. `docs/INSTALL.md`, section 19, "Sign in to
+  the lab".
+- **Live runs on the lanes that need a signed-in user** (`tools/agent_live.py --role athn|sess|athz`).
+  They use an engagement of their own, `Agent live run (lab, test accounts)`, so the other lanes'
+  runs stay signed out and comparable. The first time, the script signs in to the lab as `alice`
+  and `carol` with the lab's form, from inside the lab container, as a person would, and adds the
+  two sessions through the API as test accounts `user` and `admin` (D-040); it never prints them.
+  The pre-flight checks they are there, for `shop.lab.test` only, and the write-up names them and
+  counts the requests the lab saw signed in as each user. In a dry run with one of these lanes the
+  stub sends its first request as a test account, and the run fails unless the lab saw it signed in.
 
 ### Fixed
 - **Accessibility of the report and the landing page** (WE-7, WE-8, WE-9, Low): the HTML report's

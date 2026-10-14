@@ -269,3 +269,207 @@ def test_the_stubs_fixed_run_uses_the_agents_tools_as_their_schemas_say():
         if uses[0]["name"] in ("add_evidence", "mark_item"):
             assert uses[0]["input"]["item_idx"] == 2           # the first open item
     assert names == ["http_request", "http_request", "add_evidence", "record_lead", "mark_item", "finish", "finish"]
+
+
+# ---- the lab's sign-in and the lanes that need it (athn, sess, athz) ----------------------------
+
+LAB_CONF = ROOT / "lab" / "nginx.conf"
+
+
+def test_the_lab_log_names_the_signed_in_user_and_the_run_counts_it():
+    live = load_live()
+    conf = LAB_CONF.read_text()
+    assert 'user="$lab_user"' in conf and "map $cookie_lab_session $lab_user" in conf
+    line = '80 "GET /account/ HTTP/1.1" 200 ua="u" research="agent-live-run" t=1000.5 user="alice"'
+    assert live.LAB_LINE.match(line)["user"] == "alice"
+    assert live.LAB_LINE.match(lab_line("/"))["user"] is None          # a line from before the sign-in
+    rows = [row("http://shop.lab.test/"), row("http://shop.lab.test/a"), row("http://shop.lab.test/b")]
+    m = run_data(live, [lab_line("/") + ' user=""', line, line.replace("alice", "carol")], rows)
+    assert m["lab_signed_in"] == {"alice": 1, "carol": 1} and m["header_on_every_request"]
+    live.LANE_ROLE = "athz"
+    text = live.section(m, dry=False, today="d", project="p", prices="x")
+    assert "; signed in as alice 1, carol 1 |" in text
+    assert "test accounts `user` (customer, alice), `admin` (admin, carol)" in text
+    live.LANE_ROLE = "errh"
+    m = run_data(live, [lab_line("/"), lab_line("/x")], rows[:2])
+    assert m["lab_signed_in"] == {} and "signed in as" not in live.section(m, dry=False, today="d", project="p",
+                                                                           prices="x")
+
+
+def test_the_lanes_that_need_a_signed_in_user_are_wstg_lanes_with_the_labs_accounts():
+    from app import packs
+    live = load_live()
+    assert set(live.ACCOUNT_ROLES) == {"athn", "sess", "athz"} and set(live.ACCOUNT_ROLES) <= set(live.ROLES)
+    wstg = {lane.key for lane in packs.all_packs()[live.PACK].lanes}
+    assert set(live.ROLES) <= wstg
+    conf = LAB_CONF.read_text()
+    # Each fictional account signs in with what the lab's sign-in reads, and two roles exist to compare.
+    for label, role, username, password in live.LAB_ACCOUNTS:
+        assert f"username={username}(?:&|$))(?=.*(?:^|&)password={password}(?:&|$))" in conf, username
+        assert f"{username} {role};" in conf, username
+    assert {r for _, r, _, _ in live.LAB_ACCOUNTS} == {"customer", "admin"}
+    assert live.SESSION_COOKIE == "lab_session" and 'Set-Cookie "lab_session=$lab_issue; Path=/"' in conf
+
+
+def test_the_labs_signed_in_pages_answer_only_with_a_session():
+    """Every location that serves a signed-in page or API checks the session first, and the sign-in's
+    own answer listens on the loopback only."""
+    import re
+    conf = LAB_CONF.read_text()
+    blocks = re.findall(r"location (?:= |~ )?(\S+) \{\n(.*?)\n  \}", conf, re.S)
+    signed = {p: b for p, b in blocks if p.startswith(("/account/", "/api/v1/me", "/api/v1/orders", "/api/v1/admin",
+                                                        "^/account/"))}
+    assert len(signed) >= 9
+    for path, body in signed.items():
+        if path != "/account/logout":          # sign-out answers anyone, as it always did
+            assert 'if ($lab_user = "") { return 401' in body, path
+    assert "listen 127.0.0.1:8081;" in conf and "proxy_pass http://127.0.0.1:8081;" in conf
+    assert re.search(r"location = /_signin \{\n\s+internal;", conf)
+    # The planted issues are written down where the lab is, for the benchmark to say what is there.
+    for planted in ("ATHN-01", "ATHN-06", "ATHN-07", "ATHN-09", "SESS-02", "SESS-04", "SESS-05", "SESS-06",
+                    "SESS-07", "ATHZ-04", "ATHZ-02/03"):
+        assert f"#     - {planted}" in conf, planted
+
+
+def test_the_sign_in_cookie_is_read_from_the_answer_and_never_printed(capsys):
+    live = load_live()
+    ok = ("Connecting to 127.0.0.1 (127.0.0.1:80)\n  HTTP/1.1 200 OK\n  Server: nginx\n"
+          "  Set-Cookie: lab_session=0123abcd; Path=/\n  \nsaving to '/dev/null'\n")
+    assert live.session_cookie(ok) == "lab_session=0123abcd"
+    assert live.session_cookie("  HTTP/1.1 401 Unauthorized\nwget: server returned error") is None
+    assert live.session_cookie("  Set-Cookie: other=1; Path=/\n") is None
+
+    class Runs:
+        def __init__(self, out):
+            self.out, self.argv = out, None
+
+        def run(self, *argv, check=True, **kw):
+            self.argv = argv
+            return __import__("subprocess").CompletedProcess(argv, 0, stdout="", stderr=self.out)
+    stack = Runs(ok)
+    assert live.sign_in(stack, "alice", "pw") == "lab_session=0123abcd"
+    assert stack.argv[:3] == ("exec", "-T", "lab") and "username=alice&password=pw" in stack.argv
+    assert live.HEADER in stack.argv                     # the sign-in carries the research header too
+    with pytest.raises(live.Failed, match="HTTP 401") as e:
+        live.sign_in(Runs("  HTTP/1.1 401 Unauthorized\n"), "alice", "bad")
+    assert "bad" not in str(e.value)
+    assert "0123abcd" not in capsys.readouterr().out
+
+
+class FakeApi:
+    """The API routes tools/agent_live.py's prepare step uses, in memory, and the lab's sign-in."""
+
+    def __init__(self, live):
+        self.live, self.engs, self.accounts, self.lanes, self.calls, self.n = live, {}, {}, {}, [], 0
+        self.signed_in = []
+
+    def _id(self):
+        self.n += 1
+        return self.n
+
+    def run(self, *argv, check=True, **kw):
+        user = next(a for a in argv if a.startswith("username=")).split("&")[0].split("=")[1]
+        self.signed_in.append(user)
+        out = f"  HTTP/1.1 200 OK\n  Set-Cookie: lab_session=secret-of-{user}; Path=/\n"
+        return __import__("subprocess").CompletedProcess(argv, 0, stdout="", stderr=out)
+
+    def api(self, method, path, body=None):
+        import re
+        self.calls.append((method, path, body))
+        parts = path.strip("/").split("/")
+        if path == "/engagements":
+            if method == "GET":
+                return [{"id": i, "name": e["name"]} for i, e in self.engs.items()]
+            i = self._id()
+            self.engs[i] = {"name": body["name"], "scope": {}, "lanes": {}}
+            self.accounts[i] = []
+            return {"id": i, "name": body["name"]}
+        if re.fullmatch(r"/engagements/\d+/scope", path):
+            e = self.engs[int(parts[1])]
+            if method == "PUT":
+                e["scope"].update(body)
+            return {"include": e["scope"].get("include"), "exclude": e["scope"].get("exclude", []),
+                    "authorized_at": e.get("authorized_at"), "research_header": e["scope"].get("research_header"),
+                    "content_deleted": None, "redact_evidence": True}
+        if re.fullmatch(r"/engagements/\d+/attest", path):
+            self.engs[int(parts[1])]["authorized_at"] = "2026-10-14T00:00:00Z"
+            return {}
+        if re.fullmatch(r"/engagements/\d+/coverage", path):
+            e = self.engs[int(parts[1])]
+            return {"assets": [{"host": self.live.LAB_HOST, "asset_id": int(parts[1]),
+                                "roles": {r: {"lane_id": lid} for r, lid in e["lanes"].items()}}]}
+        if path == "/lanes" and method == "POST":
+            i = self._id()
+            self.lanes[i] = {"id": i, "items": [{"state": "open"}], "status": "open", "executor": "manual"}
+            self.engs[body["asset_id"]]["lanes"][body["role"]] = i
+            return self.lanes[i]
+        if re.fullmatch(r"/lanes/\d+", path):
+            return self.lanes[int(parts[1])]
+        if re.fullmatch(r"/lanes/\d+/agent-runs", path):
+            return []
+        if re.fullmatch(r"/engagements/\d+/test-accounts", path):
+            accounts = self.accounts[int(parts[1])]
+            if method == "POST":
+                accounts.append({"id": self._id(), "label": body["label"], "role": body["role"],
+                                 "hosts": body["hosts"], "kind": body["kind"], "value": body["value"]})
+            return [{k: v for k, v in a.items() if k != "value"} for a in accounts]
+        if re.fullmatch(r"/engagements/\d+/test-accounts/\d+", path):
+            a = next(x for x in self.accounts[int(parts[1])] if x["id"] == int(parts[3]))
+            a.update(body)
+            return {k: v for k, v in a.items() if k != "value"}
+        raise AssertionError(f"unexpected {method} {path}")
+
+
+def test_prepare_signs_in_the_labs_accounts_for_the_lanes_that_need_them(capsys):
+    live = load_live()
+    api = FakeApi(live)
+    api.api("GET", "/engagements")
+    # A signed-out lane: its own engagement, no test accounts.
+    live.LANE_ROLE = "inpv"
+    e, lane, how = live.find_lane(api, prepare=True)
+    assert how == "created" and e["name"] == live.ENG_NAME and api.accounts[e["id"]] == [] and api.signed_in == []
+    # A lane that needs a signed-in user: another engagement, with both accounts for the lab host only,
+    # each from a sign-in, as cookies.
+    live.LANE_ROLE = "athz"
+    e2, lane2, how = live.find_lane(api, prepare=True)
+    assert how == "created" and e2["name"] == live.ACCOUNTS_ENG_NAME and e2["id"] != e["id"]
+    assert api.signed_in == ["alice", "carol"]
+    got = {a["label"]: a for a in api.accounts[e2["id"]]}
+    assert set(got) == {"user", "admin"}
+    assert got["user"]["value"] == "lab_session=secret-of-alice" and got["admin"]["value"] == "lab_session=secret-of-carol"
+    assert all(a["hosts"] == [live.LAB_HOST] and a["kind"] == "cookie" for a in got.values())
+    assert got["user"]["role"] == "customer (alice)" and got["admin"]["role"] == "admin (carol)"
+    # The next account lane reuses that engagement and signs in no one again; a signed-out lane never
+    # takes the engagement that has accounts.
+    live.LANE_ROLE = "sess"
+    e3, _, how = live.find_lane(api, prepare=True)
+    assert e3["id"] == e2["id"] and api.signed_in == ["alice", "carol"]
+    live.LANE_ROLE = "conf"
+    e4, _, _ = live.find_lane(api, prepare=True)
+    assert e4["id"] == e["id"]
+    # An account deleted on the engagement is signed in again; with --no-prepare it is not, and the
+    # engagement is not used.
+    api.accounts[e2["id"]] = [a for a in api.accounts[e2["id"]] if a["label"] != "admin"]
+    live.LANE_ROLE = "athn"
+    with pytest.raises(live.Failed, match="and its test accounts"):
+        live.find_lane(api, prepare=False)
+    e5, _, how = live.find_lane(api, prepare=True)
+    assert e5["id"] == e2["id"] and how == "reused" and api.signed_in == ["alice", "carol", "carol"]
+    out = capsys.readouterr().out
+    assert "secret-of" not in out and "Signed in to the lab as alice and added the session as test account user" in out
+    assert not [c for c in api.calls if c[2] and "secret-of" in json.dumps(c[2]) and "test-accounts" not in c[1]]
+
+
+def test_the_stub_sends_its_first_request_as_a_usable_test_account():
+    spec = importlib.util.spec_from_file_location("claude_stub", ROOT / "tools" / "agent_dryrun" / "claude_stub.py")
+    stub = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(stub)
+    ctx = {"host": "shop.lab.test", "items": [{"idx": 1, "state": "open"}],
+           "test_accounts": [{"label": "other", "role": "x", "usable_on_this_host": False},
+                             {"label": "user", "role": "customer (alice)", "usable_on_this_host": True}]}
+    [use] = [b for b in stub.play(0, ctx, []) if b["type"] == "tool_use"]
+    assert use["input"]["as_account"] == "user"
+    [use] = [b for b in stub.play(1, ctx, []) if b["type"] == "tool_use"]
+    assert use["input"]["as_account"] == ""
+    [use] = [b for b in stub.play(0, {"host": "shop.lab.test", "items": []}, []) if b["type"] == "tool_use"]
+    assert use["input"]["as_account"] == ""
