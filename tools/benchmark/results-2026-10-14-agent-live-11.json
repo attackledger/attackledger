@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 82,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 12,
+  "detail": "",
+  "summary": "Lane 37 (session management), origin http://shop.lab.test (HTTPS refused at the gateway). Marked done: SESS-01 (session schema: server-set opaque cookie, values redacted, so only partial), SESS-02 (cookie attributes: no HttpOnly/Secure/SameSite, one-year Max-Age), SESS-04 (exposed session data: none in URLs or bodies, but a client AWS key id and public source map), SESS-05 (CSRF: no token on login or password forms, no SameSite, state change reachable by GET), SESS-06 (logout: GET-based, cookie cleared, but the same session still returned admin data afterwards, so needs confirmation). Left open: SESS-03 (fixation needs a login POST, which is disallowed; no pre-login token was issued), SESS-07 (server-side idle/absolute timeout needs waiting, not done), SESS-08 (session puzzling not visible through read-only requests), SESS-09 (hijacking needs a captured token replayed from another client). Important: I sent one GET to /account/password as alice by mistake. It is state-changing and returned \"saved\"; no new password was sent, so the reviewer should check and restore alice's password if needed. Leads recorded: password GET state change (high), customer reads admin user list (high), logout not invalidating the session (medium), cookie flags and public caching (medium), AWS key and source map in client JS (high). One lead detail has a mistyped marker value; the redacted key marker is sha256:849382dac65b.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 12,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 22,
+  "target_by_method": {
+    "GET": 22
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 22,
+  "lab_requests": 21,
+  "lab_with_header": 21,
+  "lab_with_user_agent": 21,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 9,
+    "carol": 4
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 25,
+  "items_evidenced": 9,
+  "items_marked": 5,
+  "leads": 5,
+  "usage": {
+    "input": 26,
+    "output": 15022,
+    "cache_read": 123088,
+    "cache_write": 24107
+  },
+  "cost_usd_estimate": 0.0118,
+  "wall_seconds": 93.3,
+  "job_seconds": 89.8,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 83,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 11,
+  "detail": "",
+  "summary": "Lane 38 (Authentication) on shop.lab.test, read-only. HTTP answers and HTTPS is refused, so the origin is http://shop.lab.test. Done: ATHN-01 (credentials travel over plain HTTP, no TLS listener), ATHN-04 (customer session reads /api/v1/admin/users, which returns 401 anonymously, and the customer gets 403 on /admin/), ATHN-05 (no remember-me option on login, but the session cookie persists for one year), ATHN-06 (authenticated /account/settings is cacheable with a Set-Cookie response), ATHN-07 (password minlength=4, no complexity rule), ATHN-09 (change form has no current-password check and no CSRF token), ATHN-10 (no OAuth/SSO found; /backup/ open to anonymous requests). ATHN-08 is N/A: no security-question or recovery feature found on the probed paths. Open: ATHN-02 (default credentials) and ATHN-03 (lockout). Both need repeated POSTs to /login, which this read-only tool cannot send, and I did not attempt credential guessing. I did not resend GET /account/password from the sess lead, which changed alice's password state; the reviewer needs to check and restore it. Leads recorded: plain-HTTP login, the alice password change, /backup/ exposure, and the {\"ok\":true} responses on /api/v1/login and /api/v1/password/reset. The session-lane leads on the admin list, app.js secrets and logout were not re-tested here beyond the admin list.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 11,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 21,
+  "target_by_method": {
+    "GET": 21
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 21,
+  "lab_requests": 20,
+  "lab_with_header": 20,
+  "lab_with_user_agent": 20,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 5
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 18,
+  "items_evidenced": 7,
+  "items_marked": 8,
+  "leads": 4,
+  "usage": {
+    "input": 24,
+    "output": 13052,
+    "cache_read": 124549,
+    "cache_write": 22644
+  },
+  "cost_usd_estimate": 0.0106,
+  "wall_seconds": 81.3,
+  "job_seconds": 78.4,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

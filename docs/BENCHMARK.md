@@ -712,3 +712,49 @@ One agent run through the Messages API, on the lab, with the cheapest configured
 | Cost (estimate) | $0.0125 of a $0.5 budget |
 
 Agent summary for the reviewer: "Lane 32 (Authentication) on shop.lab.test. Items done: 1, 4, 5, 6, 7, 9, 10. Item 8 is N/A because no security-question or recovery feature exists on the host (/forgot-password and /reset-password return 404). Items 2 (default credentials) and 3 (lockout) are left open: both require repeated POST login attempts, which are out of scope with writes disabled and would amount to credential guessing. Only GET/HEAD/OPTIONS were sent, all as anonymous, alice (user) or carol (admin) as needed, at a low rate. Key observations: (1) only plain HTTP answers (HTTPS refused by the gateway), and the login fo"
+
+## Live agent run (2026-10-14, sess lane, signed in, with the ATHN-07/SESS-05 hints)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `c69c029`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `sess` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 82, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 12 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 93.3 s (job 89.8 s) |
+| Claude API calls (gateway log) | 12 to api.anthropic.com |
+| Target requests (gateway log) | 22: GET 22; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443) |
+| Lab access log | 21 request(s), 21 with the research header, 21 with the user agent; signed in as alice 9, carol 4 |
+| Research header on every request | yes |
+| Evidence | 25 entries on 9 item(s); 5 item(s) marked; 5 lead(s) |
+| Tokens | input 26, output 15,022, cache read 123,088, cache write 24,107 |
+| Cost (estimate) | $0.0118 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 37 (session management), origin http://shop.lab.test (HTTPS refused at the gateway). Marked done: SESS-01 (session schema: server-set opaque cookie, values redacted, so only partial), SESS-02 (cookie attributes: no HttpOnly/Secure/SameSite, one-year Max-Age), SESS-04 (exposed session data: none in URLs or bodies, but a client AWS key id and public source map), SESS-05 (CSRF: no token on login or password forms, no SameSite, state change reachable by GET), SESS-06 (logout: GET-based, cookie cleared, but the same session still returned admin data afterwards, so needs confirmation). Left ope"
+
+## Live agent run (2026-10-14, athn lane, signed in, with the ATHN-07/SESS-05 hints)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `c69c029`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `athn` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 83, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 11 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 81.3 s (job 78.4 s) |
+| Claude API calls (gateway log) | 11 to api.anthropic.com |
+| Target requests (gateway log) | 21: GET 21; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443) |
+| Lab access log | 20 request(s), 20 with the research header, 20 with the user agent; signed in as alice 5 |
+| Research header on every request | yes |
+| Evidence | 18 entries on 7 item(s); 8 item(s) marked; 4 lead(s) |
+| Tokens | input 24, output 13,052, cache read 124,549, cache write 22,644 |
+| Cost (estimate) | $0.0106 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 38 (Authentication) on shop.lab.test, read-only. HTTP answers and HTTPS is refused, so the origin is http://shop.lab.test. Done: ATHN-01 (credentials travel over plain HTTP, no TLS listener), ATHN-04 (customer session reads /api/v1/admin/users, which returns 401 anonymously, and the customer gets 403 on /admin/), ATHN-05 (no remember-me option on login, but the session cookie persists for one year), ATHN-06 (authenticated /account/settings is cacheable with a Set-Cookie response), ATHN-07 (password minlength=4, no complexity rule), ATHN-09 (change form has no current-password check and no"
