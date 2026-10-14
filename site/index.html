@@ -415,8 +415,11 @@ Verified.</code></pre>
       <div class="prose">
         <h2 class="section" id="licence-title">Licence and status</h2>
         <p>AttackLedger is open source under the <strong>AGPL-3.0</strong>, with a commercial licence for teams that
-          cannot use AGPL software. The current version is a preview: recon is complete, and agent-assisted hunting
-          has been tested on a local lab. The source code is on <a href="https://github.com/attackledger/attackledger">GitHub</a>.</p>
+          cannot use AGPL software. The current version is a preview: recon is complete, and agent-assisted testing
+          has been <a href="https://github.com/attackledger/attackledger/blob/main/docs/BENCHMARK.md">measured</a>
+          against the real Claude API on a local lab: one run per lane (information gathering, configuration, input
+          validation), under two cents each with the smallest model, finding five of the six issues planted in the lab.
+          Every request went through the gateway and is tied to evidence. The source code is on <a href="https://github.com/attackledger/attackledger">GitHub</a>.</p>
         <p>Used on a live engagement by its author: 117 requests from a real vulnerability disclosure program
           imported from Caido, 16 evidence entries mapped, 2 lanes signed in the reviewer's browser and timestamped,
           and the report verified offline in strict mode.</p>
