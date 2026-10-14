@@ -466,3 +466,26 @@ Not a measurement of the model: the Claude API was a local stub (`tools/agent_dr
 | Cost (estimate) | $0.0021 of a $0.004 budget |
 
 Agent summary for the reviewer: "Partial run, stopped (cost limit) before the agent finished: 0 evidence entries, 0 items marked. The open items are left for a person; nothing was closed."
+
+## Live agent run (2026-10-14)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `351316b`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `errh` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 61 |
+| Outcome | job `done`, agent `finished`, 9 turn(s) |
+| Limits | max_turns 15, max_requests 20, max_cost_usd 0.5; applied by the worker: $0.50, 15 turns, 2,000,000 tokens |
+| Wall time | 51.1 s (job 48.2 s) |
+| Claude API calls (gateway log) | 9 to api.anthropic.com |
+| Target requests (gateway log) | 20: GET 19, HEAD 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target HEAD https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443); target GET https://shop.lab.test/%E0%A4%A: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443); target GET https://shop.lab.test/?id=%27%22%3C%3E%5C&page=-1&q[]=1: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443); target GET https://shop.lab.test/errh-probe-does-not-exist-7f3a: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443); target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 15 request(s), 14 with the research header, 14 with the user agent; 1 answered 400 by the lab's nginx before it read the headers |
+| Research header on every request | yes (on the 14 whose headers the lab read; 1 not observable) |
+| Evidence | 20 entries on 2 item(s); 2 item(s) marked; 4 lead(s) |
+| Tokens | input 20, output 8,824, cache read 63,225, cache write 15,593 |
+| Cost (estimate) | $0.0070 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 19 (error handling) on shop.lab.test: both open items were tested and marked done, with evidence attached. WSTG-ERRH-01 (improper error handling): malformed query strings, an invalid percent-encoding, out-of-range and non-numeric ids, and nonexistent paths produced generic responses (bare "not found" 404, stock nginx 400, plain "ok" or {"ok":true}), with no verbose error text. WSTG-ERRH-02 (stack traces): no stack trace or debug output in any response from phpinfo.php, /debug, /.git/HEAD, error-triggering paths, or the linked app.js. Caveats: HTTPS to shop.lab.test was refused at connect,"

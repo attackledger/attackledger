@@ -1,0 +1,83 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 61,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 9,
+  "detail": "",
+  "summary": "Lane 19 (error handling) on shop.lab.test: both open items were tested and marked done, with evidence attached. WSTG-ERRH-01 (improper error handling): malformed query strings, an invalid percent-encoding, out-of-range and non-numeric ids, and nonexistent paths produced generic responses (bare \"not found\" 404, stock nginx 400, plain \"ok\" or {\"ok\":true}), with no verbose error text. WSTG-ERRH-02 (stack traces): no stack trace or debug output in any response from phpinfo.php, /debug, /.git/HEAD, error-triggering paths, or the linked app.js. Caveats: HTTPS to shop.lab.test was refused at connect, so all testing was over HTTP (recorded as a lead). The request budget (20) ran out during the run, so there was no further coverage, such as non-GET methods (not permitted anyway), more API paths, or deeper malformed-JSON probing on the API. Leads recorded for other lanes: a hardcoded AWS key ID and a Stripe publishable key in static/app.js (medium), a public source map exposing original TypeScript sources (low), search reflecting raw query text (low, not validated), and plain HTTP with no redirect (info). Nothing was validated as a vulnerability in this lane; a person should review the evidence before signing the receipt.",
+  "limits": {
+    "max_turns": 15,
+    "max_requests": 20,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 9,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 20,
+  "target_by_method": {
+    "GET": 19,
+    "HEAD": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "HEAD",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/%E0%A4%A",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/?id=%27%22%3C%3E%5C&page=-1&q[]=1",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/errh-probe-does-not-exist-7f3a",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 20,
+  "lab_requests": 15,
+  "lab_with_header": 14,
+  "lab_with_user_agent": 14,
+  "lab_headers_unread": 1,
+  "header_on_every_request": true,
+  "evidence_entries": 20,
+  "items_evidenced": 2,
+  "items_marked": 2,
+  "leads": 4,
+  "usage": {
+    "input": 20,
+    "output": 8824,
+    "cache_read": 63225,
+    "cache_write": 15593
+  },
+  "cost_usd_estimate": 0.007,
+  "wall_seconds": 51.1,
+  "job_seconds": 48.2,
+  "budget": "$0.50, 15 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}
