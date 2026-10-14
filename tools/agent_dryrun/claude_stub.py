@@ -6,8 +6,9 @@ claude-stub.test, with a certificate from its own throwaway CA. The gateway trus
 this host only (ATTACKLEDGER_GATEWAY_TEST_SERVICE_CA, refused with a real key), so the agent's
 calls take the real path: the worker's SDK, the gateway's route, key and GW-1 body checks.
 
-It plays a fixed lane run from the conversation it receives (stateless): fetch the home page,
-fetch a page that does not exist, attach both to the first open item, record a lead, mark the
+It plays a fixed lane run from the conversation it receives (stateless): fetch the home page (as
+the first test account usable on the host, when the lane context lists one), fetch a page that does
+not exist, attach both to the first open item, record a lead, mark the
 item done, finish. Each answer reports token usage like the API (a cache write on the first call,
 cache reads after, about a token per four bytes of the request); STUB_USAGE_SCALE (default 1)
 multiplies the output tokens, never past the call's max_tokens, to exercise the budget. Every request
@@ -58,6 +59,8 @@ def exchange_ids(messages: list) -> list:
 def play(turn: int, ctx: dict, messages: list) -> list:
     host = ctx.get("host") or "shop.lab.test"
     item = next((i for i in ctx.get("items", []) if i.get("state") == "open"), {"idx": 1})
+    # With test accounts (D-040), the home page is fetched as the first one usable on the host.
+    account = next((a["label"] for a in ctx.get("test_accounts") or [] if a.get("usable_on_this_host")), "")
     t = f"toolu_stub_{turn}"
 
     def use(name, args):
@@ -66,7 +69,7 @@ def play(turn: int, ctx: dict, messages: list) -> list:
     steps = [
         [think, {"type": "text", "text": "Fetching the home page."},
          use("http_request", {"method": "GET", "url": f"http://{host}/", "headers": [], "view": "auto",
-                              "as_account": ""})],
+                              "as_account": account})],
         [think, use("http_request", {"method": "GET", "url": f"http://{host}/no-such-page", "headers": [],
                                      "view": "auto", "as_account": ""})],
         [use("add_evidence", {"item_idx": item["idx"], "exchange_ids": exchange_ids(messages)[:2],

@@ -1306,6 +1306,34 @@ The six steps that do run (resolve, find live web servers, well-known files, cra
 JavaScript analysis and parameter routing) finished in under a minute on a test install,
 and the gateway log listed 27 entries for them (requests and DNS questions).
 
+### Sign in to the lab
+
+The shop has a sign-in, at `http://shop.lab.test/login`, with two fictional accounts:
+
+| Username | Password | Role in the shop |
+|---|---|---|
+| `alice` | `shop-alice-2026` | customer (order 1001) |
+| `carol` | `shop-carol-admin-2026` | admin (order 1002) |
+
+They are what the **Authentication**, **Session management** and **Authorization** lanes need:
+a signed-in user, and two of them with different roles to compare. The lab stores nothing: the
+sign-in and the forms behind it answer, but nothing changes. The weaknesses planted for those
+lanes, like the others, are listed at the top of `lab/nginx.conf`.
+
+To let agents work those lanes on the practice engagement, give it the two sessions as test
+accounts (`docs/TESTER_GUIDE.md`, "Test accounts for the agent"):
+
+1. In the lab browser (see "Capture a HAR of the lab from a browser" below, steps 1 and 2), open
+   `http://shop.lab.test/login` and sign in as `alice`.
+2. Copy the value of the `lab_session` cookie: developer tools (F12), **Application** (Firefox:
+   **Storage**), **Cookies**, `http://shop.lab.test`.
+3. In AttackLedger, on the engagement's **Test accounts** tab, add it with the label `user`, the
+   role `customer`, the host `shop.lab.test` and **Cookie header** `lab_session=<the value>`.
+4. Do the same as `carol`, with the label `admin` and the role `admin`.
+
+Signing out of the shop clears the cookie in the browser but does not end the session (one of
+the planted issues), so the accounts keep working.
+
 ### A first live agent run
 
 The first run against the real Claude API is a small, measured one on the lab: one lane
@@ -1352,9 +1380,28 @@ The worker caps every run, whatever was asked for in the web app: `ATTACKLEDGER_
 making a call that could go over. The run then ends as partial, with no receipt. The prices it
 uses are in `server/app/agentloop.py` (`MODELS`); check them against current pricing.
 
+Other lanes of the lab run the same way, with `--role`: `info`, `conf` and `inpv` signed out, like
+`errh`, and `athn`, `sess` and `athz` (Authentication, Session management, Authorization) signed in.
+For those three the scripts use an engagement of their own, `Agent live run (lab, test accounts)`.
+The first time, they sign in to the lab as `alice` and `carol` with its sign-in form (from inside
+the lab's container, as a person would in a browser) and add the two sessions as the test accounts
+`user` (customer) and `admin` through the API. The sessions are never printed. For example:
+
+```sh
+docker compose up -d --force-recreate lab
+bash tools/agent_preflight.sh --role athz
+bash tools/agent_live_run.sh --role athz
+```
+
+The first command is needed once after an upgrade that changed `lab/nginx.conf`, which the lab
+reads only when it starts. The write-up names the test accounts, and the lab's own access log
+says how many requests arrived signed in as each user.
+
 To rehearse all of it without a key, `python3 tools/agent_live.py dryrun` builds this tree into
 its own compose project with no route out. A stub Claude API there plays a fixed run, through
-the same SDK, gateway checks and tools. Then it removes the project.
+the same SDK, gateway checks and tools. Then it removes the project. With `--role athz` (or
+`athn`, `sess`), the stub sends its first request as a test account, and the dry run fails unless
+the lab saw it signed in.
 
 ### Capture a HAR of the lab from a browser
 

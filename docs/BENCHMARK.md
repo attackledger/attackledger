@@ -405,14 +405,14 @@ section is one table:
 |---|---|
 | Model | the job's result (the worker's `ATTACKLEDGER_AGENT_MODEL`; a first run uses the cheapest) |
 | Stack | the compose project, the commit, the date of the price table in `agentloop.MODELS` |
-| Lane | the lab engagement's `errh` lane on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run` |
+| Lane | the lab engagement's lane (`errh` unless `--role` names another) on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`; for `athn`, `sess` and `athz`, the test accounts it ran with |
 | Outcome | the job's status (`done` only if the agent finished) and the agent's (`finished`, `cost_limit`, ...) |
 | Limits | what the run asked for, and what the worker applied (the lower of that and its ceilings) |
 | Wall time | from queueing the run to its end, and the job's own start to finish |
 | Claude API calls | the gateway's log for the job, kind `service`, by host |
 | Target requests | the gateway's log for the job, kind `target`, by method and host; all must be `shop.lab.test` |
 | Refused or failed rows | every gateway row for the job that was not sent, with its reason |
-| Lab access log | the lab's own nginx log in the run's window (`lab/nginx.conf` logs the research header and user agent): an independent count |
+| Lab access log | the lab's own nginx log in the run's window (`lab/nginx.conf` logs the research header, the user agent and the fictional user a request was signed in as): an independent count |
 | Research header on every request | yes only if every request the lab saw carried it and the lab saw as many as the gateway sent |
 | Evidence | the lane's agent evidence since the job started, the items it is on, items marked, leads |
 | Tokens | the API's usage summed over the run: input, output, cache read, cache write |
