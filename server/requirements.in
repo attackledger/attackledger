@@ -17,5 +17,5 @@ pytest==9.1.1
 PyYAML==6.0.3
 alembic==1.20.0
 anthropic==1.12.1
-cryptography==50.0.0
+cryptography==50.0.2
 defusedxml==0.7.1
