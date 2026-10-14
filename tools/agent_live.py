@@ -166,7 +166,7 @@ def container_checks(stack: Stack, live: bool) -> tuple[list, dict]:
 
 
 def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
-    """The lab engagement and its lane: reused while the lane has open items and no active run,
+    """The lab engagement and its lane: reused while every item of the lane is open and no run is active,
     created otherwise (if prepare). (engagement, lane, what was done)."""
     for e in stack.api("GET", "/engagements"):
         if not e["name"].startswith(ENG_NAME):
@@ -185,7 +185,8 @@ def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
         else:
             lane = stack.api("GET", f"/lanes/{cell['lane_id']}")
         runs = stack.api("GET", f"/lanes/{lane['id']}/agent-runs")
-        if any(i["state"] == "open" for i in lane["items"]) and lane["status"] != "closed" \
+        # Only a lane no run has worked on: one with some items already done is not a comparable measurement.
+        if all(i["state"] == "open" for i in lane["items"]) and lane["status"] != "closed" \
                 and not any(r["status"] in ("queued", "running") for r in runs):
             return e, lane, "reused"
     if not prepare:
