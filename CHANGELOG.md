@@ -561,6 +561,11 @@ reaches them.
   "What is planted for each lane".
 
 ### Fixed
+- **A read of the lab's form targets looked like a write.** `/account/email` and
+  `/account/password` answered "saved" to any method, so a live run that sent GET
+  `/account/password` reported that alice's password may have changed. They now take POST only,
+  as a real form target does: other methods get 405 with `Allow: POST` (still 401 signed out), and
+  a POST is "saved" and changes nothing, as before. Sign-out by GET stays, as planted (SESS-06).
 - **Accessibility of the report and the landing page** (WE-7, WE-8, WE-9, Low): the HTML report's
   wide tables can be scrolled from the keyboard (each is a named, focusable region), its contents
   links are 24px apart (WCAG 2.5.8), and the landing page's sample verifier output meets AA

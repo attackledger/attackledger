@@ -579,3 +579,20 @@ def test_every_role_takes_the_engagement_its_lane_needs():
     assert {r for r, n in engs.items() if n == live.ACCOUNTS_ENG_NAME} == set(live.ACCOUNT_ROLES)
     assert {r for r, n in engs.items() if n == live.ENG_NAME} == set(live.ROLES) - set(live.ACCOUNT_ROLES)
     assert api.signed_in == ["alice", "carol"]            # once, for the first signed-in lane
+
+
+def test_the_labs_form_targets_take_post_only():
+    """A read must never look like a write: GET /account/password answering "saved" was reported by a
+    live run as a changed password. The form targets refuse every other method (405, Allow: POST)
+    after the sign-in check, and only a POST is "saved". Sign-out by GET stays (SESS-06, planted)."""
+    import re
+    conf = LAB_CONF.read_text()
+    [body] = re.findall(r"location ~ \^/account/\(email\|password\)\$ \{\n(.*?)\n  \}", conf, re.S)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    assert lines == ['if ($lab_user = "") { return 401 \'sign in first\'; }',
+                     "if ($request_method != POST) { add_header Allow POST always; "
+                     "return 405 'method not allowed: this form takes POST'; }",
+                     "return 200 'saved';"]
+    # Nothing else answers like a saved write; the registration answers only to its POST.
+    served = "\n".join(line for line in conf.splitlines() if not line.lstrip().startswith("#"))
+    assert served.count("'saved'") == 1 and "if ($request_method = POST) { rewrite ^ /_register last; }" in served
