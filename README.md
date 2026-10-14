@@ -260,10 +260,12 @@ passed to the traffic gateway only, which adds it to the agent's API calls; the 
 its tools never see it), set the lane's executor to *Claude agent* and start a run
 from the lane. The agent:
 
-- sends **read-only** requests (GET, HEAD, OPTIONS) to the lane's host only, with the
+- sends only **GET, HEAD and OPTIONS** requests to the lane's host, with the
   research identification, no redirects and within the rate limit;
 - can send requests **as a test account** (A, B, …) that a tester signed in to and added.
   The gateway adds the session, so the agent never sees it (D-040);
+- is told never to GET a form's target or an action URL: the gateway enforces methods, and a
+  badly built endpoint can still change something on a GET (D-059);
 - can **propose a write** (POST, PUT, PATCH, DELETE) only if the engagement allows writes,
   which is off by default. Each write waits on the Approvals tab until a tester approves
   that exact request, and a DELETE needs its path typed as well. The gateway sends it
