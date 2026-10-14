@@ -627,3 +627,19 @@ One agent run through the Messages API, on the lab, with the cheapest configured
 | Cost (estimate) | $0.0164 of a $0.5 budget |
 
 Agent summary for the reviewer: "Lane 26 (input validation) on shop.lab.test over HTTP only, since HTTPS on 443 was refused. Items done: INPV-01 (reflected HTML injection confirmed in /search.php?q=, recorded as a high lead, not browser-verified), INPV-03, 04, 05, 06, 07, 08, 09, 11, 12, 13, 16, 17, 18, 19 (no further issues observed). INPV-10 is N/A because no mail feature exists on the host. Left open: INPV-02 (stored XSS; no writable or stored-content surface reachable with read-only requests and no test accounts), INPV-14 (incubated vulnerabilities; needs multi-step stored flows), and INPV-15 (HTTP splitting was tested wi"
+
+## Live agent run repeatability: info lane, three runs (2026-10-14)
+
+The same lane run three more times on fresh lanes (`--no-append`, jobs 71 to 73; commit `a4a51dd`, `claude-haiku-5-5`,
+60 requests allowed), to see whether the keys in `static/app.js`, missed by the post-D-057 info run above, were a
+gap in the prompt or chance.
+
+| Run | Requests | Items marked | Leads | Cost (estimate) | Keys in app.js | Hidden parameter | Source map | /backup/ |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 26 | 9 of 10 | 5 | $0.0109 | found | found | found | found |
+| 2 | 25 | 9 of 10 | 5 | $0.0100 | found | found | found | found |
+| 3 | 27 | 9 of 10 | 4 | $0.0113 | found | not found | found | found |
+
+The keys were found in every run, so the miss was chance and the hints were not changed. The hidden parameter was
+found in two of three. Item 1 (search engine discovery) stays open in each run: it needs third-party queries the
+host-scoped tools do not send.
