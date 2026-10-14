@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 63,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 10,
+  "detail": "",
+  "summary": "Configuration lane (shop.lab.test), read-only GET/HEAD/OPTIONS requests only; no writes were proposed. Done (7 items): WSTG-CONF-01 (HTTP banner nginx/1.30.5; HTTPS refused at TCP connect), CONF-02 (status, phpinfo, actuator and manager paths 404; admin login 401; unauthenticated JSON API), CONF-03 (no source disclosure from backup or alternate extensions), CONF-04 (the /backup/ 200 is a catch-all placeholder for any path, so backup contents were not confirmed; recorded as a lead correcting the existing one), CONF-05 (admin login 401 over plain HTTP; phpMyAdmin and manager 404), CONF-08 (crossdomain.xml and clientaccesspolicy.xml 404), CONF-11 (no cloud-storage references in the home page, app.js or source map). N/A (1): CONF-10, because scope is the single host shop.lab.test with no other hostnames to test. Left open (3): CONF-06 (HTTP methods: only OPTIONS/HEAD were sent; PUT, DELETE and TRACE need unsafe requests the read-only tool cannot send, and writes are disallowed); CONF-07 (HSTS: the HTTP response has no Strict-Transport-Security header, but HSTS can only be assessed on HTTPS, which is refused); CONF-09 (file permissions: no web-reachable sensitive files were found, but local permissions cannot be seen over HTTP). Also noted for other lanes: admin login is served over plain HTTP, and the existing AWS key-id lead in app.js was not re-validated here.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 10,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 40,
+  "target_by_method": {
+    "GET": 35,
+    "HEAD": 2,
+    "OPTIONS": 3
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 40,
+  "lab_requests": 39,
+  "lab_with_header": 39,
+  "lab_with_user_agent": 39,
+  "lab_headers_unread": 0,
+  "header_on_every_request": true,
+  "evidence_entries": 51,
+  "items_evidenced": 10,
+  "items_marked": 8,
+  "leads": 1,
+  "usage": {
+    "input": 22,
+    "output": 17327,
+    "cache_read": 168325,
+    "cache_write": 30557
+  },
+  "cost_usd_estimate": 0.0142,
+  "wall_seconds": 99.3,
+  "job_seconds": 97.2,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

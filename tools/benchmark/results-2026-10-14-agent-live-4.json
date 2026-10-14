@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 64,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 15,
+  "detail": "",
+  "summary": "Lane 22 (input validation) on shop.lab.test, read-only, no test accounts, writes disallowed. Done (14 items): WSTG-INPV-01 reflected XSS CONFIRMED as unescaped HTML reflection in /search.php q (harmless marker tag, recorded as a high-severity lead); INPV-03 verb tampering (OPTIONS/HEAD on search and /admin/, 401 unchanged); INPV-04 HPP (first value used); INPV-05 SQLi, INPV-06 LDAP, INPV-07 XML, INPV-09 XPath, INPV-11 code, INPV-12 command, INPV-13 format string, INPV-18 SSTI, INPV-19 SSRF: no signal observed; INPV-08 SSI: encoded directive echoed, not processed, raw directive not sendable (coverage limited); INPV-16 incoming headers: X-Forwarded-Host not reflected. INPV-10 IMAP/SMTP marked N/A (no mail feature found). Left open: INPV-02 stored XSS and INPV-14 incubated (need POST writes, disallowed); INPV-15 HTTP splitting/smuggling (CRLF split not observed, but smuggling not testable since the client refuses Transfer-Encoding); INPV-17 host header injection (client refuses Host override; only X-Forwarded-Host tested). Limits: SQLi was checked by response differential only (no time-based tests); SSRF had no out-of-band callback. Products and API endpoints returned identical bodies for all inputs, so those signals are weak. Recon leads about HTTP-only transport, the AWS key and the source map are other lanes' concerns and were not re-tested here.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 15,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 41,
+  "target_by_method": {
+    "GET": 37,
+    "OPTIONS": 2,
+    "HEAD": 2
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "http://shop.lab.test/search.php?q=lanemethod1",
+      "reason": "method override to POST is refused"
+    }
+  ],
+  "agent_requests": 42,
+  "lab_requests": 40,
+  "lab_with_header": 40,
+  "lab_with_user_agent": 40,
+  "lab_headers_unread": 0,
+  "header_on_every_request": true,
+  "evidence_entries": 38,
+  "items_evidenced": 17,
+  "items_marked": 15,
+  "leads": 2,
+  "usage": {
+    "input": 32,
+    "output": 24998,
+    "cache_read": 304686,
+    "cache_write": 41161
+  },
+  "cost_usd_estimate": 0.0207,
+  "wall_seconds": 141.4,
+  "job_seconds": 138.0,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

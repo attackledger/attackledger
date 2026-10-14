@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 62,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 9,
+  "detail": "",
+  "summary": "Lane 20 (information gathering, shop.lab.test): 9 of 10 items done with read-only GET/HEAD/OPTIONS requests at normal pace. Evidence is attached to each item; the lead on the exposed /backup/ directory is recorded for the info-disclosure lane. Item WSTG-INFO-01 (search engine discovery) is left open: only the on-host part (robots.txt, sitemap, security.txt, page links) was tested, and the search-engine index queries are off-host and outside this host-scoped tool. Other notes: the custom request headers were rejected because the gateway sets them, so requests went out with the gateway's research headers. HTTPS on 443 is refused, so the TLS side was not tested. The errh-lane leads (AWS key id in app.js, source map, search reflection) were confirmed as observed by recon and were not re-validated here. No test accounts were available, so authenticated paths were not mapped. No writes were made.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 9,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 25,
+  "target_by_method": {
+    "GET": 23,
+    "OPTIONS": 1,
+    "HEAD": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 25,
+  "lab_requests": 24,
+  "lab_with_header": 24,
+  "lab_with_user_agent": 24,
+  "lab_headers_unread": 0,
+  "header_on_every_request": true,
+  "evidence_entries": 59,
+  "items_evidenced": 10,
+  "items_marked": 9,
+  "leads": 1,
+  "usage": {
+    "input": 20,
+    "output": 11417,
+    "cache_read": 99173,
+    "cache_write": 22371
+  },
+  "cost_usd_estimate": 0.0095,
+  "wall_seconds": 63.2,
+  "job_seconds": 62.3,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}
