@@ -417,8 +417,8 @@ Verified.</code></pre>
         <p>AttackLedger is open source under the <strong>AGPL-3.0</strong>, with a commercial licence for teams that
           cannot use AGPL software. The current version is a preview: recon is complete, and agent-assisted testing
           has been <a href="https://github.com/attackledger/attackledger/blob/main/docs/BENCHMARK.md">measured</a>
-          against the real Claude API on a local lab: one run per lane (information gathering, configuration, input
-          validation), under two cents each with the smallest model, finding five of the six issues planted in the lab.
+          against the real Claude API on a local lab: one run for each of the 12 OWASP WSTG lanes, signed in where the
+          lane needs it, under two cents each with the smallest model, finding 25 of the 31 issues planted in the lab.
           Every request went through the gateway and is tied to evidence. The source code is on <a href="https://github.com/attackledger/attackledger">GitHub</a>.</p>
         <p>Used on a live engagement by its author: 117 requests from a real vulnerability disclosure program
           imported from Caido, 16 evidence entries mapped, 2 lanes signed in the reviewer's browser and timestamped,

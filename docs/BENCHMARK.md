@@ -873,3 +873,23 @@ One agent run through the Messages API, on the lab, with the cheapest configured
 | Cost (estimate) | $0.0065 of a $0.5 budget |
 
 Agent summary for the reviewer: "Lane 43 (API), item 1 WSTG-APIT-01 Test GraphQL: done. Scheme check: http://shop.lab.test answers; https is refused by the gateway, so testing used http. GraphQL is at /graphql. /api/graphql and /api/v1/graphql returned a generic {"ok":true} or 404 and were not GraphQL. Anonymous introspection is enabled and the schema has no mutation type. Using the customer account (alice), customer(username:"carol") returned carol's name, phone and address, while anonymous requests were refused with "Not signed in". The admin account also reads alice's record. Two leads were recorded: the BOLA (high) and th"
+
+## Live agent runs: what the lab plants and what the latest run of each lane found (2026-10-14)
+
+Counted by hand from each run's leads, item notes and summary (`claude-haiku-5-5`, 60 requests allowed). The planted
+issues are listed in the comment block of `lab/nginx.conf`. Error handling has no planted issue.
+
+| Lane | Planted | Found by the latest run | Missed |
+|---|---|---|---|
+| Information gathering, configuration, input validation (after D-057) | 6 | 5 | the keys in `app.js` in that run (found 3 of 3 in the repeat runs) |
+| Authorization | 2 | 2 | |
+| Session management, authentication (with the ATHN-07 and SESS-05 hints) | 9 | 8 | the one-year session lifetime (SESS-07 left open; found by the run before the hints) |
+| Identity management | 3 | 2 | the case-sensitive username check |
+| Business logic | 2 | 2 | |
+| Cryptography | 2 | 1 | the MD5 hash in the account export |
+| Client side | 4 | 3 | the message listener without an origin check |
+| API (GraphQL) | 3 | 2 | the field suggestions in errors |
+| **All** | **31** | **25** | |
+
+The client-side count includes the credentialed CORS reflection, judged from the lane's item notes rather than a lead.
+Each run cost under two cents by the loop's estimate.
