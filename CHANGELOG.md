@@ -390,6 +390,19 @@ each with a test.
   mode exactly when every receipt was signed, and was the same bytes in two other processes, from
   every random history.
 
+Deleting an engagement's content now reaches the change history's free text (D-058, the review's
+open item, `RETENTION.md` follow-up):
+- **Audit record v2.** An audit log entry that carries free text (a note on an approved or rejected
+  write, the path typed to confirm a DELETE, a test account's role, hosts and header names, a
+  dismissal reason, the tool named in an imported file) commits to a salted SHA-256 of each field
+  (a random 128-bit salt per field) instead of the text, which is kept outside the hashed record.
+  Deleting the content blanks it; the chain, the receipts, the seal and reports made before and after
+  the deletion still verify, also with `--require-history`. The History tab and the report show
+  `[deleted]` in its place, and both verifiers check every text against its hash and count the
+  deleted ones in a NOTE. Entries written before this version keep their text: their chain hash
+  covers it. A verifier from before this version fails a report that has a v2 entry; use this
+  version's `verify_report.py` or `/verify`.
+
 Gaps the threat model found (`docs/THREAT_MODEL.md`, section 8), each fix with a test that failed
 before it:
 - **The machine routes were reachable through the public front end** (TM-1). nginx forwarded all
@@ -455,6 +468,11 @@ when it migrates the restored database. **0027** adds `user_sessions.last_seen_a
 timeout (TM-3): **sessions now end after 30 minutes without use** (set
 `ATTACKLEDGER_SESSION_IDLE_MINUTES` in `.env` for another limit, up to 720), and sessions older
 than that are signed out at their first request after the upgrade.
+
+Migration **0028** (run when the API starts) adds three columns to `audit_log` (`record_version`,
+`text_sha256`, `texts`) and makes its append-only triggers again, so that `texts` may become NULL
+(D-058). Existing entries become record version 1 and verify as before. It can be downgraded only
+while no version 2 entry exists.
 
 **nginx and the gateway (TM-1):** rebuild the web image (`docker compose build web`) for the new
 `web/nginx.conf`, and recreate the API and the gateway: `docker-compose.yml` now sets

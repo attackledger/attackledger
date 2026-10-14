@@ -75,7 +75,8 @@ reviewer's key; TM-6: a compromised gateway).
   carried no request a row in the request log, and refuses TLS server names other than the
   CONNECT host (FZ-36 to FZ-40).
 - **RET-2, RET-3 (Medium): content deletion missed running jobs and job targets.** The backup
-  documentation also overstated what master-key rotation does (RET-7).
+  documentation also overstated what master-key rotation does (RET-7). A follow-up (D-058, audit
+  record v2) made deletion reach the change history's free text too, which the review had left open.
 
 ## Still open
 
@@ -85,8 +86,10 @@ Each report lists its own open items. The main ones:
   instance key can seal a different report (VERIFIER.md).
 - **The gateway can reach the host's addresses on networks it is not on,** such as the host's
   LAN. INSTALL §6 suggests a host firewall rule, which has not been tested.
-- **The audit log keeps some free text that content deletion cannot remove** without breaking
-  its hash chain: approval notes, the typed DELETE path, and test-account roles and hosts.
+- **Change history entries written before migration 0028 keep their free text** (approval notes,
+  the typed DELETE path, test-account roles and hosts) after content deletion: their hash chain
+  covers it. Since 0028 (D-058) such text is kept outside the hashed record and deleted with the
+  content (RETENTION.md, follow-up).
 - **Content deletion does not reach backups made before it,** Postgres WAL and dead rows, or
   container logs (RETENTION.md).
 - **OS packages are not version-pinned, and nothing scans them.** Images and tags are not signed.

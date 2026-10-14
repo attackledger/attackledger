@@ -30,9 +30,10 @@ records the design and the choices made while building it.
   `POST /gateway/account`, for the gateway token, for a running agent job's credential, for a host
   named for the account (`GATEWAY.md`, decision 9).
 - **Audit.** `account.added`, `account.replaced`, `account.deleted`, with the label, role, hosts,
-  kind, header names and fingerprint, never a value.
+  kind, header names and fingerprint, never a value. The role, hosts and header names are kept
+  outside the hashed record, which commits to a salted hash of each (audit record v2, D-058).
 - **Content deletion** (D-043) deletes the rows; the sealed values were unreadable already, since
-  the key goes.
+  the key goes. It also blanks the role, hosts and header names in the audit entries (D-058).
 
 ### Who
 
@@ -94,7 +95,8 @@ agent: propose_write ──► pending ──approve──► approved ──(th
   reports the exchange.
 - **Audit.** `write.approved`, `write.delete_confirmed`, `write.rejected` by the person;
   `write.sent` by the traffic gateway (a new actor kind, `gateway`), each with the proposal id,
-  method, host, account and request hash, never the body.
+  method, host, account and request hash, never the body. The decision note and the typed path are
+  kept outside the hashed record and blanked when the content is deleted (D-058).
 
 ### Who approves
 

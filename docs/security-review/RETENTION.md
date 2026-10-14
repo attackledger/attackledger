@@ -62,7 +62,9 @@ blanked, or encrypted under the engagement key, which is deleted (crypto-shredde
 | `write_proposals` | sealed request (headers, body), URL, agent's reason, decision note | waiting ones deleted; the others blanked | gone, and an approved write's later outcome no longer writes a reason into the note (RET-4) |
 | `checklist_items.na_reason` | why an item is not applicable | kept | **kept by design**: receipts commit to it |
 | `receipts` | signed payloads, manifests (hashes, item ids and texts) | kept | **kept by design** |
-| `audit_log.change` | before/after of settings, scope, members; notes on approved/rejected writes and dismissal reasons (redacted); the path typed to confirm a DELETE; test account labels, roles, hosts, header names; import tool names | kept | **kept by design**: hash-chained, it cannot change. A later record version could commit to hashes of the free-text fields; that is a product decision, not made here |
+| `audit_log.change` | before/after of settings, scope, members; test account labels; write methods, hosts and request hashes | kept | **kept by design**: hash-chained, it cannot change, and it is what the history proves |
+| `audit_log.texts` (audit record v2, since 0028) | notes on approved/rejected writes and dismissal reasons (redacted); the path typed to confirm a DELETE; test account roles, hosts, header names; import tool names | (kept in `change` before D-058) | **blanked** (follow-up below): the record commits to a salted hash of each, which stays |
+| `audit_log.change` of entries written before 0028 (audit record v1) | the same free text, in the record | kept | **kept by design**: the v1 chain hash covers the text; the deletion screen and the deletion's own entry count these entries |
 | `engagements`, `assets`, `lanes` | name, scope, policy URL, research header, hosts | kept | **kept by design**: what the report is about |
 | `key_log`, `users`, `memberships`, sessions | people and keys | kept | not engagement content |
 | Free pages of the SQLite file | bytes of deleted rows and of replaced values | **kept on builds without `SECURE_DELETE`** | overwritten: the engine turns `secure_delete` on (RET-5) |
@@ -88,6 +90,32 @@ blanked, or encrypted under the engagement key, which is deleted (crypto-shredde
 | The gateway's queue of unwritten log rows | written later with the URL blanked (EV-6), reason kept | URL and reason blanked |
 | The gateway's caches: job rules (2 s), test account headers (2 s), DNS scopes (3 s) | expire within seconds; the API refuses a deleted engagement's accounts and a cancelled job's credential | the same, and the job is cancelled at once |
 | A running worker's run (queued rows, the tool's output) | sent to the API and stored | refused (`results`, `agent/exchange`: 409) or answered and not kept (`log`, `finish`) |
+
+## Follow-up, 2026-10-14: the audit log's free text (D-058)
+
+Branch `audit-fieldhash`, from `c2d4d06`. The open item above, "a later record version could commit
+to hashes of the free-text fields", was decided by the owner and built:
+
+- **Audit record v2.** An entry whose change carries free text (`auditlog.TEXT_FIELDS`: `after.note`
+  of `write.approved` and `write.rejected`, `after.path` of `write.delete_confirmed`, `role`, `hosts`
+  and `header_names` of the `account.*` entries, `after.reason` of `import.dismissed`,
+  `after.creator` of `import.batch`) commits to `sha256(canonical({field, salt, value}))` per field,
+  with a random 128-bit salt, instead of the text. The salt and the text are in `audit_log.texts`,
+  outside the hashed bytes; deleting the content sets it to NULL, and the append-only trigger lets
+  nothing else change. An entry without free text stays v1.
+- **Tests** (`server/tests/test_audit_texts.py`, `test_retention.py`). The canary test now also puts
+  the canary into every one of those fields, for both engagements, checks that the audit log holds
+  both before the deletion (the positive control), and after it searches every table, the SQLite
+  file's raw bytes and the History view: the deleted engagement's canary is nowhere, the other's is
+  still there. With the blanking turned off, it fails. Reports made before and after the deletion
+  verify with `--require-history`, the seal included; the History tab shows `[deleted]`; the
+  verifiers catch an edited text, a changed salt, a text moved to another field, texts given on a v1
+  entry, and a v2 entry passed off as v1. The equivalence corpus has 19 more cases (`audit-v2*`).
+- **What remains.** Entries written before 0028 are v1 and keep their text: their chain hash covers
+  it, and rewriting them would break every receipt and seal over them. The deletion screen says how
+  many there are. The texts are plaintext in the database, like `write_proposals` and
+  `test_accounts`, so backups made before a deletion and Postgres's dead rows and WAL keep them, as
+  below.
 
 ## What deletion cannot reach
 
