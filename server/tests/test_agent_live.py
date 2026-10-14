@@ -176,8 +176,8 @@ def load_live():
     return mod
 
 
-def lab_line(path, research="agent-live-run", ua="AttackLedger agent live run", t=1000.5):
-    return f'80 "GET {path} HTTP/1.1" 200 ua="{ua}" research="{research}" t={t}'
+def lab_line(path, research="agent-live-run", ua="AttackLedger agent live run", t=1000.5, status=200):
+    return f'80 "GET {path} HTTP/1.1" {status} ua="{ua}" research="{research}" t={t}'
 
 
 def run_data(live, lab, rows):
@@ -225,6 +225,20 @@ def test_the_measurements_count_hosts_methods_header_evidence_and_refusals():
     assert m["header_on_every_request"]          # the refused one never reached the lab
     assert "| Research header on every request | yes |" in live.section(m, dry=True, today="d", project="p",
                                                                          prices="x")
+
+    # nginx answers 400 to a path above the root before it reads the headers and logs "-" for both
+    # (the first live run, /..%2f..%2fetc%2fpasswd): counted as not observable, not as missing.
+    rows2 = rows[:3] + [row("http://shop.lab.test/..%2f..%2fetc%2fpasswd")]
+    m = run_data(live, [lab_line("/"), lab_line("/..%2f..%2fetc%2fpasswd", research="-", ua="-", status=400)], rows2)
+    assert m["header_on_every_request"] and m["lab_headers_unread"] == 1 and m["lab_with_header"] == 1
+    text = live.section(m, dry=False, today="d", project="p", prices="x")
+    assert "| Research header on every request | yes (on the 1 whose headers the lab read; 1 not observable) |" in text
+    assert "1 answered 400 by the lab's nginx before it read the headers" in text
+    # Only that shape: a 400 with the header, or any other status without it, is still judged.
+    m = run_data(live, [lab_line("/"), lab_line("/x", research="-", ua="-")], rows)
+    assert not m["header_on_every_request"] and m["lab_headers_unread"] == 0
+    m = run_data(live, [lab_line("/"), lab_line("/x", research="-", status=400)], rows)
+    assert not m["header_on_every_request"]
 
 
 def test_the_lab_logs_the_header_the_live_run_sends():

@@ -285,6 +285,10 @@ def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: 
     ev = [e for e in lane.get("evidence", []) if e.get("source") == "agent" and t0 is not None
           and dt.datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")) >= t0]
     t1 = dt.datetime.fromisoformat(job["finished_at"].replace("Z", "+00:00")) if job.get("finished_at") else None
+    # nginx answers 400 before it reads the headers when a path climbs above the root (/..%2f..%2f),
+    # and logs "-" for both: the header is not observable on those, so they are counted, not judged.
+    blind = [x for x in lab if x["status"] == "400" and x["research"] == "-" and x["ua"] == "-"]
+    seen = [x for x in lab if not (x["status"] == "400" and x["research"] == "-" and x["ua"] == "-")]
     return {
         "job_id": job["id"], "job_status": job["status"], "agent_status": res.get("status"),
         "model": res.get("model"), "turns": res.get("turns"), "detail": res.get("detail", ""),
@@ -297,8 +301,9 @@ def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: 
         "agent_requests": res.get("requests"),
         "lab_requests": len(lab), "lab_with_header": sum(1 for x in lab if x["research"] == value),
         "lab_with_user_agent": sum(1 for x in lab if x["ua"] == USER_AGENT),
-        # Every request the lab saw carried it, and the lab saw as many as the gateway sent.
-        "header_on_every_request": all(x["research"] == value for x in lab)
+        "lab_headers_unread": len(blind),
+        # Every request whose headers the lab read carried it, and the lab saw as many as the gateway sent.
+        "header_on_every_request": all(x["research"] == value for x in seen)
                                     and len(lab) == sum(1 for r in target if r["verdict"] == "allowed"),
         "evidence_entries": len(ev), "items_evidenced": len({e["item_idx"] for e in ev if e["item_idx"] is not None}),
         "items_marked": res.get("items_marked"), "leads": res.get("leads_added"),
@@ -356,8 +361,12 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
                                           f" ({'all' if m['only_lab_host'] else 'NOT all'} {LAB_HOST})"),
         ("Refused or failed rows", refused),
         ("Lab access log", f"{m['lab_requests']} request(s), {m['lab_with_header']} with the research header, "
-                           f"{m['lab_with_user_agent']} with the user agent"),
-        ("Research header on every request", ("yes" if m["lab_requests"] else "yes (no request was sent)")
+                           f"{m['lab_with_user_agent']} with the user agent"
+                           + (f"; {unread} answered 400 by the lab's nginx before it read the headers"
+                              if (unread := m.get("lab_headers_unread")) else "")),
+        ("Research header on every request", (("yes" if m["lab_requests"] else "yes (no request was sent)")
+                                              + (f" (on the {m['lab_requests'] - unread} whose headers the lab "
+                                                 f"read; {unread} not observable)" if unread else ""))
                                              if m["header_on_every_request"] else "NO"),
         ("Evidence", f"{m['evidence_entries']} entr{'y' if m['evidence_entries'] == 1 else 'ies'} on "
                      f"{m['items_evidenced']} item(s); {m['items_marked']} item(s) marked; {m['leads']} lead(s)"),
