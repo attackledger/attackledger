@@ -94,7 +94,7 @@ write (`Toolbox`), because the worker has no database (`WORKER_API.md`):
 
 | Tool | Gate |
 |---|---|
-| `http_request` | Lane host only, inside the scope rules; GET, HEAD and OPTIONS only (D-024); research identification always sent and not overridable; no redirects; spaced to the rate limit; request budget per run |
+| `http_request` | Lane host only, inside the scope rules; GET, HEAD and OPTIONS only (D-024); research identification always sent and not overridable; no redirects; spaced to the rate limit; request budget per run; an origin (scheme, host, port) that fails to connect before it has answered is refused for the rest of the run without using the budget (D-057) |
 | `add_evidence` | Cites exchanges from this run only (or a note); hash-chained; marked `[agent]` |
 | `mark_item` | Open items only; done needs evidence on the item, N/A needs a reason |
 | `record_lead` | Lane host only; deduplicated |

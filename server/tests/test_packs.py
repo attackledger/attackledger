@@ -52,6 +52,32 @@ def test_item_controls_merge_lane_controls():
     assert p.lane("a").items[0].controls == ("C-1", "C-2")
 
 
+def test_item_hints_are_short_plain_text_and_optional():
+    p = packs._parse_pack({"id": "p", "lanes": [lane("a", items=[
+        {"id": "x", "text": "t", "hint": "  Request the   usual files.\n"}, {"id": "y", "text": "u"}])]}, KNOWN)
+    assert [i.hint for i in p.lane("a").items] == ["Request the usual files.", ""]
+    for bad, error in (({"x": 1}, "must be text"), ("w " * 201, "longer than")):
+        with pytest.raises(packs.PackError, match=error):
+            packs._parse_pack({"id": "p", "lanes": [lane("a", items=[{"id": "x", "text": "t", "hint": bad}])]}, KNOWN)
+
+
+def test_shipped_hints_name_nothing_planted_in_the_lab():
+    """Hints are general methodology, not the bundled lab's answers: none names a path the lab
+    serves (lab/nginx.conf; the site root and robots.txt aside, which every target has) or a
+    query parameter it reads."""
+    import re
+    conf = (Path(__file__).resolve().parents[2] / "lab" / "nginx.conf").read_text()
+    paths = {p.strip("/") for p in re.findall(r"location\s+(?:=\s+)?(/[\w./-]*)\s", conf)} - {"", "robots.txt"}
+    params = set(re.findall(r"\$arg_(\w+)", conf))
+    assert {"static/app.js", ".git/config", "backup"} <= paths and params
+    hints = [i.hint.lower() for p in packs.all_packs().values() for l in p.lanes for i in l.items if i.hint]
+    assert hints
+    for h in hints:
+        assert "lab" not in h and "shop" not in h
+        assert not [p for p in paths if "/" + p.lower() in h or ("/" in p and p.lower() in h)], h
+        assert not [w for w in params if re.search(rf"\b{w}\b", h)], h
+
+
 # ---- control mappings: strength, notes and the review statement (docs/CONTROLS.md) ----
 
 def test_bare_control_id_means_supporting_and_strength_is_kept():

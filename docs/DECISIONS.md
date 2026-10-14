@@ -929,6 +929,40 @@ options considered and who decided.
 - **Number:** D-055 was left free for a decision being written in parallel on another branch.
 - **Made by:** Claude, from the security review (third pass, branch `sec3-sessions`).
 
+### D-057 · An agent is told where the host answers and how a test is usually done (2026-10-14, made autonomously)
+- **Problem** (the first live runs on the lab, docs/BENCHMARK.md, 2026-10-14): every run spent
+  1 to 5 requests of its budget on `https://` URLs of a host that answers on HTTP only, and kept
+  trying after the first failure; the configuration lane closed "old backup and unreferenced
+  files" without requesting version-control metadata; no run looked for hidden parameters. The
+  agent was told neither which origins recon had seen answering nor how a checklist item is
+  usually tested, while every item carried its ISO, PCI and DORA control ids, paid for on every
+  turn and of no use for testing.
+- **Decision:**
+  - The lane context has `recon.origins`: each scheme://host:port the probe module saw answering,
+    with its status (from the probe's observations; empty when no probe ran). The system prompt
+    says to use them, and when there are none to find out with one request each whether http or
+    https answers before spending more.
+  - The agent's tools remember an origin that fails to connect (the gateway's "could not connect
+    to") before it has answered in the run, and refuse further requests to it without counting
+    them. An origin that answered once is never blocked, so a passing failure costs one request.
+  - A pack item may carry a `hint` (plain text, at most 400 characters): how the test is usually
+    done. The lane context gives it to the agent on that item only, so it costs tokens only on
+    lanes that have it. The WSTG pack has hints on six items (INFO-03, INFO-05, INFO-06, CONF-03,
+    CONF-04, CONF-05). Hints are general methodology: a test checks that none names a path the
+    bundled lab serves or a parameter it reads.
+  - The model's copy of the lane context leaves out the items' control mappings
+    (`agentloop.agent_view`); the context the API returns is unchanged.
+- **Cost:** the system prompt grows by 269 bytes (about 65 tokens) on every lane. The first
+  message shrinks on every WSTG lane, hints included, because the control ids go: by 207 bytes
+  (errh) to 2,341 bytes (inpv), and by 535 and 564 bytes on info and conf, which carry hints.
+- **Considered:** per-lane methodology text in the system prompt (paid on every lane, and the
+  prompt would grow with each pack); naming exact version-control files or candidate parameter
+  names in the hints (the lab plants some of them, so the benchmark would measure the hint, not
+  the agent; the model knows the standard files of a .git directory); retrying
+  a failed origin once more for timeouts (rejected: a timeout costs the connect timeout each time,
+  and an origin that has answered is never blocked anyway).
+- **Made by:** Claude, at Murat's request after the live runs (branch `agent-brief`).
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

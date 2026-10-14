@@ -387,6 +387,32 @@ def test_the_agent_cannot_set_the_gateways_headers(stack, gw):
     assert gw.up.requests == []
 
 
+def test_an_origin_that_does_not_connect_is_not_tried_again(stack, gw):
+    """The real gateway's answer when nothing listens on a port: the worker's tools remember
+    that origin and refuse it after one try, without using the budget; others still work."""
+    e, lane, job = setup(stack, accounts=False)
+    tb = tools(gw, job)
+    real = gw.gw.open_connection
+
+    async def connector(ip, port, ssl=None, server_hostname=None):
+        if port == 443:
+            raise ConnectionRefusedError(111, "Connect call failed")
+        return await real(ip, port, ssl=ssl, server_hostname=server_hostname)
+    gw.gw.open_connection = connector
+
+    def fetch(url):
+        return tb.call("http_request", {"method": "GET", "url": url, "headers": [], "view": "raw",
+                                        "as_account": ""})
+    text_, err = fetch(f"https://{HOST}/")
+    assert err and agenttools.CONNECT_FAILED in text_ and f"Nothing answered at https://{HOST}:443" in text_
+    assert tb.requests == 1
+    for path in ("/robots.txt", "/a?b=1"):
+        text_, err = fetch(f"https://{HOST}{path}")
+        assert err and text_.startswith("not sent, and not counted") and tb.requests == 1
+    text_, err = fetch(f"http://{HOST}/")
+    assert not err and tb.requests == 2 and len(gw.up.requests) == 1
+
+
 # ---- writes: refused while the rule is off -------------------------------------------------------
 
 def test_writes_are_refused_when_the_rule_is_off(stack, gw):
