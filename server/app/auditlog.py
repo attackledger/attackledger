@@ -18,8 +18,24 @@ An entry names who acted (a person with their name and email at the time, the op
 token, the operator on the server, or open mode), a stable action name, the engagement when
 there is one, the person a person.* entry is about, and the change as before and after
 values. Passwords and secrets are never recorded; that a password was set is.
+
+Two record versions share one chain (D-058). Entries written before migration 0028 are v1: the
+record holds the change whole, free text included. An entry written since that carries free text
+(TEXT_FIELDS: a note on an approved or rejected write, the path typed to confirm a DELETE, a test
+account's role, hosts and header names, a dismissal reason, the tool that made an imported file)
+is v2: the text is taken out of the change, and the record commits instead to
+
+    text_sha256[path] = sha256(canonical({"field": path, "salt": salt, "value": value}))
+
+with a random 128-bit salt per field, so a short value (a role such as "admin") cannot be
+guessed from its hash. The salt and the value are kept next to the record, outside the hashed
+bytes (audit_log.texts), and go into reports with it; deleting the engagement's content blanks
+them, and the chain, the receipts and the reports still verify. An entry without free text stays
+v1: its record is the same change either way.
 """
+import copy
 import json
+import secrets
 from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_, select, text
@@ -49,6 +65,23 @@ ACTIONS = (
     "write.approved", "write.delete_confirmed", "write.rejected", "write.sent",
 )
 RECORD_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
+RECORD_VERSION = 2              # what append writes for an entry with free text; v1 entries stay as written
+# The free text of each action, by its place in the change ("after.note": change["after"]["note"]).
+# Deleting an engagement's content blanks it in v2 entries (D-058); a value that is None, "" or []
+# stays in the change, as there is nothing to delete.
+TEXT_FIELDS = {
+    "write.approved": ("after.note",),
+    "write.rejected": ("after.note",),
+    "write.delete_confirmed": ("after.path",),
+    "account.added": ("after.role", "after.hosts", "after.header_names"),
+    "account.replaced": ("before.role", "before.hosts", "before.header_names",
+                         "after.role", "after.hosts", "after.header_names"),
+    "account.deleted": ("before.role", "before.hosts", "before.header_names"),
+    "import.dismissed": ("after.reason",),
+    "import.batch": ("after.creator",),
+}
+_LISTS = ("hosts", "header_names")
+DELETED = "[deleted]"           # in place of a text that was deleted, where an entry is described
 CLI = {"kind": "cli", "user_id": None, "name": "operator CLI", "email": None}
 
 
@@ -79,10 +112,75 @@ def starter(session, user_id: int | None) -> dict:
 
 def record(e: AuditEntry) -> dict:
     """The fields the chain commits to. The verifier rebuilds exactly this."""
-    return {"seq": e.seq, "at": e.at,
-            "actor": {"kind": e.actor_kind, "user_id": e.actor_user_id, "name": e.actor_name, "email": e.actor_email},
-            "action": e.action, "engagement_id": e.engagement_id, "subject_id": e.subject_id,
-            "change": json.loads(e.change)}
+    rec = {"seq": e.seq, "at": e.at,
+           "actor": {"kind": e.actor_kind, "user_id": e.actor_user_id, "name": e.actor_name, "email": e.actor_email},
+           "action": e.action, "engagement_id": e.engagement_id, "subject_id": e.subject_id,
+           "change": json.loads(e.change)}
+    if e.record_version == 2:
+        rec = {"v": 2, **rec, "text_sha256": json.loads(e.text_sha256)}
+    return rec
+
+
+def texts_of(e: AuditEntry) -> dict | None:
+    """A v2 entry's texts, {path: {"salt", "value"}}, or None once they were deleted. A v1 entry
+    has none outside its record."""
+    return json.loads(e.texts) if e.texts else None
+
+
+def old_texts(session, eng_id: int) -> int:
+    """How many of an engagement's v1 entries hold free text in their record, which deleting the
+    content cannot remove: those written before 0028."""
+    n = 0
+    for e in session.scalars(select(AuditEntry).where(AuditEntry.engagement_id == eng_id, AuditEntry.record_version == 1,
+                                                      AuditEntry.action.in_(sorted(TEXT_FIELDS)))):
+        if split_texts(e.action, json.loads(e.change))[1]:
+            n += 1
+    return n
+
+
+def entry(e: AuditEntry) -> dict:
+    """An entry as a report carries it: the record, and for v2 the texts the record commits to."""
+    rec = record(e)
+    return {**rec, "texts": texts_of(e)} if e.record_version == 2 else rec
+
+
+def text_sha256(path: str, salt: str, value) -> str:
+    return ledger.sha256(ledger.canonical({"field": path, "salt": salt, "value": value}))
+
+
+def split_texts(action: str, change: dict) -> tuple[dict, dict, dict]:
+    """The change without its free text, the hashes a v2 record commits to, and the texts."""
+    change, hashes, texts = copy.deepcopy(change), {}, {}
+    for path in TEXT_FIELDS.get(action, ()):
+        part, key = path.split(".", 1)
+        where = change.get(part)
+        if not isinstance(where, dict) or where.get(key) in (None, "", []):
+            continue
+        value, salt = where.pop(key), secrets.token_hex(16)
+        hashes[path], texts[path] = text_sha256(path, salt, value), {"salt": salt, "value": value}
+    return change, hashes, texts
+
+
+def readable(rec: dict) -> dict:
+    """An entry as people read it: a v2 record's change with its texts put back, and DELETED in
+    place of each one that is no longer there (deleted with the engagement's content). v1
+    records are returned as they are."""
+    if rec.get("v") != 2 or "texts_deleted" in rec:            # v1, or already readable
+        return rec
+    change, texts = copy.deepcopy(rec.get("change") or {}), rec.get("texts") or {}
+    gone = []
+    for path in sorted(rec.get("text_sha256") or {}):
+        part, key = path.split(".", 1)
+        t = texts.get(path)
+        if isinstance(t, dict) and "value" in t:
+            value = t["value"]
+        else:
+            value = [DELETED] if key in _LISTS else DELETED
+            gone.append(path)
+        if not isinstance(change.get(part), dict):
+            change[part] = {}
+        change[part][key] = value
+    return {**rec, "change": change, "texts_deleted": gone}
 
 
 def entry_hash(prev_hash: str, record_sha256: str) -> str:
@@ -100,10 +198,21 @@ def append(session, *, actor: dict, action: str, change: dict, engagement_id: in
     if session.bind.dialect.name == "postgresql":
         session.execute(text("SELECT pg_advisory_xact_lock(7037, :org)"), {"org": org})
     last = _last(session, org)
+    # An entry with free text is v2; one without stays v1, whose record is the same change (D-058).
+    version, hashes, texts = 1, None, None
+    if RECORD_VERSION == 2:
+        stripped, found, kept = split_texts(action, change)
+        if found:
+            version, change, hashes, texts = 2, stripped, found, kept
+            eng = session.get(Engagement, engagement_id) if engagement_id is not None else None
+            if eng is not None and eng.content_deleted_at is not None:
+                texts = {}          # its content is deleted: nothing new of it is kept
     e = AuditEntry(organization_id=org, seq=(last.seq + 1) if last else 1, at=at or now_text(), actor_kind=actor["kind"],
                    actor_user_id=actor.get("user_id"), actor_name=actor.get("name") or "",
                    actor_email=actor.get("email"), action=action, engagement_id=engagement_id,
-                   subject_id=subject_id, change=ledger.canonical(change),
+                   subject_id=subject_id, change=ledger.canonical(change), record_version=version,
+                   text_sha256=ledger.canonical(hashes) if hashes is not None else None,
+                   texts=ledger.canonical(texts) if texts else None,
                    prev_hash=last.entry_hash if last else GENESIS)
     e.record_sha256 = ledger.sha256(ledger.canonical(record(e)))
     e.entry_hash = entry_hash(e.prev_hash, e.record_sha256)
@@ -152,8 +261,20 @@ def _verify(session, org: int) -> list[str]:
             problems.append(f"audit log entry {e.seq}: content does not match its record hash")
         if entry_hash(e.prev_hash, e.record_sha256) != e.entry_hash:
             problems.append(f"audit log entry {e.seq}: does not match its chain hash")
+        if e.record_version == 2 and e.texts:
+            problems += _check_texts(e)
         prev = e.entry_hash
     return problems
+
+
+def _check_texts(e: AuditEntry) -> list[str]:
+    """The texts kept outside a v2 record match the hashes it commits to."""
+    try:
+        hashes, texts = json.loads(e.text_sha256), json.loads(e.texts)
+        bad = [p for p, t in texts.items() if hashes.get(p) != text_sha256(p, t["salt"], t["value"])]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return [f"audit log entry {e.seq}: its texts cannot be read"]
+    return [f"audit log entry {e.seq}: the text of {p} does not match the hash its record commits to" for p in sorted(bad)]
 
 
 # ---- what is recorded ------------------------------------------------------------
@@ -261,12 +382,14 @@ def for_report(session, eng_id: int, people: set[int]) -> dict | None:
         "head": head(session, org),
         "links": [{"seq": e.seq, "prev_hash": e.prev_hash, "record_sha256": e.record_sha256,
                    "entry_hash": e.entry_hash} for e in links],
-        "entries": [record(e) for e in entries],
+        "entries": [entry(e) for e in entries],
     }
 
 
 def view(e: AuditEntry) -> dict:
-    rec = record(e)
+    """An entry for the History tab: its change with the texts put back (no salts)."""
+    rec = readable(entry(e))
+    rec.pop("texts", None)
     return {**rec, "actor_label": actor_label(rec["actor"]), "text": describe(rec)}
 
 
@@ -333,7 +456,9 @@ def _cause(c: dict) -> str:
 
 
 def describe(rec: dict) -> str:
-    """One sentence for an entry, for the History view and the report."""
+    """One sentence for an entry, for the History view and the report. A v2 entry's texts are
+    put back first, or shown as DELETED (readable)."""
+    rec = readable(rec)
     a, ch = rec.get("action"), rec.get("change") or {}
     before, after = ch.get("before"), ch.get("after") or {}
     snapshot = before is None and (rec.get("actor") or {}).get("kind") == "backfill"
@@ -382,8 +507,15 @@ def describe(rec: dict) -> str:
         out = (f"Deleted the engagement's content {why}: its key, its raw evidence, "
                f"{removed.get('summaries', 0)} evidence summaries and its recon results. Hashes, receipts "
                "and this history remain")
+        if removed.get("audit_texts"):
+            out += (f"; the text of {_n(removed['audit_texts'], 'history entry', 'history entries')} (notes, paths, "
+                    "test account roles and hosts) was deleted, its salted hash remains")
         if kept.get("v1_summaries"):
             out += f"; {kept['v1_summaries']} summaries recorded before chain v2 remain, because the chain covers their text"
+        if kept.get("v1_audit_texts"):
+            n = kept["v1_audit_texts"]
+            out += (f"; {_n(n, 'history entry', 'history entries')} recorded before audit record v2 "
+                    f"{'keeps its' if n == 1 else 'keep their'} text, because the chain covers it")
         return out
     if a == "members.updated":
         old = {m["user_id"]: m for m in (before or [])}
@@ -442,7 +574,9 @@ def describe(rec: dict) -> str:
             return f"Added {what}; the session material is stored encrypted and never shown"
         if a == "account.deleted":
             return f"Deleted {what}"
-        changed = [k for k in ("role", "hosts", "kind", "fingerprint") if (before or {}).get(k) != after.get(k)]
+        # A v2 entry names what changed: its texts may be deleted, and their hashes always differ.
+        changed = ch.get("changed") or [k for k in ("role", "hosts", "kind", "fingerprint")
+                                         if (before or {}).get(k) != after.get(k)]
         return f"Replaced {', '.join('the session material' if k == 'fingerprint' else k for k in changed)} of {what}"
     if a == "engagement.writes":
         return ("Allowed agents to propose writes; each one waits for a person's approval" if after.get("allow_writes")

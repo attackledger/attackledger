@@ -31,7 +31,9 @@ purpose: it re-derives every hash itself. Checks:
      registered to the signer before the receipt's payload was issued, and it was not
      revoked before that,
   7. (format 2, reports with an audit log) the change history: its entries hash correctly
-     and link into the audit log in order up to the head, and for every receipt issued
+     and link into the audit log in order up to the head, every text an audit record v2
+     commits to by a salted hash matches it (a text deleted with the engagement's content is
+     reported as unavailable, and the history is still checked), and for every receipt issued
      while the log covered the engagement, the signer held the reviewer role on it (or was
      an owner), had an active account, and had the name and email the receipt names, at
      the time it was issued. A NOTE gives the scope in force and who gave the role.
@@ -79,6 +81,9 @@ CHAIN_FIELDS = ("seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "
 CHAIN_FIELDS_V2 = ("v", "seq", "lane_id", "host", "role", "item_id", "kind", "sha256", "uri", "summary_sha256", "source")
 KEY_LOG_FIELDS = ("seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via")
 AUDIT_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
+# Audit record v2 commits to a salted hash of each free-text field instead of the text, so the
+# text can be deleted with the engagement's content (D-058).
+AUDIT_FIELDS_V2 = ("v",) + AUDIT_FIELDS + ("text_sha256",)
 # v3 adds the signer's email; v4 the change history heads it was signed against (D-054).
 PAYLOAD_FORMATS = ("attackledger-receipt-v2", "attackledger-receipt-v3", "attackledger-receipt-v4")
 HISTORY_FORMAT = PAYLOAD_FORMATS[2]
@@ -574,8 +579,18 @@ def _utc(text: str, whole_seconds: bool = False):
     return t.replace(microsecond=0) if whole_seconds else t
 
 
-def check_log(log: dict, what: str, fields: tuple) -> tuple[list[str], list[tuple] | None]:
+def audit_fields(e: dict) -> tuple | None:
+    """The fields an audit log entry's record hash covers, by its record version; None for a
+    version this verifier does not know."""
+    version = e.get("v", 1)
+    if version not in (1, 2) or "v" in e and version == 1:
+        return None
+    return AUDIT_FIELDS_V2 if version == 2 else AUDIT_FIELDS
+
+
+def check_log(log: dict, what: str, fields) -> tuple[list[str], list[tuple] | None]:
     """The links and records of a hash-chained log in a report (the key log, the audit log).
+    fields: the record's fields, or a function of the entry that gives them (audit_fields).
     Returns the problems and the records in chain order as (time, record), or None for the
     records when the links cannot be read."""
     problems = []
@@ -604,9 +619,12 @@ def check_log(log: dict, what: str, fields: tuple) -> tuple[list[str], list[tupl
     records, latest = [], None
     for e in sorted(log.get("entries") or [], key=lambda e: e.get("seq") or 0):
         ln = by_seq.get(e.get("seq"))
+        keys = fields(e) if callable(fields) else fields
         if ln is None:
             problems.append(f"{what} entry #{e.get('seq')} is not in the chain the report carries")
-        elif sha(canonical({k: e.get(k) for k in fields})) != ln["record_sha256"]:
+        elif keys is None:
+            problems.append(f"{what} entry #{e.get('seq')}: unknown record version {e.get('v')!r}")
+        elif sha(canonical({k: e.get(k) for k in keys})) != ln["record_sha256"]:
             problems.append(f"{what} entry #{e.get('seq')}: content does not match its record hash")
         try:
             at = _utc(e["at"])
@@ -788,7 +806,9 @@ def check_audit_log(r: dict, strict: bool = False, sealed=None) -> tuple[list[st
             notes.append("this report has no change history (made before the audit log); who held the reviewer "
                          "role and which scope was in force when each receipt was issued are not shown")
         return [], notes
-    problems, records = check_log(log, "audit log", AUDIT_FIELDS)
+    problems, records = check_log(log, "audit log", audit_fields)
+    text_problems, notes = check_texts(r, log)
+    problems += text_problems
     if records is None:
         return problems, notes
     eng_id = r["engagement"]["id"]
@@ -887,6 +907,38 @@ def check_audit_log(r: dict, strict: bool = False, sealed=None) -> tuple[list[st
                      f"(the receipt issued {covered[1].strftime('%Y-%m-%d %H:%M UTC')}); entries after it are as the "
                      "report gives them, so one left out, such as a later void of a receipt, would not be detected")
     return problems, notes
+
+
+def check_texts(r: dict, log: dict) -> tuple[list[str], list[str]]:
+    """The free text of audit record v2 entries (D-058): each text the report gives, with its
+    salt, must hash to what the record commits to. A text that is not given was deleted with the
+    engagement's content; a NOTE counts them. Entries of other record versions give none."""
+    problems, gone = [], 0
+    for e in log.get("entries") or []:
+        texts = e.get("texts")
+        if e.get("v") != 2:
+            if texts is not None:
+                problems.append(f"audit log entry #{e.get('seq')}: gives texts, but its record version commits to none")
+            continue
+        committed = e.get("text_sha256")
+        if not isinstance(committed, dict) or not (texts is None or isinstance(texts, dict)):
+            problems.append(f"audit log entry #{e.get('seq')}: its texts cannot be read")
+            continue
+        texts = texts or {}
+        for path in sorted(texts):
+            t = texts[path]
+            if (path not in committed or not isinstance(t, dict) or not isinstance(t.get("salt"), str)
+                    or sha(canonical({"field": path, "salt": t["salt"], "value": t.get("value")})) != committed[path]):
+                problems.append(f"audit log entry #{e.get('seq')}: the text of {path} does not match the hash the "
+                                "record commits to")
+        gone += sum(1 for path in committed if path not in texts)
+    if not gone:
+        return problems, []
+    d = r.get("engagement", {}).get("content_deleted") or {}
+    why = (f"deleted on {(d.get('at') or '')[:10] or 'an unknown date'} by {d.get('by') or 'someone'}"
+           if d else "the report does not say it was deleted")
+    return problems, [f"{gone} text{'' if gone == 1 else 's'} of the change history (notes, paths, test account roles "
+                      f"and hosts): content unavailable ({why}); the change history was still checked"]
 
 
 # ---- the report seal ------------------------------------------------------------------

@@ -14,7 +14,9 @@ password, an injected query.
                      token is stored, nothing changes.
   gateway_requests   url and reason may become '': deleting the engagement's content
                      (vault.delete_content). Method, host, port, status, verdict and bytes stay.
-  audit_log, key_log nothing changes.
+  audit_log          texts may become NULL: deleting an engagement's content blanks the free text
+                     of its v2 entries (D-058). The record commits to text_sha256, which stays.
+  key_log            nothing changes.
 
 Who these triggers do not stop: a database superuser (the role the Postgres image makes from
 POSTGRES_USER, which the API connects as) can drop or disable them, and anyone who can write the
@@ -22,8 +24,8 @@ SQLite file can rewrite it. They are a second layer against mistakes and against
 the application; the hash chains (ledger.py, auditlog.py, keylog.py), the reviewers' signatures
 and the report seal remain what proves that nothing changed (docs/THREAT_MODEL.md, TM-5).
 
-The same triggers are made by migration 0026 (with the column lists of that time, frozen there)
-and, for a database made from the models (tests, create_all), by attach() below. A migration that
+The same triggers are made by migration 0026 (with the column lists of that time, frozen there;
+0028 makes audit_log's again with its new columns and rule) and, for a database made from the models (tests, create_all), by attach() below. A migration that
 must change one of these tables' rows drops the trigger first and makes it again; on SQLite, a
 migration that rebuilds one of these tables (batch_alter_table) must make its triggers again,
 since a rebuilt table has none. tests/test_appendonly.py compares the two.
@@ -57,7 +59,10 @@ RULES: dict[str, Rule] = {
         pg="(NEW.url = '' OR NEW.url = OLD.url) AND (NEW.reason = '' OR NEW.reason = OLD.reason)",
         sqlite="(NEW.url = '' OR NEW.url IS OLD.url) AND (NEW.reason = '' OR NEW.reason IS OLD.reason)",
         why="only the URL and the reason may be removed, when the engagement's content is deleted"),
-    "audit_log": Rule(),
+    "audit_log": Rule(
+        ("texts",),
+        pg="NEW.texts IS NULL", sqlite="NEW.texts IS NULL",
+        why="only the free text of an entry may be removed, when its engagement's content is deleted"),
     "key_log": Rule(),
 }
 

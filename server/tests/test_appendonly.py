@@ -192,12 +192,15 @@ def test_downgrading_0026_removes_the_triggers_and_upgrading_makes_them_again(tm
     monkeypatch.setattr(db, "engine", eng)
     monkeypatch.setattr(migrate, "engine", eng)
     migrate.upgrade_head()
+    S = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
+    # Rows as an installation from before 0028 holds them (audit record v1, which 0028's downgrade
+    # keeps), seeded at head: at 0025 the models no longer match the tables.
+    monkeypatch.setattr(auditlog, "RECORD_VERSION", 1)
+    ids = seed(S)
     command.downgrade(migrate._config(), "0025")
     assert _triggers(eng) == []
-    S = sessionmaker(bind=eng, autoflush=False, expire_on_commit=False)
-    ids = seed(S)
     with S() as s:
-        name = s.get(AuditEntry, ids["audit_log"]).actor_name
+        name = s.execute(text("SELECT actor_name FROM audit_log WHERE id = :id"), {"id": ids["audit_log"]}).scalar()
     assert not refused(S, "UPDATE audit_log SET actor_name = 'x' WHERE id = :id", id=ids["audit_log"])
     assert not refused(S, "UPDATE audit_log SET actor_name = :n WHERE id = :id", n=name, id=ids["audit_log"])
     migrate.upgrade_head()

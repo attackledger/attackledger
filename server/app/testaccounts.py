@@ -285,8 +285,10 @@ def replace_account(eng_id: int, account_id: int, body: AccountReplace, request:
     after = _audit_ref(a)
     if after != before:
         a.replaced_at = now()
+        # What changed is named: the role and hosts can be deleted from the entry later (D-058).
+        changed = [k for k in ("role", "hosts", "kind", "fingerprint") if before.get(k) != after.get(k)]
         auditlog.append(session, actor=auditlog.actor(authz.current(request)), action="account.replaced",
-                        engagement_id=eng.id, change={"before": before, "after": after})
+                        engagement_id=eng.id, change={"before": before, "after": after, "changed": changed})
     session.commit()
     return view(a, _names(session))
 

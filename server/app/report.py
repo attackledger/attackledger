@@ -509,8 +509,18 @@ signer held the reviewer role when it was issued.</p>
 {_table(["Time", "By", "Change"], rows, "history", "Change history") if rows else "<p class='muted'>No changes were recorded.</p>"}
 <p class="note">{plural(len(rows) - people, 'engagement entry', 'engagement entries')} and
 {plural(people, 'person entry', 'person entries')}. Entries made by “recorded when the audit log was added” are the state
-at that time; who set it before then is not known. Passwords are never recorded, only that one was set.</p>
+at that time; who set it before then is not known. Passwords are never recorded, only that one was set.{_texts_note(log)}</p>
 </section>"""
+
+
+def _texts_note(log: dict) -> str:
+    """Notes, typed paths, test account roles and hosts that were deleted with the content (D-058)."""
+    gone = sum(len(e.get("text_sha256") or {}) - len(e.get("texts") or {})
+               for e in log.get("entries", []) if e.get("v") == 2)
+    if not gone:
+        return ""
+    return (f" {plural(gone, 'text', 'texts')} (notes, typed paths, test account roles and hosts) shown as [deleted] were "
+            "deleted with the engagement’s content; the history keeps a salted hash of each, so it still verifies.")
 
 
 def _verify(r: dict) -> str:

@@ -152,7 +152,7 @@ def key_log(s, _args) -> int:
 
 def audit_log(s, _args) -> int:
     for e in s.scalars(select(AuditEntry).order_by(AuditEntry.organization_id, AuditEntry.seq)):
-        rec = auditlog.record(e)
+        rec = auditlog.entry(e)
         where = f"engagement {e.engagement_id}  " if e.engagement_id is not None else ""
         print(f"{_org_label(s, e)}{e.seq:>5}  {e.at}  {e.action:<24} {where}{auditlog.actor_label(rec['actor'])}: {auditlog.describe(rec)}")
     problems = auditlog.verify(s)
