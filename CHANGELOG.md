@@ -614,6 +614,16 @@ reaches them.
   local app through Caido.
 
 ### Changed
+- **Agents are given the paths already seen on their host** (D-059). The lane context has
+  `known_paths`: up to 40 lines of `METHOD /path status [source]` for the lane's host, from
+  imported traffic, evidence and what recon requested itself, deduplicated by path shape, without
+  query strings, redacted when the engagement redacts, and empty once its content was deleted. The
+  prompt says that the same 4xx on every guessed path is likely a path allowlist or catch-all, not
+  a block on the researcher, and to name the reachable paths in the summary. It also says never to
+  probe a form's target or a URL naming an action with GET or HEAD (a badly built endpoint may act
+  on it), but to treat it as a write; a logout link served as GET may be followed. The system
+  prompt grows by 535 bytes; the first message by 40 bytes with no known paths, about 2.4 KB at
+  the cap.
 - **Agents waste fewer requests and get how-to hints** (D-057), from the first live runs on the
   lab: the lane context lists the origins (scheme, host, port) the probe saw answering
   (`recon.origins`), and the prompt says to find out which scheme answers before spending

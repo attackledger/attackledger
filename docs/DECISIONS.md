@@ -1020,6 +1020,58 @@ options considered and who decided.
 - **Proposed by:** Claude (the security review's open item). **Decided by:** Murat Kabak (a new
   record version). Built on branch `audit-fieldhash`.
 
+### D-059 · An agent is given the host's known paths, and never probes an action with GET (2026-10-14, made autonomously)
+- **Problem** (a real engagement, 2026-10-14): an agent lane started on a host with no recon. The
+  host serves one path prefix only and answers the same 403 to everything else. The agent guessed
+  common paths (`/`, `/login`, `/robots.txt`, `/.well-known/openid-configuration`), got the same 403
+  each time, concluded that the edge blocked the research client, and finished with nothing
+  tested, while an import in the engagement held over a hundred real requests showing the
+  working paths. The lane context gave the agent recon output only, and the prompt said nothing
+  about a uniform 4xx. Separately, a lab run sent GET to a password-change form's target to see
+  whether it answered, and then reported that the user's password might have changed.
+- **Decision:**
+  - The lane context has `known_paths` (`executors.known_paths`): `{"total": N, "paths": [...]}`,
+    each path a line `METHOD /path status [source xN]`, for the lane's host only. Sources:
+    imported traffic (inbox entries: method, path, status), the URIs of evidence attached to any
+    lane of the engagement (the path only; it joins a row with the same path), and recon endpoints
+    a tool requested itself (a crawl, or content discovery with its status) that are not already
+    among the ranked endpoints shown. Archive URLs (gau, wayback), JavaScript files and junk are
+    left out: they say a path once existed or looked like one, not that it answers.
+  - Deduplicated by method and path shape (`surface.shape`: identifiers collapsed, so
+    `/items/1` and `/items/2` are one row with a count). Query strings and fragments are never
+    given. When the engagement redacts (the default), each path also goes through
+    `redact.text` with the personal-data rules (an email in a path becomes a marker); the stored
+    URLs were redacted already. A port other than the scheme's default keeps its origin.
+  - Ordered by what the status says (2xx, 3xx, then 401/405/5xx, unknown, other 4xx, 404/410
+    last: a catch-all answers 403 to anything), then source (import, evidence, recon), signal
+    (`surface.score`) and count; static files (styles, images, fonts) last. At most 40 shown
+    (`KNOWN_PATHS`), read from at most 5,000 rows of each source, the most recent first.
+  - Nothing once the engagement's content was deleted: evidence URIs outlive the deletion by
+    design (the chain commits to them, RETENTION.md), so the function returns nothing rather than
+    relying on the other sources being blank.
+  - The system prompt gets two lines. One: when guessed paths all get the same 4xx body, suspect a
+    path allowlist or catch-all, not a block on the researcher; use `known_paths` and name the
+    reachable paths in the summary. Two (asked for during the work, after the lab run above): never GET or HEAD a form's target or
+    a URL naming an action (password or email change, delete, transfer) to probe it, since a badly
+    built endpoint may act on GET; treat it as a write needing approval and read the page leading
+    to it instead; a logout link the application serves as a GET may be followed to test session
+    termination.
+- **Cost:** the system prompt grows by 535 bytes on every lane and turn (about 135 tokens:
+  214 bytes for the known-paths line, 321 for the GET rule). The first message grows by 40 bytes
+  when nothing is known (`{"total": 0, "paths": []}`), and by about 2.4 KB (about 600 tokens)
+  at the cap: measured on a lane with 117 imported requests over 59 path shapes, 40 shown. The
+  first message is cached, so later turns read it at the cache rate.
+- **Considered:** the gateway's request log as a fourth source (it holds every earlier request to
+  the host, recon tools' misses included, and a failed run's guesses: mostly noise, and recon's
+  findings are in the endpoints already); giving exact identifiers instead of shapes (an object
+  id from someone's traffic is personal data more often than it helps; the agent sees `{id}`);
+  repeating recon endpoints already ranked (paid twice); a structured object per path (more bytes
+  per row than a line); known paths from other engagements of the same program (the
+  context never reaches outside its engagement and host). The GET rule is in the prompt only:
+  the tools cannot tell an action URL from a page, and refusing GET by path words would block
+  reads of the pages that lead to them.
+- **Made by:** Claude, after the runs above (branch `agent-known-paths`).
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or
