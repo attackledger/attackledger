@@ -28,6 +28,9 @@ const CHAIN_FIELDS_V2 = ["v", "seq", "lane_id", "host", "role", "item_id", "kind
                          "source"];
 const KEY_LOG_FIELDS = ["seq", "user_id", "user_name", "key_fingerprint", "algorithm", "event", "at", "via"];
 const AUDIT_FIELDS = ["seq", "at", "actor", "action", "engagement_id", "subject_id", "change"];
+// Audit record v2 commits to a salted hash of each free-text field instead of the text, so the
+// text can be deleted with the engagement's content (D-058).
+const AUDIT_FIELDS_V2 = ["v", ...AUDIT_FIELDS, "text_sha256"];
 // v3 adds the signer's email; v4 the change history heads it was signed against (D-054).
 const PAYLOAD_FORMATS = ["attackledger-receipt-v2", "attackledger-receipt-v3", "attackledger-receipt-v4"];
 const HISTORY_FORMAT = PAYLOAD_FORMATS[2];
@@ -1208,9 +1211,19 @@ async function checkSignatures(r: Dict, require: boolean, mode: Ed25519Mode): Pr
 
 type Rec = [Time, unknown];
 
-/** The links and records of a hash-chained log in a report (the key log, the audit log). Returns
- * the problems and the records in chain order, or null for the records when the links cannot be read. */
-async function checkLog(log: unknown, what: string, fields: string[]): Promise<[Problems, Rec[] | null]> {
+/** The fields an audit log entry's record hash covers, by its record version; null for a version
+ * this verifier does not know. */
+function auditFields(e: unknown): string[] | null {
+  const version = getk(e, "v", 1);
+  if (!pyIn(version, [1, 2]) || (pyIn("v", e) && pyEq(version, 1))) return null;
+  return pyEq(version, 2) ? AUDIT_FIELDS_V2 : AUDIT_FIELDS;
+}
+
+/** The links and records of a hash-chained log in a report (the key log, the audit log). fields:
+ * the record's fields, or a function of the entry that gives them (auditFields). Returns the
+ * problems and the records in chain order, or null for the records when the links cannot be read. */
+async function checkLog(log: unknown, what: string,
+                        fields: string[] | ((e: unknown) => string[] | null)): Promise<[Problems, Rec[] | null]> {
   const problems: Problems = [];
   if (!pyEq(getk(log, "genesis"), GENESIS)) problems.push(`unexpected ${what} genesis value`);
   const links = iter(or(getk(log, "links"), []));
@@ -1245,11 +1258,14 @@ async function checkLog(log: unknown, what: string, fields: string[]): Promise<[
   let latest: Time | null = null;
   for (const e of sortedBy(iter(or(getk(log, "entries"), [])), (e) => or(getk(e, "seq"), 0))) {
     const ln = bySeq.get(getk(e, "seq"));
+    const keys = typeof fields === "function" ? fields(e) : fields;
     if (ln === undefined) {
       problems.push(`${what} entry #${pyStr(getk(e, "seq"))} is not in the chain the report carries`);
+    } else if (keys === null) {
+      problems.push(`${what} entry #${pyStr(getk(e, "seq"))}: unknown record version ${pyRepr(getk(e, "v"))}`);
     } else {
       const rec = dict();
-      for (const k of fields) rec[k] = getk(e, k);
+      for (const k of keys) rec[k] = getk(e, k);
       if (!pyEq(await sha(canonical(rec)), at(ln, "record_sha256"))) {
         problems.push(`${what} entry #${pyStr(getk(e, "seq"))}: content does not match its record hash`);
       }
@@ -1454,6 +1470,46 @@ function voidsReceipt(e: unknown, lane: unknown, rc: unknown, issued: Time, when
   return when !== null && when.us > signed.us;
 }
 
+/** The free text of audit record v2 entries (D-058): each text the report gives, with its salt,
+ * must hash to what the record commits to. A text that is not given was deleted with the
+ * engagement's content; a note counts them. Entries of other record versions give none. */
+async function checkTexts(r: Dict, log: unknown): Promise<[Problems, Notes]> {
+  const problems: Problems = [];
+  let gone = 0;
+  for (const e of iter(or(getk(log, "entries"), []))) {
+    const texts = getk(e, "texts");
+    const seq = () => pyStr(getk(e, "seq"));
+    if (!pyEq(getk(e, "v"), 2)) {
+      if (texts !== null) problems.push(`audit log entry #${seq()}: gives texts, but its record version commits to none`);
+      continue;
+    }
+    const committed = getk(e, "text_sha256");
+    if (!isDict(committed) || !(texts === null || isDict(texts))) {
+      problems.push(`audit log entry #${seq()}: its texts cannot be read`);
+      continue;
+    }
+    const given = (texts === null ? dict() : texts) as Dict;
+    for (const path of sortedBy(Object.keys(given), (k) => k)) {
+      const t = given[path];
+      let bad = !pyIn(path, committed) || !isDict(t) || typeof getk(t, "salt") !== "string";
+      if (!bad) {
+        const o = dict();
+        o.field = path; o.salt = at(t, "salt"); o.value = getk(t, "value");
+        bad = !pyEq(await sha(canonical(o)), at(committed, path));
+      }
+      if (bad) problems.push(`audit log entry #${seq()}: the text of ${path} does not match the hash the record commits to`);
+    }
+    gone += Object.keys(committed).filter((path) => !pyIn(path, given)).length;
+  }
+  if (!gone) return [problems, []];
+  const d = or(getk(getk(r, "engagement", dict()), "content_deleted"), dict());
+  const why = truthy(d)
+    ? `deleted on ${pyStr(or(slice(or(getk(d, "at"), ""), 10), "an unknown date"))} by ${pyStr(or(getk(d, "by"), "someone"))}`
+    : "the report does not say it was deleted";
+  return [problems, [`${gone} text${gone === 1 ? "" : "s"} of the change history (notes, paths, test account roles `
+                     + `and hosts): content unavailable (${why}); the change history was still checked`]];
+}
+
 /** With strict (--require-history), the report must carry the audit log and every receipt must
  * commit to it (format v4); see docs/VERIFIER.md for what that proves. */
 /** sealed: the audit log entry up to which a valid seal binds the history (checkSeal), or null. */
@@ -1469,7 +1525,10 @@ async function checkAuditLog(r: Dict, strict = false, sealed: unknown = null): P
     }
     return [[], notes];
   }
-  const [problems, records] = await checkLog(log, "audit log", AUDIT_FIELDS);
+  const [problems, records] = await checkLog(log, "audit log", auditFields);
+  const [textProblems, textNotes] = await checkTexts(r, log);
+  problems.push(...textProblems);
+  notes.push(...textNotes);
   if (records === null) return [problems, notes];
   const engId = at(at(r, "engagement"), "id");
   const start = records.find(([, e]) => pyEq(getk(e, "engagement_id"), engId))?.[0] ?? null;
