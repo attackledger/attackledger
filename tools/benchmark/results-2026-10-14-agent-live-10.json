@@ -1,0 +1,63 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 76,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 14,
+  "detail": "",
+  "summary": "Lane 32 (Authentication) on shop.lab.test. Items done: 1, 4, 5, 6, 7, 9, 10. Item 8 is N/A because no security-question or recovery feature exists on the host (/forgot-password and /reset-password return 404). Items 2 (default credentials) and 3 (lockout) are left open: both require repeated POST login attempts, which are out of scope with writes disabled and would amount to credential guessing. Only GET/HEAD/OPTIONS were sent, all as anonymous, alice (user) or carol (admin) as needed, at a low rate.\nKey observations: (1) only plain HTTP answers (HTTPS refused by the gateway), and the login form posts credentials to an http:// URL (item 1, high); (2) /account/ and related personalised pages are served with 'Cache-Control: public, max-age=3600' (item 6); (3) the password-change form has no current-password field and the stated minimum is 4 characters, with server-side enforcement untested because it needs a POST (items 7 and 9); (4) no authentication bypass was found on the protected paths or path variants tested (item 4); (5) /api/v1/* is a catch-all returning {\"ok\":true} (item 10), so it is not an alternative auth channel. Leads recorded: the password-change re-auth gap (medium), the HTTP-only login (high), and the API catch-all (info). The session-after-logout, session-in-URL, cookie-flag and secrets-in-app.js leads belong to the session and configuration lanes and were not re-tested here.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 14,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 28,
+  "target_by_method": {
+    "GET": 26,
+    "HEAD": 2
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "HEAD",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 28,
+  "lab_requests": 27,
+  "lab_with_header": 27,
+  "lab_with_user_agent": 27,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 6,
+    "carol": 1
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 31,
+  "items_evidenced": 10,
+  "items_marked": 8,
+  "leads": 3,
+  "usage": {
+    "input": 30,
+    "output": 14583,
+    "cache_read": 189504,
+    "cache_write": 26310
+  },
+  "cost_usd_estimate": 0.0125,
+  "wall_seconds": 84.2,
+  "job_seconds": 82.0,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

@@ -643,3 +643,72 @@ gap in the prompt or chance.
 The keys were found in every run, so the miss was chance and the hints were not changed. The hidden parameter was
 found in two of three. Item 1 (search engine discovery) stays open in each run: it needs third-party queries the
 host-scoped tools do not send.
+
+## Live agent run (2026-10-14, athz lane, signed in, 60 requests)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `234ddaa`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `athz` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 74, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 22 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 108.3 s (job 106.0 s) |
+| Claude API calls (gateway log) | 22 to api.anthropic.com |
+| Target requests (gateway log) | 47: GET 45, HEAD 2; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target HEAD https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 46 request(s), 44 with the research header, 44 with the user agent; 2 answered 400 by the lab's nginx before it read the headers; signed in as alice 21, carol 8 |
+| Research header on every request | yes (on the 44 whose headers the lab read; 2 not observable) |
+| Evidence | 29 entries on 4 item(s); 4 item(s) marked; 3 lead(s) |
+| Tokens | input 46, output 14,739, cache read 323,458, cache write 28,086 |
+| Cost (estimate) | $0.0141 of a $0.5 budget |
+
+Agent summary for the reviewer: "All four ATHZ items were tested with read-only requests on http://shop.lab.test (recon origins were empty; the HTTPS probe was refused by the gateway, so HTTP was used). Results: (1) WSTG-ATHZ-01 traversal/file inclusion: not observed on /static/, /products?id= or /search.php?q=. (2) WSTG-ATHZ-02 authorization bypass: /admin/ enforces roles and the header bypass attempts failed, but the admin API /api/v1/admin/users returns the full user list to a customer account; lead recorded (high). (3) WSTG-ATHZ-03 privilege escalation: the customer (alice) reads admin data (read-only; write-side escalati"
+
+## Live agent run (2026-10-14, sess lane, signed in, 60 requests)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `234ddaa`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `sess` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 75, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 14 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 105.3 s (job 103.2 s) |
+| Claude API calls (gateway log) | 14 to api.anthropic.com |
+| Target requests (gateway log) | 22: GET 22; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 21 request(s), 21 with the research header, 21 with the user agent; signed in as alice 9, carol 2 |
+| Research header on every request | yes |
+| Evidence | 27 entries on 9 item(s); 4 item(s) marked; 5 lead(s) |
+| Tokens | input 30, output 19,042, cache read 177,673, cache write 29,148 |
+| Cost (estimate) | $0.0149 of a $0.5 budget |
+
+Agent summary for the reviewer: "Session lane (31) on http://shop.lab.test (HTTPS refused, HTTP answered). Done: SESS-01 (session schema observed; token entropy not sampled), SESS-02 (cookie attributes observed; no HttpOnly/SameSite visible, one-year Max-Age), SESS-04 (session value in statement URL, public cache headers on personalized pages, AWS key in app.js routed to config), SESS-06 (logout clears the cookie but the old session still returned 200 via /api/v1/me; logged as a lead to validate). Left open: SESS-03 (fixation needs a login POST, which writes-disabled rules forbid), SESS-05 (cross-site POST behavior not exerci"
+
+## Live agent run (2026-10-14, athn lane, signed in, 60 requests)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `234ddaa`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `athn` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 76, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 14 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 84.2 s (job 82.0 s) |
+| Claude API calls (gateway log) | 14 to api.anthropic.com |
+| Target requests (gateway log) | 28: GET 26, HEAD 2; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target HEAD https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 27 request(s), 27 with the research header, 27 with the user agent; signed in as alice 6, carol 1 |
+| Research header on every request | yes |
+| Evidence | 31 entries on 10 item(s); 8 item(s) marked; 3 lead(s) |
+| Tokens | input 30, output 14,583, cache read 189,504, cache write 26,310 |
+| Cost (estimate) | $0.0125 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 32 (Authentication) on shop.lab.test. Items done: 1, 4, 5, 6, 7, 9, 10. Item 8 is N/A because no security-question or recovery feature exists on the host (/forgot-password and /reset-password return 404). Items 2 (default credentials) and 3 (lockout) are left open: both require repeated POST login attempts, which are out of scope with writes disabled and would amount to credential guessing. Only GET/HEAD/OPTIONS were sent, all as anonymous, alice (user) or carol (admin) as needed, at a low rate. Key observations: (1) only plain HTTP answers (HTTPS refused by the gateway), and the login fo"
