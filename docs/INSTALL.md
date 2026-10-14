@@ -1316,9 +1316,10 @@ The shop has a sign-in, at `http://shop.lab.test/login`, with two fictional acco
 | `carol` | `shop-carol-admin-2026` | admin (order 1002) |
 
 They are what the **Authentication**, **Session management** and **Authorization** lanes need:
-a signed-in user, and two of them with different roles to compare. The lab stores nothing: the
-sign-in and the forms behind it answer, but nothing changes. The weaknesses planted for those
-lanes, like the others, are listed at the top of `lab/nginx.conf`.
+a signed-in user, and two of them with different roles to compare. The **Cryptography**, **Client
+side** and **API** lanes use them too. The lab stores nothing: the sign-in and the forms behind it
+answer, but nothing changes. The weaknesses planted for those lanes, like the others, are listed at
+the top of `lab/nginx.conf`.
 
 To let agents work those lanes on the practice engagement, give it the two sessions as test
 accounts (`docs/TESTER_GUIDE.md`, "Test accounts for the agent"):
@@ -1333,6 +1334,33 @@ accounts (`docs/TESTER_GUIDE.md`, "Test accounts for the agent"):
 
 Signing out of the shop clears the cookie in the browser but does not end the session (one of
 the planted issues), so the accounts keep working.
+
+### What is planted for each lane
+
+Every lane of the WSTG methodology has something to find in the lab, and every issue shows with
+read-only requests (one is confirmed by a write, see below the table). The last column says
+whether the lane's live run (below) signs in: some of its issues show only with a session, or are
+linked only from a signed-in page. The full list, with the WSTG test each issue is for, is the
+comment block at the top of `lab/nginx.conf`.
+
+| Lane | Planted | Signed in |
+|---|---|---|
+| Information gathering (`info`) | a script with keys and a sourcemap, an exposed `.git/config`, `robots.txt` naming a directory, a hidden debug parameter | no |
+| Configuration (`conf`) | the same files, an admin path, a `/backup/` directory | no |
+| Identity management (`idnt`) | the password reset and a username check tell existing accounts apart; the check is case-sensitive, so a look-alike name is free; the registration form sends the account's role, and the server takes it | no |
+| Authentication (`athn`) | credentials over plain HTTP, cacheable signed-in pages, a four-character password policy, a password change without the current password | yes |
+| Authorization (`athz`) | an order any signed-in user can read; an admin API that checks only that someone is signed in | yes |
+| Session management (`sess`) | a session cookie without HttpOnly, Secure or SameSite that lasts a year, the session in a URL, a form without an anti-CSRF token, a sign-out that does not end the session | yes |
+| Input validation (`inpv`) | a search that reflects its query into the page | no |
+| Error handling (`errh`) | the search's hidden debug parameter turns on a verbose trace; the other errors are plain | no |
+| Cryptography (`cryp`) | no TLS anywhere; an invoice link whose reference is base64 of the order number, so another order's invoice opens; a data export with the password's unsalted MD5 | yes |
+| Business logic (`busl`) | a quantity check that accepts zero, negative and above-stock quantities; a "Buy now" quote that charges the price the request carries | no |
+| Client side (`clnt`) | a page that writes the URL's `#` part into the page as HTML; a message listener without an origin check; an API that reflects any origin with credentials; no frame protection on the password change | yes |
+| API (`apit`) | GraphQL with introspection on, a field that returns any customer's email and address to any signed-in user, and errors that suggest the real field names | yes |
+
+Writes are accepted and change nothing. The registration's role is confirmed by one: an approved
+write, or a person in the lab browser, sending the form with `role=admin` gets "Account created
+with the role admin".
 
 ### A first live agent run
 
@@ -1380,9 +1408,10 @@ The worker caps every run, whatever was asked for in the web app: `ATTACKLEDGER_
 making a call that could go over. The run then ends as partial, with no receipt. The prices it
 uses are in `server/app/agentloop.py` (`MODELS`); check them against current pricing.
 
-Other lanes of the lab run the same way, with `--role`: `info`, `conf` and `inpv` signed out, like
-`errh`, and `athn`, `sess` and `athz` (Authentication, Session management, Authorization) signed in.
-For those three the scripts use an engagement of their own, `Agent live run (lab, test accounts)`.
+Every other lane of the lab runs the same way, with `--role`: `info`, `conf`, `idnt`, `inpv` and
+`busl` signed out, like `errh`, and `athn`, `athz`, `sess`, `cryp`, `clnt` and `apit` signed in (the
+table above says why). For the signed-in lanes the scripts use an engagement of their own, `Agent
+live run (lab, test accounts)`.
 The first time, they sign in to the lab as `alice` and `carol` with its sign-in form (from inside
 the lab's container, as a person would in a browser) and add the two sessions as the test accounts
 `user` (customer) and `admin` through the API. The sessions are never printed. For example:
@@ -1399,9 +1428,9 @@ says how many requests arrived signed in as each user.
 
 To rehearse all of it without a key, `python3 tools/agent_live.py dryrun` builds this tree into
 its own compose project with no route out. A stub Claude API there plays a fixed run, through
-the same SDK, gateway checks and tools. Then it removes the project. With `--role athz` (or
-`athn`, `sess`), the stub sends its first request as a test account, and the dry run fails unless
-the lab saw it signed in.
+the same SDK, gateway checks and tools. Then it removes the project. With a signed-in lane
+(`--role athz`, for example), the stub sends its first request as a test account, and the dry run
+fails unless the lab saw it signed in.
 
 ### Capture a HAR of the lab from a browser
 

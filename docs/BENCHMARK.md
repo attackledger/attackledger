@@ -405,7 +405,7 @@ section is one table:
 |---|---|
 | Model | the job's result (the worker's `ATTACKLEDGER_AGENT_MODEL`; a first run uses the cheapest) |
 | Stack | the compose project, the commit, the date of the price table in `agentloop.MODELS` |
-| Lane | the lab engagement's lane (`errh` unless `--role` names another) on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`; for `athn`, `sess` and `athz`, the test accounts it ran with |
+| Lane | the lab engagement's lane (`errh` unless `--role` names another) on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`; for a signed-in lane (`athn`, `athz`, `sess`, `cryp`, `clnt`, `apit`), the test accounts it ran with |
 | Outcome | the job's status (`done` only if the agent finished) and the agent's (`finished`, `cost_limit`, ...) |
 | Limits | what the run asked for, and what the worker applied (the lower of that and its ceilings) |
 | Wall time | from queueing the run to its end, and the job's own start to finish |

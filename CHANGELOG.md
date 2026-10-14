@@ -558,8 +558,32 @@ reaches them.
   The pre-flight checks they are there, for `shop.lab.test` only, and the write-up names them and
   counts the requests the lab saw signed in as each user. In a dry run with one of these lanes the
   stub sends its first request as a test account, and the run fails unless the lab saw it signed in.
+- **Every WSTG lane can be measured on the lab** (`lab/nginx.conf`, still nginx alone, fictional
+  data only). Planted, and listed at the top of the file with the WSTG test each is for: for
+  Identity management, a password reset and a username check that tell existing accounts apart,
+  a case-sensitive check that leaves look-alike names free, and a registration form that sends the
+  account's role, which the server takes; for Cryptography, an invoice share link whose reference is
+  base64 of the order number (another order's invoice opens) and a data export with the password's
+  unsalted MD5; for Business logic, a quantity check that calls zero, negative and above-stock
+  quantities valid and a "Buy now" quote that charges the price the request carries; for Client
+  side, a DOM sink fed by the URL's `#` part, a message listener without an origin check, an API
+  that reflects any origin with credentials and no frame protection; for API, GraphQL over GET
+  with introspection on, a field that returns any customer's email and address to any signed-in
+  user, and errors that suggest the real field names. Each shows with read-only requests. The home
+  page now also links to the cart, order tracking and help, the sign-in page to the password reset
+  and the registration, the account page to the invoice link and the data export, and
+  `/static/app.js` names `/graphql`; `/api/v1/me` also returns the email and the CORS headers, and
+  the new API paths answer for themselves instead of the `/api/` catch-all's `{"ok":true}`. The
+  rest answers as before. `tools/agent_live.py --role` takes the five new lanes: `idnt` and `busl`
+  signed out, `cryp`, `clnt` and `apit` with the test accounts. `docs/INSTALL.md`, section 19,
+  "What is planted for each lane".
 
 ### Fixed
+- **A read of the lab's form targets looked like a write.** `/account/email` and
+  `/account/password` answered "saved" to any method, so a live run that sent GET
+  `/account/password` reported that alice's password may have changed. They now take POST only,
+  as a real form target does: other methods get 405 with `Allow: POST` (still 401 signed out), and
+  a POST is "saved" and changes nothing, as before. Sign-out by GET stays, as planted (SESS-06).
 - **Accessibility of the report and the landing page** (WE-7, WE-8, WE-9, Low): the HTML report's
   wide tables can be scrolled from the keyboard (each is a named, focusable region), its contents
   links are 24px apart (WCAG 2.5.8), and the landing page's sample verifier output meets AA

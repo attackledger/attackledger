@@ -299,9 +299,11 @@ def test_the_lab_log_names_the_signed_in_user_and_the_run_counts_it():
 def test_the_lanes_that_need_a_signed_in_user_are_wstg_lanes_with_the_labs_accounts():
     from app import packs
     live = load_live()
-    assert set(live.ACCOUNT_ROLES) == {"athn", "sess", "athz"} and set(live.ACCOUNT_ROLES) <= set(live.ROLES)
+    assert set(live.ACCOUNT_ROLES) == {"athn", "sess", "athz", "cryp", "clnt", "apit"}
+    assert set(live.ACCOUNT_ROLES) <= set(live.ROLES)
     wstg = {lane.key for lane in packs.all_packs()[live.PACK].lanes}
-    assert set(live.ROLES) <= wstg
+    # Every WSTG lane can be run on the lab: each has something planted for it.
+    assert set(live.ROLES) == wstg and len(live.ROLES) == len(set(live.ROLES))
     conf = LAB_CONF.read_text()
     # Each fictional account signs in with what the lab's sign-in reads, and two roles exist to compare.
     for label, role, username, password in live.LAB_ACCOUNTS:
@@ -473,3 +475,124 @@ def test_the_stub_sends_its_first_request_as_a_usable_test_account():
     assert use["input"]["as_account"] == ""
     [use] = [b for b in stub.play(0, {"host": "shop.lab.test", "items": []}, []) if b["type"] == "tool_use"]
     assert use["input"]["as_account"] == ""
+
+
+# ---- the lanes planted last (idnt, cryp, busl, clnt, apit) -------------------------------------
+
+def lab_blocks() -> dict:
+    """Each location's body by its path (lab/nginx.conf, the shop's server and the loopback's): the
+    first one for a path (`location = /`, the home page, before the catch-all `location /`). A body
+    is cut at its first line that starts "  }", which is enough for what these tests read."""
+    import re
+    out: dict = {}
+    for path, body in re.findall(r"location (?:= |~ )?(\S+) \{\n(.*?)\n  \}", LAB_CONF.read_text(), re.S):
+        out.setdefault(path, body)
+    return out
+
+
+def test_the_lab_says_what_is_planted_for_each_new_lane_and_serves_it():
+    """The comment block at the top of lab/nginx.conf is what the benchmark says there is to find:
+    each issue is listed under its lane, and each path it names is served."""
+    conf = LAB_CONF.read_text()
+    head = conf.split("\nserver {")[0]
+    for lane in ("idnt", "cryp", "busl", "clnt", "apit"):
+        assert f"({lane})" in head, lane
+    for planted in ("IDNT-04", "IDNT-04/05", "IDNT-02", "CRYP-01/03", "CRYP-04", "BUSL-01/05", "BUSL-02/03",
+                    "CLNT-01", "CLNT-11", "CLNT-07", "CLNT-09", "APIT-01"):
+        assert f"#     - {planted}:" in head, planted
+    blocks = lab_blocks()
+    for path in ("/forgot-password", "/register", "/_register", "/static/register.js", "/api/v1/username-available",
+                 "/invoice", "/account/export", "/cart", "/static/cart.js", "/api/v1/cart/check",
+                 "/api/v1/checkout/quote", "/track", "/static/track.js", "/support", "/static/support.js",
+                 "/api/v1/me", "/graphql"):
+        assert path in blocks, path
+    # Reachable from pages an agent starts on: the home page, the sign-in page, the account page, app.js.
+    for page, links in (("/", ("/cart", "/track", "/support")), ("/login", ("/forgot-password", "/register")),
+                        ("/account/", ("/invoice?ref=$lab_invoice_ref", "/account/export")),
+                        ("/static/app.js", ('"/graphql"',))):
+        for link in links:
+            assert link in blocks[page], (page, link)
+    # The lanes that run signed out find theirs signed out: none of those locations reads the session.
+    for path in ("/forgot-password", "/register", "/api/v1/username-available", "/cart", "/api/v1/cart/check",
+                 "/api/v1/checkout/quote"):
+        assert "$lab_user" not in blocks[path] and "$cookie_lab_session" not in blocks[path], path
+
+
+def test_the_new_lanes_planted_issues_are_what_the_comments_say():
+    import base64
+    import hashlib
+    import re
+    live = load_live()
+    conf = LAB_CONF.read_text()
+    blocks = lab_blocks()
+    # IDNT-04/05: the known usernames are matched exactly and case-sensitively (a map's plain strings
+    # ignore case, so "Carol" would be taken); the reset and the check answer differently for them.
+    assert '"~^alice$" alice;' in conf and '"~^carol$" carol;' in conf
+    assert "return 404" in blocks["/forgot-password"] and "$lab_masked_email" in blocks["/forgot-password"]
+    assert '{"available":false}' in blocks["/api/v1/username-available"]
+    # IDNT-02: the form sends the role, and the loopback's answer names the role it was sent.
+    assert '<input type="hidden" name="role" value="customer">' in blocks["/register"]
+    assert "rewrite ^ /_register last;" in blocks["/register"]
+    assert re.search(r"location = /_register \{\n\s+internal;", conf)
+    assert "proxy_set_header X-Lab-Register-Role $lab_register_role;" in blocks["/_register"]
+    assert "with the role $http_x_lab_register_role." in conf.split("listen 127.0.0.1:8081;")[1]
+    # CRYP-04: each account's invoice reference is base64 of "order=<its order>", and the map opens it.
+    for user, order in (("alice", 1001), ("carol", 1002)):
+        ref = base64.b64encode(f"order={order}".encode()).decode()
+        assert f'{user} "{ref}";' in conf and f'"~^{ref.rstrip("=")}(==|%3D%3D)?$" {order};' in conf
+        assert f"if ($lab_invoice = {order})" in blocks["/invoice"]
+    # CRYP-04: the export's hash is the unsalted MD5 of each fictional password.
+    for _, _, username, password in live.LAB_ACCOUNTS:
+        assert f'{username} "{hashlib.md5(password.encode()).hexdigest()}";' in conf, username
+    assert '"password_hash_algorithm":"md5"' in blocks["/account/export"]
+    # BUSL: any whole number is a valid quantity; the quote's price is the request's.
+    assert '"~^(-?)0*([0-9]{1,9})$" $1$2;' in conf and '"valid":true' in blocks["/api/v1/cart/check"]
+    assert '"unit_price":"$lab_price","total":"$lab_price EUR"' in blocks["/api/v1/checkout/quote"]
+    assert "price=89.90" in blocks["/cart"]
+    # CLNT: the hash into innerHTML, a message listener without an origin check, reflected CORS.
+    assert "location.hash" in blocks["/static/track.js"] and ".innerHTML =" in blocks["/static/track.js"]
+    support = blocks["/static/support.js"]
+    assert 'addEventListener("message"' in support and "origin" not in support and ".innerHTML = e.data" in support
+    me = blocks["/api/v1/me"]
+    assert "add_header Access-Control-Allow-Origin $http_origin always;" in me
+    assert "add_header Access-Control-Allow-Credentials true always;" in me
+    served = "\n".join(line for line in conf.splitlines() if not line.lstrip().startswith("#"))
+    assert "x-frame-options" not in served.lower() and "frame-ancestors" not in served
+    # APIT-01: introspection before the sign-in check; another customer's data after it.
+    gql = blocks["/graphql"]
+    assert gql.index("$lab_gql = introspection") < gql.index('$lab_user = ""') < gql.index("$lab_gql_customer")
+    assert '"~__schema|__type[^a-z]" introspection;' in conf and "Did you mean customer, viewer or orders?" in gql
+    assert '"~customer.*carol"' in conf and '"email":"carol@example.test"' in conf
+
+
+def test_every_role_takes_the_engagement_its_lane_needs():
+    """A signed-in lane takes the engagement with the lab's accounts, a signed-out one the other."""
+    live = load_live()
+    api = FakeApi(live)
+    engs = {}
+    for role in live.ROLES:
+        live.LANE_ROLE = role
+        e, lane, _ = live.find_lane(api, prepare=True)
+        engs[role] = e["name"]
+        assert lane["id"] in api.lanes
+    live.LANE_ROLE = "errh"
+    assert {r for r, n in engs.items() if n == live.ACCOUNTS_ENG_NAME} == set(live.ACCOUNT_ROLES)
+    assert {r for r, n in engs.items() if n == live.ENG_NAME} == set(live.ROLES) - set(live.ACCOUNT_ROLES)
+    assert api.signed_in == ["alice", "carol"]            # once, for the first signed-in lane
+
+
+def test_the_labs_form_targets_take_post_only():
+    """A read must never look like a write: GET /account/password answering "saved" was reported by a
+    live run as a changed password. The form targets refuse every other method (405, Allow: POST)
+    after the sign-in check, and only a POST is "saved". Sign-out by GET stays (SESS-06, planted)."""
+    import re
+    conf = LAB_CONF.read_text()
+    [body] = re.findall(r"location ~ \^/account/\(email\|password\)\$ \{\n(.*?)\n  \}", conf, re.S)
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    assert lines == ['if ($lab_user = "") { return 401 \'sign in first\'; }',
+                     "if ($request_method != POST) { add_header Allow POST always; "
+                     "return 405 'method not allowed: this form takes POST'; }",
+                     "return 200 'saved';"]
+    # Nothing else answers like a saved write; the registration answers only to its POST.
+    served = "\n".join(line for line in conf.splitlines() if not line.lstrip().startswith("#"))
+    assert served.count("'saved'") == 1 and "if ($request_method = POST) { rewrite ^ /_register last; }" in served

@@ -26,8 +26,8 @@ preflight  checks, without sending anything to the Claude API or the target:
            a live setup passes (the SDK calls api.anthropic.com, no test CA, a real-looking key)
            are not applied. Exit status 1, with a plain message, if anything failed.
 
-           --role athn, sess or athz (the lanes that need a signed-in user) use their own lab
-           engagement, `Agent live run (lab, test accounts)`, with the lab's two fictional
+           --role athn, sess, athz, cryp, clnt or apit (the lanes that need a signed-in user) use
+           their own lab engagement, `Agent live run (lab, test accounts)`, with the lab's two fictional
            accounts as test accounts (D-040): user (alice, a customer) and admin (carol). Without
            --no-prepare, a missing one is signed in to the lab as a person would (POST /login,
            from inside the lab container) and its session cookie added through the API; the
@@ -67,9 +67,19 @@ ENG_NAME = "Agent live run (lab)"
 LANE_ROLE = "errh"              # WSTG Error handling: two items, both testable with read-only requests
 # Lanes that need a signed-in user: their runs use the lab's fictional accounts as test accounts
 # (D-040), on an engagement of their own, so the other lanes' runs stay comparable (no accounts).
-ACCOUNT_ROLES = ("athn", "sess", "athz")
+# Why each needs one (lab/nginx.conf lists what is planted):
+#   athn, sess  the sign-in, the session cookie and the signed-in pages are what they test;
+#   athz        two roles to compare (a customer reads an admin's data);
+#   cryp        the weak encoding and hashing sit behind the sign-in (the invoice link on the
+#               account page, the data export);
+#   clnt        the credentialed CORS read only shows a user's data when one is signed in, and the
+#               page to frame is the signed-in password change;
+#   apit        the GraphQL field that exposes another customer answers signed-in users only.
+# idnt and busl run signed out: account enumeration, registration and the cart's checks are what
+# anyone sees, and a session would only hide that.
+ACCOUNT_ROLES = ("athn", "sess", "athz", "cryp", "clnt", "apit")
 # Lanes a run may take (--role): each has issues planted in lab/nginx.conf for an agent to find.
-ROLES = ("errh", "info", "conf", "inpv") + ACCOUNT_ROLES
+ROLES = ("errh", "info", "conf", "inpv", "idnt", "busl") + ACCOUNT_ROLES
 ACCOUNTS_ENG_NAME = "Agent live run (lab, test accounts)"
 # The lab's fictional accounts (lab/nginx.conf): test account label, its role in the shop, and the
 # username and password a person would sign in with. Fictional, and the lab is reachable only
