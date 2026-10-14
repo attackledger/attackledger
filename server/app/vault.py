@@ -415,8 +415,8 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     from sqlalchemy import delete as sa_delete, select, update
 
     from . import auditlog
-    from .models import (AgentExchange, Endpoint, Engagement, Evidence, GatewayRequest, Job, JobStatus, Lead,
-                         Observation)
+    from .models import (AgentExchange, AuditEntry, Endpoint, Engagement, Evidence, GatewayRequest, Job, JobStatus,
+                         Lead, Observation)
 
     if reason not in REASONS:
         raise ValueError(f"unknown reason {reason!r}")
@@ -471,16 +471,23 @@ def delete_content(session, eng, *, actor: dict, reason: str) -> dict:
     counts["jobs_stopped"] = stopped
     counts["agent_exchanges"] = session.execute(sa_delete(AgentExchange).where(
         AgentExchange.job_id.in_(ids))).rowcount or 0 if ids else 0
+    # The change history's free text: notes, typed DELETE paths, test accounts' roles and hosts,
+    # dismissal reasons (D-058). A v2 entry's record commits to a salted hash of each, which stays;
+    # a v1 entry's record holds the text itself, so it stays too.
+    counts["audit_texts"] = session.execute(update(AuditEntry).where(
+        AuditEntry.engagement_id == eng.id, AuditEntry.texts.is_not(None)).values(texts=None)).rowcount or 0
+    old_texts = auditlog.old_texts(session, eng.id)
     eng.content_deleted_at, eng.content_deleted_by, eng.content_deleted_reason = now, by, reason
     change = {"after": {"deleted_at": now.isoformat(), "reason": reason,
                         "retain_until": eng.retain_until.isoformat() if eng.retain_until else None},
               "removed": {"summaries": len(sealed), "job_logs": len(jobs), **counts},
-              "kept": {"v1_summaries": kept, "evidence_entries": len(rows)}}
+              "kept": {"v1_summaries": kept, "evidence_entries": len(rows),
+                       **({"v1_audit_texts": old_texts} if old_texts else {})}}
     auditlog.append(session, actor=actor, action="engagement.content_deleted", engagement_id=eng.id, change=change)
     session.commit()
     files = finish_deletion(session, eng)
     return {"already_deleted": False, **deleted_info(eng), "summaries_removed": len(sealed),
-            "v1_summaries_kept": kept, **counts, **files}
+            "v1_summaries_kept": kept, "v1_audit_texts_kept": old_texts, **counts, **files}
 
 
 def _hosts_only(targets) -> list:

@@ -66,6 +66,19 @@ the receipt is closed. In every mode, both verifiers fail a v4 receipt when the 
 not reach the signed head, has another entry there, or leaves out a counted entry. The same goes
 for the key log head and the signer's key registration.
 
+An audit log entry written since migration 0028 that carries free text is **audit record v2**
+(D-058): its record has `"v": 2` and, in place of each free-text field (a note, a typed DELETE path,
+a test account's role, hosts and header names, a dismissal reason, an import tool's name),
+`text_sha256` maps the field's place (`after.note`) to `sha256(canonical({"field", "salt",
+"value"}))`, with a random 128-bit salt. The report gives the salt and the value next to the record
+(`texts`), outside what the chain hashes, and both verifiers check each one. Once the engagement's
+content is deleted, `texts` is `null`: the record, the links and the signatures over them are
+unchanged, so the report still verifies, and a NOTE counts the texts that are unavailable. A text
+that does not match its hash, a text for a field the record does not commit to, texts on a v1
+entry, or a version this verifier does not know fail the change history. Entries without free
+text, and every entry written before 0028, are v1 as before. A verifier from before D-058 fails a
+report with a v2 entry.
+
 ## What a signature does not prove
 
 A valid receipt signature proves that the holder of that key signed exactly that payload. It does
@@ -225,7 +238,8 @@ docker run --rm --user 1000:1000 -e HOME=/tmp -v "$PWD":/w -w /w/server \
 
 To remake only the payload v4 reports (unsealed, as exported before D-055) and keep every older
 fixture in its format, pass `--only v4` to the same command; `--only seal` remakes the sealed
-reports (`seal-*`, with their test timestamp root `seal-ec-root.pem`). A case with
+reports (`seal-*`, with their test timestamp root `seal-ec-root.pem`), and `--only audit-v2` the
+audit record v2 reports (`audit-v2*`, D-058). A case with
 `"history": true` runs with `--require-history`.
 
 When `verify_report.py` changes, change `web/src/verify_report.ts` the same way, add a case to

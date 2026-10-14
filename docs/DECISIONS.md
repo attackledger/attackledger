@@ -963,6 +963,63 @@ options considered and who decided.
   and an origin that has answered is never blocked anyway).
 - **Made by:** Claude, at Murat's request after the live runs (branch `agent-brief`).
 
+### D-058 · The audit log commits to a salted hash of its free text, so deletion reaches it (2026-10-14, decided by Murat)
+- **Problem** (docs/security-review/RETENTION.md, the open item of the security review): the
+  audit log is hash-chained (D-037), so deleting an engagement's content (D-043) could not remove
+  the free text its entries held: notes on approved and rejected writes, the path typed to confirm
+  a DELETE, test accounts' roles, hosts and header names, dismissal reasons, the tool named in an
+  imported file. Everything else that held them was deleted or blanked.
+- **Decision** (Murat chose a new record version; Claude chose the construction):
+  - **Audit record v2.** An entry whose change carries one of those fields
+    (`auditlog.TEXT_FIELDS`, by action and place, such as `after.note`) is written as v2: the
+    field leaves the change, and the record, which the chain hashes, gets `"v": 2` and
+    `text_sha256: {path: sha256(canonical({"field": path, "salt": salt, "value": value}))}`.
+    The salt and the value are kept in `audit_log.texts`, outside the hashed bytes. Reports carry
+    them with the entry (`texts`), the History tab and the report's history put them back in the
+    sentence, and both verifiers check each one against its hash.
+  - **Deletion** sets `texts` to NULL for the engagement's entries. The records, the links, the
+    heads, the receipts that sign them (v4) and the seal stay as they were, so reports made before
+    and after the deletion verify, also with `--require-history`. The verifiers say in a NOTE how
+    many texts are unavailable and why; the History tab and the report show `[deleted]` in their
+    place. An entry written after the deletion keeps its hash and no text. The append-only
+    triggers (TM-5) let `texts` become NULL and nothing else (migration 0028).
+  - **An entry with no such text stays v1.** Its record would be the same change either way, so
+    reports made only of such entries still verify with verifiers from before this decision, and
+    0028 can still be downgraded while no v2 entry exists.
+  - **Old entries are not rewritten.** Entries written before 0028 are v1 and keep their text in
+    the record, which the chain covers: deleting the content leaves it, the deletion screen counts
+    those entries, and the deletion's own entry records how many there were.
+- **Why a random salt per field, and not a keyed hash (HMAC) with a per-engagement key that
+  deletion destroys:** a role such as `admin`, a path or a short note can be guessed from a plain
+  hash; 128 random bits per field make that impossible once the salt is gone. To check a text, a
+  verifier needs its salt, which travels with that one text only. With an HMAC the verifier would
+  need the engagement's key: every exported report would carry it, and with it anyone holding
+  that report could test guesses against every later entry of the engagement once its text was
+  deleted. The salt also needs no key store, no rotation and nothing beyond SHA-256 in the browser
+  verifier, and binding the field's name into the hash keeps a text from being shown under
+  another field.
+- **What an auditor can still verify after a deletion:** that the history is complete and
+  unaltered (every record and link), who did what and when, the method, host, account label and
+  request hash of every write, the decision and that a DELETE was confirmed, a test account's
+  label, kind and fingerprint, and which fields held text. **What is lost:** the text itself: the
+  note, the typed path, the role, hosts and header names, the dismissal reason, the import tool.
+  A report exported before the deletion still holds them, as it holds the evidence summaries.
+- **Not reached:** backups made before the deletion, Postgres dead rows and WAL (RETENTION.md):
+  the texts are plaintext in the database, like the rows they describe (`write_proposals`,
+  `test_accounts`), which deletion removes the same way. Encrypting them under the engagement key
+  would help only if those rows were encrypted too.
+- **Compatibility:** a verifier from before this decision fails a report that has a v2 entry
+  (the record hash does not match), rather than passing it; `tools/verify_report.py` and the
+  browser verifier from this version read both. The report format stays `attackledger-report/2`.
+- **Considered:** an HMAC keyed per engagement (above); encrypting the texts with the
+  engagement's data key and committing to a plain hash, as chain record v2 does for evidence
+  summaries (a plain hash of a short value can be guessed); rewriting old entries to v2 (it would
+  change records that signatures and seals already cover, so reports already issued would fail);
+  making every new entry v2 (older verifiers would fail every new report, with nothing gained for
+  entries without text).
+- **Proposed by:** Claude (the security review's open item). **Decided by:** Murat Kabak (a new
+  record version). Built on branch `audit-fieldhash`.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

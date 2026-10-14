@@ -281,7 +281,8 @@ def rechain(report):
     prev = log["links"][0]["prev_hash"]
     for ln in log["links"]:
         if ln["seq"] in recs:
-            ln["record_sha256"] = verifier.sha(verifier.canonical({k: recs[ln["seq"]][k] for k in verifier.AUDIT_FIELDS}))
+            rec = recs[ln["seq"]]
+            ln["record_sha256"] = verifier.sha(verifier.canonical({k: rec[k] for k in verifier.audit_fields(rec)}))
         ln["prev_hash"] = prev
         ln["entry_hash"] = prev = verifier.sha(prev + ln["record_sha256"])
     log["head"] = {"seq": log["links"][-1]["seq"], "entry_hash": prev}

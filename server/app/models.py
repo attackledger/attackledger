@@ -527,6 +527,13 @@ class AuditEntry(OrgOwned, Base):
     record_sha256: Mapped[str] = mapped_column(String(64))
     prev_hash: Mapped[str] = mapped_column(String(64))
     entry_hash: Mapped[str] = mapped_column(String(64))
+    # Record version (auditlog.py, D-058). v1 (before 0028): the record holds the change whole.
+    # v2: the change without its free text, and text_sha256, canonical JSON {path: salted hash};
+    # texts, canonical JSON {path: {salt, value}}, is outside the hashed bytes and becomes null
+    # when the engagement's content is deleted (null too when the entry has no text).
+    record_version: Mapped[int] = mapped_column(default=1, server_default="1")
+    text_sha256: Mapped[str | None] = mapped_column(Text)
+    texts: Mapped[str | None] = mapped_column(Text)
 
 
 # ---- evidence import (D-029) ------------------------------------------------------------

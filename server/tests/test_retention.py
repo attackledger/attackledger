@@ -4,7 +4,9 @@
 One test seeds a unique string (the canary) into every store that holds an engagement's content:
 evidence, the blob store (encrypted and from before encryption), recon results, the import inbox,
 test accounts, proposed writes, jobs (log, outcome, targets, a run that is still running), an agent
-run's exchanges, the gateway's request log and the gateway's quarantine file. It deletes the
+run's exchanges, the gateway's request log, the gateway's quarantine file, and the free text of
+the change history (audit record v2, D-058: approval notes, the typed DELETE path, test accounts'
+roles, hosts and header names, dismissal reasons, import tool names). It deletes the
 content, lets the running job and the gateway carry on as they would, and then searches every
 table row, every file of the blob store, the quarantine file and, on SQLite, the database file's
 raw bytes. A second engagement's canary must still be found in each of them: a search that finds
@@ -24,6 +26,7 @@ from sqlalchemy.orm import sessionmaker
 
 import testdb
 from harness import WORKER_TOKEN, Stack
+from test_audit_texts import every_text
 from test_gateway_log import GATEWAY_TOKEN, Bridge
 
 from app import approvals, blobs, db, gateway, ledger, vault
@@ -83,6 +86,13 @@ def table_dump(Session) -> str:
             for row in s.execute(t.select()):
                 out.append(f"{t.name}: {tuple(row)!r}")
     return "\n".join(out)
+
+
+def audit_rows(Session) -> str:
+    """The audit log's rows, as text."""
+    from app.models import AuditEntry
+    with Session() as s:
+        return "\n".join(repr(tuple(row)) for row in s.execute(AuditEntry.__table__.select()))
 
 
 def files_holding(root: Path, needle: str) -> list[str]:
@@ -204,12 +214,15 @@ def test_deleting_content_leaves_nothing_readable_in_any_store(file_stack, tmp_p
     gw = gateway.Gateway(ContentBridge(stack.api), None, deny_hosts=(), networks=[], quarantine=str(quarantine))
     a = seed(stack, gw, "lab", C)
     b = seed(stack, gw, "other", OTHER)
+    for x, c in ((a, C), (b, OTHER)):           # the change history's free text (D-058)
+        every_text(stack.api, stack.Session, x["e"], x["lane"], HOST, c, labels=("T", "U"))
     blob_root = vault.blob_root()
 
     # Every store holds both canaries (in the blob store only the plaintext blob shows it: the
     # rest is encrypted). This is what the searches below can find.
     for c in (C, OTHER):
         assert c in table_dump(stack.Session)
+        assert c in audit_rows(stack.Session)
         assert files_holding(blob_root, c) and c in quarantine.read_text()
         if stack.db_path:
             assert c.encode() in raw_database(stack)
@@ -245,6 +258,9 @@ def test_deleting_content_leaves_nothing_readable_in_any_store(file_stack, tmp_p
 
     # The other engagement keeps all of its own.
     assert OTHER in dump and OTHER in quarantine.read_text() and files_holding(blob_root, OTHER)
+    assert OTHER in audit_rows(stack.Session) and C not in audit_rows(stack.Session)
+    r = stack.api.get(f"/engagements/{a['e']}/audit")
+    assert r.status_code == 200 and C not in r.text and "[deleted]" in r.text
     if stack.db_path:
         assert OTHER.encode() in raw
     assert OTHER in stack.api.get(f"/engagements/{b['e']}/jobs").text

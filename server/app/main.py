@@ -1696,7 +1696,7 @@ def update_engagement(eng_id: int, body: EngagementPatch, request: Request, sess
 
 # ---- retention and deleting content (D-043) -----------------------------------
 
-def _content_terms(rows: list[Evidence]) -> dict:
+def _content_terms(rows: list[Evidence], old_texts: int = 0) -> dict:
     """What deleting the content removes and what stays, in plain sentences for the deletion
     screen. What stays is what the evidence chain, the receipts and the audit log commit to:
     removing it would break verification (D-043)."""
@@ -1718,6 +1718,10 @@ def _content_terms(rows: list[Evidence]) -> dict:
     if v1:
         keeps.append(f"{plural(v1, 'evidence summary', 'evidence summaries')} recorded before chain record v2, "
                      "because the chain covers their text.")
+    if old_texts:
+        keeps.append(f"The notes, typed DELETE paths, test account roles and hosts, dismissal reasons and import tool "
+                     f"names in {plural(old_texts, 'change history entry', 'change history entries')} recorded before "
+                     "audit record v2, because the chain covers their text.")
     removes = [
         "The engagement's key, so the raw evidence and the evidence summaries can no longer be read.",
         "Recon results: observations, URLs and leads.",
@@ -1727,6 +1731,9 @@ def _content_terms(rows: list[Evidence]) -> dict:
         "Job logs and agent run summaries, and the URLs among job targets (the hosts stay). Runs still going "
         "are cancelled, and what they report afterwards is not kept.",
         "Test accounts, and the requests, URLs and notes of proposed writes.",
+        "The free text in the change history: notes on approved and rejected writes, the paths typed to confirm "
+        "a DELETE, test accounts' roles, hosts and header names, dismissal reasons and import tool names. The "
+        "history keeps a salted hash of each, so it still verifies.",
     ]
     return {"evidence_uris": len(uris), "uris_with_query": queries, "keeps": keeps, "removes": removes}
 
@@ -1734,7 +1741,7 @@ def _content_terms(rows: list[Evidence]) -> dict:
 def _content_status(session, eng: Engagement) -> dict:
     rows = session.scalars(select(Evidence).where(Evidence.engagement_id == eng.id)).all()
     return {"engagement": eng.name, "retain_until": eng.retain_until.isoformat() if eng.retain_until else None,
-            **_content_terms(rows),
+            **_content_terms(rows, auditlog.old_texts(session, eng.id)),
             "content_deleted": vault.deleted_info(eng),
             "encryption": vault.describe_master(),
             "evidence_entries": len(rows),
@@ -1770,7 +1777,7 @@ def delete_content(eng_id: int, body: DeleteContentIn, request: Request, session
     res = vault.delete_content(session, eng, actor=auditlog.actor(authz.current(request)), reason="owner")
     return {**_content_status(session, eng), "removed": {k: res.get(k, 0) for k in (
         "summaries_removed", "observations", "endpoints", "leads", "inbox_entries", "import_batches",
-        "gateway_urls", "jobs_stopped", "agent_exchanges", "test_accounts", "write_proposals",
+        "gateway_urls", "jobs_stopped", "agent_exchanges", "test_accounts", "write_proposals", "audit_texts",
         "blobs_removed", "plaintext_blobs_removed")}}
 
 

@@ -23,12 +23,14 @@ choices; the code is `server/app/vault.py`, `server/app/blobs.py` and `server/ap
 | Plaintext blobs from before 0017 that no evidence cites (a v0.6 agent run's exchanges it did not add as evidence) | blob store, flat | plaintext | not attributable to an engagement: `encrypt-existing` removes them (below) |
 | Evidence URI (`evidence.uri`) | evidence row | plaintext | kept: the chain record (v1 and v2) commits to it |
 | Item N/A reasons | checklist items | plaintext | kept: the receipt manifest commits to them |
-| Hosts, lane roles, hashes, receipts, signatures, timestamps, key log, audit log | | plaintext | kept: they are what a report verifies |
+| Hosts, lane roles, hashes, receipts, signatures, timestamps, key log, audit log records | | plaintext | kept: they are what a report verifies |
+| The audit log's free text (audit record v2, D-058): notes on approved and rejected writes, dismissal reasons, the path typed to confirm a DELETE, test accounts' roles, hosts and header names, import tool names | `audit_log.texts` | plaintext (notes and reasons redacted) | **blanked**; the record keeps a salted SHA-256 of each, so the history still verifies |
 
-The audit log is hash-chained and cannot change, so what its entries hold stays: notes people
-wrote when approving or rejecting a write and dismissal reasons (both redacted), the path a person
-typed to confirm a DELETE, test account labels, roles, hosts and header names, and import tool
-names. Every store, what deletion does to it and what it cannot reach (backups, Postgres's dead
+The audit log is hash-chained and cannot change. Since migration 0028 an entry's free text is
+kept outside the hashed record, which commits to `sha256(canonical({field, salt, value}))` with a
+random 128-bit salt per field, so a short value such as a role cannot be guessed from its hash
+once the salt is deleted (D-058). Entries written before 0028 hold their text in the record and
+keep it. Every store, what deletion does to it and what it cannot reach (backups, Postgres's dead
 rows and WAL, container logs, browsers, the Claude API) is in `docs/security-review/RETENTION.md`.
 
 Why recon results are not encrypted at rest: they are filtered and searched in SQL (host,

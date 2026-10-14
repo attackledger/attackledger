@@ -4,7 +4,8 @@
 The fixtures are genuine reports from the server itself (signed in the test suite's
 browser-key stand-in, timestamped by throwaway OpenSSL timestamp authorities with RSA and
 EC chains; evidence chain records v1 and v2 in one chain; reports made after an owner and
-the retention policy deleted an engagement's content), and mutated copies, each made to
+the retention policy deleted an engagement's content; audit records v1 and v2 in one change
+history, before and after the texts were deleted), and mutated copies, each made to
 break one check. tools/verifier_equivalence/run.sh then runs verify_report.py and the
 browser module on every one of them and compares the output.
 
@@ -440,6 +441,84 @@ def make_seal(tsa) -> dict:
     return out
 
 
+def make_audit_v2() -> dict:
+    """Audit record v2 (D-058): a change history whose older entries are v1 (written as before
+    migration 0028, a test account's role in the record) and whose newer ones commit to a salted
+    hash of each free-text field (notes, the typed DELETE path, test accounts' roles, hosts and
+    header names, a dismissal reason, an import tool's name), signed (v4) and sealed; the same
+    report as HTML; the report after the owner deleted the content (the texts gone); and unsealed
+    copies made to break the texts, or the record versions. Returns {name: bytes}."""
+    from app import auditlog
+    from test_audit_texts import every_text
+    use_tsa(None)
+    out = {}
+    with fresh_client() as c:
+        name = "Equivalence: audit record v2"
+        auditlog.RECORD_VERSION = 1             # what an installation wrote before 0028
+        try:
+            e, assets = people_engagement(c, name)
+            ok(c.post(f"/engagements/{e}/test-accounts", json={"label": "O", "role": "legacy role",
+                                                               "hosts": ["shop.lab.test"], "kind": "bearer",
+                                                               "value": "legacy"}), 201)
+        finally:
+            auditlog.RECORD_VERSION = 2
+        lane = ok(c.post("/lanes", json={"asset_id": assets["shop.lab.test"], "role": "recon"}), 201)
+        every_text(c, c.Session, e, lane["id"], "shop.lab.test", "equivalence")
+        a = lane_items(c, lane, {1: "scope confirmed"})
+        sign_in(c, "riza@lab.test")
+        signed_close(c, a, register(c, "Ed25519"))
+        sign_in(c, "owner@lab.test")
+        out["audit-v2"] = report(c, e)
+        out["audit-v2.html"] = html_report(c, e)
+        ok(c.post(f"/engagements/{e}/content/delete", json={"confirm_name": name}))
+        out["audit-v2-deleted"] = report(c, e)
+    base, deleted = json.loads(unsealed(out["audit-v2"])), json.loads(unsealed(out["audit-v2-deleted"]))
+
+    def entry(r, action, version=2):
+        return next(x for x in r["audit_log"]["entries"] if x["action"] == action and x.get("v", 1) == version)
+
+    def m(name, fn, src=base):
+        r = copy.deepcopy(src)
+        fn(r)
+        out[name] = json.dumps(rehash(r), ensure_ascii=False).encode()
+
+    def note(r):
+        return entry(r, "write.approved")["texts"]["after.note"]
+    m("audit-v2-text-edited", lambda r: note(r).__setitem__("value", "approved by the client"))
+    m("audit-v2-text-salt-changed", lambda r: note(r).__setitem__("salt", "0" * 32))
+    m("audit-v2-text-salt-not-a-string", lambda r: note(r).__setitem__("salt", 5))
+
+    def moved(r):                   # a role shown as the hosts and the hosts as the role
+        t = entry(r, "account.added")["texts"]
+        t["after.role"], t["after.hosts"] = t["after.hosts"], t["after.role"]
+    m("audit-v2-text-moved", moved)
+    m("audit-v2-text-unknown-field", lambda r: entry(r, "write.approved")["texts"].__setitem__("after.extra", note(r)))
+    m("audit-v2-texts-on-v1-entry", lambda r: entry(r, "account.added", 1).__setitem__(
+        "texts", copy.deepcopy(entry(r, "account.added")["texts"])))
+    m("audit-v2-texts-unreadable", lambda r: entry(r, "write.rejected").__setitem__("texts", ["no"]))
+    m("audit-v2-text-withheld", lambda r: entry(r, "write.rejected").__setitem__("texts", None))
+    m("audit-v2-unknown-version", lambda r: entry(r, "write.rejected").__setitem__("v", 3))
+    m("audit-v2-float-version", lambda r: entry(r, "write.rejected").__setitem__("v", 2.0))
+    m("audit-v2-explicit-v1", lambda r: entry(r, "account.added", 1).__setitem__("v", 1))
+
+    def as_v1(r):
+        x = entry(r, "write.rejected")
+        x.pop("v")
+        x.pop("text_sha256")
+    m("audit-v2-passed-off-as-v1", as_v1)
+
+    def rewritten(r):               # another note, its hash and the chain recomputed: the signature names the old head
+        x = entry(r, "write.approved")
+        x["texts"]["after.note"]["value"] = "approved by the client"
+        t = x["texts"]["after.note"]
+        x["text_sha256"]["after.note"] = sha(canonical({"field": "after.note", "salt": t["salt"], "value": t["value"]}))
+        rewrite_log(r["audit_log"], lambda e: ("v",) + AUDIT + ("text_sha256",) if e.get("v") == 2 else AUDIT)
+    m("audit-v2-rewritten", rewritten)
+    m("audit-v2-deleted-text-put-back-wrong", lambda r: entry(r, "write.rejected").__setitem__(
+        "texts", {"after.note": {"salt": "0" * 32, "value": "no"}}), deleted)
+    return out
+
+
 def write(made: dict) -> None:
     for name, data in made.items():
         (OUT / (name if name.endswith(".html") else f"{name}.json")).write_bytes(data)
@@ -476,16 +555,17 @@ def flip_b64(s: str, at: int = 10) -> str:
     return base64.b64encode(bytes(raw)).decode()
 
 
-def rewrite_log(log: dict, fields: tuple) -> None:
+def rewrite_log(log: dict, fields) -> None:
     """Recompute record hashes, links and head after an entry was edited: a consistent
-    rewrite, which only the content checks can catch."""
+    rewrite, which only the content checks can catch. fields: a tuple, or a function of the entry."""
     by_seq = {e["seq"]: e for e in log["entries"]}
     prev = None
     for ln in log["links"]:
         if prev is not None:
             ln["prev_hash"] = prev
         if ln["seq"] in by_seq:
-            ln["record_sha256"] = sha(canonical({k: by_seq[ln["seq"]].get(k) for k in fields}))
+            e = by_seq[ln["seq"]]
+            ln["record_sha256"] = sha(canonical({k: e.get(k) for k in (fields(e) if callable(fields) else fields)}))
         ln["entry_hash"] = prev = sha(ln["prev_hash"] + ln["record_sha256"])
     log["head"] = {"seq": log["links"][-1]["seq"], "entry_hash": log["links"][-1]["entry_hash"]}
 
@@ -667,6 +747,7 @@ def main():
         (OUT / f"{name}.json").write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
     write(make_v4())
     write(seal_fixtures())
+    write(make_audit_v2())
 
     # The DigiCert token kept with the server tests, in the smallest report that carries it:
     # the timestamp verifies; the made-up receipt around it does not.
@@ -699,12 +780,21 @@ def only(names: set[str]) -> None:
     """Remake some fixtures and leave the others as they are: the mutations of signed.json and
     content-deleted.json as they are on disk, and the void report (made anew). "v4" makes every
     report of make_v4 anew (payload v4, unsealed), and keeps the older fixtures in their format;
-    "seal" every report of make_seal (sealed, D-055) and seal-ec-root.pem.
+    "seal" every report of make_seal (sealed, D-055) and seal-ec-root.pem; "audit-v2" every report of
+    make_audit_v2 (audit record v2, D-058).
 
         ... make_fixtures.py --only void,void-reported-as-receipted,receipt-issued-at-moved
         ... make_fixtures.py --only v4
         ... make_fixtures.py --only seal
+        ... make_fixtures.py --only audit-v2
     """
+    if "audit-v2" in names:
+        made = make_audit_v2()
+        write(made)
+        names = names - {"audit-v2"}
+        print(f"{OUT}: wrote {len(made)} audit record v2 reports")
+        if not names:
+            return
     if "seal" in names:
         made = seal_fixtures()
         write(made)

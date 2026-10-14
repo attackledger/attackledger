@@ -113,7 +113,7 @@ def _voided(session, eng_id: int) -> dict[int, dict]:
 
 
 def _void_view(e: AuditEntry) -> dict:
-    rec = auditlog.record(e)
+    rec = auditlog.entry(e)
     return {"at": e.at, "by": auditlog.actor_label(rec["actor"]), "cause": rec["change"].get("cause") or {},
             "text": auditlog.describe(rec)}
 
