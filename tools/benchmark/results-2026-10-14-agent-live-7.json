@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 70,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 15,
+  "detail": "",
+  "summary": "Lane 26 (input validation) on shop.lab.test over HTTP only, since HTTPS on 443 was refused. Items done: INPV-01 (reflected HTML injection confirmed in /search.php?q=, recorded as a high lead, not browser-verified), INPV-03, 04, 05, 06, 07, 08, 09, 11, 12, 13, 16, 17, 18, 19 (no further issues observed). INPV-10 is N/A because no mail feature exists on the host. Left open: INPV-02 (stored XSS; no writable or stored-content surface reachable with read-only requests and no test accounts), INPV-14 (incubated vulnerabilities; needs multi-step stored flows), and INPV-15 (HTTP splitting was tested with no injection, but smuggling needs a Transfer-Encoding header that the gateway refuses). Caveats: the server does not decode percent-escapes, so injection probes reflected literally and some checks relied on reflection; the Host header cannot be changed through the gateway, so host-header injection was tested only via X-Forwarded-Host. The recon leads (secrets in app.js, the .git config, the publicly served source map, debug trace, /backup/) belong to other lanes and were not re-investigated.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 15,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 29,
+  "target_by_method": {
+    "GET": 26,
+    "OPTIONS": 2,
+    "HEAD": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "http://shop.lab.test/admin/",
+      "reason": "method override to POST is refused"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 30,
+  "lab_requests": 27,
+  "lab_with_header": 27,
+  "lab_with_user_agent": 27,
+  "lab_headers_unread": 0,
+  "header_on_every_request": true,
+  "evidence_entries": 36,
+  "items_evidenced": 17,
+  "items_marked": 16,
+  "leads": 1,
+  "usage": {
+    "input": 32,
+    "output": 19849,
+    "cache_read": 236591,
+    "cache_write": 32593
+  },
+  "cost_usd_estimate": 0.0164,
+  "wall_seconds": 114.4,
+  "job_seconds": 112.8,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

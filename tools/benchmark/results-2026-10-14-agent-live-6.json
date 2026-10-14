@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 69,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 13,
+  "detail": "",
+  "summary": "Lane 25 (Configuration) on shop.lab.test. HTTP on port 80 is the only working web origin (https://443 was refused; plain HTTP also answers on 8443; 8080 refused). Ten of eleven items are done and item 10 is N/A.\n\nMain findings (all read-only GET/HEAD/OPTIONS):\n- /.git/config is publicly readable (x18) and names the remote https://git.lab.test/shop/storefront.git. Other .git files, .svn, .hg, .env, backups and archives returned 404.\n- /backup/ and /backup/index.html serve a bare \"backup index\" page without authentication (robots.txt disallows it).\n- The search script shows debug output when debug=x is added (x43).\n- The only admin interface is /admin/ (and /admin/login), which returns 401 and asks for authentication.\n- No HSTS, cross-domain policy or cloud storage references were found.\n- The client bundle's redacted AWS key and Stripe key were noted but not used; the secrets lane should validate them.\n\nLimits:\n- Item 6 (HTTP methods): only OPTIONS and HEAD could be sent under the read-only rule, so PUT, DELETE and TRACE were not tested.\n- Item 7 (HSTS): HTTPS is unreachable, so HSTS could be checked only as absent from the HTTP responses.\n- Item 9 (file permissions): checked by probing directory listing and readable files; full permission testing was not possible with read-only requests.\n- Item 10 (subdomain takeover): N/A, because only shop.lab.test is in scope and git.lab.test was not requested.\n\nLeads recorded: /.git/config exposure (medium) and plain HTTP on 8443 with no TLS on 443 (medium). The existing recon leads for the app.js secrets, the /backup/ directory, the source map and the debug parameter were confirmed where relevant.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 13,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 51,
+  "target_by_method": {
+    "GET": 47,
+    "OPTIONS": 3,
+    "HEAD": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "http://shop.lab.test:8080/",
+      "reason": "could not connect to shop.lab.test:8080: Connect call failed ('172.21.0.2', 8080)"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 51,
+  "lab_requests": 49,
+  "lab_with_header": 49,
+  "lab_with_user_agent": 49,
+  "lab_headers_unread": 0,
+  "header_on_every_request": true,
+  "evidence_entries": 56,
+  "items_evidenced": 10,
+  "items_marked": 11,
+  "leads": 2,
+  "usage": {
+    "input": 28,
+    "output": 21329,
+    "cache_read": 222013,
+    "cache_write": 36494
+  },
+  "cost_usd_estimate": 0.0174,
+  "wall_seconds": 123.5,
+  "job_seconds": 118.6,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}

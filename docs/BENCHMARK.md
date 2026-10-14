@@ -558,3 +558,72 @@ One agent run through the Messages API, on the lab, with the cheapest configured
 | Cost (estimate) | $0.0207 of a $0.5 budget |
 
 Agent summary for the reviewer: "Lane 22 (input validation) on shop.lab.test, read-only, no test accounts, writes disallowed. Done (14 items): WSTG-INPV-01 reflected XSS CONFIRMED as unescaped HTML reflection in /search.php q (harmless marker tag, recorded as a high-severity lead); INPV-03 verb tampering (OPTIONS/HEAD on search and /admin/, 401 unchanged); INPV-04 HPP (first value used); INPV-05 SQLi, INPV-06 LDAP, INPV-07 XML, INPV-09 XPath, INPV-11 code, INPV-12 command, INPV-13 format string, INPV-18 SSTI, INPV-19 SSRF: no signal observed; INPV-08 SSI: encoded directive echoed, not processed, raw directive not sendable (co"
+
+## Live agent run (2026-10-14, info lane, 60 requests, after D-057)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `106ebdf`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `info` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 68 |
+| Outcome | job `done`, agent `finished`, 14 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 87.4 s (job 85.2 s) |
+| Claude API calls (gateway log) | 14 to api.anthropic.com |
+| Target requests (gateway log) | 28: GET 26, HEAD 1, OPTIONS 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET http://shop.lab.test:8080/: could not connect to shop.lab.test:8080: Connect call failed ('172.21.0.2', 8080); target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 26 request(s), 26 with the research header, 26 with the user agent |
+| Research header on every request | yes |
+| Evidence | 49 entries on 10 item(s); 9 item(s) marked; 3 lead(s) |
+| Tokens | input 30, output 14,684, cache read 204,826, cache write 25,599 |
+| Cost (estimate) | $0.0126 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 24 (information gathering) on shop.lab.test. Nine of ten items are marked done with evidence. Item 1 (WSTG-INFO-01, search engine discovery) is left open because search-engine queries to third parties are outside what these host-scoped tools can send; on-host discovery is noted on it. Key findings: HTTP is the only working scheme (HTTPS:443 and 8080 refused); robots.txt disallows /backup/, which returns 200 unauthenticated; /static/app.js.map is publicly served (200); and a hidden debug parameter on /search.php changes the response to "verbose trace enabled" (confirmed by splitting a batc"
+
+## Live agent run (2026-10-14, conf lane, 60 requests, after D-057)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `106ebdf`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `conf` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 69 |
+| Outcome | job `done`, agent `finished`, 13 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 123.5 s (job 118.6 s) |
+| Claude API calls (gateway log) | 13 to api.anthropic.com |
+| Target requests (gateway log) | 51: GET 47, HEAD 1, OPTIONS 3; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET http://shop.lab.test:8080/: could not connect to shop.lab.test:8080: Connect call failed ('172.21.0.2', 8080); target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 49 request(s), 49 with the research header, 49 with the user agent |
+| Research header on every request | yes |
+| Evidence | 56 entries on 10 item(s); 11 item(s) marked; 2 lead(s) |
+| Tokens | input 28, output 21,329, cache read 222,013, cache write 36,494 |
+| Cost (estimate) | $0.0174 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 25 (Configuration) on shop.lab.test. HTTP on port 80 is the only working web origin (https://443 was refused; plain HTTP also answers on 8443; 8080 refused). Ten of eleven items are done and item 10 is N/A.  Main findings (all read-only GET/HEAD/OPTIONS): - /.git/config is publicly readable (x18) and names the remote https://git.lab.test/shop/storefront.git. Other .git files, .svn, .hg, .env, backups and archives returned 404. - /backup/ and /backup/index.html serve a bare "backup index" page without authentication (robots.txt disallows it). - The search script shows debug output when deb"
+
+## Live agent run (2026-10-14, inpv lane, 60 requests, after D-057)
+
+One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-haiku-5-5` |
+| Stack | compose project `attackledger`, commit `106ebdf`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `inpv` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 70 |
+| Outcome | job `done`, agent `finished`, 15 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 0.5; applied by the worker: $0.50, 30 turns, 2,000,000 tokens |
+| Wall time | 114.4 s (job 112.8 s) |
+| Claude API calls (gateway log) | 15 to api.anthropic.com |
+| Target requests (gateway log) | 29: GET 26, HEAD 1, OPTIONS 2; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET http://shop.lab.test/admin/: method override to POST is refused; target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443) |
+| Lab access log | 27 request(s), 27 with the research header, 27 with the user agent |
+| Research header on every request | yes |
+| Evidence | 36 entries on 17 item(s); 16 item(s) marked; 1 lead(s) |
+| Tokens | input 32, output 19,849, cache read 236,591, cache write 32,593 |
+| Cost (estimate) | $0.0164 of a $0.5 budget |
+
+Agent summary for the reviewer: "Lane 26 (input validation) on shop.lab.test over HTTP only, since HTTPS on 443 was refused. Items done: INPV-01 (reflected HTML injection confirmed in /search.php?q=, recorded as a high lead, not browser-verified), INPV-03, 04, 05, 06, 07, 08, 09, 11, 12, 13, 16, 17, 18, 19 (no further issues observed). INPV-10 is N/A because no mail feature exists on the host. Left open: INPV-02 (stored XSS; no writable or stored-content surface reachable with read-only requests and no test accounts), INPV-14 (incubated vulnerabilities; needs multi-step stored flows), and INPV-15 (HTTP splitting was tested wi"

@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-14",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 68,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-haiku-5-5",
+  "turns": 14,
+  "detail": "",
+  "summary": "Lane 24 (information gathering) on shop.lab.test. Nine of ten items are marked done with evidence. Item 1 (WSTG-INFO-01, search engine discovery) is left open because search-engine queries to third parties are outside what these host-scoped tools can send; on-host discovery is noted on it. Key findings: HTTP is the only working scheme (HTTPS:443 and 8080 refused); robots.txt disallows /backup/, which returns 200 unauthenticated; /static/app.js.map is publicly served (200); and a hidden debug parameter on /search.php changes the response to \"verbose trace enabled\" (confirmed by splitting a batched name set). The AWS key ID and Stripe key in app.js are redacted in the record and the existing errh lead covers them; the AWS key value was not reproduced. The framework could not be identified beyond nginx/1.30.5. The 401 on /admin/ and the /api/v1 routes were observed, not tested further. Leads recorded: debug parameter (medium), backup directory (medium), source map (low), plus the existing lane-18 leads for the bundle keys and plaintext-only serving.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 0.5
+  },
+  "claude_api_calls": 14,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 28,
+  "target_by_method": {
+    "GET": 26,
+    "HEAD": 1,
+    "OPTIONS": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "http://shop.lab.test:8080/",
+      "reason": "could not connect to shop.lab.test:8080: Connect call failed ('172.21.0.2', 8080)"
+    },
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.21.0.2', 443)"
+    }
+  ],
+  "agent_requests": 28,
+  "lab_requests": 26,
+  "lab_with_header": 26,
+  "lab_with_user_agent": 26,
+  "lab_headers_unread": 0,
+  "header_on_every_request": true,
+  "evidence_entries": 49,
+  "items_evidenced": 10,
+  "items_marked": 9,
+  "leads": 3,
+  "usage": {
+    "input": 30,
+    "output": 14684,
+    "cache_read": 204826,
+    "cache_write": 25599
+  },
+  "cost_usd_estimate": 0.0126,
+  "wall_seconds": 87.4,
+  "job_seconds": 85.2,
+  "budget": "$0.50, 30 turns, 2,000,000 tokens",
+  "budget_usd": 0.5
+}
