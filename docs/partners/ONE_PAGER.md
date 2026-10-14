@@ -2,7 +2,7 @@
 
 **Proof of what a security test covered, that you check yourself.**
 
-Status: October 2026, version 0.8.0 (a preview). Every statement below comes from the
+Status: October 2026, version 0.9.0 (a preview). Every statement below comes from the
 documents listed under [Sources](#sources).
 
 ## The problem
@@ -82,7 +82,7 @@ history and the server's seal.
 
 ## Status today
 
-- **Version 0.8.0, a preview.** Before 1.0, versions may change the data model; migrations
+- **Version 0.9.0, a preview.** Before 1.0, versions may change the data model; migrations
   upgrade existing databases.
 - **Self-hosted.** It runs on your own server. Test data never leaves it, and there is no
   telemetry.
@@ -96,7 +96,7 @@ history and the server's seal.
   Python and browser verifiers give identical results on 134 reports and 2,600 random mutants.
 - **Works with the tools testers already use.** HAR, Burp Suite XML and Caido JSON exports are
   imported as evidence. Recon and a Claude agent are available inside the gateway's limits, but
-  are optional. The agent has not yet run against the live API.
+  are optional. The agent has run against the real Claude API on the bundled lab only.
 - **Known limits:** no second sign-in factor (put it behind your SSO or VPN); deleting an
   engagement's content does not reach backups made before it.
 - **Who:** built by Murat Kabak, a security researcher in bug bounty programs since 2022. The

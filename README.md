@@ -285,7 +285,8 @@ against current pricing), so a run stops before a call that could take it over. 
 caps every run whatever it asked for: `ATTACKLEDGER_AGENT_MAX_USD` (default $1.00),
 `ATTACKLEDGER_AGENT_MAX_TURNS` (30) and `ATTACKLEDGER_AGENT_MAX_TOKENS` (2,000,000). The model sees
 only the first 4,000 characters of each response, and 40,000 per run; the full response
-is kept as evidence. The loop has not yet run against the live API: try it on the lab first.
+is kept as evidence. The loop has run against the real Claude API on the bundled lab only
+(`docs/BENCHMARK.md`): try it on the lab first.
 
 ## People and roles
 
@@ -374,10 +375,11 @@ assumes and enforces:
 
 ## Status
 
-`v0.8.0`, the MVP for a design partner plus test accounts, approved writes and organizations (see [`CHANGELOG.md`](CHANGELOG.md) and
-[`docs/MVP.md`](docs/MVP.md)). Before 1.0, minor versions may change the data model;
-migrations upgrade existing databases. Hunt agents are a preview and have not yet run
-against the live API. Expect rough edges.
+`v0.9.0`, the MVP for a design partner plus test accounts, approved writes, organizations and an
+internal security review (see [`CHANGELOG.md`](CHANGELOG.md) and [`docs/MVP.md`](docs/MVP.md)).
+Before 1.0, minor versions may change the data model; migrations upgrade existing databases.
+Hunt agents are a preview and have run against the real Claude API on the bundled lab only
+([`docs/BENCHMARK.md`](docs/BENCHMARK.md)). Expect rough edges.
 
 ## Author
 

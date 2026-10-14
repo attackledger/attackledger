@@ -53,7 +53,7 @@ async def lifespan(_app: FastAPI):
 # Every route passes authz.authorize first: who is calling, and may they use this route.
 # FastAPI's own documentation routes would skip that dependency, so they are off and served
 # below as ordinary routes, which the permission table covers (sign-in whenever it is needed).
-app = FastAPI(title="AttackLedger", version="0.8.0", lifespan=lifespan,
+app = FastAPI(title="AttackLedger", version="0.9.0", lifespan=lifespan,
               dependencies=[Depends(authz.authorize)], docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(nulguard.NulGuard)     # a NUL in a request: refused, or replaced on the machine channels
 

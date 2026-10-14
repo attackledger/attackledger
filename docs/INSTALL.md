@@ -135,7 +135,7 @@ the Compose version this needs).
 ## 3. Get AttackLedger
 
 1. Clone the repository and check out the newest release (or the one you were told to
-   install, for example `git checkout v0.8.0`):
+   install, for example `git checkout v0.9.0`):
 
    ```sh
    REPO_URL=https://github.com/attackledger/attackledger.git
@@ -970,7 +970,7 @@ before it takes jobs. Migrations can change the data, so always back up first.
 
    ```sh
    git fetch --tags
-   git checkout v0.7.1
+   git checkout v0.9.0
    keys() { grep -oE '^[# ]*[A-Z][A-Z0-9_]*=' "$1" | tr -d '# =' | sort -u; }
    diff <(keys deploy/.env.example) <(keys .env)
    ```
@@ -1034,7 +1034,7 @@ return to the previous release and restore the backup from step 2:
 
 ```sh
 cd /opt/attackledger
-git checkout <the previous release, for example v0.7.1>
+git checkout <the previous release, for example v0.8.0>
 docker compose build
 tools/restore.sh --force /var/backups/attackledger/attackledger-<the backup from step 2>
 ```
