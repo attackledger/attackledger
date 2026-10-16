@@ -501,7 +501,7 @@ Backup, Security Policy, Allowlist Bypass, Exposed Metrics, Poison Null Byte):
 | `clnt` (105) | 2 | 2: Web3 Sandbox, Allowlist Bypass | the DOM XSS match was a sentence about a missing CSP "should an injection sink be reachable": out |
 | Union | 13 | 10 (12%): all read; all six solved challenges among them (old: four) | |
 
-Three passes of all 12 lanes on Juice Shop (2026-10-16, Opus `claude-opus-5-5`, max 80 turns, max 200
+Three passes of all 12 lanes on Juice Shop (2026-10-16, model requested `claude-opus-5-5`, max 80 turns, max 200
 requests, lanes in waves of 4 on one shop recreated before each wave, key of a Console organization
 **not** in the Cyber Verification Program). Snapshots: `tools/benchmark/juiceshop-2026-10-16-p{1,2,3}-<lane>.json`.
 Scored with `tools/juiceshop_score.py` against the 83 reachable; each pass is the union of its 12 lanes:
@@ -524,6 +524,17 @@ Scored with `tools/juiceshop_score.py` against the 83 reachable; each pass is th
 - The model knows Juice Shop from training, and its solutions are public: these numbers are recall on a
   widely documented application, not a measure of performance on an unknown target. The agents' briefs
   carry only the WSTG checklists, never the challenge list.
+
+- **The model that answered was mostly not the one requested.** The agent loop asks for the server-side
+  fallback (`server-side-fallback-2026-07-01`): when Opus 5.5's safety classifier declines a turn, another
+  model answers it. The Console's cost page for 2026-10-16 bills $67.94 to Claude Opus 4.8 and $0.05 to
+  Claude Opus 5.5, so nearly every turn of these runs, and of the shop-lab Opus runs the same day (jobs
+  90-101), was answered by Opus 4.8. The runs did not record the answering model (the job says
+  `claude-opus-5-5`), so the split per run is not known. These are results of Opus 4.8 behind Opus 5.5's
+  classifier, without the Cyber Verification Program.
+- **The costs above are underestimates.** A response from a model not in the price table is priced at the
+  dearest rate the table knows (Opus 5.5's), and Opus 4.8 costs more: the organization's credit fell by about
+  $118 for runs estimated at about $76. The Console bill is authoritative.
 
 Runs after the organization joins the Cyber Verification Program will be reported beside these.
 
