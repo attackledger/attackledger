@@ -140,11 +140,14 @@ def fill(c, *, tag: str, owner_email: str, worker_token: str, gateway_token: str
     assert not call["is_error"], call
     out["proposal"] = json.loads(call["text"])["proposal_id"]
     # A lab write rule (D-062), made while the deployment allows them, for a lab host in scope.
+    # Code older than D-062 (tools/test_postgres.sh fills a database with the 0.7.1 code) has no
+    # such route and answers 404: no rule then.
     was = os.environ.get("ATTACKLEDGER_LAB_WRITE_RULES")
     os.environ["ATTACKLEDGER_LAB_WRITE_RULES"] = "1"
     try:
-        out["rule"] = _ok(c.post(f"/engagements/{e}/lab-write-rules", json={
-            "methods": ["POST"], "hosts": [f"lab.{tag}.test"], "note": f"lab {tag}"}))["id"]
+        r = c.post(f"/engagements/{e}/lab-write-rules", json={
+            "methods": ["POST"], "hosts": [f"lab.{tag}.test"], "note": f"lab {tag}"})
+        out["rule"] = None if r.status_code == 404 and r.json().get("detail") == "Not Found" else _ok(r)["id"]
     finally:
         if was is None:
             os.environ.pop("ATTACKLEDGER_LAB_WRITE_RULES", None)
