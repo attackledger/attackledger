@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 90,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 7,
+  "detail": "",
+  "summary": "Worked both Error-handling items on shop.lab.test (HTTP only) with read-only requests.\n\nWSTG-ERRH-01 (improper error handling) \u2014 DONE: Exercised error paths across the reachable endpoints. Unknown paths return a generic 404 \"not found\" (x4); invalid/overflow query params on /api/v1/items hit a benign catch-all {\"ok\":true} (x1,x2); the GraphQL endpoints (/graphql, /api/graphql) return clean, structured JSON errors with proper HTTP 400 for invalid fields and missing query (x9,x11) and a controlled \"Not signed in\" error for unauthenticated access (x16); /admin/ returns a minimal 401 login page (x13). No error response leaked sensitive internals. Not vulnerable.\n\nWSTG-ERRH-02 (stack traces) \u2014 DONE: Tried to force traces via malformed GraphQL syntax, unknown fields, empty/null arguments, null-byte/binary search input, and encoded path traversal on the API (x9,x10,x11,x12,x15,x16). No stack traces, exception classes, file paths, or debug output appeared; all responses were short and sanitized. Not vulnerable.\n\nNotes/leads: GraphQL introspection is enabled on /graphql (x6) and the /search.php?debug=1 verbose flag (x3,x14) toggles a \"verbose trace enabled\" message \u2014 both already captured as recon leads from lane 28; the search debug output did not expose trace contents in these requests. Recorded one info lead for nginx/1.30.5 version disclosure in the Server header. Nothing left open; writes were not needed (engagement is read-only).",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 3.0
+  },
+  "claude_api_calls": 7,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 16,
+  "target_by_method": {
+    "GET": 16
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [],
+  "agent_requests": 16,
+  "lab_requests": 16,
+  "lab_with_header": 16,
+  "lab_with_user_agent": 16,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {},
+  "header_on_every_request": true,
+  "evidence_entries": 12,
+  "items_evidenced": 2,
+  "items_marked": 2,
+  "leads": 1,
+  "usage": {
+    "input": 14,
+    "output": 5340,
+    "cache_read": 53931,
+    "cache_write": 13466
+  },
+  "cost_usd_estimate": 0.185,
+  "wall_seconds": 78.5,
+  "job_seconds": 75.9,
+  "budget": "$3.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 3.0
+}

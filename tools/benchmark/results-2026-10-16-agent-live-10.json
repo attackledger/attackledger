@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 99,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 10,
+  "detail": "",
+  "summary": "Cryptography lane on shop.lab.test (read-only). \n\nCRYP-01 (weak TLS) \u2014 DONE: There is no TLS at all. TCP connections to port 443 are refused (\"Nothing answered at :443\") while port 80 serves the full app over cleartext HTTP, with no HTTP->HTTPS redirect. This is the weakest possible transport posture. Recorded as a high lead.\n\nCRYP-03 (sensitive info over unencrypted channel) \u2014 DONE: Over cleartext HTTP, the sign-in form posts credentials to http://shop.lab.test/login, the persistent session cookie (Max-Age=1yr, no Secure flag) is set/sent in the clear, and /static/app.js exposes an AWS access key id (plus a Stripe key) to the browser. All exposed to network interception. Recorded a medium lead for the AWS key in client JS.\n\nCRYP-02 (padding oracle) \u2014 N/A: No client-controllable ciphertext exists. The session token is opaque and gateway-redacted (cannot be set to arbitrary values here) and no encrypted URL params/tokens are used; order and API data are plaintext JSON. A padding oracle cannot be exercised read-only.\n\nCRYP-04 (weak encryption) \u2014 N/A: No application-level ciphertext or algorithm is observable to assess cipher strength; token values are redacted/opaque and app data is returned in plaintext. The only cryptographic weakness present is the total lack of transport encryption, captured under CRYP-01/03.\n\nNote: cross-lane leads (missing cookie flags, BOLA/BFLA, logout CSRF, etc.) were already recorded by other lanes and are consistent with the HTTP-only finding here.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 5.0
+  },
+  "claude_api_calls": 10,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 8,
+  "target_by_method": {
+    "GET": 7,
+    "HEAD": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/login",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    },
+    {
+      "kind": "target",
+      "method": "HEAD",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 8,
+  "lab_requests": 6,
+  "lab_with_header": 6,
+  "lab_with_user_agent": 6,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 2
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 9,
+  "items_evidenced": 4,
+  "items_marked": 4,
+  "leads": 2,
+  "usage": {
+    "input": 20,
+    "output": 7455,
+    "cache_read": 92981,
+    "cache_write": 15151
+  },
+  "cost_usd_estimate": 0.2435,
+  "wall_seconds": 111.5,
+  "job_seconds": 108.4,
+  "budget": "$5.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 5.0
+}

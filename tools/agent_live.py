@@ -459,7 +459,7 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
             "playing a fixed run, so the turns, tokens and cost are the stub's. It shows the path and the "
             "accounting end to end: the worker's SDK, the gateway's route, key swap and GW-1 body check, the "
             "budget, the tools, the evidence and this write-up." if dry else
-            "One agent run through the Messages API, on the lab, with the cheapest configured model. The cost is "
+            "One agent run through the Messages API, on the lab, with the worker's configured model. The cost is "
             "the loop's estimate from the token counts the API returned; the Console bill is authoritative.")
     rows = [
         ("Model", f"`{m['model']}`"),

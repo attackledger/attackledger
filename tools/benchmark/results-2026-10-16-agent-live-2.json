@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 91,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 9,
+  "detail": "",
+  "summary": "Lane 46 (Information gathering) complete; all 10 WSTG-INFO items marked done with read-only evidence. Only HTTP answers (https:443 refused). Host shop.lab.test is \"Lab shop\", an e-commerce app behind nginx/1.30.5.\n\nReachable paths found: / (links to products?id, search.php?q, /about, /account/logout, /admin/, /cart, /track, /support, /login), /robots.txt (Disallow: /backup/), /backup/ (200 \"backup index\"), /admin/ (401 Admin Login), /api/v1/items?page= and /api/v1/cart (REST, JSON), /graphql (GraphQL), /search.php?q= (PHP), /login (POST form username/password; links to /forgot-password, /register), /track (+/static/track.js), /support (+/static/support.js), /static/app.js and /static/app.js.map. /sitemap.xml and /.well-known/security.txt are 404.\n\nFingerprints: nginx 1.30.5; webpack/TypeScript SPA; PHP search; GraphQL; REST /api/v1. No X-Powered-By.\n\nLeads recorded for other lanes: (1) live Stripe pk_live key + AWS access key id in /static/app.js (medium); (2) app.js.map source-path leak (low); (3) DOM XSS sink in track.js (location.hash->innerHTML, medium); (4) support.js postMessage handler with no origin check writing e.data to innerHTML (medium). Writes were not needed (read-only engagement, no test accounts). Nothing left open.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 5.0
+  },
+  "claude_api_calls": 9,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 19,
+  "target_by_method": {
+    "GET": 19
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 19,
+  "lab_requests": 18,
+  "lab_with_header": 18,
+  "lab_with_user_agent": 18,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {},
+  "header_on_every_request": true,
+  "evidence_entries": 34,
+  "items_evidenced": 10,
+  "items_marked": 10,
+  "leads": 4,
+  "usage": {
+    "input": 18,
+    "output": 9157,
+    "cache_read": 77083,
+    "cache_write": 17930
+  },
+  "cost_usd_estimate": 0.2883,
+  "wall_seconds": 123.7,
+  "job_seconds": 120.5,
+  "budget": "$5.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 5.0
+}

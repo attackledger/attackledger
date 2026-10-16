@@ -1,0 +1,62 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 96,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 11,
+  "detail": "",
+  "summary": "Tested the Authentication lane on shop.lab.test (HTTP only \u2014 port 443 refused connection). Reachable paths observed: /, /login, /register, /forgot-password, /account/settings, /account/password (form target), /admin/, /api/v1/login, /api/v1/username-available, /graphql, /static/app.js, /static/register.js.\n\nDONE:\n- ATHN-01 (encrypted channel): FINDING \u2014 no HTTPS; /login posts credentials to plaintext http:// action.\n- ATHN-04 (auth bypass): not vulnerable to direct access \u2014 /account/settings and /admin/ return 401 without a session.\n- ATHN-05 (remember-password): no \"remember me\" control, but the session cookie is persistent (Max-Age=31536000) with no Secure/HttpOnly/SameSite (lead recorded).\n- ATHN-06 (cache): FINDING \u2014 authenticated /account/settings served with Cache-Control: public, max-age=3600.\n- ATHN-07 (password policy): FINDING \u2014 register and change-password enforce only minlength=4, no complexity.\n- ATHN-09 (change/reset): FINDING \u2014 /account/password change requires no current password; /forgot-password uses GET.\n- ATHN-10 (alternative channels): REST /api/v1 and /graphql exist; /api/v1/login returns {\"ok\":true} to unauthenticated GET/OPTIONS (lead recorded).\n\nN/A:\n- ATHN-02 (default creds) and ATHN-03 (lockout): both require submitting login attempts (writes/credential guessing/brute force), disallowed in this read-only engagement.\n- ATHN-08 (security Q&A): no security-question feature exists; reset uses username only.\n\nLeads recorded for a human to validate: unauthenticated /api/v1/login ok:true, insecure persistent session cookie, username enumeration via /api/v1/username-available, hidden role field on /register, and password change without current-password. No writes were performed (not permitted).",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 5.0
+  },
+  "claude_api_calls": 11,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 15,
+  "target_by_method": {
+    "GET": 14,
+    "OPTIONS": 1
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [
+    {
+      "kind": "target",
+      "method": "GET",
+      "url": "https://shop.lab.test/",
+      "reason": "could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443)"
+    }
+  ],
+  "agent_requests": 15,
+  "lab_requests": 14,
+  "lab_with_header": 14,
+  "lab_with_user_agent": 14,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 2
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 13,
+  "items_evidenced": 7,
+  "items_marked": 10,
+  "leads": 5,
+  "usage": {
+    "input": 22,
+    "output": 10049,
+    "cache_read": 83672,
+    "cache_write": 25933
+  },
+  "cost_usd_estimate": 0.3475,
+  "wall_seconds": 135.7,
+  "job_seconds": 133.6,
+  "budget": "$5.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 5.0
+}

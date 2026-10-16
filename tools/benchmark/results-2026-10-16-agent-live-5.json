@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 94,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 11,
+  "detail": "",
+  "summary": "Worked the Identity management lane on shop.lab.test (HTTP only) read-only; no test accounts and writes disabled, so POST flows were observed but not exercised.\n\nReachable identity surfaces: /login, /register, /forgot-password, /admin/ (401 Admin Login), and API /api/v1/username-available.\n\nFindings per item:\n- IDNT-01 Role definitions (done): Two roles observed (customer vs admin, admin boundary at /admin/ -> 401). The /register form carries a client-controlled hidden field role=customer -> mass-assignment/privilege-escalation candidate. Recorded as HIGH lead; could not confirm server-side trust because writes are disabled.\n- IDNT-02 Registration (done): Open self-service registration at /register; password minlength=4 only (weak), no CAPTCHA/email-verification visible, uses username-availability API.\n- IDNT-03 Provisioning (done): Fully self-service, unauthenticated, no approval/confirmation step; account role supplied by client.\n- IDNT-04 Enumeration (done): /api/v1/username-available is an unauthenticated yes/no oracle \u2014 username=alice returns available:false (exists) vs admin/test/support/random available:true. Recorded as MEDIUM lead. Forgot-password form also submits username via GET (username leaked in URL/logs) \u2014 recorded as LOW lead; its action was not probed.\n- IDNT-05 Username policy (done): Weak/unenforced \u2014 reserved name \"admin\" available, case-sensitive (ADMIN distinct), no whitespace trim (\"admin \" distinct), no pattern/length constraint on the form.\n\nNot tested: actual registration POST (including role=admin mass-assignment), forgot-password reset-link behavior, and GraphQL queries \u2014 all require writes/POST that this read-only lane does not permit. A person should validate the mass-assignment lead via an approved write.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 5.0
+  },
+  "claude_api_calls": 11,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 18,
+  "target_by_method": {
+    "GET": 18
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [],
+  "agent_requests": 19,
+  "lab_requests": 18,
+  "lab_with_header": 18,
+  "lab_with_user_agent": 18,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {},
+  "header_on_every_request": true,
+  "evidence_entries": 15,
+  "items_evidenced": 5,
+  "items_marked": 5,
+  "leads": 3,
+  "usage": {
+    "input": 22,
+    "output": 9325,
+    "cache_read": 118387,
+    "cache_write": 18549
+  },
+  "cost_usd_estimate": 0.303,
+  "wall_seconds": 138.8,
+  "job_seconds": 137.7,
+  "budget": "$5.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 5.0
+}

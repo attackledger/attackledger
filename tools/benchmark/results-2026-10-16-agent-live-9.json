@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 98,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 11,
+  "detail": "",
+  "summary": "Worked the Authorization lane (athz) on shop.lab.test using the alice (customer) and carol (admin) test accounts, read-only. Reachable paths used: /account/settings, /static/app.js(.map), and API endpoints discovered in app.js (/api/v1/items, /api/v1/cart, /api/v1/orders, /api/v1/orders/{id}, /api/v1/admin/users). Note /admin returns 404 for all callers.\n\nFindings:\n- WSTG-ATHZ-04 (IDOR) DONE \u2014 CONFIRMED. /api/v1/orders list is per-user scoped (alice=1001, carol=1002) but the object endpoint /api/v1/orders/{id} has no ownership check: alice read carol's order 1002 in full (name, SKU, total, shipping address). Sequential ids. Recorded as high lead.\n- WSTG-ATHZ-03 (privilege escalation) DONE \u2014 CONFIRMED. /api/v1/admin/users returns the full user/role list to alice (customer), byte-identical to carol (admin); unauthenticated it's 401. Authentication is checked but role is not. Recorded as high lead. (The registration hidden role=customer field from recon is a separate priv-esc vector but requires a write/registration, not testable in this read-only lane.)\n- WSTG-ATHZ-02 (authz schema bypass) DONE \u2014 CONFIRMED via both the horizontal (orders IDOR) and vertical (admin namespace reachable by customer) cases above; authorization is enforced inconsistently (auth present, object/role checks absent).\n- WSTG-ATHZ-01 (directory traversal / file inclusion) DONE \u2014 not vulnerable via read-only probing. nginx rejects traversal against /static (400) for plain and URL-encoded dot-segments; API stubs ignore path/param traversal payloads.\n\nAll items marked done. Writes were not permitted, so the registration role-field escalation and any POST/GraphQL mutation paths were left for a write-authorized lane.",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 5.0
+  },
+  "claude_api_calls": 11,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 26,
+  "target_by_method": {
+    "GET": 26
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [],
+  "agent_requests": 26,
+  "lab_requests": 26,
+  "lab_with_header": 23,
+  "lab_with_user_agent": 23,
+  "lab_headers_unread": 3,
+  "lab_signed_in": {
+    "alice": 13,
+    "carol": 5
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 17,
+  "items_evidenced": 4,
+  "items_marked": 4,
+  "leads": 2,
+  "usage": {
+    "input": 22,
+    "output": 9794,
+    "cache_read": 126758,
+    "cache_write": 20721
+  },
+  "cost_usd_estimate": 0.3249,
+  "wall_seconds": 135.7,
+  "job_seconds": 132.5,
+  "budget": "$5.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 5.0
+}

@@ -893,3 +893,279 @@ issues are listed in the comment block of `lab/nginx.conf`. Error handling has n
 
 The client-side count includes the credentialed CORS reflection, judged from the lane's item notes rather than a lead.
 Each run cost under two cents by the loop's estimate.
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `errh` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 90 |
+| Outcome | job `done`, agent `finished`, 7 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 3.0; applied by the worker: $3.00, 30 turns, 2,000,000 tokens |
+| Wall time | 78.5 s (job 75.9 s) |
+| Claude API calls (gateway log) | 7 to api.anthropic.com |
+| Target requests (gateway log) | 16: GET 16; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 16 request(s), 16 with the research header, 16 with the user agent |
+| Research header on every request | yes |
+| Evidence | 12 entries on 2 item(s); 2 item(s) marked; 1 lead(s) |
+| Tokens | input 14, output 5,340, cache read 53,931, cache write 13,466 |
+| Cost (estimate) | $0.1850 of a $3 budget |
+
+Agent summary for the reviewer: "Worked both Error-handling items on shop.lab.test (HTTP only) with read-only requests.  WSTG-ERRH-01 (improper error handling) — DONE: Exercised error paths across the reachable endpoints. Unknown paths return a generic 404 "not found" (x4); invalid/overflow query params on /api/v1/items hit a benign catch-all {"ok":true} (x1,x2); the GraphQL endpoints (/graphql, /api/graphql) return clean, structured JSON errors with proper HTTP 400 for invalid fields and missing query (x9,x11) and a controlled "Not signed in" error for unauthenticated access (x16); /admin/ returns a minimal 401 login page (x"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `info` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 91 |
+| Outcome | job `done`, agent `finished`, 9 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 123.7 s (job 120.5 s) |
+| Claude API calls (gateway log) | 9 to api.anthropic.com |
+| Target requests (gateway log) | 19: GET 19; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443) |
+| Lab access log | 18 request(s), 18 with the research header, 18 with the user agent |
+| Research header on every request | yes |
+| Evidence | 34 entries on 10 item(s); 10 item(s) marked; 4 lead(s) |
+| Tokens | input 18, output 9,157, cache read 77,083, cache write 17,930 |
+| Cost (estimate) | $0.2883 of a $5 budget |
+
+Agent summary for the reviewer: "Lane 46 (Information gathering) complete; all 10 WSTG-INFO items marked done with read-only evidence. Only HTTP answers (https:443 refused). Host shop.lab.test is "Lab shop", an e-commerce app behind nginx/1.30.5.  Reachable paths found: / (links to products?id, search.php?q, /about, /account/logout, /admin/, /cart, /track, /support, /login), /robots.txt (Disallow: /backup/), /backup/ (200 "backup index"), /admin/ (401 Admin Login), /api/v1/items?page= and /api/v1/cart (REST, JSON), /graphql (GraphQL), /search.php?q= (PHP), /login (POST form username/password; links to /forgot-password, /regis"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `conf` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 92 |
+| Outcome | job `done`, agent `finished`, 8 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 153.9 s (job 151.6 s) |
+| Claude API calls (gateway log) | 8 to api.anthropic.com |
+| Target requests (gateway log) | 21: GET 19, OPTIONS 2; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443) |
+| Lab access log | 20 request(s), 20 with the research header, 20 with the user agent |
+| Research header on every request | yes |
+| Evidence | 24 entries on 9 item(s); 11 item(s) marked; 2 lead(s) |
+| Tokens | input 16, output 11,455, cache read 81,576, cache write 20,930 |
+| Cost (estimate) | $0.3501 of a $5 budget |
+
+Agent summary for the reviewer: "Configuration lane for shop.lab.test (HTTP port 80 only; HTTPS/443 refused). Tested all 11 WSTG-CONF items read-only.  Done (9): - CONF-01 Network infra: nginx/1.30.5 version disclosed in Server header; only plaintext port 80 answers. - CONF-02 App platform: nginx + PHP (search.php executes), plus GraphQL and /api/v1 REST referenced in app.js; no X-Powered-By. - CONF-03 File extension handling: .bak/.phps/.php~/.js.bak variants all 404, no source disclosure. - CONF-04 Backup/unreferenced files: /.git/config exposed (leaks remote https://git.lab.test/shop/storefront.git); .git/HEAD and .git/ind"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `inpv` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 93 |
+| Outcome | job `done`, agent `finished`, 15 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 202.1 s (job 201.5 s) |
+| Claude API calls (gateway log) | 15 to api.anthropic.com |
+| Target requests (gateway log) | 25: GET 24, OPTIONS 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 25 request(s), 25 with the research header, 25 with the user agent |
+| Research header on every request | yes |
+| Evidence | 23 entries on 13 item(s); 19 item(s) marked; 1 lead(s) |
+| Tokens | input 30, output 14,546, cache read 203,142, cache write 26,333 |
+| Cost (estimate) | $0.4633 of a $5 budget |
+
+Agent summary for the reviewer: "Input-validation lane on shop.lab.test (HTTP only). Key finding: CONFIRMED reflected XSS at /search.php?q= — the parameter is echoed into the HTML body with no encoding (<script>alert(1)</script> reflected verbatim); recorded as a high-severity lead.  Tested and NOT vulnerable (evidence attached): SQLi (search.php quote reflected literally; /products?id static; GraphQL orders returns "Not signed in"), SSTI (${7*7} not evaluated), SSI (<!--#exec--> not executed), command injection (metachars reflected literally), format-string (%s%n reflected, no crash), HPP (duplicate id/search params = same s"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `idnt` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 94 |
+| Outcome | job `done`, agent `finished`, 11 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 138.8 s (job 137.7 s) |
+| Claude API calls (gateway log) | 11 to api.anthropic.com |
+| Target requests (gateway log) | 18: GET 18; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 18 request(s), 18 with the research header, 18 with the user agent |
+| Research header on every request | yes |
+| Evidence | 15 entries on 5 item(s); 5 item(s) marked; 3 lead(s) |
+| Tokens | input 22, output 9,325, cache read 118,387, cache write 18,549 |
+| Cost (estimate) | $0.3030 of a $5 budget |
+
+Agent summary for the reviewer: "Worked the Identity management lane on shop.lab.test (HTTP only) read-only; no test accounts and writes disabled, so POST flows were observed but not exercised.  Reachable identity surfaces: /login, /register, /forgot-password, /admin/ (401 Admin Login), and API /api/v1/username-available.  Findings per item: - IDNT-01 Role definitions (done): Two roles observed (customer vs admin, admin boundary at /admin/ -> 401). The /register form carries a client-controlled hidden field role=customer -> mass-assignment/privilege-escalation candidate. Recorded as HIGH lead; could not confirm server-side tr"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `busl` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 95 |
+| Outcome | job `done`, agent `finished`, 10 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 172.0 s (job 168.5 s) |
+| Claude API calls (gateway log) | 10 to api.anthropic.com |
+| Target requests (gateway log) | 19: GET 19; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 19 request(s), 19 with the research header, 19 with the user agent |
+| Research header on every request | yes |
+| Evidence | 16 entries on 6 item(s); 9 item(s) marked; 2 lead(s) |
+| Tokens | input 20, output 12,058, cache read 117,309, cache write 23,472 |
+| Cost (estimate) | $0.3821 of a $5 budget |
+
+Agent summary for the reviewer: "Business-logic lane on shop.lab.test, worked read-only with no test accounts and writes disabled. The host is largely a lab stub: /products, /api/v1/items and /api/v1/cart return canned {"ok":true}/placeholder pages; the live business surfaces are /graphql, the /register form, /login, /track and the /api/v1/username-available oracle.  Items marked DONE (tested, results documented): - BUSL-01 data validation: items API ignores page=-1 (stub); username-available validates presence (400) but handles SQLi-style input as a literal (no error); register exposes a client-controlled hidden role field. "
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `athn` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 96, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 11 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 135.7 s (job 133.6 s) |
+| Claude API calls (gateway log) | 11 to api.anthropic.com |
+| Target requests (gateway log) | 15: GET 14, OPTIONS 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443) |
+| Lab access log | 14 request(s), 14 with the research header, 14 with the user agent; signed in as alice 2 |
+| Research header on every request | yes |
+| Evidence | 13 entries on 7 item(s); 10 item(s) marked; 5 lead(s) |
+| Tokens | input 22, output 10,049, cache read 83,672, cache write 25,933 |
+| Cost (estimate) | $0.3475 of a $5 budget |
+
+Agent summary for the reviewer: "Tested the Authentication lane on shop.lab.test (HTTP only — port 443 refused connection). Reachable paths observed: /, /login, /register, /forgot-password, /account/settings, /account/password (form target), /admin/, /api/v1/login, /api/v1/username-available, /graphql, /static/app.js, /static/register.js.  DONE: - ATHN-01 (encrypted channel): FINDING — no HTTPS; /login posts credentials to plaintext http:// action. - ATHN-04 (auth bypass): not vulnerable to direct access — /account/settings and /admin/ return 401 without a session. - ATHN-05 (remember-password): no "remember me" control, but "
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `sess` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 97, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 8 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 141.7 s (job 139.6 s) |
+| Claude API calls (gateway log) | 8 to api.anthropic.com |
+| Target requests (gateway log) | 9: GET 9; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 9 request(s), 9 with the research header, 9 with the user agent; signed in as alice 3, carol 1 |
+| Research header on every request | yes |
+| Evidence | 25 entries on 9 item(s); 9 item(s) marked; 2 lead(s) |
+| Tokens | input 16, output 10,005, cache read 73,842, cache write 17,653 |
+| Cost (estimate) | $0.3032 of a $5 budget |
+
+Agent summary for the reviewer: "Worked all 9 session-management items on shop.lab.test (HTTP only) using the admin (carol) and user (alice) test sessions; read-only, no writes.  Findings: - Schema (01): server-side session carried in one cookie "lab_session"; distinct per-user values; 401 without it; cleared on logout. - Cookie attributes (02): "lab_session=...; Path=/; Max-Age=31536000" with NO Secure, HttpOnly or SameSite, on a HTTP-only site — confirms the recon high lead. Same for both roles. - Fixation (03): no pre-auth cookie issued by /login; forged value rejected (401); logout invalidates. Post-login rotation not tes"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `athz` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 98, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 11 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 135.7 s (job 132.5 s) |
+| Claude API calls (gateway log) | 11 to api.anthropic.com |
+| Target requests (gateway log) | 26: GET 26; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 26 request(s), 23 with the research header, 23 with the user agent; 3 answered 400 by the lab's nginx before it read the headers; signed in as alice 13, carol 5 |
+| Research header on every request | yes (on the 23 whose headers the lab read; 3 not observable) |
+| Evidence | 17 entries on 4 item(s); 4 item(s) marked; 2 lead(s) |
+| Tokens | input 22, output 9,794, cache read 126,758, cache write 20,721 |
+| Cost (estimate) | $0.3249 of a $5 budget |
+
+Agent summary for the reviewer: "Worked the Authorization lane (athz) on shop.lab.test using the alice (customer) and carol (admin) test accounts, read-only. Reachable paths used: /account/settings, /static/app.js(.map), and API endpoints discovered in app.js (/api/v1/items, /api/v1/cart, /api/v1/orders, /api/v1/orders/{id}, /api/v1/admin/users). Note /admin returns 404 for all callers.  Findings: - WSTG-ATHZ-04 (IDOR) DONE — CONFIRMED. /api/v1/orders list is per-user scoped (alice=1001, carol=1002) but the object endpoint /api/v1/orders/{id} has no ownership check: alice read carol's order 1002 in full (name, SKU, total, shi"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `cryp` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 99, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 10 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 111.5 s (job 108.4 s) |
+| Claude API calls (gateway log) | 10 to api.anthropic.com |
+| Target requests (gateway log) | 8: GET 7, HEAD 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | target GET https://shop.lab.test/login: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443); target HEAD https://shop.lab.test/: could not connect to shop.lab.test:443: Connect call failed ('172.24.0.2', 443) |
+| Lab access log | 6 request(s), 6 with the research header, 6 with the user agent; signed in as alice 2 |
+| Research header on every request | yes |
+| Evidence | 9 entries on 4 item(s); 4 item(s) marked; 2 lead(s) |
+| Tokens | input 20, output 7,455, cache read 92,981, cache write 15,151 |
+| Cost (estimate) | $0.2435 of a $5 budget |
+
+Agent summary for the reviewer: "Cryptography lane on shop.lab.test (read-only).   CRYP-01 (weak TLS) — DONE: There is no TLS at all. TCP connections to port 443 are refused ("Nothing answered at :443") while port 80 serves the full app over cleartext HTTP, with no HTTP->HTTPS redirect. This is the weakest possible transport posture. Recorded as a high lead.  CRYP-03 (sensitive info over unencrypted channel) — DONE: Over cleartext HTTP, the sign-in form posts credentials to http://shop.lab.test/login, the persistent session cookie (Max-Age=1yr, no Secure flag) is set/sent in the clear, and /static/app.js exposes an AWS access"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `clnt` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 100, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 12 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 183.7 s (job 179.5 s) |
+| Claude API calls (gateway log) | 12 to api.anthropic.com |
+| Target requests (gateway log) | 14: GET 13, OPTIONS 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 14 request(s), 14 with the research header, 14 with the user agent; signed in as alice 4 |
+| Research header on every request | yes |
+| Evidence | 21 entries on 11 item(s); 13 item(s) marked; 2 lead(s) |
+| Tokens | input 24, output 13,471, cache read 143,843, cache write 24,247 |
+| Cost (estimate) | $0.4195 of a $5 budget |
+
+Agent summary for the reviewer: "Worked all 13 client-side (WSTG-CLNT) items on shop.lab.test (HTTP only).  Key finding — Reflected XSS / HTML injection (items 2, 3): GET /search.php?q= reflects the raw query string into the HTML body with no escaping. A literal payload <b>x7test</b> and <script>alert(1)</script> are both echoed verbatim into text/html, confirming attacker-controlled script executes in a victim browser. Recorded as a high lead (amplified by the non-HttpOnly session cookie noted by the auth lane).  Clickjacking (item 9): homepage, /login and the authenticated /account/settings (change-password form) are served"
+
+## Live agent run (2026-10-16)
+
+One agent run through the Messages API, on the lab, with the worker's configured model. The cost is the loop's estimate from the token counts the API returned; the Console bill is authoritative.
+
+| | |
+|---|---|
+| Model | `claude-opus-5-5` |
+| Stack | compose project `attackledger`, commit `fee4ced with uncommitted changes`, prices of 2026-10-09 (`agentloop.MODELS`) |
+| Lane | `apit` on `shop.lab.test`, scope `shop.lab.test` only, `X-Bug-Bounty: agent-live-run`, job 101, test accounts `user` (customer, alice), `admin` (admin, carol) |
+| Outcome | job `done`, agent `finished`, 7 turn(s) |
+| Limits | max_turns 30, max_requests 60, max_cost_usd 5.0; applied by the worker: $5.00, 30 turns, 2,000,000 tokens |
+| Wall time | 69.5 s (job 67.6 s) |
+| Claude API calls (gateway log) | 7 to api.anthropic.com |
+| Target requests (gateway log) | 9: GET 8, OPTIONS 1; hosts: shop.lab.test (all shop.lab.test) |
+| Refused or failed rows | none |
+| Lab access log | 9 request(s), 9 with the research header, 9 with the user agent; signed in as alice 3 |
+| Research header on every request | yes |
+| Evidence | 8 entries on 1 item(s); 1 item(s) marked; 2 lead(s) |
+| Tokens | input 14, output 4,614, cache read 60,584, cache write 14,300 |
+| Cost (estimate) | $0.1760 of a $5 budget |
+
+Agent summary for the reviewer: "Lane had one item: WSTG-APIT-01 Test GraphQL. The /graphql endpoint is live (nginx, JSON errors). Tested with read-only GET queries only (writes not permitted; no mutationType exists anyway).  Findings: 1. Introspection is fully enabled without authentication — a complete __schema query returns the Query type (viewer, customer(username:String!), orders) and types Customer (username/name/email/phone/address/role) and Order. Verbose field-suggestion errors also aid discovery. GraphQL queries are accepted over GET, making authenticated queries cacheable/CSRF-reachable. Recorded as a low lead. 2. "

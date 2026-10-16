@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-16",
+  "dry_run": false,
+  "project": "attackledger",
+  "job_id": 97,
+  "job_status": "done",
+  "agent_status": "finished",
+  "model": "claude-opus-5-5",
+  "turns": 8,
+  "detail": "",
+  "summary": "Worked all 9 session-management items on shop.lab.test (HTTP only) using the admin (carol) and user (alice) test sessions; read-only, no writes.\n\nFindings:\n- Schema (01): server-side session carried in one cookie \"lab_session\"; distinct per-user values; 401 without it; cleared on logout.\n- Cookie attributes (02): \"lab_session=...; Path=/; Max-Age=31536000\" with NO Secure, HttpOnly or SameSite, on a HTTP-only site \u2014 confirms the recon high lead. Same for both roles.\n- Fixation (03): no pre-auth cookie issued by /login; forged value rejected (401); logout invalidates. Post-login rotation not testable read-only (login POST needs writes).\n- Exposed session vars (04): no session id in URLs/bodies, but authenticated /account/settings is returned with \"Cache-Control: public, max-age=3600\" (new medium lead). app.js also exposes a Stripe pk and an AWS key id (redacted at storage).\n- CSRF (05): sign-in and change-password forms have no anti-CSRF token and cookie has no SameSite \u2014 forgeable (new medium lead); change-password also takes only new_password (ties to recon medium lead).\n- Logout (06): GET /account/logout terminates session (Max-Age=0), but being GET it is CSRF-able.\n- Timeout (07): 1-year persistent cookie, no short timeout evident; server-side idle expiry not measurable read-only.\n- Puzzling (08): unknown/missing session both yield 401; each session resolves to its own identity; no cross-contamination seen.\n- Hijacking (09): missing HttpOnly/Secure over HTTP makes the session id stealable; replay with a genuine stolen value not exercised read-only.\n\nLeft partially open by nature of read-only: post-login session rotation (03), precise server-side timeout (07), and live hijack replay (09) \u2014 all require login/write actions not permitted in this engagement. Recorded two new medium leads (public cache-control on authenticated pages; GET logout / missing CSRF tokens).",
+  "limits": {
+    "max_turns": 30,
+    "max_requests": 60,
+    "max_cost_usd": 5.0
+  },
+  "claude_api_calls": 8,
+  "claude_api_hosts": [
+    "api.anthropic.com"
+  ],
+  "target_requests": 9,
+  "target_by_method": {
+    "GET": 9
+  },
+  "target_hosts": [
+    "shop.lab.test"
+  ],
+  "only_lab_host": true,
+  "refused_rows": [],
+  "agent_requests": 9,
+  "lab_requests": 9,
+  "lab_with_header": 9,
+  "lab_with_user_agent": 9,
+  "lab_headers_unread": 0,
+  "lab_signed_in": {
+    "alice": 3,
+    "carol": 1
+  },
+  "header_on_every_request": true,
+  "evidence_entries": 25,
+  "items_evidenced": 9,
+  "items_marked": 9,
+  "leads": 2,
+  "usage": {
+    "input": 16,
+    "output": 10005,
+    "cache_read": 73842,
+    "cache_write": 17653
+  },
+  "cost_usd_estimate": 0.3032,
+  "wall_seconds": 141.7,
+  "job_seconds": 139.6,
+  "budget": "$5.00, 30 turns, 2,000,000 tokens",
+  "budget_usd": 5.0
+}
