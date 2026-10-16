@@ -190,6 +190,13 @@ may read it, and it is never committed (the repository ignores it).
    with `nano .env`). The key is passed to the gateway only, which adds it to the agent's
    calls to the Claude API; the worker, where the recon tools run, never has it. Without it,
    everything except agent runs works.
+   Claude's cyber safeguards are set per Claude Console organization: by default the model
+   declines some security tasks, and an agent run it declines ends as `refused` (with what it
+   had done, and below the depth floor if one was set). Authorized testing teams can apply for
+   Anthropic's Cyber Verification Program for the organization the key belongs to
+   (portal.anthropic.com, Programs; Red Team Access covers authorized penetration testing), and
+   then enable it for that key's workspace in the Console. Our enrollment does not carry over to
+   your organization.
 
 7. Optional: how long a signed-in browser may go without use before it is signed out,
    `ATTACKLEDGER_SESSION_IDLE_MINUTES` (default 30 minutes). A session ends 12 hours after

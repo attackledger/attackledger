@@ -124,7 +124,7 @@ PACK = "web-pentest-wstg"
 HEADER = "X-Bug-Bounty: agent-live-run"     # the lab's access log records this header (lab/nginx.conf)
 USER_AGENT = "AttackLedger agent live run"
 POLICY = "https://example.com/policy"
-WAIT_SECONDS = 15 * 60
+WAIT_SECONDS = 45 * 60          # a deep run (80 turns, 200 requests) can take well over 15 minutes
 STUB_HOST = "claude-stub.test"
 
 
@@ -511,7 +511,7 @@ def juice_snapshot(stack: Stack, args, job: dict, eng: dict, lane: dict, m: dict
     # The snapshot is written before it is scored, so a scoring failure never loses the run's data.
     if path is not None:
         path.write_text(json.dumps(snap, indent=2) + "\n")
-        shown = path.relative_to(ROOT) if path.resolve().is_relative_to(ROOT) else path
+        shown = path.resolve().relative_to(ROOT) if path.resolve().is_relative_to(ROOT) else path
         print(f"Snapshot for scoring in {shown}: python3 tools/juiceshop_score.py {shown} [--review FILE]",
               flush=True)
     sc = scorer()

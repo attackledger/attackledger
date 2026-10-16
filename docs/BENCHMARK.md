@@ -427,6 +427,12 @@ Outcome row says when the run still ended below the floor; compare runs with and
 
 ### On OWASP Juice Shop (`--target juiceshop`, D-060)
 
+Safeguards at the time of measurement: the runs on 2026-10-16 used a key of a Console organization
+that was **not** in Anthropic's Cyber Verification Program, the same default a new installation has
+(docs/INSTALL.md). One of them (job 114, authorization) was declined by the model and ended
+`refused`. Runs made after an organization is enrolled are labelled as such, since the results may
+differ.
+
 The same run on the second practice target, Juice Shop 20.2.0 (`bkimminich/juice-shop:v20.2.0`,
 pinned by digest), as `juice.lab.test`: scope `juice.lab.test` only, every lane signed out, the
 same research header. The rows above are the same, with `juice.lab.test` for the host and Juice
