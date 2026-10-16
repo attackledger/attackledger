@@ -11,6 +11,12 @@ before 1.0, minor versions may change the data model.
   --target juiceshop` runs an agent on it, and `tools/juiceshop_score.py` scores a run against
   Juice Shop's own challenge list: challenges identified by an explicit, reviewable indicator
   table, and challenges Juice Shop marked solved during the run.
+- Juice Shop scores against a written-down denominator, `tools/juiceshop/reachable.tsv`: the 83
+  challenges this lab can reach offline, each with what it needs (read, write, account; solved only
+  in a browser) and the v20.2.0 source that decides it. The indicator table covers all 83, and the
+  scorer no longer counts sentences that say the issue is absent or only suppose it, files only
+  listed or refused, or one SQL injection as several challenges; several snapshots score together
+  as a union (D-060).
 
 ## [0.9.0] - 2026-10-14
 
