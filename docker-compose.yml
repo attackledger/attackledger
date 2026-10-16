@@ -5,7 +5,9 @@
 #             /worker/* only), its traffic the gateway's proxy and resolver.
 #   control   the gateway and the API (rules, request log, the relayed worker calls).
 #   database  the database and the API only.
-#   lab       the gateway and the local practice target only.
+#   lab       the gateway and the local practice targets only: the shop, and Juice Shop's front.
+#   juiceshop Juice Shop's front and Juice Shop only (D-060): the gateway never reaches Juice
+#             Shop itself, only the front, which answers as juice.lab.test on port 80.
 #   default   api (published port, timestamp authority), web and the gateway: the way out.
 # Every request a recon tool or an agent sends leaves through the gateway, which enforces the
 # engagement's scope, read-only methods, rate ceiling and identification, and logs it.
@@ -17,9 +19,10 @@
 #     net.ipv4.ip_unprivileged_port_start=0 in each container, and the services that bind one
 #     say so explicitly with the same sysctl;
 #   - a read-only root filesystem: each service writes only to its volumes and to the tmpfs
-#     folders it lists, which are empty at every start;
+#     folders it lists, which are empty at every start. One exception, the optional practice
+#     target Juice Shop (below, D-060), which rewrites its own files at start and by design;
 #   - a non-root user (Postgres 70, the API 10001, the gateway 10002, the worker 10001,
-#     nginx 101);
+#     nginx 101, Juice Shop 65532);
 #   - a memory and a process (pids) ceiling, generous for one install. The production file
 #     sets its own memory ceilings from .env.
 # Images are pinned by digest; the build pins and hashes what it downloads (docs/SUPPLY_CHAIN.md).
@@ -242,6 +245,74 @@ services:
       lab:
         aliases: [shop.lab.test]
 
+  # A second, larger practice target (D-060, docs/INSTALL.md section 19): OWASP Juice Shop, an
+  # intentionally vulnerable shop with its own challenge list. Optional: it starts only with
+  # --profile lab and when named (docker compose --profile lab up -d juiceshop juiceshop-front).
+  # It is on its own internal network (juiceshop), which only its front shares, publishes no
+  # port and has no route out; the gateway reaches the front only, as juice.lab.test on port 80.
+  juiceshop:
+    profiles: ["lab"]
+    # bkimminich/juice-shop v20.2.0 (released 2026-08-10), pinned by its multi-arch index digest
+    # (linux/amd64 and linux/arm64) on 2026-10-16.
+    image: bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    # Not read-only, the one exception to the hardening above: at every start Juice Shop
+    # rewrites files of its own image (its SQLite database in data/, ftp/legal.md, i18n/,
+    # the front end's index.html and images) and its challenges write there by design (uploads,
+    # overwriting legal.md). tmpfs folders would hide the files the image ships in those
+    # folders. Its writes stay in the container's own layer, which a recreate discards: every
+    # `up --force-recreate juiceshop` is a fresh shop with no challenge solved. No volume.
+    read_only: false
+    user: "65532:65532"            # the image's own nonroot user (distroless)
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    # Default configuration: the challenges that are dangerous in a container (remote code
+    # execution, XXE, NoSQL denial of service, ...) stay disabled, as Juice Shop does by itself
+    # when it runs in Docker.
+    deploy:
+      resources:
+        limits:
+          pids: 256
+          memory: 1g
+    networks: [juiceshop]
+    # A TCP connection, no request: a request would show in Juice Shop's own log and could
+    # count towards a challenge.
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e",
+             "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 3s
+      retries: 60
+
+  # Juice Shop's front (lab/juiceshop.conf): port 80 as juice.lab.test, and an access log in the
+  # shop's format, which tools/agent_live.py compares with the gateway's log.
+  juiceshop-front:
+    profiles: ["lab"]
+    # nginx:1.30.5-alpine, pinned by its multi-arch index digest on 2026-10-10 (as the lab).
+    image: nginx:1.30-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+    volumes:
+      - ./lab/juiceshop.conf:/etc/nginx/conf.d/default.conf:ro
+    <<: *hardening
+    user: "101:101"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    tmpfs:
+      - /var/cache/nginx:size=64m,mode=0700,uid=101,gid=101,noexec,nosuid,nodev
+      - /run:size=1m,mode=0755,uid=101,gid=101,noexec,nosuid,nodev
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    deploy:
+      resources:
+        limits:
+          pids: 256
+          memory: 128m
+    networks:
+      lab:
+        aliases: [juice.lab.test]
+      juiceshop: {}
+    depends_on:
+      juiceshop:
+        condition: service_healthy
+
   web:
     build:
       context: web
@@ -282,6 +353,9 @@ networks:
     internal: true
     driver_opts: *no-host-address
   lab:
+    internal: true
+    driver_opts: *no-host-address
+  juiceshop:
     internal: true
     driver_opts: *no-host-address
   default: {}

@@ -5,6 +5,7 @@
 # the budget. Sends nothing to the Claude API or the target (with --role athn, sess, athz, cryp,
 # clnt or apit: the lab's sign-in, once per missing test account). Exit 1 with a message on any failure.
 #   bash tools/agent_preflight.sh [--role errh|info|conf|inpv|idnt|busl|athn|sess|athz|cryp|clnt|apit] [--dry-run] [--no-prepare]
+#                                 [--target shop|juiceshop]   (juiceshop: OWASP Juice Shop as juice.lab.test, D-060)
 #                                 [--project NAME] [--env-file FILE] [--api URL]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

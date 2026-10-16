@@ -133,8 +133,9 @@ python_sbom "attackledger-worker:$TAG" worker /srv/requirements-arjun.txt
 go_sbom "attackledger-worker:$TAG" worker
 os_sbom "attackledger-web:$TAG" web
 npm_sbom
-# The third-party images, by the digests the compose files pin.
-for image in $(grep -hoE 'image: [a-z0-9./-]+:[^ @]+@sha256:[0-9a-f]{64}' "$ROOT/docker-compose.yml" "$ROOT/deploy/compose.prod.yml" | awk '{print $2}' | sort -u); do
+# The third-party images, by the digests the compose files pin; not OWASP Juice Shop, the optional
+# practice target (D-060), which is vulnerable on purpose and not part of what runs AttackLedger.
+for image in $(grep -hoE 'image: [a-z0-9./-]+:[^ @]+@sha256:[0-9a-f]{64}' "$ROOT/docker-compose.yml" "$ROOT/deploy/compose.prod.yml" | awk '{print $2}' | grep -v '^bkimminich/juice-shop:' | sort -u); do
   docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image" >/dev/null
   os_sbom "$image" "$(echo "${image%%:*}" | tr / _)"
 done

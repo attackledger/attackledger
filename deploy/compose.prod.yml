@@ -10,7 +10,7 @@
 #     (ATTACKLEDGER_REQUIRE_SIGN_IN=1) and session cookies are sent only over HTTPS;
 #   - restart policies, healthchecks, memory and CPU limits, and rotated logs for every service;
 #   - the container hardening of docker-compose.yml, extended to the lab proxy and Caddy;
-#   - the practice target (lab) and its browser proxy start only with --profile lab;
+#   - the practice targets (lab, juiceshop) and the lab's browser proxy start only with --profile lab;
 #   - the encryption master key comes from a root-only file on the host, mounted read-only
 #     into the API only (never from .env, and never the public development key). The worker
 #     has no key and no database (D-042).
@@ -149,6 +149,15 @@ services:
   # against the lab"): docker compose --profile lab up -d lab lab-proxy
   lab:
     profiles: ["lab"]
+
+  # The second practice target, OWASP Juice Shop, and its front (D-060): --profile lab already
+  # (docker-compose.yml), and started only when named:
+  # docker compose --profile lab up -d juiceshop-front. Neither publishes a port, and the lab
+  # proxy below does not forward to it: agents reach it through the gateway only.
+  juiceshop:
+    logging: *logging
+  juiceshop-front:
+    logging: *logging
 
   # A browser's way to the practice target, for capturing a HAR (or Burp or Caido traffic) to
   # import. An HTTP proxy on the server's loopback only, reached over an SSH tunnel. It forwards

@@ -70,10 +70,11 @@ if [ "$#" -gt 0 ]; then
   images=("$@")
 else
   images=("attackledger-api:$TAG" "attackledger-worker:$TAG" "attackledger-web:$TAG")
-  # The third-party images, by the digests the compose files pin.
+  # The third-party images, by the digests the compose files pin. Not OWASP Juice Shop, the optional
+  # practice target (D-060): it is vulnerable on purpose and not part of what runs AttackLedger.
   while read -r image; do images+=("$image"); done < <(
     grep -hoE 'image: [a-z0-9./-]+:[^ @]+@sha256:[0-9a-f]{64}' "$ROOT/docker-compose.yml" "$ROOT/deploy/compose.prod.yml" \
-      | awk '{print $2}' | sort -u)
+      | awk '{print $2}' | grep -v '^bkimminich/juice-shop:' | sort -u)
 fi
 
 # The scanner's own container: no capability, no privilege gain, a read-only root filesystem. Its

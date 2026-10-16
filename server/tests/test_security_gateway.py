@@ -275,7 +275,7 @@ def test_gw6_every_address_of_the_deployments_containers_is_refused(files):
     gw_nets = set(_networks(services.pop("gateway")))
     deny = set(gateway.DENY_HOSTS)
     for name, svc in services.items():
-        if name == "lab":                                  # the practice target: a target on purpose
+        if name in ("lab", "juiceshop-front"):             # the practice targets: targets on purpose (D-060)
             continue
         shared = {n: v for n, v in _networks(svc).items() if n in gw_nets}
         if len(shared) == 1:
