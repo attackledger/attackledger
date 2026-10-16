@@ -25,7 +25,12 @@ for f in "$DENY" "$FDENY"; do
 done
 
 echo "[gate] 2/3 absolute personal paths"
-if grep -rnIE '/Users/[A-Za-z0-9_]+|/home/[A-Za-z0-9_]+' --exclude-dir=.git --exclude=.git --exclude-dir=node_modules --exclude-dir=dist --exclude=release_gate.sh "$ROOT"; then
+# A path inside a URL route (Juice Shop's /api/Users/1 in benchmark snapshots) is not a home
+# directory: a match right after "/api" is skipped; any other match on the same line still fails.
+paths="$(grep -rnIE '/Users/[A-Za-z0-9_]+|/home/[A-Za-z0-9_]+' --exclude-dir=.git --exclude=.git --exclude-dir=node_modules --exclude-dir=dist --exclude=release_gate.sh "$ROOT" \
+  | perl -ne 'my ($f, $n, $t) = split /:/, $_, 3; print if $t =~ m{(?<!/api)/(?:Users|home)/[A-Za-z0-9_]+}')"
+if [ -n "$paths" ]; then
+  printf '%s\n' "$paths"
   echo "[gate] FAIL: absolute user paths present"; fail=1
 fi
 
