@@ -15,6 +15,10 @@ DOCKERFILES = ["server/Dockerfile", "worker/Dockerfile", "web/Dockerfile", "e2e/
 # The one service that keeps root, and the one capability it gets back: the caddy binary
 # carries it as a file capability (the kernel refuses to run it without it) and binds 80/443.
 ROOT_SERVICES = {"caddy": {"NET_BIND_SERVICE"}}
+# The one service without a read-only root filesystem: the optional practice target OWASP Juice Shop
+# (D-060), which rewrites its own files at every start and by design. Its writes stay in the
+# container's layer, discarded at each recreate; it is on a network of its own (test_juiceshop.py).
+READ_WRITE_SERVICES = {"juiceshop"}
 
 
 class _Loader(yaml.SafeLoader):
@@ -75,7 +79,7 @@ def test_every_service_is_hardened(files):
         assert "no-new-privileges:true" in (svc.get("security_opt") or []), name
         assert svc.get("cap_drop") == ["ALL"], name
         assert set(svc.get("cap_add") or []) == ROOT_SERVICES.get(name, set()), name
-        assert svc.get("read_only") is True, name
+        assert svc.get("read_only") is (name not in READ_WRITE_SERVICES), name
         assert not svc.get("privileged"), name
         assert svc.get("network_mode") != "host" and svc.get("pid") != "host", name
         limits = ((svc.get("deploy") or {}).get("resources") or {}).get("limits") or {}

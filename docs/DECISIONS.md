@@ -1072,6 +1072,56 @@ options considered and who decided.
   reads of the pages that lead to them.
 - **Made by:** Claude, after the runs above (branch `agent-known-paths`).
 
+### D-060 · OWASP Juice Shop as a second lab target (2026-10-16, decided by Murat)
+- **Problem:** the agent runs are measured on one practice target, a static nginx shop
+  (`lab/nginx.conf`) with 31 issues planted for the WSTG lanes. Twelve lanes have been run on it,
+  and the latest runs found 25 of the 31. A target this small says little about how an agent
+  does on a real application: a few hundred routes, a single-page front end, an API, a database.
+- **Decision:**
+  - The `lab` profile gets OWASP Juice Shop, `bkimminich/juice-shop:v20.2.0` (released
+    2026-08-10, the newest release at least two weeks old), pinned by its multi-arch index digest
+    `sha256:8739101a…5193526b`. It starts only when named
+    (`docker compose --profile lab up -d juiceshop-front`).
+  - Juice Shop listens on 3000 on a network of its own (`juiceshop`, internal, no host address)
+    that only a small nginx front shares. The front (`lab/juiceshop.conf`) is on the lab network as
+    `juice.lab.test`, port 80. The front is there for three reasons: Juice Shop writes its access
+    log to a file inside its container, and the run's measurement needs the target's own count of
+    requests and research headers in the shop's format; port 80 keeps the gateway, the pre-flight
+    check and the agents' URLs the same for both targets; and the gateway never shares a network
+    with the vulnerable application itself. The front changes nothing in a request. No port is
+    published, and the lab proxy for browsers does not forward to it.
+  - Hardening as for every service, except the read-only root filesystem: Juice Shop rewrites
+    its own files at every start and its challenges write by design. The writes stay in the
+    container's layer, which a recreate discards (a fresh shop, no challenge solved). The test of
+    hardening names it as the one exception. The image is pinned, not scanned or put in the SBOM:
+    it is vulnerable on purpose and runs nothing of AttackLedger's.
+  - `tools/agent_live.py --target juiceshop` (the shop stays the default): its own engagement,
+    `Agent live run (Juice Shop)`, scope `juice.lab.test` only, authorized, the same research
+    header; a lane per role, all signed out (Juice Shop's accounts are its challenges). The agents
+    stay read-only unless the D-041 approval flow is used; nothing is approved automatically.
+    Pre-flight also checks Juice Shop and reads its challenge list from inside the stack (the
+    front's container asks Juice Shop directly: neither through the gateway nor in the front's
+    log). A run starts on a fresh shop, reads the list before and after, and writes a snapshot.
+  - `tools/juiceshop_score.py` scores the snapshot offline. **Identified**: a lead or evidence
+    entry names a challenge by an indicator in `tools/juiceshop/challenge_map.tsv`, a table a
+    person can review; firm indicators count, uncertain ones (and matches in an entry with a
+    negation) are listed for a reviewer to confirm or reject. **Solved**: Juice Shop's own flag
+    went from unsolved to solved during the run. The two are never added: a read-only agent can
+    identify far more than it can solve, and the method text says so.
+- **Cost:** about 520 MB of image and up to 1 GB of memory while it runs. The indicator table
+  covers 74 of 116 challenges and must be checked against the challenge list when the pin moves
+  (the scorer stops if a key or name no longer matches).
+- **Considered:** Juice Shop listening on port 80 itself (`PORT=80`; simpler, but no access log
+  in the run's format, so the independent count and the header check would be lost); putting
+  Juice Shop on the lab network with the front (the gateway could then reach port 3000 directly);
+  a read-only root filesystem with volumes over the folders it writes (volumes would keep state
+  between recreates); fuzzy text matching of leads to challenge descriptions (it would overclaim);
+  reading the solved flags through the gateway (they would count as the run's requests); signing
+  in with Juice Shop's built-in accounts for the signed-in lanes (that solves challenges by itself);
+  DVWA or WebGoat (fewer API routes, no machine-readable solved state).
+- **Proposed by:** Claude. **Decided by:** Murat Kabak, who chose this option on 2026-10-16. Built
+  on branch `feat/lab-juiceshop`.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

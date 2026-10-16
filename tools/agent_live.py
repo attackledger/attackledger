@@ -8,7 +8,8 @@
 
 tools/agent_preflight.sh and tools/agent_live_run.sh call the first two. Options for every
 command: --project NAME, --compose-file FILE (repeatable), --env-file FILE, --api URL (default
-http://127.0.0.1:8000), --benchmark FILE (default docs/BENCHMARK.md), --role LANE (default errh).
+http://127.0.0.1:8000), --benchmark FILE (default docs/BENCHMARK.md), --role LANE (default errh),
+--target shop|juiceshop (default shop: shop.lab.test).
 Without them, the commands use this folder's compose setup (docker compose with its .env), like
 every other command here.
 
@@ -44,6 +45,17 @@ dryrun     the whole of it against a stub Claude API, in its own compose project
            tree, with no route out: no key, no traffic outside the stack. Then it removes that
            project (its containers, networks and volumes) unless --keep.
 
+--target juiceshop  the second practice target, OWASP Juice Shop (D-060), as juice.lab.test: its own
+           engagement, `Agent live run (Juice Shop)` (scope juice.lab.test only, authorized, the same
+           research header), a lane per role as for the shop, and every lane signed out (Juice Shop's
+           own accounts are not used: signing in as one solves challenges by itself). Pre-flight also
+           checks that Juice Shop and its front run and reads Juice Shop's challenge list from inside
+           the stack (the front's container asks Juice Shop directly: nothing goes through the
+           gateway or into the front's access log). A run reads that list before and after, recreates
+           Juice Shop first if a challenge is already solved, writes a snapshot of the run's leads,
+           evidence and items with both lists (tools/benchmark/juiceshop-<date>-<kind>[-n].json, or
+           --snapshot FILE) and prints the score of tools/juiceshop_score.py.
+
 The API token is read from the env file (ATTACKLEDGER_API_TOKEN, the operator token) and never
 printed. Standard library only.
 """
@@ -62,8 +74,26 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LAB_HOST = "shop.lab.test"
-ENG_NAME = "Agent live run (lab)"
+# The practice targets a run can take (--target). The shop is lab/nginx.conf; Juice Shop (D-060) is
+# reached through its front (lab/juiceshop.conf), whose access log is the independent count.
+#   host        what the engagement's scope holds and the agent is given
+#   services    the compose services that make it up (started with --profile lab)
+#   log_service the one whose access log, in the format of LAB_LINE, counts what arrived
+TARGETS = {
+    "shop": {"host": "shop.lab.test", "eng_name": "Agent live run (lab)", "services": ("lab",),
+             "log_service": "lab", "label": ""},
+    "juiceshop": {"host": "juice.lab.test", "eng_name": "Agent live run (Juice Shop)",
+                  "services": ("juiceshop", "juiceshop-front"), "log_service": "juiceshop-front",
+                  "label": "Juice Shop"},
+}
+TARGET = "shop"
+LAB_HOST = TARGETS[TARGET]["host"]
+ENG_NAME = TARGETS[TARGET]["eng_name"]
+LAB_SERVICES = TARGETS[TARGET]["services"]
+LAB_LOG_SERVICE = TARGETS[TARGET]["log_service"]
+# Juice Shop's own API, from inside its front's container (the juiceshop network): the challenge
+# list with its solved flags, and the version.
+JUICE_API = "http://juiceshop:3000"
 LANE_ROLE = "errh"              # WSTG Error handling: two items, both testable with read-only requests
 # Lanes that need a signed-in user: their runs use the lab's fictional accounts as test accounts
 # (D-040), on an engagement of their own, so the other lanes' runs stay comparable (no accounts).
@@ -93,6 +123,14 @@ USER_AGENT = "AttackLedger agent live run"
 POLICY = "https://example.com/policy"
 WAIT_SECONDS = 15 * 60
 STUB_HOST = "claude-stub.test"
+
+
+def use_target(name: str) -> None:
+    """Point the module at a practice target (--target)."""
+    global TARGET, LAB_HOST, ENG_NAME, LAB_SERVICES, LAB_LOG_SERVICE
+    t = TARGETS[name]
+    TARGET, LAB_HOST, ENG_NAME = name, t["host"], t["eng_name"]
+    LAB_SERVICES, LAB_LOG_SERVICE = t["services"], t["log_service"]
 
 
 class Failed(Exception):
@@ -194,7 +232,9 @@ def container_checks(stack: Stack, live: bool) -> tuple[list, dict]:
 
 
 def uses_accounts() -> bool:
-    return LANE_ROLE in ACCOUNT_ROLES
+    # Juice Shop's lanes all run signed out: its accounts are its challenges (signing in as the
+    # administrator with admin123 solves one), and its registration is a write the agents do not send.
+    return TARGET == "shop" and LANE_ROLE in ACCOUNT_ROLES
 
 
 def eng_name() -> str:
@@ -294,7 +334,8 @@ def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
         "include": [LAB_HOST], "exclude": [], "rate_limit_rps": 2, "research_header": HEADER,
         "research_user_agent": USER_AGENT, "enabled_modules": [], "crawl_depth": 1})
     stack.api("POST", f"/engagements/{e['id']}/attest",
-              {"operator": "agent_live.py (lab)", "policy_url": POLICY, "confirm": True})
+              {"operator": f"agent_live.py ({'lab' if TARGET == 'shop' else TARGET})", "policy_url": POLICY,
+               "confirm": True})
     asset = next(a for a in stack.api("GET", f"/engagements/{e['id']}/coverage")["assets"] if a["host"] == LAB_HOST)
     lane = stack.api("POST", "/lanes", {"asset_id": asset["asset_id"], "role": LANE_ROLE})
     if uses_accounts():
@@ -308,14 +349,16 @@ def preflight(stack: Stack, live: bool, prepare: bool = True) -> dict:
                                                 if uses_accounts() and prepare else "") + ".", flush=True)
     checks = []
     up = stack.running()
-    missing = [s for s in ("api", "gateway", "worker", "lab") if s not in up]
-    checks.append(("stack", not missing, "api, gateway, worker and lab are running" if not missing
-                   else f"not running: {', '.join(missing)} (docker compose up -d; docker compose --profile lab "
-                        f"up -d lab)"))
+    missing = [s for s in ("api", "gateway", "worker", *LAB_SERVICES) if s not in up]
+    checks.append(("stack", not missing, f"api, gateway, worker and {' and '.join(LAB_SERVICES)} are running"
+                   if not missing else f"not running: {', '.join(missing)} (docker compose up -d; docker compose "
+                                       f"--profile lab up -d {' '.join(LAB_SERVICES)})"))
     worker = {}
     if not missing:
         more, worker = container_checks(stack, live)
         checks += more
+        if TARGET == "juiceshop":
+            checks.append(juice_check(stack))
     eng = lane = None
     try:
         agent = next((x for x in stack.api("GET", "/executors") if x["key"] == "agent"), {})
@@ -351,6 +394,128 @@ def preflight(stack: Stack, live: bool, prepare: bool = True) -> dict:
     return {"engagement": eng, "lane": lane, "worker": worker}
 
 
+# ---- Juice Shop (D-060) ----------------------------------------------------------------------
+
+def juice_get(stack: Stack, path: str):
+    """GET a path of Juice Shop's own API from inside its front's container, straight to Juice Shop on
+    the juiceshop network: not through the gateway, and not through the front (so not in its access
+    log, which counts the agent's requests). JSON, or Failed."""
+    p = stack.run("exec", "-T", TARGETS["juiceshop"]["log_service"], "wget", "-q", "-T", "15", "-O", "-",
+                  JUICE_API + path, check=False)
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        raise Failed(f"Juice Shop did not answer {path} from inside the stack: "
+                     f"{(p.stderr or p.stdout or '').strip()[-200:] or 'no answer'}")
+
+
+def juice_challenges(stack: Stack) -> list[dict]:
+    """Juice Shop's challenge list with its solved flags (/api/Challenges), the fields scoring needs."""
+    data = juice_get(stack, "/api/Challenges")
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not rows:
+        raise Failed("Juice Shop's /api/Challenges answered without a challenge list")
+    return [{"key": c["key"], "name": c["name"], "category": c["category"], "difficulty": c.get("difficulty"),
+             "solved": bool(c.get("solved")), "disabledEnv": c.get("disabledEnv") or []} for c in rows]
+
+
+def juice_version(stack: Stack) -> str:
+    try:
+        return str(juice_get(stack, "/rest/admin/application-version").get("version") or "?")
+    except (Failed, AttributeError):
+        return "?"
+
+
+def juice_check(stack: Stack) -> tuple:
+    """Pre-flight: Juice Shop answers inside the stack, and no challenge is solved yet."""
+    try:
+        rows = juice_challenges(stack)
+    except Failed as e:
+        return ("juice shop", False, f"{e} (docker compose --profile lab up -d {' '.join(LAB_SERVICES)})")
+    solved = sum(c["solved"] for c in rows)
+    return ("juice shop", not solved,
+            f"Juice Shop {juice_version(stack)}: {len(rows)} challenges, none solved (read inside the stack, "
+            f"not through the gateway)" if not solved else
+            f"{solved} challenge(s) already solved: a run starts on a fresh shop (agent_live.py run recreates it; "
+            f"or docker compose --profile lab up -d --force-recreate juiceshop)")
+
+
+def fresh_juice_shop(stack: Stack) -> list[dict]:
+    """The challenge list before a run, on a fresh shop: Juice Shop is recreated (its writes are in the
+    container's own layer, so a new container has no challenge solved) if any is solved."""
+    rows = None
+    for _ in range(40):
+        try:
+            rows = juice_challenges(stack)
+            break
+        except Failed:
+            time.sleep(3)
+    if rows is None:
+        rows = juice_challenges(stack)
+    if not any(c["solved"] for c in rows):
+        return rows
+    print(f"Juice Shop has {sum(c['solved'] for c in rows)} challenge(s) solved already: recreating it for a "
+          f"fresh shop.", flush=True)
+    stack.run("--profile", "lab", "up", "-d", "--force-recreate", "--wait", "juiceshop", timeout=600)
+    for _ in range(40):
+        try:
+            rows = juice_challenges(stack)
+            if not any(c["solved"] for c in rows):
+                return rows
+        except Failed:
+            pass
+        time.sleep(3)
+    raise Failed("Juice Shop still has solved challenges after it was recreated")
+
+
+def scorer():
+    """tools/juiceshop_score.py, loaded from this tree."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("juiceshop_score", ROOT / "tools" / "juiceshop_score.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def juice_snapshot(stack: Stack, args, job: dict, eng: dict, lane: dict, m: dict, before: list, today: str) -> str:
+    """After a run on Juice Shop: the run's leads, agent evidence and items, with the challenge list read
+    before and after, written for tools/juiceshop_score.py (offline); returns that score (Markdown)."""
+    after = juice_challenges(stack)
+    t0 = job.get("started_at")
+    t0 = dt.datetime.fromisoformat(t0.replace("Z", "+00:00")) if t0 else None
+    leads = [{"id": x["id"], "title": x["title"], "detail": x["detail"], "severity": x["severity"],
+              "source_url": x["source_url"]}
+             for x in stack.api("GET", f"/engagements/{eng['id']}/leads?kind=agent")
+             if isinstance(x.get("detail"), dict) and x["detail"].get("lane_id") == lane["id"]]
+    evidence = [{"id": e["id"], "item_idx": e["item_idx"], "kind": e.get("kind"), "uri": e.get("uri"),
+                 "summary": e.get("summary")}
+                for e in lane.get("evidence", []) if e.get("source") == "agent" and t0 is not None
+                and dt.datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")) >= t0]
+    snap = {"format": "attackledger-juiceshop-snapshot/1", "date": today, "dry_run": bool(args.dry_run),
+            "juice_shop_version": juice_version(stack), "in_docker": True, "target_host": LAB_HOST,
+            "engagement_id": eng["id"], "job_id": job["id"], "lane": {"id": lane["id"], "role": lane["role"]},
+            "agent_status": m.get("agent_status"), "agent_summary": m.get("summary", ""),
+            "leads": leads, "evidence": evidence,
+            "items": [{"idx": i["idx"], "key": i["key"], "text": i["text"], "state": i["state"],
+                       "na_reason": i.get("na_reason")} for i in lane.get("items", [])],
+            "challenges_before": before, "challenges_after": after}
+    path = Path(args.snapshot) if args.snapshot else None
+    if path is None and not args.no_append:
+        kind = "agent-dryrun" if args.dry_run else "agent-live"
+        out_dir = ROOT / "tools" / "benchmark"
+        n = 1 + sum(1 for _ in out_dir.glob(f"juiceshop-{today}-{kind}*.json"))
+        path = out_dir / f"juiceshop-{today}-{kind}{'' if n == 1 else f'-{n}'}.json"
+    sc = scorer()
+    text = sc.markdown(sc.score(snap, sc.load_map()))
+    print(text, flush=True)
+    if path is not None:
+        path.write_text(json.dumps(snap, indent=2) + "\n")
+        shown = path.relative_to(ROOT) if path.resolve().is_relative_to(ROOT) else path
+        print(f"Snapshot for scoring in {shown}: python3 tools/juiceshop_score.py {shown} [--review FILE]",
+              flush=True)
+    return text
+
+
 # ---- the run ---------------------------------------------------------------------------------
 
 LAB_LINE = re.compile(r'^(?P<port>\d+) "(?P<method>[A-Z]+) (?P<path>\S*) [^"]*" (?P<status>\d+) '
@@ -359,9 +524,10 @@ LAB_LINE = re.compile(r'^(?P<port>\d+) "(?P<method>[A-Z]+) (?P<path>\S*) [^"]*" 
 
 
 def lab_requests(stack: Stack, since: float, until: float) -> list[dict]:
-    """The lab's own access log (lab/nginx.conf) between two times: an independent count."""
+    """The target's own access log (lab/nginx.conf, or Juice Shop's front, lab/juiceshop.conf) between
+    two times: an independent count."""
     stamp = dt.datetime.fromtimestamp(since - 5, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    p = stack.run("logs", "--no-log-prefix", "--since", stamp, "lab", check=False)
+    p = stack.run("logs", "--no-log-prefix", "--since", stamp, LAB_LOG_SERVICE, check=False)
     out = []
     for line in (p.stdout or "").splitlines():
         m = LAB_LINE.match(line.strip())
@@ -453,6 +619,8 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
     u = m["usage"] or {}
     methods = ", ".join(f"{k} {v}" for k, v in sorted(m["target_by_method"].items())) or "none"
     refused = "; ".join(f"{r['kind']} {r['method']} {r['url']}: {r['reason']}" for r in m["refused_rows"]) or "none"
+    where = TARGETS[TARGET]["label"]
+    label = ", ".join(x for x in (where, label) if x)
     title = (f"## Agent run dry run against a stub Claude API ({today}{', ' + label if label else ''})" if dry
              else f"## Live agent run ({today}{', ' + label if label else ''})")
     lead = ("Not a measurement of the model: the Claude API was a local stub (`tools/agent_dryrun/claude_stub.py`) "
@@ -502,9 +670,10 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
 
 def run(stack: Stack, args) -> dict:
     live = not args.dry_run
-    if "lab" not in stack.running():
+    if not set(LAB_SERVICES) <= stack.running():
         print(f"Starting the lab ({LAB_HOST}).", flush=True)
-        stack.run("--profile", "lab", "up", "-d", "lab")
+        stack.run("--profile", "lab", "up", "-d", *LAB_SERVICES)
+    juice_before = fresh_juice_shop(stack) if TARGET == "juiceshop" else None
     pre = preflight(stack, live=live, prepare=True)
     worker = pre["worker"]
     if worker.get("model") != worker.get("cheapest") and not args.any_model:
@@ -542,6 +711,8 @@ def run(stack: Stack, args) -> dict:
     print(text, flush=True)
     for line in (job.get("log") or "").splitlines()[-12:]:
         print(f"  log: {line[:200]}")
+    if juice_before is not None:
+        text += "\n" + juice_snapshot(stack, args, job, eng, lane_now, m, juice_before, today)
     if not args.no_append:
         bench = Path(args.benchmark) if args.benchmark else ROOT / "docs" / "BENCHMARK.md"
         with open(bench, "a") as f:
@@ -613,8 +784,8 @@ def dryrun(args) -> None:
               flush=True)
         if not args.no_build:
             stack.run("build", "api", "gateway", "worker", capture=False, timeout=3600)
-        stack.run("--profile", "lab", "up", "-d", "--no-build", "db", "api", "claude-stub", "gateway", "worker", "lab",
-                  timeout=900)
+        stack.run("--profile", "lab", "up", "-d", "--no-build", "db", "api", "claude-stub", "gateway", "worker",
+                  *LAB_SERVICES, timeout=900)
         for _ in range(60):
             try:
                 stack.api("GET", "/executors")
@@ -679,8 +850,13 @@ def main(argv=None) -> int:
     ap.add_argument("--label", default="", help="added to the benchmark section's title")
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--role", choices=ROLES, default=LANE_ROLE, help="the WSTG lane on the lab to run")
+    ap.add_argument("--target", choices=sorted(TARGETS), default="shop",
+                    help="the practice target: the shop (shop.lab.test) or OWASP Juice Shop (juice.lab.test, D-060)")
+    ap.add_argument("--snapshot", help="with --target juiceshop: where to write the run's snapshot for "
+                                       "tools/juiceshop_score.py")
     args = ap.parse_args(argv)
     LANE_ROLE = args.role
+    use_target(args.target)
     try:
         if args.command == "preflight":
             preflight(Stack(args), live=not args.dry_run, prepare=not args.no_prepare)

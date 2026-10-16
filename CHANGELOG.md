@@ -5,6 +5,13 @@ before 1.0, minor versions may change the data model.
 
 ## [Unreleased]
 
+### Added
+- OWASP Juice Shop 20.2.0 as a second, optional practice target in the `lab` profile, behind a
+  small front as `juice.lab.test`, with no published port (D-060). `tools/agent_live.py
+  --target juiceshop` runs an agent on it, and `tools/juiceshop_score.py` scores a run against
+  Juice Shop's own challenge list: challenges identified by an explicit, reviewable indicator
+  table, and challenges Juice Shop marked solved during the run.
+
 ## [0.9.0] - 2026-10-14
 
 An internal security review with its fixes, supply-chain hardening, browser end-to-end tests,

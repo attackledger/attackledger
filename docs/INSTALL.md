@@ -388,7 +388,8 @@ never follows redirects, and logs every request.
 | `internal` | worker, gateway | the worker's only network: the gateway's proxy, resolver and relay |
 | `control` | gateway, api | rules and the request log for the gateway; the worker's relayed calls |
 | `database` | db, api | only the API reaches the database |
-| `lab` | gateway, lab, lab-proxy | the practice target (section 19) |
+| `lab` | gateway, lab, lab-proxy, juiceshop-front | the practice targets (section 19) |
+| `juiceshop` | juiceshop-front, juiceshop | OWASP Juice Shop behind its front, when started (section 19, D-060) |
 | `default` | api, web, gateway, caddy (and lab-proxy, when the lab runs) | the way out: the timestamp authority, targets, Caddy; the published ports |
 
 All but `default` are `internal: true` in Docker: nothing on them has a route out. They also
@@ -1431,6 +1432,62 @@ its own compose project with no route out. A stub Claude API there plays a fixed
 the same SDK, gateway checks and tools. Then it removes the project. With a signed-in lane
 (`--role athz`, for example), the stub sends its first request as a test account, and the dry run
 fails unless the lab saw it signed in.
+
+### A second target: OWASP Juice Shop
+
+For a wider surface than the shop's 31 planted issues, the lab profile also has
+[OWASP Juice Shop](https://owasp.org/www-project-juice-shop/), an intentionally vulnerable shop
+with its own list of about a hundred challenges (D-060). It is optional and starts only when
+named:
+
+```sh
+docker compose --profile lab up -d juiceshop-front     # starts juiceshop first
+docker compose --profile lab rm --stop --force juiceshop-front juiceshop
+```
+
+- **Version.** `bkimminich/juice-shop:v20.2.0` (released 2026-08-10), pinned by its multi-arch
+  index digest `sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b`
+  (`linux/amd64`, `linux/arm64`). It runs with its default configuration, so the challenges that
+  are dangerous in a container (remote code execution, XXE, NoSQL denial of service and the like,
+  18 of 116) stay disabled, as Juice Shop does by itself in Docker. The chatbot and Web3
+  challenges need services on the internet that the lab cannot reach.
+- **How it is reached.** Juice Shop listens on port 3000 on a network of its own (`juiceshop`)
+  that only its front shares. The front, a small nginx (`lab/juiceshop.conf`), is on the lab
+  network as `juice.lab.test`, port 80, like the shop. The gateway reaches the front only;
+  nothing is published on the host, and neither network has a route out or a host address.
+  The front passes requests on unchanged and keeps an access log in the shop's format, which
+  is how the scripts below count what arrived.
+- **Hardening.** Like every service (no capabilities, `no-new-privileges`, non-root, memory and
+  process ceilings), except the read-only root filesystem: Juice Shop rewrites its own files at
+  every start, and its challenges write by design. What it writes stays in the container,
+  so `docker compose --profile lab up -d --force-recreate juiceshop` gives a fresh shop with no
+  challenge solved.
+- **Engagement.** In scope: `juice.lab.test` only. Every lane runs signed out: Juice Shop's
+  own accounts are part of its challenges (signing in as the administrator solves one).
+- **Do not publish it.** It is vulnerable on purpose. Do not add a port for it, and do not
+  put it behind the lab proxy: a person who wants to browse it can do so from their own copy.
+
+An agent run on it works like one on the shop, with `--target juiceshop`. Pre-flight also
+checks that Juice Shop answers and that no challenge is solved yet (it reads the challenge list
+from inside the stack, not through the gateway). The run recreates Juice Shop first if a
+challenge is solved, reads the challenge list before and after, writes a snapshot of the run's
+leads, evidence and items next to its numbers (`tools/benchmark/juiceshop-<date>-agent-live.json`)
+and prints a score:
+
+```sh
+bash tools/agent_preflight.sh --target juiceshop --role info
+bash tools/agent_live_run.sh --target juiceshop --role info --any-model --max-turns 80 --max-requests 200
+python3 tools/juiceshop_score.py tools/benchmark/juiceshop-<date>-agent-live.json [--review review.json]
+```
+
+The score has two counts that are never added together. **Identified**: a lead or evidence entry
+of the run names a challenge's issue by an explicit indicator in
+`tools/juiceshop/challenge_map.tsv`, a table to review (firm indicators name a file, path or
+artefact only that challenge is about and are counted; uncertain ones are listed, with the text
+they were found in, for a person to confirm or reject with `--review`). **Solved**: Juice Shop's
+own flag for the challenge went from unsolved to solved during the run. An agent that only reads
+(GET, HEAD, OPTIONS) can identify far more challenges than it can solve: most need a write. The
+dry run works for it too: `python3 tools/agent_live.py dryrun --target juiceshop`.
 
 ### Capture a HAR of the lab from a browser
 

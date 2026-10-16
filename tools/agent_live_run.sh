@@ -4,6 +4,8 @@
 # worker's model (the cheapest configured, unless --any-model), waits for it, prints what was sent
 # and spent and appends it to docs/BENCHMARK.md. The API token comes from .env, never printed.
 #   bash tools/agent_live_run.sh [--role errh|info|conf|inpv|idnt|busl|athn|sess|athz|cryp|clnt|apit] [--any-model] [--max-turns N] [--max-requests N] [--no-append]
+#                                [--target shop|juiceshop] [--snapshot FILE]   (juiceshop: D-060; also writes a snapshot
+#                                for tools/juiceshop_score.py and prints its score)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 exec python3 tools/agent_live.py run "$@"
