@@ -1119,6 +1119,15 @@ options considered and who decided.
   reading the solved flags through the gateway (they would count as the run's requests); signing
   in with Juice Shop's built-in accounts for the signed-in lanes (that solves challenges by itself);
   DVWA or WebGoat (fewer API routes, no machine-readable solved state).
+- **Answer list and prior knowledge (added 2026-10-16, after the first four Opus runs):** Juice Shop
+  serves its own challenge list, descriptions and hints signed out (`/api/Challenges`, `/api/Hints`)
+  and progress codes (`/rest/continue-code`). The front now answers 404 on them, so an agent cannot
+  claim a challenge from the list; the Score Board challenge cannot be solved as a result. The first
+  four runs (jobs 102-105) never requested them. Juice Shop and its solutions are public and widely
+  documented, so a model may know them: those runs sent known solution payloads (the search
+  `qwert'))--`, the redirect allowlist bypass) with little or no discovery first. A Juice Shop score
+  therefore measures recall as well as finding, and is reported with that note; the shop lab, whose
+  issues are not published walkthroughs, stays the measure of finding.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak, who chose this option on 2026-10-16. Built
   on branch `feat/lab-juiceshop`.
 
