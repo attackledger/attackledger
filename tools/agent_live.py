@@ -505,14 +505,15 @@ def juice_snapshot(stack: Stack, args, job: dict, eng: dict, lane: dict, m: dict
         out_dir = ROOT / "tools" / "benchmark"
         n = 1 + sum(1 for _ in out_dir.glob(f"juiceshop-{today}-{kind}*.json"))
         path = out_dir / f"juiceshop-{today}-{kind}{'' if n == 1 else f'-{n}'}.json"
-    sc = scorer()
-    text = sc.markdown(sc.score(snap, sc.load_map()))
-    print(text, flush=True)
+    # The snapshot is written before it is scored, so a scoring failure never loses the run's data.
     if path is not None:
         path.write_text(json.dumps(snap, indent=2) + "\n")
         shown = path.relative_to(ROOT) if path.resolve().is_relative_to(ROOT) else path
         print(f"Snapshot for scoring in {shown}: python3 tools/juiceshop_score.py {shown} [--review FILE]",
               flush=True)
+    sc = scorer()
+    text = sc.markdown(sc.score(snap, sc.load_map()))
+    print(text, flush=True)
     return text
 
 

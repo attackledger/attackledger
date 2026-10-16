@@ -1,0 +1,2122 @@
+{
+  "format": "attackledger-juiceshop-snapshot/1",
+  "date": "2026-10-16",
+  "dry_run": false,
+  "juice_shop_version": "20.2.0",
+  "in_docker": true,
+  "target_host": "juice.lab.test",
+  "engagement_id": 19,
+  "job_id": 103,
+  "lane": {
+    "id": 58,
+    "role": "conf"
+  },
+  "agent_status": "finished",
+  "agent_summary": "Lane 58 (Configuration, WSTG-CONF-01..11) worked against juice.lab.test, an OWASP Juice Shop (Node/Express + Angular SPA) behind nginx/1.30.5. HTTPS/443 refused; only HTTP/80 answers. The host uses a catch-all that returns the SPA index (200) for unknown paths, so bodies were compared, not status codes.\n\nDone: 01 network infra (nginx/1.30.5 banner, no TLS). 02 platform (Express ^4.22.1 verbose stack traces leaking server paths; unauth application-configuration JSON). 03 file extensions (direct .bak blocked by \"only .md/.pdf\" filter, bypassed with poison null byte /ftp/..%2500.md to retrieve backup contents). 04 backup/unreferenced files (/ftp directory listing exposes *.bak, incident-support.kdbx, etc.; /.git/HEAD and /.env absent). 05 admin interfaces (unauth /metrics Prometheus endpoint and /rest/admin/application-configuration). 06 HTTP methods (OPTIONS advertises GET,HEAD,PUT,PATCH,POST,DELETE with ACAO:*). 07 HSTS (HTTP-only, no Strict-Transport-Security header). 08 RIA cross-domain (no crossdomain.xml/clientaccesspolicy.xml \u2014 catch-all index only). 09 file permissions (world-readable /ftp serving sensitive files; OS-level perms not inspectable over HTTP). 11 cloud storage (config references only local assets, no S3/GCS/Azure buckets found).\n\nN/A: 10 subdomain takeover \u2014 single in-scope host, no subdomains/dangling CNAMEs in scope and DNS resolution not possible with read-only HTTP.\n\nLeads recorded: exposed /ftp with null-byte extension-filter bypass (medium); unauth /metrics (low); verbose Express stack traces (low); unauth admin application-configuration (low). All testing was read-only; no writes proposed (engagement is read-only).",
+  "leads": [
+    {
+      "id": 150,
+      "title": "[agent] Exposed /ftp directory listing with backup and sensitive files + null-byte extension bypass",
+      "detail": {
+        "text": "GET http://juice.lab.test/ftp returns a directory listing of leftover/sensitive files (package.json.bak, package-lock.json.bak, coupons_2013.md.bak, incident-support.kdbx, encrypt.pyc, suspicious_errors.yml, announcement_encrypted.md). An extension filter blocks non-.md/.pdf downloads, but the poison null-byte path /ftp/coupons_2013.md.bak%2500.md bypasses it and returns the backup file contents. Allows retrieval of files intended to be blocked.",
+        "lane": "conf",
+        "lane_id": 58
+      },
+      "severity": "medium",
+      "source_url": "http://juice.lab.test/ftp"
+    },
+    {
+      "id": 148,
+      "title": "[agent] Unauthenticated Prometheus /metrics endpoint exposed",
+      "detail": {
+        "text": "GET http://juice.lab.test/metrics returns 200 with full Prometheus metrics (process CPU/memory, open FDs, event-loop lag, HTTP status counters, app startup timings) with no authentication. Discloses internal runtime/infra details.",
+        "lane": "conf",
+        "lane_id": 58
+      },
+      "severity": "low",
+      "source_url": "http://juice.lab.test/metrics"
+    },
+    {
+      "id": 151,
+      "title": "[agent] Unauthenticated admin application-configuration disclosure",
+      "detail": {
+        "text": "GET http://juice.lab.test/rest/admin/application-configuration returns the full application configuration JSON (server settings, OAuth client IDs, contact emails, feature flags) without authentication.",
+        "lane": "conf",
+        "lane_id": 58
+      },
+      "severity": "low",
+      "source_url": "http://juice.lab.test/rest/admin/application-configuration"
+    },
+    {
+      "id": 149,
+      "title": "[agent] Verbose Express stack traces disclose paths and versions",
+      "detail": {
+        "text": "GET http://juice.lab.test/ftp/package.json.bak returns a 403 error page containing a full Express stack trace revealing framework version (Express ^4.22.1) and absolute server source paths (/juice-shop/build/routes/fileServer.js, /juice-shop/node_modules/...). Error handling leaks internal implementation detail.",
+        "lane": "conf",
+        "lane_id": 58
+      },
+      "severity": "low",
+      "source_url": "http://juice.lab.test/ftp/package.json.bak"
+    }
+  ],
+  "evidence": [
+    {
+      "id": 1239,
+      "item_idx": 1,
+      "kind": "response",
+      "uri": "http://juice.lab.test/",
+      "summary": "[agent] GET http://juice.lab.test/ -> 200. GET / returned a Server banner disclosing the exact reverse proxy version (nginx/1.30.5). HTTPS on port 443 was refused (no TLS service); only HTTP/port 80 answers on this host."
+    },
+    {
+      "id": 1240,
+      "item_idx": 2,
+      "kind": "response",
+      "uri": "http://juice.lab.test/ftp/package.json.bak",
+      "summary": "[agent] GET http://juice.lab.test/ftp/package.json.bak -> 403. Requesting /ftp/package.json.bak returned a 403 with a full Express stack trace disclosing framework version (Express ^4.22.1) and server file paths (/juice-shop/build/routes/fileServer.js). /rest/admin/application-configuration returned the full application configuration JSON unauthenticated, confirming a Node/Express + Angular platform with verbose error handling."
+    },
+    {
+      "id": 1241,
+      "item_idx": 2,
+      "kind": "response",
+      "uri": "http://juice.lab.test/rest/admin/application-configuration",
+      "summary": "[agent] GET http://juice.lab.test/rest/admin/application-configuration -> 200. Requesting /ftp/package.json.bak returned a 403 with a full Express stack trace disclosing framework version (Express ^4.22.1) and server file paths (/juice-shop/build/routes/fileServer.js). /rest/admin/application-configuration returned the full application configuration JSON unauthenticated, confirming a Node/Express + Angular platform with verbose error handling. [2 values redacted: email address]"
+    },
+    {
+      "id": 1242,
+      "item_idx": 3,
+      "kind": "response",
+      "uri": "http://juice.lab.test/ftp/package.json.bak",
+      "summary": "[agent] GET http://juice.lab.test/ftp/package.json.bak -> 403. Direct GET /ftp/package.json.bak is blocked (403 \"Only .md and .pdf files are allowed!\"), but GET /ftp/coupons_2013.md.bak%2500.md (poison null byte) bypassed the extension filter and returned the raw .bak file contents (131 bytes, application/octet-stream), showing unsafe file-extension handling that exposes backup files."
+    },
+    {
+      "id": 1243,
+      "item_idx": 3,
+      "kind": "response",
+      "uri": "http://juice.lab.test/ftp/coupons_2013.md.bak%2500.md",
+      "summary": "[agent] GET http://juice.lab.test/ftp/coupons_2013.md.bak%2500.md -> 200. Direct GET /ftp/package.json.bak is blocked (403 \"Only .md and .pdf files are allowed!\"), but GET /ftp/coupons_2013.md.bak%2500.md (poison null byte) bypassed the extension filter and returned the raw .bak file contents (131 bytes, application/octet-stream), showing unsafe file-extension handling that exposes backup files."
+    },
+    {
+      "id": 1244,
+      "item_idx": 4,
+      "kind": "response",
+      "uri": "http://juice.lab.test/ftp",
+      "summary": "[agent] GET http://juice.lab.test/ftp -> 200. GET /ftp returned a directory listing exposing unreferenced/backup files (package.json.bak, package-lock.json.bak, coupons_2013.md.bak, incident-support.kdbx, encrypt.pyc, suspicious_errors.yml). VCS/metadata probes /.git/HEAD and /.env returned the SPA index (catch-all 200), i.e. not present; bodies compared to confirm they are not real files."
+    },
+    {
+      "id": 1245,
+      "item_idx": 4,
+      "kind": "response",
+      "uri": "http://juice.lab.test/.git/HEAD",
+      "summary": "[agent] GET http://juice.lab.test/.git/HEAD -> 200. GET /ftp returned a directory listing exposing unreferenced/backup files (package.json.bak, package-lock.json.bak, coupons_2013.md.bak, incident-support.kdbx, encrypt.pyc, suspicious_errors.yml). VCS/metadata probes /.git/HEAD and /.env returned the SPA index (catch-all 200), i.e. not present; bodies compared to confirm they are not real files."
+    },
+    {
+      "id": 1246,
+      "item_idx": 4,
+      "kind": "response",
+      "uri": "http://juice.lab.test/.env",
+      "summary": "[agent] GET http://juice.lab.test/.env -> 200. GET /ftp returned a directory listing exposing unreferenced/backup files (package.json.bak, package-lock.json.bak, coupons_2013.md.bak, incident-support.kdbx, encrypt.pyc, suspicious_errors.yml). VCS/metadata probes /.git/HEAD and /.env returned the SPA index (catch-all 200), i.e. not present; bodies compared to confirm they are not real files."
+    },
+    {
+      "id": 1247,
+      "item_idx": 5,
+      "kind": "response",
+      "uri": "http://juice.lab.test/metrics",
+      "summary": "[agent] GET http://juice.lab.test/metrics -> 200. GET /metrics returned a Prometheus metrics endpoint (process CPU/memory, event-loop, HTTP counters) with no authentication. GET /rest/admin/application-configuration returned the full admin application configuration JSON with no authentication. Both are admin/monitoring interfaces reachable unauthenticated."
+    },
+    {
+      "id": 1248,
+      "item_idx": 5,
+      "kind": "response",
+      "uri": "http://juice.lab.test/rest/admin/application-configuration",
+      "summary": "[agent] GET http://juice.lab.test/rest/admin/application-configuration -> 200. GET /metrics returned a Prometheus metrics endpoint (process CPU/memory, event-loop, HTTP counters) with no authentication. GET /rest/admin/application-configuration returned the full admin application configuration JSON with no authentication. Both are admin/monitoring interfaces reachable unauthenticated. [2 values redacted: email address]"
+    },
+    {
+      "id": 1249,
+      "item_idx": 6,
+      "kind": "response",
+      "uri": "http://juice.lab.test/",
+      "summary": "[agent] OPTIONS http://juice.lab.test/ -> 204. OPTIONS / returned 204 advertising Access-Control-Allow-Methods: GET,HEAD,PUT,PATCH,POST,DELETE and Access-Control-Allow-Origin: *. HTTP methods were enumerated via OPTIONS; the server advertises write methods alongside a wildcard CORS policy."
+    },
+    {
+      "id": 1250,
+      "item_idx": 7,
+      "kind": "response",
+      "uri": "http://juice.lab.test/",
+      "summary": "[agent] GET http://juice.lab.test/ -> 200. The site is served over HTTP only (HTTPS/443 refused) and the GET / response contains no Strict-Transport-Security header, so HSTS is not enforced."
+    },
+    {
+      "id": 1251,
+      "item_idx": 8,
+      "kind": "response",
+      "uri": "http://juice.lab.test/crossdomain.xml",
+      "summary": "[agent] GET http://juice.lab.test/crossdomain.xml -> 200. GET /crossdomain.xml and /clientaccesspolicy.xml both returned the SPA index HTML (catch-all 200), not an actual RIA cross-domain policy file, so no Flash/Silverlight cross-domain policy is served."
+    },
+    {
+      "id": 1252,
+      "item_idx": 8,
+      "kind": "response",
+      "uri": "http://juice.lab.test/clientaccesspolicy.xml",
+      "summary": "[agent] GET http://juice.lab.test/clientaccesspolicy.xml -> 200. GET /crossdomain.xml and /clientaccesspolicy.xml both returned the SPA index HTML (catch-all 200), not an actual RIA cross-domain policy file, so no Flash/Silverlight cross-domain policy is served."
+    },
+    {
+      "id": 1253,
+      "item_idx": 9,
+      "kind": "response",
+      "uri": "http://juice.lab.test/ftp",
+      "summary": "[agent] GET http://juice.lab.test/ftp -> 200. The /ftp directory is world-readable and lists/serves sensitive files (e.g. incident-support.kdbx keepass DB, *.bak backups) that should not be web-accessible; combined with the null-byte retrieval this shows overly permissive file exposure. OS-level file permissions cannot be inspected with read-only HTTP."
+    },
+    {
+      "id": 1254,
+      "item_idx": 9,
+      "kind": "response",
+      "uri": "http://juice.lab.test/ftp/coupons_2013.md.bak%2500.md",
+      "summary": "[agent] GET http://juice.lab.test/ftp/coupons_2013.md.bak%2500.md -> 200. The /ftp directory is world-readable and lists/serves sensitive files (e.g. incident-support.kdbx keepass DB, *.bak backups) that should not be web-accessible; combined with the null-byte retrieval this shows overly permissive file exposure. OS-level file permissions cannot be inspected with read-only HTTP."
+    },
+    {
+      "id": 1255,
+      "item_idx": 11,
+      "kind": "response",
+      "uri": "http://juice.lab.test/rest/admin/application-configuration",
+      "summary": "[agent] GET http://juice.lab.test/rest/admin/application-configuration -> 200. The application-configuration JSON (image/logo paths, promotion assets) references only local/relative asset paths and no external cloud storage buckets (S3/GCS/Azure); no cloud storage endpoints were found referenced by the app. [2 values redacted: email address]"
+    }
+  ],
+  "items": [
+    {
+      "idx": 1,
+      "key": "WSTG-CONF-01",
+      "text": "Test network infrastructure configuration",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 2,
+      "key": "WSTG-CONF-02",
+      "text": "Test application platform configuration",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 3,
+      "key": "WSTG-CONF-03",
+      "text": "Test file extension handling for sensitive information",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 4,
+      "key": "WSTG-CONF-04",
+      "text": "Review old backup and unreferenced files",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 5,
+      "key": "WSTG-CONF-05",
+      "text": "Enumerate infrastructure and application admin interfaces",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 6,
+      "key": "WSTG-CONF-06",
+      "text": "Test HTTP methods",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 7,
+      "key": "WSTG-CONF-07",
+      "text": "Test HTTP Strict Transport Security",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 8,
+      "key": "WSTG-CONF-08",
+      "text": "Test RIA cross-domain policy",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 9,
+      "key": "WSTG-CONF-09",
+      "text": "Test file permissions",
+      "state": "done",
+      "na_reason": null
+    },
+    {
+      "idx": 10,
+      "key": "WSTG-CONF-10",
+      "text": "Test for subdomain takeover",
+      "state": "na",
+      "na_reason": "[agent] Single in-scope host (juice.lab.test) resolving to one origin; no subdomains or dangling CNAMEs are in scope, and DNS/CNAME resolution needed for subdomain-takeover testing cannot be performed with read-only HTTP requests to this host."
+    },
+    {
+      "idx": 11,
+      "key": "WSTG-CONF-11",
+      "text": "Test cloud storage",
+      "state": "done",
+      "na_reason": null
+    }
+  ],
+  "challenges_before": [
+    {
+      "key": "passwordHashLeakChallenge",
+      "name": "Password Hash Leak",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "restfulXssChallenge",
+      "name": "API-only XSS",
+      "category": "XSS",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "accessLogDisclosureChallenge",
+      "name": "Access Log",
+      "category": "Observability Failures",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "registerAdminChallenge",
+      "name": "Admin Registration",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "adminSectionChallenge",
+      "name": "Admin Section",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "fileWriteChallenge",
+      "name": "Arbitrary File Write",
+      "category": "Vulnerable Components",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "resetPasswordBjoernOwaspChallenge",
+      "name": "Bjoern's Favorite Pet",
+      "category": "Broken Authentication",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "tokenSaleChallenge",
+      "name": "Blockchain Hype",
+      "category": "Security through Obscurity",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "nftUnlockChallenge",
+      "name": "NFT Takeover",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "nftMintChallenge",
+      "name": "Mint the Honey Pot",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "web3WalletChallenge",
+      "name": "Wallet Depletion",
+      "category": "Miscellaneous",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "web3SandboxChallenge",
+      "name": "Web3 Sandbox",
+      "category": "Broken Access Control",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "rceChallenge",
+      "name": "Blocked RCE DoS",
+      "category": "Insecure Deserialization",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "captchaBypassChallenge",
+      "name": "CAPTCHA Bypass",
+      "category": "Broken Anti Automation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "changePasswordBenderChallenge",
+      "name": "Change Bender's Password",
+      "category": "Broken Authentication",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "christmasSpecialChallenge",
+      "name": "Christmas Special",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "usernameXssChallenge",
+      "name": "CSP Bypass",
+      "category": "XSS",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "persistedXssUserChallenge",
+      "name": "Client-side XSS Protection",
+      "category": "XSS",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "directoryListingChallenge",
+      "name": "Confidential Document",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "localXssChallenge",
+      "name": "DOM XSS",
+      "category": "XSS",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dbSchemaChallenge",
+      "name": "Database Schema",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "deprecatedInterfaceChallenge",
+      "name": "Deprecated Interface",
+      "category": "Security Misconfiguration",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "easterEggLevelOneChallenge",
+      "name": "Easter Egg",
+      "category": "Broken Access Control",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "emailLeakChallenge",
+      "name": "Email Leak",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "emptyUserRegistration",
+      "name": "Empty User Registration",
+      "category": "Improper Input Validation",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "ephemeralAccountantChallenge",
+      "name": "Ephemeral Accountant",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "errorHandlingChallenge",
+      "name": "Error Handling",
+      "category": "Security Misconfiguration",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "manipulateClockChallenge",
+      "name": "Expired Coupon",
+      "category": "Improper Input Validation",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "extraLanguageChallenge",
+      "name": "Extra Language",
+      "category": "Broken Anti Automation",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "feedbackChallenge",
+      "name": "Five-Star Feedback",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgedCouponChallenge",
+      "name": "Forged Coupon",
+      "category": "Cryptographic Issues",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgedFeedbackChallenge",
+      "name": "Forged Feedback",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgedReviewChallenge",
+      "name": "Forged Review",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "jwtForgedChallenge",
+      "name": "Forged Signed JWT",
+      "category": "Vulnerable Components",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgottenDevBackupChallenge",
+      "name": "Forgotten Developer Backup",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgottenBackupChallenge",
+      "name": "Forgotten Sales Backup",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "typosquattingAngularChallenge",
+      "name": "Frontend Typosquatting",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "ghostLoginChallenge",
+      "name": "GDPR Data Erasure",
+      "category": "Broken Authentication",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dataExportChallenge",
+      "name": "GDPR Data Theft",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "httpHeaderXssChallenge",
+      "name": "HTTP-Header XSS",
+      "category": "XSS",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "continueCodeChallenge",
+      "name": "Imaginary Challenge",
+      "category": "Cryptographic Issues",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dlpPasswordSprayingChallenge",
+      "name": "Leaked Access Logs",
+      "category": "Observability Failures",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dlpPastebinDataLeakChallenge",
+      "name": "Leaked Unsafe Product",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "typosquattingNpmChallenge",
+      "name": "Legacy Typosquatting",
+      "category": "Vulnerable Components",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginAdminChallenge",
+      "name": "Login Admin",
+      "category": "Injection",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginAmyChallenge",
+      "name": "Login Amy",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginBenderChallenge",
+      "name": "Login Bender",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "oauthUserPasswordChallenge",
+      "name": "Login Bjoern",
+      "category": "Broken Authentication",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginJimChallenge",
+      "name": "Login Jim",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginRapperChallenge",
+      "name": "Login MC SafeSearch",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginSupportChallenge",
+      "name": "Login Support Team",
+      "category": "Security Misconfiguration",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "basketManipulateChallenge",
+      "name": "Manipulate Basket",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "misplacedSignatureFileChallenge",
+      "name": "Misplaced Signature File",
+      "category": "Observability Failures",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "timingAttackChallenge",
+      "name": "Multiple Likes",
+      "category": "Broken Anti Automation",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "easterEggLevelTwoChallenge",
+      "name": "Nested Easter Egg",
+      "category": "Cryptographic Issues",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "noSqlCommandChallenge",
+      "name": "NoSQL DoS",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "noSqlOrdersChallenge",
+      "name": "NoSQL Exfiltration",
+      "category": "Injection",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "noSqlReviewsChallenge",
+      "name": "NoSQL Manipulation",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "redirectCryptoCurrencyChallenge",
+      "name": "Outdated Allowlist",
+      "category": "Unvalidated Redirects",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "weakPasswordChallenge",
+      "name": "Password Strength",
+      "category": "Broken Authentication",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "negativeOrderChallenge",
+      "name": "Payback Time",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "premiumPaywallChallenge",
+      "name": "Premium Paywall",
+      "category": "Cryptographic Issues",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "privacyPolicyChallenge",
+      "name": "Privacy Policy",
+      "category": "Miscellaneous",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "privacyPolicyProofChallenge",
+      "name": "Privacy Policy Inspection",
+      "category": "Security through Obscurity",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "changeProductChallenge",
+      "name": "Product Tampering",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "reflectedXssChallenge",
+      "name": "Reflected XSS",
+      "category": "XSS",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "passwordRepeatChallenge",
+      "name": "Repetitive Registration",
+      "category": "Improper Input Validation",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordBenderChallenge",
+      "name": "Reset Bender's Password",
+      "category": "Broken Authentication",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordBjoernChallenge",
+      "name": "Reset Bjoern's Password",
+      "category": "Broken Authentication",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordJimChallenge",
+      "name": "Reset Jim's Password",
+      "category": "Broken Authentication",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordMortyChallenge",
+      "name": "Reset Morty's Password",
+      "category": "Broken Anti Automation",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "retrieveBlueprintChallenge",
+      "name": "Retrieve Blueprint",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "ssrfChallenge",
+      "name": "SSRF",
+      "category": "Broken Access Control",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "sstiChallenge",
+      "name": "SSTi",
+      "category": "Injection",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "scoreBoardChallenge",
+      "name": "Score Board",
+      "category": "Miscellaneous",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "securityPolicyChallenge",
+      "name": "Security Policy",
+      "category": "Miscellaneous",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "persistedXssFeedbackChallenge",
+      "name": "Server-side XSS Protection",
+      "category": "XSS",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "hiddenImageChallenge",
+      "name": "Steganography",
+      "category": "Security through Obscurity",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "rceOccupyChallenge",
+      "name": "Successful RCE DoS",
+      "category": "Insecure Deserialization",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "supplyChainAttackChallenge",
+      "name": "Supply Chain Attack",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "twoFactorAuthUnsafeSecretStorageChallenge",
+      "name": "Two Factor Authentication",
+      "category": "Broken Authentication",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "jwtUnsignedChallenge",
+      "name": "Unsigned JWT",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "uploadSizeChallenge",
+      "name": "Upload Size",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "uploadTypeChallenge",
+      "name": "Upload Type",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "unionSqlInjectionChallenge",
+      "name": "User Credentials",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "videoXssChallenge",
+      "name": "Video XSS",
+      "category": "XSS",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "basketAccessChallenge",
+      "name": "View Basket",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "knownVulnerableComponentChallenge",
+      "name": "Vulnerable Library",
+      "category": "Vulnerable Components",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "weirdCryptoChallenge",
+      "name": "Weird Crypto",
+      "category": "Cryptographic Issues",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "redirectChallenge",
+      "name": "Allowlist Bypass",
+      "category": "Unvalidated Redirects",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "xxeFileDisclosureChallenge",
+      "name": "XXE Data Access",
+      "category": "XXE",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "xxeDosChallenge",
+      "name": "XXE DoS",
+      "category": "XXE",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "yamlBombChallenge",
+      "name": "Memory Bomb",
+      "category": "Insecure Deserialization",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "zeroStarsChallenge",
+      "name": "Zero Stars",
+      "category": "Improper Input Validation",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "missingEncodingChallenge",
+      "name": "Missing Encoding",
+      "category": "Improper Input Validation",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "svgInjectionChallenge",
+      "name": "Cross-Site Imaging",
+      "category": "Security Misconfiguration",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "exposedMetricsChallenge",
+      "name": "Exposed Metrics",
+      "category": "Observability Failures",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "misplacedIacFiles",
+      "name": "Misplaced IaC Files",
+      "category": "Security Misconfiguration",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "freeDeluxeChallenge",
+      "name": "Deluxe Fraud",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "csrfChallenge",
+      "name": "CSRF",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "xssBonusChallenge",
+      "name": "Bonus Payload",
+      "category": "XSS",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordUvoginChallenge",
+      "name": "Reset Uvogin's Password",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "geoStalkingMetaChallenge",
+      "name": "Meta Geo Stalking",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "geoStalkingVisualChallenge",
+      "name": "Visual Geo Stalking",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "nullByteChallenge",
+      "name": "Poison Null Byte",
+      "category": "Improper Input Validation",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "lfrChallenge",
+      "name": "Local File Read",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "closeNotificationsChallenge",
+      "name": "Mass Dispel",
+      "category": "Miscellaneous",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "csafChallenge",
+      "name": "Security Advisory",
+      "category": "Miscellaneous",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "exposedCredentialsChallenge",
+      "name": "Exposed Credentials",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "leakedApiKeyChallenge",
+      "name": "Leaked API Key",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "chatbotPromptInjectionChallenge",
+      "name": "Chatbot Prompt Injection",
+      "category": "Injection",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "chatbotGreedyInjectionChallenge",
+      "name": "Greedy Chatbot Manipulation",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "aiDebuggingChallenge",
+      "name": "AI Debugging",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "systemPromptExtractionChallenge",
+      "name": "System Prompt Extraction",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "iacLeakedKeyChallenge",
+      "name": "Login Cloud Admin",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "vulnerableDockerImageChallenge",
+      "name": "Vulnerable Infrastructure",
+      "category": "Vulnerable Components",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    }
+  ],
+  "challenges_after": [
+    {
+      "key": "passwordHashLeakChallenge",
+      "name": "Password Hash Leak",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "restfulXssChallenge",
+      "name": "API-only XSS",
+      "category": "XSS",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "accessLogDisclosureChallenge",
+      "name": "Access Log",
+      "category": "Observability Failures",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "registerAdminChallenge",
+      "name": "Admin Registration",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "adminSectionChallenge",
+      "name": "Admin Section",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "fileWriteChallenge",
+      "name": "Arbitrary File Write",
+      "category": "Vulnerable Components",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "resetPasswordBjoernOwaspChallenge",
+      "name": "Bjoern's Favorite Pet",
+      "category": "Broken Authentication",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "tokenSaleChallenge",
+      "name": "Blockchain Hype",
+      "category": "Security through Obscurity",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "nftUnlockChallenge",
+      "name": "NFT Takeover",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "nftMintChallenge",
+      "name": "Mint the Honey Pot",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "web3WalletChallenge",
+      "name": "Wallet Depletion",
+      "category": "Miscellaneous",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "web3SandboxChallenge",
+      "name": "Web3 Sandbox",
+      "category": "Broken Access Control",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "rceChallenge",
+      "name": "Blocked RCE DoS",
+      "category": "Insecure Deserialization",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "captchaBypassChallenge",
+      "name": "CAPTCHA Bypass",
+      "category": "Broken Anti Automation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "changePasswordBenderChallenge",
+      "name": "Change Bender's Password",
+      "category": "Broken Authentication",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "christmasSpecialChallenge",
+      "name": "Christmas Special",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "usernameXssChallenge",
+      "name": "CSP Bypass",
+      "category": "XSS",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "persistedXssUserChallenge",
+      "name": "Client-side XSS Protection",
+      "category": "XSS",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "directoryListingChallenge",
+      "name": "Confidential Document",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "localXssChallenge",
+      "name": "DOM XSS",
+      "category": "XSS",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dbSchemaChallenge",
+      "name": "Database Schema",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "deprecatedInterfaceChallenge",
+      "name": "Deprecated Interface",
+      "category": "Security Misconfiguration",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "easterEggLevelOneChallenge",
+      "name": "Easter Egg",
+      "category": "Broken Access Control",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "emailLeakChallenge",
+      "name": "Email Leak",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "emptyUserRegistration",
+      "name": "Empty User Registration",
+      "category": "Improper Input Validation",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "ephemeralAccountantChallenge",
+      "name": "Ephemeral Accountant",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "errorHandlingChallenge",
+      "name": "Error Handling",
+      "category": "Security Misconfiguration",
+      "difficulty": 1,
+      "solved": true,
+      "disabledEnv": []
+    },
+    {
+      "key": "manipulateClockChallenge",
+      "name": "Expired Coupon",
+      "category": "Improper Input Validation",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "extraLanguageChallenge",
+      "name": "Extra Language",
+      "category": "Broken Anti Automation",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "feedbackChallenge",
+      "name": "Five-Star Feedback",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgedCouponChallenge",
+      "name": "Forged Coupon",
+      "category": "Cryptographic Issues",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgedFeedbackChallenge",
+      "name": "Forged Feedback",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgedReviewChallenge",
+      "name": "Forged Review",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "jwtForgedChallenge",
+      "name": "Forged Signed JWT",
+      "category": "Vulnerable Components",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgottenDevBackupChallenge",
+      "name": "Forgotten Developer Backup",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "forgottenBackupChallenge",
+      "name": "Forgotten Sales Backup",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": true,
+      "disabledEnv": []
+    },
+    {
+      "key": "typosquattingAngularChallenge",
+      "name": "Frontend Typosquatting",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "ghostLoginChallenge",
+      "name": "GDPR Data Erasure",
+      "category": "Broken Authentication",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dataExportChallenge",
+      "name": "GDPR Data Theft",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "httpHeaderXssChallenge",
+      "name": "HTTP-Header XSS",
+      "category": "XSS",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "continueCodeChallenge",
+      "name": "Imaginary Challenge",
+      "category": "Cryptographic Issues",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dlpPasswordSprayingChallenge",
+      "name": "Leaked Access Logs",
+      "category": "Observability Failures",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "dlpPastebinDataLeakChallenge",
+      "name": "Leaked Unsafe Product",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "typosquattingNpmChallenge",
+      "name": "Legacy Typosquatting",
+      "category": "Vulnerable Components",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginAdminChallenge",
+      "name": "Login Admin",
+      "category": "Injection",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginAmyChallenge",
+      "name": "Login Amy",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginBenderChallenge",
+      "name": "Login Bender",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "oauthUserPasswordChallenge",
+      "name": "Login Bjoern",
+      "category": "Broken Authentication",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginJimChallenge",
+      "name": "Login Jim",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginRapperChallenge",
+      "name": "Login MC SafeSearch",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "loginSupportChallenge",
+      "name": "Login Support Team",
+      "category": "Security Misconfiguration",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "basketManipulateChallenge",
+      "name": "Manipulate Basket",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "misplacedSignatureFileChallenge",
+      "name": "Misplaced Signature File",
+      "category": "Observability Failures",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "timingAttackChallenge",
+      "name": "Multiple Likes",
+      "category": "Broken Anti Automation",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "easterEggLevelTwoChallenge",
+      "name": "Nested Easter Egg",
+      "category": "Cryptographic Issues",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "noSqlCommandChallenge",
+      "name": "NoSQL DoS",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "noSqlOrdersChallenge",
+      "name": "NoSQL Exfiltration",
+      "category": "Injection",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "noSqlReviewsChallenge",
+      "name": "NoSQL Manipulation",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "redirectCryptoCurrencyChallenge",
+      "name": "Outdated Allowlist",
+      "category": "Unvalidated Redirects",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "weakPasswordChallenge",
+      "name": "Password Strength",
+      "category": "Broken Authentication",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "negativeOrderChallenge",
+      "name": "Payback Time",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "premiumPaywallChallenge",
+      "name": "Premium Paywall",
+      "category": "Cryptographic Issues",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "privacyPolicyChallenge",
+      "name": "Privacy Policy",
+      "category": "Miscellaneous",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "privacyPolicyProofChallenge",
+      "name": "Privacy Policy Inspection",
+      "category": "Security through Obscurity",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "changeProductChallenge",
+      "name": "Product Tampering",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "reflectedXssChallenge",
+      "name": "Reflected XSS",
+      "category": "XSS",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "passwordRepeatChallenge",
+      "name": "Repetitive Registration",
+      "category": "Improper Input Validation",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordBenderChallenge",
+      "name": "Reset Bender's Password",
+      "category": "Broken Authentication",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordBjoernChallenge",
+      "name": "Reset Bjoern's Password",
+      "category": "Broken Authentication",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordJimChallenge",
+      "name": "Reset Jim's Password",
+      "category": "Broken Authentication",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordMortyChallenge",
+      "name": "Reset Morty's Password",
+      "category": "Broken Anti Automation",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "retrieveBlueprintChallenge",
+      "name": "Retrieve Blueprint",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "ssrfChallenge",
+      "name": "SSRF",
+      "category": "Broken Access Control",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "sstiChallenge",
+      "name": "SSTi",
+      "category": "Injection",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "scoreBoardChallenge",
+      "name": "Score Board",
+      "category": "Miscellaneous",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "securityPolicyChallenge",
+      "name": "Security Policy",
+      "category": "Miscellaneous",
+      "difficulty": 2,
+      "solved": true,
+      "disabledEnv": []
+    },
+    {
+      "key": "persistedXssFeedbackChallenge",
+      "name": "Server-side XSS Protection",
+      "category": "XSS",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "hiddenImageChallenge",
+      "name": "Steganography",
+      "category": "Security through Obscurity",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "rceOccupyChallenge",
+      "name": "Successful RCE DoS",
+      "category": "Insecure Deserialization",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "supplyChainAttackChallenge",
+      "name": "Supply Chain Attack",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "twoFactorAuthUnsafeSecretStorageChallenge",
+      "name": "Two Factor Authentication",
+      "category": "Broken Authentication",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "jwtUnsignedChallenge",
+      "name": "Unsigned JWT",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "uploadSizeChallenge",
+      "name": "Upload Size",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "uploadTypeChallenge",
+      "name": "Upload Type",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "unionSqlInjectionChallenge",
+      "name": "User Credentials",
+      "category": "Injection",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "videoXssChallenge",
+      "name": "Video XSS",
+      "category": "XSS",
+      "difficulty": 6,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "basketAccessChallenge",
+      "name": "View Basket",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "knownVulnerableComponentChallenge",
+      "name": "Vulnerable Library",
+      "category": "Vulnerable Components",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "weirdCryptoChallenge",
+      "name": "Weird Crypto",
+      "category": "Cryptographic Issues",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "redirectChallenge",
+      "name": "Allowlist Bypass",
+      "category": "Unvalidated Redirects",
+      "difficulty": 4,
+      "solved": true,
+      "disabledEnv": []
+    },
+    {
+      "key": "xxeFileDisclosureChallenge",
+      "name": "XXE Data Access",
+      "category": "XXE",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "xxeDosChallenge",
+      "name": "XXE DoS",
+      "category": "XXE",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "yamlBombChallenge",
+      "name": "Memory Bomb",
+      "category": "Insecure Deserialization",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "zeroStarsChallenge",
+      "name": "Zero Stars",
+      "category": "Improper Input Validation",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "missingEncodingChallenge",
+      "name": "Missing Encoding",
+      "category": "Improper Input Validation",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "svgInjectionChallenge",
+      "name": "Cross-Site Imaging",
+      "category": "Security Misconfiguration",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "exposedMetricsChallenge",
+      "name": "Exposed Metrics",
+      "category": "Observability Failures",
+      "difficulty": 1,
+      "solved": true,
+      "disabledEnv": []
+    },
+    {
+      "key": "misplacedIacFiles",
+      "name": "Misplaced IaC Files",
+      "category": "Security Misconfiguration",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "freeDeluxeChallenge",
+      "name": "Deluxe Fraud",
+      "category": "Improper Input Validation",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "csrfChallenge",
+      "name": "CSRF",
+      "category": "Broken Access Control",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "xssBonusChallenge",
+      "name": "Bonus Payload",
+      "category": "XSS",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "resetPasswordUvoginChallenge",
+      "name": "Reset Uvogin's Password",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "geoStalkingMetaChallenge",
+      "name": "Meta Geo Stalking",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "geoStalkingVisualChallenge",
+      "name": "Visual Geo Stalking",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "nullByteChallenge",
+      "name": "Poison Null Byte",
+      "category": "Improper Input Validation",
+      "difficulty": 4,
+      "solved": true,
+      "disabledEnv": []
+    },
+    {
+      "key": "lfrChallenge",
+      "name": "Local File Read",
+      "category": "Vulnerable Components",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": "Docker"
+    },
+    {
+      "key": "closeNotificationsChallenge",
+      "name": "Mass Dispel",
+      "category": "Miscellaneous",
+      "difficulty": 1,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "csafChallenge",
+      "name": "Security Advisory",
+      "category": "Miscellaneous",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "exposedCredentialsChallenge",
+      "name": "Exposed Credentials",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "leakedApiKeyChallenge",
+      "name": "Leaked API Key",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 5,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "chatbotPromptInjectionChallenge",
+      "name": "Chatbot Prompt Injection",
+      "category": "Injection",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "chatbotGreedyInjectionChallenge",
+      "name": "Greedy Chatbot Manipulation",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "aiDebuggingChallenge",
+      "name": "AI Debugging",
+      "category": "Broken Access Control",
+      "difficulty": 2,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "systemPromptExtractionChallenge",
+      "name": "System Prompt Extraction",
+      "category": "Injection",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "iacLeakedKeyChallenge",
+      "name": "Login Cloud Admin",
+      "category": "Sensitive Data Exposure",
+      "difficulty": 4,
+      "solved": false,
+      "disabledEnv": []
+    },
+    {
+      "key": "vulnerableDockerImageChallenge",
+      "name": "Vulnerable Infrastructure",
+      "category": "Vulnerable Components",
+      "difficulty": 3,
+      "solved": false,
+      "disabledEnv": []
+    }
+  ]
+}
