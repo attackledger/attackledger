@@ -1432,6 +1432,9 @@ class AgentRunIn(BaseModel):
     max_turns: int = Field(default=15, ge=1, le=100)
     max_requests: int = Field(default=30, ge=1, le=1000)
     max_cost_usd: float = Field(default=0.50, ge=0.05, le=20)   # estimated; bounded before each call (agentloop)
+    # The depth floor (D-061): finish below this many requests is declined while turns and budget
+    # remain, at most twice. 0 is no floor.
+    min_requests: int = Field(default=0, ge=0, le=1000)
     # A run made by an outside driver through the same tools (tools/agent_bridge.py, D-031), not
     # by the worker's Messages API loop: who drives it. The worker's loop never takes it.
     driver: str | None = Field(default=None, min_length=1, max_length=200)
@@ -1444,6 +1447,12 @@ def start_agent_run(lane_id: int, request: Request, body: AgentRunIn | None = No
     closes the lane (D-018). Every gate is checked again when the worker starts it."""
     lane = _get(session, Lane, lane_id)
     body = body or AgentRunIn()
+    if body.min_requests > body.max_requests:
+        raise HTTPException(422, f"min_requests ({body.min_requests}) must not be more than max_requests "
+                                 f"({body.max_requests})")
+    if body.min_requests and body.driver is not None:
+        raise HTTPException(422, "a depth floor (min_requests) applies to the worker's agent loop, not to an "
+                                 "outside driver")
     ok, why = executors.EXECUTORS["agent"].available()
     if not ok and body.driver is None:        # an outside driver needs no Claude API key
         raise HTTPException(422, why)
@@ -1462,7 +1471,8 @@ def start_agent_run(lane_id: int, request: Request, body: AgentRunIn | None = No
               created_by=authz.current(request).user_id,
               targets=[lane.asset.host], driver=body.driver,
               result={"limits": {"max_turns": body.max_turns, "max_requests": body.max_requests,
-                                 "max_cost_usd": body.max_cost_usd}})
+                                 "max_cost_usd": body.max_cost_usd,
+                                 **({"min_requests": body.min_requests} if body.min_requests else {})}})
     session.add(job)
     session.commit()
     return _job_view(job)

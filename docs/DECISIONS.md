@@ -1131,6 +1131,56 @@ options considered and who decided.
 - **Proposed by:** Claude. **Decided by:** Murat Kabak, who chose this option on 2026-10-16. Built
   on branch `feat/lab-juiceshop`.
 
+### D-061 · An agent run can carry a depth floor (2026-10-16, decided by Murat)
+- **Problem** (measured 2026-10-16): agent runs stop far too early. On OWASP Juice Shop (116
+  challenges, D-060) four Opus runs (jobs 102-105) with max_turns 80, max_requests 200 and a $20
+  budget each used 7 to 11 turns and 10 to 15 requests, about $0.40 each, and then called `finish`
+  because every checklist item was marked. On the shop lab, the Opus business-logic run (busl, job 95)
+  dismissed `/cart` as "a stub" without reading `/static/cart.js`, and missed both issues planted
+  there. The budget never bound; the stopping did. A marked item said the item was looked at, and
+  the agent read that as the host being exhausted.
+- **Decision:**
+  - An agent run takes an optional limit, `min_requests` (default 0: no floor, today's behavior
+    exactly). The API checks 0 ≤ min_requests ≤ max_requests (422 otherwise) and keeps it in the
+    job's limits only when it is set, so a run without a floor looks as it did. It travels as
+    `max_requests` does: API run body, job limits, worker, both toolboxes (`Toolbox`, `RemoteToolbox`)
+    and the loop. An outside driver (D-031) cannot set one (422): its calls do not go through the loop.
+  - A `finish` while the run has sent fewer requests than the floor, and turns and budget remain, does
+    not end the run. It returns a tool result, not an error, saying how many requests of the floor
+    were used and to keep exploring the host's real surface: the `known_paths` and `spa_routes` not
+    yet requested, the routes and API endpoints named in the JavaScript bundles it fetched (reading
+    the script or page that uses an endpoint before calling it a stub), parameters and read-only
+    methods not yet tried, recording what it finds as evidence or leads. Every rule still applies.
+    At most two such declines per run (`agenttools.FLOOR_REFUSALS`); the third `finish` ends the run.
+  - "Turns and budget remain" is reckoned by the loop as its own check before each call does: a turn
+    is left, the request budget is not used, and the cost and token budgets left can pay for the next
+    call with this turn's results on top. Without that room the floor does not apply.
+  - A run the agent asked to finish, was told to continue, and that then stopped at a limit (or with
+    the model ending its turn) is finished with the agent's last summary: the floor must not make a
+    finished run partial. A cancelled or refused run is not.
+  - On a run with a floor the result has `depth_floor` (`min_requests`, `requests`, `refusals`, and
+    the reason when below) and `below_depth_floor`. A run that ended below the floor says so: the job
+    log ("BELOW THE DEPTH FLOOR: n of N requests") and the start of the reviewer's summary ("Below the
+    depth floor: n of N requests (why)"), which the person signing reads in the run panel.
+  - The instruction goes in the first user message, only when the floor is set: coverage of the
+    host's real surface matters more than ticking items, a marked item does not mean the host is
+    exhausted, an endpoint is not a stub until the script or page using it is read. With no floor the
+    system prompt, the tools and the first message are byte for byte as before, so the shop
+    benchmark's prompt is unchanged. `tools/agent_live.py --min-requests N` sets it for a measured run.
+- **Considered:** a prompt-only nudge (a line in the system prompt saying to explore more before
+  finishing). Cheaper, but it changes every run's prompt and benchmark, and the runs above already
+  had a prompt asking for purposeful work through the items; nothing would hold the agent to it, and
+  nothing would tell the reviewer when it was ignored. A floor that is never ignored (refusing every
+  finish below it) was rejected: a host with little surface would then spend its whole budget on
+  noise, and the run would end at a limit instead of with the agent's summary.
+- **Limit:** a floor raises the request count, not insight. Requests made to reach a number can be
+  shallow, and a run can pass the floor and still miss what a person would find. The floor is a
+  stopping rule, not a measure of coverage; below-floor runs are flagged so the reviewer weighs
+  them, and the benchmark records the floor with each run so runs with and without one are not
+  compared as if alike. Whether it helps is for the re-measurement to show.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak, who approved fixing the early stop and
+  re-measuring on 2026-10-16. Built on branch `feat/agent-depth-floor`.
+
 ## Adding entries
 
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or

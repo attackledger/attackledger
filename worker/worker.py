@@ -959,8 +959,12 @@ def run_agent(job: "workerclient.JobChannel", client=None, transport=None) -> "R
     gw = egress.Egress(job.id, job.gateway_secret).check()     # fail closed: no gateway, nothing is sent
     r = Run(job, gw)
     r.log(f"agent model: {model}")
-    tools = agenttools.RemoteToolbox(job, spec["context"], transport=transport or agenttools.urllib_transport(gw),
-                                     max_requests=limits.get("max_requests") or agentloop.DEFAULT_LIMITS["max_requests"])
+    max_requests = limits.get("max_requests") or agentloop.DEFAULT_LIMITS["max_requests"]
+    try:
+        tools = agenttools.RemoteToolbox(job, spec["context"], transport=transport or agenttools.urllib_transport(gw),
+                                         max_requests=max_requests, min_requests=limits.get("min_requests") or 0)
+    except ValueError as e:                   # a depth floor over the request budget (D-061)
+        raise RuntimeError(str(e))
 
     def should_stop() -> bool:
         try:
@@ -980,7 +984,9 @@ def run_agent(job: "workerclient.JobChannel", client=None, transport=None) -> "R
     r.kept = res.evidence_added
     r.log(f"agent {res.status}: {plural(res.turns, 'turn')}, {plural(res.requests, 'request')}, "
           f"{plural(res.evidence_added, 'evidence entry', 'evidence entries')}, {plural(res.items_marked, 'item')} marked, "
-          f"~{agentloop.usd(res.cost_usd)} estimated" + (f"; {res.detail}" if res.detail else ""))
+          f"~{agentloop.usd(res.cost_usd)} estimated" + (f"; {res.detail}" if res.detail else "")
+          + (f"; BELOW THE DEPTH FLOOR: {res.requests} of {res.depth_floor['min_requests']} requests"
+             if res.below_depth_floor else ""))
     if res.status == "refused":
         raise RuntimeError(f"the model {res.detail}; nothing further was run")
     if res.status in AGENT_PARTIAL | {"timed_out"}:

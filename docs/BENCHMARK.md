@@ -421,6 +421,10 @@ section is one table:
 The script stops with an error, after writing the section, if a request went to another host, the lab saw
 a request without the header, or the job failed.
 
+A run with `--min-requests N` has a depth floor (D-061): a finish below N requests is declined at most
+twice while turns and budget remain, the Limits row shows `min_requests` (0 when there is none), and the
+Outcome row says when the run still ended below the floor; compare runs with and without a floor apart.
+
 ### On OWASP Juice Shop (`--target juiceshop`, D-060)
 
 The same run on the second practice target, Juice Shop 20.2.0 (`bkimminich/juice-shop:v20.2.0`,

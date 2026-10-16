@@ -498,8 +498,9 @@ def _toolbox(session, job: Job) -> agenttools.Toolbox:
     limits = (job.result or {}).get("limits") or {}
     try:
         tb = agenttools.Toolbox(session, lane, job.id, recording=True,
-                                max_requests=limits.get("max_requests") or agentloop.DEFAULT_LIMITS["max_requests"])
-    except agenttools.RunRefused as e:
+                                max_requests=limits.get("max_requests") or agentloop.DEFAULT_LIMITS["max_requests"],
+                                min_requests=limits.get("min_requests") or 0)
+    except (agenttools.RunRefused, ValueError) as e:
         raise HTTPException(409, str(e))
     for x in session.scalars(select(AgentExchange).where(AgentExchange.job_id == job.id).order_by(AgentExchange.id)):
         rep = redact.Report()
@@ -625,6 +626,13 @@ def _agent_result(job: Job, res: dict) -> dict:
             keep[k] = v[:8000] if isinstance(v, str) else v
     if keep.get("status") not in AGENT_OUTCOMES:
         raise HTTPException(422, f"unknown agent outcome {str(keep.get('status'))[:40]}")
+    floor = res.get("depth_floor")
+    if isinstance(floor, dict):        # a run with a depth floor (D-061): counts and a short reason only
+        keep["depth_floor"] = {k: floor[k] for k in ("min_requests", "requests", "refusals")
+                               if isinstance(floor.get(k), int) and not isinstance(floor.get(k), bool)}
+        if isinstance(floor.get("reason"), str):
+            keep["depth_floor"]["reason"] = floor["reason"][:300]
+        keep["below_depth_floor"] = res.get("below_depth_floor") is True
     return {"limits": (job.result or {}).get("limits", {}), **keep}
 
 

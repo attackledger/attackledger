@@ -11,6 +11,10 @@ before 1.0, minor versions may change the data model.
   --target juiceshop` runs an agent on it, and `tools/juiceshop_score.py` scores a run against
   Juice Shop's own challenge list: challenges identified by an explicit, reviewable indicator
   table, and challenges Juice Shop marked solved during the run.
+- An optional depth floor for agent runs, `min_requests` (D-061; default 0, no floor): a `finish`
+  below it is declined at most twice while turns and budget remain, with a result that says to keep
+  exploring the host's surface; a run that still ends below it is flagged (`below_depth_floor`) in the
+  job log and at the start of the reviewer's summary. `tools/agent_live.py --min-requests N`.
 
 ## [0.9.0] - 2026-10-14
 

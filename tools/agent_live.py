@@ -3,7 +3,7 @@
 
   python3 tools/agent_live.py preflight [--dry-run] [--no-prepare]
   python3 tools/agent_live.py run       [--dry-run] [--any-model] [--max-turns N] [--max-requests N]
-                                        [--no-append]
+                                        [--min-requests N] [--no-append]
   python3 tools/agent_live.py dryrun    [--project NAME] [--port PORT] [--usage-scale X] [--keep]
 
 tools/agent_preflight.sh and tools/agent_live_run.sh call the first two. Options for every
@@ -40,6 +40,9 @@ run        starts the lab if needed, prepares the engagement and lane, runs pref
            spent, from the job's result, the gateway's request log and the lab's access log. It
            appends that summary to the benchmark file as a dated section (unless --no-append) and
            writes the numbers next to it as JSON (tools/benchmark/results-<date>-agent-<n>.json).
+           --min-requests N gives the run a depth floor (D-061, default 0: none): a finish below N
+           requests is declined, at most twice, while turns and budget remain; the section and the
+           JSON say when the run still ended below it.
 
 dryrun     the whole of it against a stub Claude API, in its own compose project built from this
            tree, with no route out: no key, no traffic outside the stack. Then it removes that
@@ -572,6 +575,8 @@ def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: 
         "job_id": job["id"], "job_status": job["status"], "agent_status": res.get("status"),
         "model": res.get("model"), "turns": res.get("turns"), "detail": res.get("detail", ""),
         "summary": res.get("summary", ""), "limits": res.get("limits", {}),
+        "min_requests": (res.get("limits") or {}).get("min_requests", 0),
+        "depth_floor": res.get("depth_floor"), "below_depth_floor": bool(res.get("below_depth_floor")),
         "claude_api_calls": len(service), "claude_api_hosts": sorted({r["url"].split("/")[2] for r in service}),
         "target_requests": len(target), "target_by_method": by_method, "target_hosts": hosts,
         "only_lab_host": hosts in ([], [LAB_HOST]),
@@ -616,6 +621,18 @@ def commit_of() -> str:
         return "unknown"
 
 
+def floor_note(m: dict) -> str:
+    """The depth floor's outcome for the Outcome row (D-061); nothing for a run without one."""
+    floor = m.get("depth_floor") or {}
+    if not floor:
+        return ""
+    if m.get("below_depth_floor"):
+        return (f"; **below the depth floor**: {floor.get('requests')} of {floor.get('min_requests')} requests"
+                + (f" ({floor['reason']})" if floor.get("reason") else ""))
+    return (f"; depth floor of {floor.get('min_requests')} reached, finish declined "
+            f"{floor.get('refusals', 0)} time(s)")
+
+
 def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label: str = "") -> str:
     u = m["usage"] or {}
     methods = ", ".join(f"{k} {v}" for k, v in sorted(m["target_by_method"].items())) or "none"
@@ -637,8 +654,9 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
                  + (", test accounts " + ", ".join(f"`{label}` ({role}, {user})" for label, role, user, _ in LAB_ACCOUNTS)
                     if uses_accounts() else "")),
         ("Outcome", f"job `{m['job_status']}`, agent `{m['agent_status']}`, {m['turns']} turn(s)"
-                    + (f"; {m['detail']}" if m["detail"] else "")),
+                    + (f"; {m['detail']}" if m["detail"] else "") + floor_note(m)),
         ("Limits", (", ".join(f"{k} {v}" for k, v in m["limits"].items()) or "defaults")
+                   + ("" if "min_requests" in m["limits"] else ", min_requests 0 (no depth floor)")
                    + (f"; applied by the worker: {m['budget']}" if m.get("budget") else "")),
         ("Wall time", f"{m['wall_seconds']} s (job {m['job_seconds']} s)"),
         ("Claude API calls (gateway log)", f"{m['claude_api_calls']} to {', '.join(m['claude_api_hosts']) or 'none'}"),
@@ -686,7 +704,7 @@ def run(stack: Stack, args) -> dict:
     started = time.time()
     job = stack.api("POST", f"/lanes/{lane['id']}/agent-runs",
                     {"max_turns": args.max_turns, "max_requests": args.max_requests,
-                     "max_cost_usd": max(0.05, min(20.0, budget))})
+                     "max_cost_usd": max(0.05, min(20.0, budget)), "min_requests": args.min_requests})
     print(f"Agent run queued: job {job['id']} on lane {lane['id']}, model {worker['model']}, "
           f"budget ${budget:g}. Waiting (up to {WAIT_SECONDS // 60} minutes).", flush=True)
     while True:
@@ -842,6 +860,9 @@ def main(argv=None) -> int:
     ap.add_argument("--any-model", action="store_true")
     ap.add_argument("--max-turns", type=int, default=15)
     ap.add_argument("--max-requests", type=int, default=20)
+    ap.add_argument("--min-requests", type=int, default=0,
+                    help="depth floor (D-061): finish below this many requests is declined, at most twice, "
+                         "while turns and budget remain; 0 (default) is none")
     ap.add_argument("--no-append", action="store_true")
     ap.add_argument("--port", type=int)
     ap.add_argument("--usage-scale", type=float, default=1.0)
