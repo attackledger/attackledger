@@ -1,0 +1,145 @@
+# Which Juice Shop 20.2.0 challenges this lab can reach, and what each needs (tools/juiceshop_score.py, D-060).
+#
+# One row per challenge of the catalogue (tools/juiceshop/challenges-v20.2.0.json), in its order; the
+# scorer stops if a key or name no longer matches. Columns are separated by one tab. Reviewed against
+# Juice Shop's own source at the v20.2.0 tag (github.com/juice-shop/juice-shop, commit 5658473): the
+# file or route named in `source` is what decides the row. Nothing here was learnt by running Juice
+# Shop or by reading its challenge list through the lab.
+#
+# reach    yes          possible offline in this lab: enabled in Docker, and everything the challenge
+#                       needs is served by the lab (general knowledge aside, see note)
+#          no-docker    disabled by Juice Shop itself in Docker (its safety mode)
+#          no-llm       needs the chatbot's LLM endpoint, which the lab does not have
+#          no-chain     needs a blockchain node (Sepolia through Alchemy) on the internet
+#          no-internet  the answer exists only on the internet (a paste, a video, social media, a
+#                       binary on GitHub), not in anything the lab serves
+#          no-front     the lab's front (lab/juiceshop.conf) refuses the route or the only page that
+#                       carries what the challenge needs (/api/Challenges, /rest/continue-code, D-060)
+# needs    what observing the issue itself takes:
+#          read         signed out, GET/HEAD/OPTIONS only (a crafted header or query included)
+#          write        a state-changing request without a session of one's own (a sign-in, a
+#                       registration, a feedback, a PUT, or a GET that changes state)
+#          account      a signed-in session of an ordinary user the tester registered
+# solve    what Juice Shop's own solved check takes, in the same terms
+# browser  yes: Juice Shop marks it solved only on a socket.io event its Angular page sends while
+#          rendering (an agent that sends HTTP requests cannot solve it, though it can identify it)
+# source   the file or route of Juice Shop 20.2.0 that decides the row
+# note     what else the row depends on ("-" for nothing)
+#
+# key	name	reach	needs	solve	browser	source	note
+passwordHashLeakChallenge	Password Hash Leak	yes	account	account	no	routes/currentUser.ts: GET /rest/user/whoami?fields=password returns the hash for a signed-in user	signed out it answers an empty user
+restfulXssChallenge	API-only XSS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+accessLogDisclosureChallenge	Access Log	yes	read	read	no	server.ts: /support/logs listed by serveIndex and served; routes/verify.ts accessControlChallenges (access.log)	-
+registerAdminChallenge	Admin Registration	yes	write	write	no	server.ts POST /api/Users; routes/verify.ts registerAdminChallenge (role admin in the body)	-
+adminSectionChallenge	Admin Section	yes	read	read	no	frontend/src/app/app.routing.ts path administration (in main.js); routes/verify.ts accessControlChallenges (padding/19px.png)	-
+fileWriteChallenge	Arbitrary File Write	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+resetPasswordBjoernOwaspChallenge	Bjoern's Favorite Pet	no-internet	-	-	-	routes/resetPassword.ts: the answer is only in Bjoern's public talks and social media (challenge hints)	-
+tokenSaleChallenge	Blockchain Hype	yes	read	read	no	frontend/src/app/app.routing.ts obfuscated token sale route (in main.js); routes/verify.ts accessControlChallenges (padding/56px.png)	tagged Web3, needs no network
+nftUnlockChallenge	NFT Takeover	yes	read	write	no	seed phrase in a product review, GET /rest/products/:id/reviews (routes/showProductReviews.ts); POST /rest/web3/submitKey, routes/checkKeys.ts derives the key offline	tagged Web3, needs no network
+nftMintChallenge	Mint the Honey Pot	no-chain	-	-	-	routes/nftMint.ts: listens on Sepolia through wss://eth-sepolia.g.alchemy.com	-
+web3WalletChallenge	Wallet Depletion	no-chain	-	-	-	routes/web3Wallet.ts: listens on Sepolia through wss://eth-sepolia.g.alchemy.com	-
+web3SandboxChallenge	Web3 Sandbox	yes	read	read	no	frontend/src/app/app.routing.ts path web3-sandbox (in main.js); routes/verify.ts accessControlChallenges (padding/11px.png)	tagged Web3, needs no network
+rceChallenge	Blocked RCE DoS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+captchaBypassChallenge	CAPTCHA Bypass	yes	read	write	no	routes/captcha.ts: GET /rest/captcha returns the answer; 10 POST /api/Feedbacks in 20 s, routes/verify.ts captchaBypassChallenge	-
+changePasswordBenderChallenge	Change Bender's Password	yes	write	write	no	routes/changePassword.ts: GET /rest/user/change-password without current= changes the password; needs Bender's session (a SQL injection sign-in)	a GET that changes state; the new password only in the challenge description
+christmasSpecialChallenge	Christmas Special	yes	read	account	no	routes/search.ts: the deleted offer listed through SQL injection in GET /rest/products/search; ordering it, routes/order.ts	-
+usernameXssChallenge	CSP Bypass	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+persistedXssUserChallenge	Client-side XSS Protection	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+directoryListingChallenge	Confidential Document	yes	read	read	no	server.ts: /ftp listed by serveIndex; routes/fileServer.ts serves acquisitions.md	-
+localXssChallenge	DOM XSS	yes	read	read	yes	frontend/src/app/search-result/search-result.component.ts: q rendered with bypassSecurityTrustHtml (in main.js); solved by the socket.io event verifyLocalXssChallenge the page sends (lib/startup/registerWebsocketEvents.ts)	-
+dbSchemaChallenge	Database Schema	yes	read	read	no	routes/search.ts: q concatenated into SQL in GET /rest/products/search; solved when the answer holds every sqlite_master statement	-
+deprecatedInterfaceChallenge	Deprecated Interface	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+easterEggLevelOneChallenge	Easter Egg	yes	read	read	no	routes/fileServer.ts: GET /ftp/eastere.gg%2500.md (null byte cut after the .md check)	-
+emailLeakChallenge	Email Leak	yes	read	read	no	routes/currentUser.ts: GET /rest/user/whoami?callback= answers JSONP, solved signed out too	-
+emptyUserRegistration	Empty User Registration	yes	write	write	no	server.ts POST /api/Users; routes/verify.ts emptyUserRegistration	-
+ephemeralAccountantChallenge	Ephemeral Accountant	yes	write	write	no	routes/login.ts: SQL injection (UNION) in POST /rest/user/login	the e-mail only in the challenge description
+errorHandlingChallenge	Error Handling	yes	read	read	no	routes/verify.ts errorHandlingChallenge: any error answered 200 or above 401, e.g. GET /rest/products/search?q=' or a refused /ftp file	-
+manipulateClockChallenge	Expired Coupon	yes	read	account	no	frontend/src/app/payment/payment.component.ts: campaign codes and dates in main.js, the date sent by the client; checkout, routes/order.ts	-
+extraLanguageChallenge	Extra Language	yes	read	read	no	GET /assets/i18n/tlh_AA.json; routes/verify.ts accessControlChallenges	-
+feedbackChallenge	Five-Star Feedback	yes	account	account	no	server.ts: DELETE /api/Feedbacks/:id needs only a session; routes/verify.ts feedbackChallenge (no 5-star feedback left)	-
+forgedCouponChallenge	Forged Coupon	yes	read	account	no	z85 coupon codes in /ftp/coupons_2013.md.bak; a forged code of 80% or more at checkout, routes/order.ts	-
+forgedFeedbackChallenge	Forged Feedback	yes	write	write	no	routes/verify.ts forgedFeedbackChallenge: POST /api/Feedbacks with a UserId not the sender's, signed out too	-
+forgedReviewChallenge	Forged Review	yes	write	write	no	routes/createProductReviews.ts: PUT /rest/products/:id/reviews takes any author, signed out too	-
+jwtForgedChallenge	Forged Signed JWT	yes	read	read	no	server.ts serves /encryptionkeys/jwt.pub; routes/verify.ts jwtChallenges: any request with an HS256 token signed with it	enabled in Docker (disabled on Windows only); the e-mail only in the challenge description
+forgottenDevBackupChallenge	Forgotten Developer Backup	yes	read	read	no	routes/fileServer.ts: GET /ftp/package.json.bak%2500.md	-
+forgottenBackupChallenge	Forgotten Sales Backup	yes	read	read	no	routes/fileServer.ts: GET /ftp/coupons_2013.md.bak%2500.md	-
+typosquattingAngularChallenge	Frontend Typosquatting	yes	read	write	no	ngy-cookie in the front end's dependencies (frontend/package.json, in the served bundle and 3rdpartylicenses.txt); feedback naming it, routes/verify.ts	-
+ghostLoginChallenge	GDPR Data Erasure	yes	write	write	no	routes/login.ts: SQL injection in POST /rest/user/login as the soft-deleted chris.pike@juice-sh.op	-
+dataExportChallenge	GDPR Data Theft	yes	account	account	no	routes/dataExport.ts: POST /rest/user/data-export matches orders by e-mail with vowels masked	-
+httpHeaderXssChallenge	HTTP-Header XSS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+continueCodeChallenge	Imaginary Challenge	no-front	-	-	-	routes/restoreProgress.ts: needs PUT /rest/continue-code/apply/..., which lab/juiceshop.conf answers 404 (D-060)	-
+dlpPasswordSprayingChallenge	Leaked Access Logs	no-internet	-	-	-	routes/login.ts: the password is only in an access log pasted on the internet (challenge hints)	-
+dlpPastebinDataLeakChallenge	Leaked Unsafe Product	yes	read	write	no	the ingredients are in the served configuration (GET /rest/admin/application-configuration, products[].keywordsForPastebinDataLeakChallenge); feedback naming them, routes/verify.ts	intended through a paste on the internet
+typosquattingNpmChallenge	Legacy Typosquatting	yes	read	write	no	epilogue-js in /ftp/package.json.bak; feedback naming it, routes/verify.ts	-
+loginAdminChallenge	Login Admin	yes	write	write	no	routes/login.ts: SQL injection in POST /rest/user/login	-
+loginAmyChallenge	Login Amy	yes	write	write	no	routes/login.ts: POST /rest/user/login as amy@juice-sh.op	password from the description's hint and outside knowledge
+loginBenderChallenge	Login Bender	yes	write	write	no	routes/login.ts: SQL injection in POST /rest/user/login as bender@juice-sh.op	-
+oauthUserPasswordChallenge	Login Bjoern	yes	read	write	no	frontend/src/app/oauth/oauth.component.ts: password = btoa(reversed e-mail) in main.js; POST /rest/user/login, routes/login.ts	-
+loginJimChallenge	Login Jim	yes	write	write	no	routes/login.ts: SQL injection in POST /rest/user/login as jim@juice-sh.op	-
+loginRapperChallenge	Login MC SafeSearch	no-internet	-	-	-	routes/login.ts: the password is only in MC SafeSearch's music video (challenge hints)	-
+loginSupportChallenge	Login Support Team	yes	read	write	no	routes/fileServer.ts serves /ftp/incident-support.kdbx by name; POST /rest/user/login with the password in it, routes/login.ts	opening the KeePass file needs its key file
+basketManipulateChallenge	Manipulate Basket	yes	account	account	no	routes/basketItems.ts: POST /api/BasketItems takes the last of two BasketId values	-
+misplacedSignatureFileChallenge	Misplaced Signature File	yes	read	read	no	routes/fileServer.ts: GET /ftp/suspicious_errors.yml%2500.md	-
+timingAttackChallenge	Multiple Likes	yes	account	account	no	routes/likeProductReviews.ts: concurrent POST /rest/products/reviews likes	-
+easterEggLevelTwoChallenge	Nested Easter Egg	yes	read	read	no	server.ts: GET /the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg, decoded from eastere.gg	-
+noSqlCommandChallenge	NoSQL DoS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+noSqlOrdersChallenge	NoSQL Exfiltration	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+noSqlReviewsChallenge	NoSQL Manipulation	yes	account	account	no	routes/updateProductReviews.ts: PATCH /rest/products/reviews with an operator as id updates many (multi: true)	-
+redirectCryptoCurrencyChallenge	Outdated Allowlist	yes	read	read	no	lib/insecurity.ts redirectAllowlist (the old crypto addresses, also in main.js); GET /redirect?to=, routes/redirect.ts	-
+weakPasswordChallenge	Password Strength	yes	write	write	no	routes/login.ts: POST /rest/user/login as admin@juice-sh.op with admin123	-
+negativeOrderChallenge	Payback Time	yes	account	account	no	negative quantity through /api/BasketItems, total below 0 at checkout, routes/order.ts	-
+premiumPaywallChallenge	Premium Paywall	no-front	-	-	-	routes/premiumReward.ts: the encrypted URL is only in the challenge description (/api/Challenges, answered 404 by lab/juiceshop.conf)	-
+privacyPolicyChallenge	Privacy Policy	yes	read	read	no	frontend privacy-policy page (in main.js); routes/verify.ts accessControlChallenges (padding/81px.png)	reading it is the challenge, not a finding
+privacyPolicyProofChallenge	Privacy Policy Inspection	yes	read	read	no	frontend/src/app/privacy-policy/privacy-policy.component.html highlighted words (in main.js) form the URL served by server.ts /we/may/also/instruct/you/...	-
+changeProductChallenge	Product Tampering	yes	write	write	no	server.ts: PUT /api/Products/:id has no authorization (its isAuthorized line is commented out); routes/verify.ts changeProductChallenge	target URL in the challenge description and the served configuration
+reflectedXssChallenge	Reflected XSS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+passwordRepeatChallenge	Repetitive Registration	yes	write	write	no	server.ts POST /api/Users; routes/verify.ts passwordRepeatChallenge (passwordRepeat not compared)	-
+resetPasswordBenderChallenge	Reset Bender's Password	yes	write	write	no	routes/resetPassword.ts: POST /rest/user/reset-password with Bender's answer	answer from outside knowledge (Futurama)
+resetPasswordBjoernChallenge	Reset Bjoern's Password	no-internet	-	-	-	routes/resetPassword.ts: the answer is only in Bjoern's social media (challenge hints)	-
+resetPasswordJimChallenge	Reset Jim's Password	yes	write	write	no	routes/resetPassword.ts: POST /rest/user/reset-password with Jim's answer	answer from outside knowledge (Star Trek)
+resetPasswordMortyChallenge	Reset Morty's Password	yes	write	write	no	routes/resetPassword.ts with Morty's obfuscated answer; the reset rate limit (server.ts) keyed on X-Forwarded-For	brute force past the rate limit
+retrieveBlueprintChallenge	Retrieve Blueprint	yes	read	read	no	GET /assets/public/images/products/JuiceShop.stl; routes/verify.ts accessControlChallenges	-
+ssrfChallenge	SSRF	no-internet	-	-	-	routes/verify.ts serverSideChallenges: the key is inside the malware binaries, which /ftp/quarantine only links to on GitHub	-
+sstiChallenge	SSTi	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+scoreBoardChallenge	Score Board	yes	read	read	no	frontend/src/app/app.routing.ts path score-board (in main.js); routes/verify.ts accessControlChallenges (padding/1px.png)	the front answers 404 on the list the page shows (D-060)
+securityPolicyChallenge	Security Policy	yes	read	read	no	server.ts: GET /.well-known/security.txt; routes/verify.ts accessControlChallenges	-
+persistedXssFeedbackChallenge	Server-side XSS Protection	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+hiddenImageChallenge	Steganography	yes	read	write	no	a steganographic picture in a served image; feedback naming the character, routes/verify.ts	needs offline steganography tools
+rceOccupyChallenge	Successful RCE DoS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+supplyChainAttackChallenge	Supply Chain Attack	yes	read	write	no	eslint-scope in /ftp/package.json.bak; feedback with the report's id, routes/verify.ts	id from outside knowledge
+twoFactorAuthUnsafeSecretStorageChallenge	Two Factor Authentication	yes	read	write	no	routes/search.ts: totpSecret readable through SQL injection in GET /rest/products/search; POST /rest/2fa/verify as wurstbrot, routes/2fa.ts	-
+jwtUnsignedChallenge	Unsigned JWT	yes	read	read	no	routes/verify.ts jwtChallenges: any request carrying an alg none token for jwtn3d@	the e-mail only in the challenge description
+uploadSizeChallenge	Upload Size	yes	write	write	no	routes/fileUpload.ts: POST /file-upload, size checked in the client only	-
+uploadTypeChallenge	Upload Type	yes	write	write	no	routes/fileUpload.ts: POST /file-upload, type checked in the client only	-
+unionSqlInjectionChallenge	User Credentials	yes	read	read	no	routes/search.ts: q concatenated into SQL in GET /rest/products/search; solved when the answer holds every user's e-mail and hash	-
+videoXssChallenge	Video XSS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+basketAccessChallenge	View Basket	yes	account	account	no	routes/basket.ts: GET /rest/basket/:id returns any basket to a signed-in user	-
+knownVulnerableComponentChallenge	Vulnerable Library	yes	read	write	no	sanitize-html 1.4.2 and express-jwt 0.1.3 in /ftp/package.json.bak; feedback naming one with its version, routes/verify.ts	-
+weirdCryptoChallenge	Weird Crypto	yes	read	write	no	z85 (coupons), hashids (continue codes), MD5 (password hashes) in served files; feedback naming one, routes/verify.ts	-
+redirectChallenge	Allowlist Bypass	yes	read	read	no	lib/insecurity.ts isRedirectAllowed: url.includes(allowed URL); GET /redirect?to=, routes/redirect.ts	-
+xxeFileDisclosureChallenge	XXE Data Access	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+xxeDosChallenge	XXE DoS	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+yamlBombChallenge	Memory Bomb	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+zeroStarsChallenge	Zero Stars	yes	write	write	no	models/feedback.ts: POST /api/Feedbacks with rating 0, checked in the client only	-
+missingEncodingChallenge	Missing Encoding	yes	read	read	no	photo wall image with # in its name (GET /rest/memories); /assets/public/images/uploads/..., routes/verify.ts accessControlChallenges	-
+svgInjectionChallenge	Cross-Site Imaging	yes	read	read	yes	frontend/src/app/deluxe-user/deluxe-user.component.ts testDecal parameter (in main.js) with /redirect?to=https://cataas.com/cat; solved by the socket.io event verifySvgInjectionChallenge the page sends	-
+exposedMetricsChallenge	Exposed Metrics	yes	read	read	no	routes/metrics.ts: GET /metrics (any user agent but Prometheus)	-
+misplacedIacFiles	Misplaced IaC Files	yes	read	read	no	server.ts: /infrastructure listed by serveIndex and served; routes/verify.ts accessControlChallenges (.tf, Dockerfile, docker-compose.yml)	-
+freeDeluxeChallenge	Deluxe Fraud	yes	account	account	no	routes/deluxe.ts: POST /rest/deluxe-membership with a paymentMode neither wallet nor card	-
+csrfChallenge	CSRF	yes	account	account	no	routes/updateUserProfile.ts: POST /profile changes the name with an Origin or Referer of htmledit.squarefree.com	the header can be set without a browser
+xssBonusChallenge	Bonus Payload	yes	read	read	yes	the payload is in the served configuration (GET /rest/admin/application-configuration, challenges.xssBonusPayload); solved by the socket.io event verifyLocalXssChallenge the search page sends	-
+resetPasswordUvoginChallenge	Reset Uvogin's Password	no-internet	-	-	-	routes/resetPassword.ts: the answer is only in Uvogin's online personas (challenge hints)	-
+geoStalkingMetaChallenge	Meta Geo Stalking	yes	read	write	no	EXIF of favorite-hiking-place.png on the photo wall (GET /rest/memories), answer also in the served configuration; POST /rest/user/reset-password as john, routes/resetPassword.ts	-
+geoStalkingVisualChallenge	Visual Geo Stalking	yes	read	write	no	IMG_4253.jpg on the photo wall shows the answer, also in the served configuration; POST /rest/user/reset-password as emma, routes/resetPassword.ts	-
+nullByteChallenge	Poison Null Byte	yes	read	read	no	routes/fileServer.ts: cutOffPoisonNullByte after the .md/.pdf check, GET /ftp/<file>%2500.md	-
+lfrChallenge	Local File Read	no-docker	-	-	-	-	disabled in Docker by Juice Shop (safety mode)
+closeNotificationsChallenge	Mass Dispel	yes	read	read	yes	frontend/src/app/challenge-solved-notification/challenge-solved-notification.component.ts sends verifyCloseNotificationsChallenge when several notifications close at once	a UI feature, not a security issue; needs two challenges solved first
+csafChallenge	Security Advisory	yes	read	write	no	server.ts: /.well-known/csaf listed and served (express-jwt advisory, known_affected, its .sha512); feedback with the checksum, routes/verify.ts	-
+exposedCredentialsChallenge	Exposed Credentials	yes	read	write	no	frontend/src/app/login/login.component.ts testingUsername/testingPassword (in main.js); POST /rest/user/login, routes/login.ts	-
+leakedApiKeyChallenge	Leaked API Key	no-internet	-	-	-	routes/verify.ts leakedApiKeyChallenge: the key is in the shop's social media automation, not in the application (challenge hints)	-
+chatbotPromptInjectionChallenge	Chatbot Prompt Injection	no-llm	-	-	-	routes/chat.ts: solved inside an LLM tool call; the LLM is application.chatBot.llmApiUrl (config/default.yml), absent here	-
+chatbotGreedyInjectionChallenge	Greedy Chatbot Manipulation	no-llm	-	-	-	routes/chat.ts: solved inside an LLM tool call (generateCoupon)	-
+aiDebuggingChallenge	AI Debugging	no-llm	-	-	-	routes/chat.ts: solved on an LLM tool call with the show_tool_calls cookie	-
+systemPromptExtractionChallenge	System Prompt Extraction	no-llm	-	-	-	routes/verify.ts systemPromptExtractionChallenge: a complaint quoting the chatbot's system prompt, obtained from the LLM	-
+iacLeakedKeyChallenge	Login Cloud Admin	yes	read	read	no	infrastructure/terraform/networking.tf private key served under /infrastructure (server.ts); any request with an RS256 token for cloud-admin@ signed with it, routes/verify.ts jwtChallenges	-
+vulnerableDockerImageChallenge	Vulnerable Infrastructure	yes	read	write	no	mongo:4.4.29 in /infrastructure/docker-compose.yml; feedback or complaint naming it, routes/verify.ts	-
