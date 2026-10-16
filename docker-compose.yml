@@ -80,6 +80,9 @@ services:
       # hash is sent, once per closed lane and once per exported report. Set
       # ATTACKLEDGER_TSA_URL=off to send nothing and skip timestamps.
       ATTACKLEDGER_TSA_URL: ${ATTACKLEDGER_TSA_URL:-http://timestamp.digicert.com}
+      # "1" lets owners make lab write rules (D-062, docs/APPROVALS.md): writes on an in-scope .test or
+      # .localhost practice lab approved in advance instead of one by one. Empty (the default): off.
+      ATTACKLEDGER_LAB_WRITE_RULES: ${ATTACKLEDGER_LAB_WRITE_RULES:-}
       # Master key for encryption at rest (D-043, docs/ENCRYPTION.md). Required: without one the
       # API refuses to start (the worker holds no key: the API encrypts what the worker sends). Make one with
       #   docker compose run --rm --no-deps api python -m app.vault generate

@@ -21,6 +21,16 @@ before 1.0, minor versions may change the data model.
   scorer no longer counts sentences that say the issue is absent or only suppose it, files only
   listed or refused, or one SQL injection as several challenges; several snapshots score together
   as a union (D-060).
+- Lab write rules (D-062): on a practice lab an owner may approve a class of writes (methods, `.test`
+  or `.localhost` hosts in scope, paths, a cap, an end; a DELETE only when listed) in advance. Off
+  unless the API has `ATTACKLEDGER_LAB_WRITE_RULES=1`. Each write is still its own single-use
+  approval sent by the gateway; its records name the rule and say whether separation of duties was
+  met. `tools/agent_live.py --target juiceshop --lab-writes METHODS [--own-accounts]`.
+
+### Fixed
+- `tools/agent_live.py` no longer stops a run because lanes ran in parallel on the same lab: the lab's
+  access-log rows are matched to the job's gateway rows by method, path and time, the other runs'
+  rows are explained by their gateway rows, and a row no gateway row explains still fails the run.
 
 ## [0.9.0] - 2026-10-14
 

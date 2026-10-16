@@ -343,6 +343,30 @@ class WriteProposal(OrgOwned, Base):
     exchange_id: Mapped[str | None] = mapped_column(String(16))
     evidence_id: Mapped[int | None] = mapped_column(ForeignKey("evidence.id"))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # Approved by a lab write rule (D-062, labrules.py), not by a person reading this request; then
+    # whether the rule's maker was someone other than the run's starter (separation of duties).
+    rule_id: Mapped[int | None] = mapped_column(ForeignKey("lab_write_rules.id"))
+    rule_sod_met: Mapped[bool | None]
+
+
+class LabWriteRule(OrgOwned, Base):
+    """A standing approval of writes on an intentionally vulnerable lab (D-062, labrules.py): an
+    owner names the methods, lab hosts and paths, a cap and an end. Off unless the deployment sets
+    ATTACKLEDGER_LAB_WRITE_RULES=1; only for in-scope hosts under .test or .localhost."""
+    __tablename__ = "lab_write_rules"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    engagement_id: Mapped[int] = mapped_column(ForeignKey("engagements.id"), index=True)
+    methods: Mapped[list] = mapped_column(JSON, default=list)
+    hosts: Mapped[list] = mapped_column(JSON, default=list)
+    paths: Mapped[list] = mapped_column(JSON, default=list)
+    max_writes: Mapped[int]
+    used: Mapped[int] = mapped_column(default=0)
+    expires_at: Mapped[datetime]
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_by_name: Mapped[str] = mapped_column(String(460))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    revoked_at: Mapped[datetime | None]
 
 
 class GatewayRequest(OrgOwned, Base):

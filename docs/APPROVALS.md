@@ -121,6 +121,27 @@ Caido, a browser), under their own control, and imports the exchange as evidence
 route that sends writes on a person's behalf would add a second way to change the target that is
 not tied to a run, its limits and its log, for something the tester's own tools already do.
 
+## Lab write rules (D-062)
+
+On a practice lab (OWASP Juice Shop, the bundled shop) an owner may approve a class of writes in
+advance instead of each one. Off unless the API has `ATTACKLEDGER_LAB_WRITE_RULES=1`; a rule names
+methods (a DELETE only when listed), hosts, path patterns, a cap and an end, and is refused unless
+every host is in scope and under `.test` or `.localhost`.
+
+    GET  /engagements/{id}/lab-write-rules                 the rules (tester)
+    POST /engagements/{id}/lab-write-rules                 make one (owner)
+         {"methods": ["POST", "PUT", "PATCH", "DELETE"], "hosts": ["juice.lab.test"],
+          "paths": ["/*"], "max_writes": 300, "hours": 24, "note": "..."}
+    POST /engagements/{id}/lab-write-rules/{rid}/revoke    end one now (owner)
+
+A write the agent proposes that matches an active rule comes back `approved`; the agent sends it
+with `write_status`, once, through the gateway, as any approved write. Its proposal, evidence and
+audit entry (`write.rule_approved`) name the rule and its maker, say it was approved in advance and
+not by a person reading it, and whether separation of duties was met (the rule's maker and the run's
+starter are two people). With the engagement's separation-of-duties setting on, a rule that does not
+meet it approves nothing. The lane context lists the rules for the lane's host
+(`writes.lab_write_rules`), with the owner's note.
+
 ## Measured
 
 - Tests (`server/tests/test_test_accounts.py`, 29 tests, 39 cases): the real gateway between the worker's tools and

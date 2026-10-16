@@ -5,6 +5,7 @@ Nothing here reaches the network: the SDK's calls are captured by a transport th
 itself, and the gateway runs against the local fake upstream of test_gateway.Stack."""
 import base64
 import http.client
+import datetime as dt
 import importlib.util
 import json
 import ssl
@@ -241,6 +242,43 @@ def test_the_measurements_count_hosts_methods_header_evidence_and_refusals():
     assert not m["header_on_every_request"]
 
 
+def test_runs_in_parallel_share_the_labs_log_without_a_false_alarm():
+    """Four lanes run at once on one lab: the access log of a run's time holds all their requests.
+    Each run's own rows are found by method, path and time; the others' are explained by the gateway's
+    rows of the other jobs, and a row nobody's gateway rows explain still fails the run."""
+    live = load_live()
+
+    def at(t):
+        return f"2026-10-16T10:00:{int(t) % 60:02d}.{int(t * 1000) % 1000:03d}+00:00"
+    base = dt.datetime.fromisoformat(at(0)).timestamp()
+
+    def gw(url, t, method="GET"):
+        return {**row(url, method=method), "at": at(t), "duration_ms": 50}
+
+    def line(path, t, **kw):
+        return lab_line(path, t=base + t, **kw)
+    mine = [gw("http://shop.lab.test/a", 1), gw("http://shop.lab.test/b", 3)]
+    theirs = [gw("http://shop.lab.test/a", 1.2), gw("http://shop.lab.test/c", 2)]
+    lab = [line("/a", 1.05), line("/a", 1.25), line("/c", 2.05), line("/b", 3.05),
+           line("/..%2f..%2fetc", 2.5, research="-", ua="-", status=400)]
+    theirs.append(gw("http://shop.lab.test/..%2f..%2fetc", 2.45))
+    job = {"id": 9, "status": "done", "result": {}}
+    parsed = [live.LAB_LINE.match(x).groupdict() for x in lab]
+    m = live.measure(job, {"rows": mine}, parsed, {}, 0.0, 31.0, live.HEADER, others=theirs)
+    assert m["header_on_every_request"] and m["lab_requests"] == 2 and m["lab_requests_in_window"] == 5
+    assert m["lab_unmatched"] == 0 and m["lab_not_from_the_gateway"] == 0
+    text = live.section({**m, "usage": {}, "summary": "", "detail": "", "turns": 1, "model": "m", "limits": {}},
+                        dry=True, today="d", project="p", prices="x")
+    assert "of 5 in the run's time, the others from runs in parallel" in text
+    # Without the other runs' rows, their requests are ones the gateway did not log: a failed run.
+    m = live.measure(job, {"rows": mine}, parsed, {}, 0.0, 31.0, live.HEADER, others=[])
+    assert not m["header_on_every_request"] and m["lab_not_from_the_gateway"] == 3
+    # One of this job's requests the lab never saw.
+    m = live.measure(job, {"rows": mine + [gw("http://shop.lab.test/d", 4)]}, parsed, {}, 0.0, 31.0, live.HEADER,
+                     others=theirs)
+    assert not m["header_on_every_request"] and m["lab_unmatched"] == 1
+
+
 def test_the_lab_logs_the_header_the_live_run_sends():
     live = load_live()
     conf = (ROOT / "lab" / "nginx.conf").read_text()
@@ -283,7 +321,7 @@ def test_the_lab_log_names_the_signed_in_user_and_the_run_counts_it():
     line = '80 "GET /account/ HTTP/1.1" 200 ua="u" research="agent-live-run" t=1000.5 user="alice"'
     assert live.LAB_LINE.match(line)["user"] == "alice"
     assert live.LAB_LINE.match(lab_line("/"))["user"] is None          # a line from before the sign-in
-    rows = [row("http://shop.lab.test/"), row("http://shop.lab.test/a"), row("http://shop.lab.test/b")]
+    rows = [row("http://shop.lab.test/"), row("http://shop.lab.test/account/"), row("http://shop.lab.test/account/")]
     m = run_data(live, [lab_line("/") + ' user=""', line, line.replace("alice", "carol")], rows)
     assert m["lab_signed_in"] == {"alice": 1, "carol": 1} and m["header_on_every_request"]
     live.LANE_ROLE = "athz"
@@ -596,3 +634,30 @@ def test_the_labs_form_targets_take_post_only():
     # Nothing else answers like a saved write; the registration answers only to its POST.
     served = "\n".join(line for line in conf.splitlines() if not line.lstrip().startswith("#"))
     assert served.count("'saved'") == 1 and "if ($request_method = POST) { rewrite ^ /_register last; }" in served
+
+
+def test_juice_shop_lab_writes_and_own_accounts_options():
+    """--lab-writes and --own-accounts (D-062): an engagement of their own, two accounts per lane,
+    the methods checked, and the section says who approved the writes."""
+    live = load_live()
+    try:
+        live.use_target("juiceshop")
+        live.LANE_ROLE, live.LAB_WRITES, live.OWN_ACCOUNTS = "athz", ("POST", "DELETE"), True
+        assert live.eng_name() == "Agent live run (Juice Shop, own test accounts, lab writes)"
+        assert not live.eng_name().startswith(live.ENG_NAME) and live.uses_accounts()
+        assert live.account_labels() == ["athz1", "athz2"]
+        live.OWN_ACCOUNTS = False
+        assert live.eng_name() == "Agent live run (Juice Shop, lab writes)" and not live.uses_accounts()
+        m = run_data(live, [], [])
+        m["lab_writes"] = {"rule": 4, "methods": ["POST", "DELETE"], "max_writes": 200, "sent": 3,
+                           "sent_by_method": {"POST": 2, "DELETE": 1}, "not_by_rule": 0,
+                           "separation_of_duties_met": False}
+        text = live.section(m, dry=False, today="d", project="p", prices="x")
+        assert "| Writes (D-062) | lab write rule #4 (POST, DELETE, up to 200): 3 sent (DELETE 1, POST 2)" in text
+        assert "separation of duties **not met**" in text
+        for bad in (["--lab-writes", "GET"], ["--own-accounts"]):
+            with pytest.raises(SystemExit):
+                live.main(["run", *bad] + (["--target", "juiceshop"] if bad[0] != "--own-accounts" else []))
+    finally:
+        live.use_target("shop")
+        live.LANE_ROLE, live.LAB_WRITES, live.OWN_ACCOUNTS = "errh", (), False

@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 
 import routewalk
 import testdb
-from app import approvals, authz, db, gatewayapi, testaccounts, workerapi
+from app import approvals, authz, db, gatewayapi, labrules, testaccounts, workerapi
 from app.main import app
 
 MAIN = Path(__file__).resolve().parents[1] / "app" / "main.py"
@@ -51,9 +51,10 @@ def test_the_walk_reaches_every_included_router():
     owners) until RULES and authorize learn about it."""
     src = MAIN.read_text()
     includes = re.findall(r"app\.include_router\(([^)]*)\)", src)
-    assert includes == ["gatewayapi.router", "workerapi.router", "testaccounts.router", "approvals.router"]
+    assert includes == ["gatewayapi.router", "workerapi.router", "testaccounts.router", "approvals.router",
+                        "labrules.router"]
     walked = set(served())
-    for module in (gatewayapi, workerapi, testaccounts, approvals):
+    for module in (gatewayapi, workerapi, testaccounts, approvals, labrules):
         own = {(m, r.path) for r in module.router.routes for m in r.methods if m not in ("HEAD", "OPTIONS")}
         assert own, module.__name__
         assert own <= walked, (module.__name__, sorted(own - walked))

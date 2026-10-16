@@ -15,6 +15,7 @@ look for it in what another organization is shown.
 import base64
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,7 +49,7 @@ def fill(c, *, tag: str, owner_email: str, worker_token: str, gateway_token: str
     out["viewer"] = _ok(c.post("/people", json={"email": view_email, "name": f"Vic {tag}", "password": PW}))["id"]
     out["reviewer_email"], out["viewer_email"] = rev_email, view_email
     e = out["eng"] = _ok(c.post("/engagements", json={"name": f"Engagement {tag}", "pack_id": "bug-bounty"}))["id"]
-    _ok(c.put(f"/engagements/{e}/scope", json={"include": [f"*.{tag}.example.com"], "exclude": [],
+    _ok(c.put(f"/engagements/{e}/scope", json={"include": [f"*.{tag}.example.com", f"lab.{tag}.test"], "exclude": [],
                                               "rate_limit_rps": 5, "research_header": f"X-Bug-Bounty: {tag}"}))
     _ok(c.post(f"/engagements/{e}/attest", json={"operator": f"Olive {tag}", "policy_url": "https://example.com/policy",
                                                  "confirm": True}))
@@ -138,6 +139,17 @@ def fill(c, *, tag: str, owner_email: str, worker_token: str, gateway_token: str
                                           "body": "{}", "as_account": "", "item_idx": 1, "reason": f"try {tag}"}}))
     assert not call["is_error"], call
     out["proposal"] = json.loads(call["text"])["proposal_id"]
+    # A lab write rule (D-062), made while the deployment allows them, for a lab host in scope.
+    was = os.environ.get("ATTACKLEDGER_LAB_WRITE_RULES")
+    os.environ["ATTACKLEDGER_LAB_WRITE_RULES"] = "1"
+    try:
+        out["rule"] = _ok(c.post(f"/engagements/{e}/lab-write-rules", json={
+            "methods": ["POST"], "hosts": [f"lab.{tag}.test"], "note": f"lab {tag}"}))["id"]
+    finally:
+        if was is None:
+            os.environ.pop("ATTACKLEDGER_LAB_WRITE_RULES", None)
+        else:
+            os.environ["ATTACKLEDGER_LAB_WRITE_RULES"] = was
 
     # Two gateway log rows: one for the agent job, one refused with no engagement.
     now = datetime.now(timezone.utc).isoformat()

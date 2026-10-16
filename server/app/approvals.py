@@ -18,6 +18,9 @@ before anything is sent, as before. When it is on:
   4. the exchange becomes evidence (source "agent") with a note that a person approved it. The
      approval, the rejection, the DELETE confirmation and the sending are audit-logged.
 
+On a practice lab, an owner's lab write rule (D-062, labrules.py) may approve step 2 in advance for
+a class of writes; everything else above is unchanged, and the records name the rule.
+
 With separation of duties on, the person who started the agent run cannot approve its writes,
 and neither can the operator token. Viewers and reviewers cannot approve: approving a write is
 changing the target, which is the tester's work under the rules of engagement; reviewing evidence
@@ -42,7 +45,7 @@ from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.orm import Session, object_session
 from sqlalchemy.orm.attributes import set_committed_value
 
-from . import auditlog, authz, gateway, ledger, redact, vault
+from . import auditlog, authz, gateway, labrules, ledger, redact, vault
 from .db import get_session
 from .models import Engagement, Job, JobStatus, Lane, User, WriteProposal, iso_utc
 
@@ -166,6 +169,7 @@ def propose(session, *, eng: Engagement, lane: Lane, job_id: int | None, method:
                       body_sha256=body_sha(body), status="pending")
     session.add(p)
     session.flush()
+    labrules.try_approve(session, eng, p, url, APPROVAL_MINUTES)     # a lab's standing approval (D-062)
     return p
 
 
@@ -177,12 +181,15 @@ def status_for_agent(p: WriteProposal) -> dict:
     elif p.status == "confirming":
         out["note"] = "approved, waiting for the person's DELETE confirmation; nothing has been sent"
     elif p.status == "approved":
-        out["note"] = "approved by a person; it is sent once, now"
+        out["note"] = (f"approved by {p.decided_by_name}; call write_status to send it, once" if p.rule_id
+                       else "approved by a person; it is sent once, now")
     elif p.status == "rejected":
         out["note"] = f"rejected by a person: {p.decision_note or 'no note'}"
     elif p.status == "sent":
         out["note"] = (f"approved and sent: status {p.response_status}" if p.response_status is not None
                        else "approved and sent; no response was recorded")
+        if p.rule_id:
+            out["approved_by"] = p.decided_by_name
         if p.exchange_id:
             out["exchange_id"] = p.exchange_id
     elif p.status == "failed":
@@ -294,7 +301,8 @@ def view(session, p: WriteProposal, names: dict[int, str], full: bool) -> dict:
            "request_sha256": p.request_sha256, "created_at": iso_utc(p.created_at),
            "decided_by": p.decided_by_name, "decided_at": iso_utc(p.decided_at), "note": p.decision_note,
            "expires_at": iso_utc(p.expires_at), "sent_at": iso_utc(p.sent_at), "response_status": p.response_status,
-           "evidence_id": p.evidence_id, "needs_delete_confirmation": p.method == "DELETE",
+           "evidence_id": p.evidence_id, "needs_delete_confirmation": p.method == "DELETE" and not p.rule_id,
+           "rule_id": p.rule_id, "separation_of_duties_met": p.rule_sod_met,
            "confirm_path": urlsplit(p.url).path or "/"}
     if full and p.status in OPEN:
         req = request_of(p)
