@@ -421,6 +421,32 @@ section is one table:
 The script stops with an error, after writing the section, if a request went to another host, the lab saw
 a request without the header, or the job failed.
 
+### On OWASP Juice Shop (`--target juiceshop`, D-060)
+
+The same run on the second practice target, Juice Shop 20.2.0 (`bkimminich/juice-shop:v20.2.0`,
+pinned by digest), as `juice.lab.test`: scope `juice.lab.test` only, every lane signed out, the
+same research header. The rows above are the same, with `juice.lab.test` for the host and Juice
+Shop's front (`lab/juiceshop.conf`, the shop's log format) as the target's access log. Below the
+section comes a score from `tools/juiceshop_score.py`, from a snapshot written next to the numbers
+(`tools/benchmark/juiceshop-<date>-agent-live.json`: the run's leads, its agent evidence, the lane's
+items, and Juice Shop's challenge list before and after the run):
+
+| Count | Source |
+|---|---|
+| Challenges | Juice Shop's `/api/Challenges` (116 in 20.2.0; 18 disabled by Juice Shop itself in Docker), read from inside the stack: the front's container asks Juice Shop directly, so the reads are neither in the gateway's log nor in the front's access log |
+| Identified | a lead or agent evidence entry of the run whose text matches an indicator of `tools/juiceshop/challenge_map.tsv` for the challenge. Only `firm` indicators count (a file, path or artefact only that challenge is about, such as `/ftp/acquisitions.md` or `/support/logs`); `uncertain` ones (a class of issue that fits several challenges, such as SQL injection in the search) and any match in an entry that says it is absent ("no stack trace") are listed with the text, for a person to confirm or reject (`--review`) |
+| Solved | Juice Shop's own solved flag: unsolved before the run and solved after it. A run starts on a fresh shop (the script recreates it if a challenge is solved) |
+| Per category | both counts by Juice Shop's categories, with each category's challenges and how many are enabled |
+
+What it is not: the table covers 74 of the 116 challenges; the others need a write, a signed-in
+user or an answer only a person would recognise, and count only when solved. Identification is the
+agent's claim checked against a table, not a proof; solved is Juice Shop's judgement. A read-only
+agent (GET, HEAD and OPTIONS, writes only through a D-041 approval) can identify far more than it
+can solve: most challenges need a sign-in, a registration, a review or an upload, and only a few are
+solved by a read (the confidential document, the metrics endpoint, a provoked error). Juice Shop's
+own score board is reachable by the agent like any other page, so an agent could name challenges by
+reading it; a lead that only repeats it would still have to match an indicator.
+
 ## Agent run dry run against a stub Claude API (2026-10-12, fixed run)
 
 Not a measurement of the model: the Claude API was a local stub (`tools/agent_dryrun/claude_stub.py`) playing a fixed run, so the turns, tokens and cost are the stub's. It shows the path and the accounting end to end: the worker's SDK, the gateway's route, key swap and GW-1 body check, the budget, the tools, the evidence and this write-up.

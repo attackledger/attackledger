@@ -172,6 +172,10 @@ ATTACKLEDGER_SCAN_TAG=v0.9.0 tools/scan_images.sh
 tools/scan_images.sh postgres:16-alpine@sha256:…  # chosen images only
 ```
 
+OWASP Juice Shop (`bkimminich/juice-shop:v20.2.0`, the optional second practice target, D-060) is
+pinned by digest like the other images, but neither scanned nor in the SBOM: it is vulnerable on
+purpose, starts only with `--profile lab` when named, and runs nothing of AttackLedger's.
+
 It copies each image's package database out (as `tools/sbom.sh` does; the image is not run), and
 every Go binary in it: any executable file carrying Go's build information, found by reading the
 image's filesystem as `docker export` writes it (Caddy, the worker's eight Go recon tools, `gosu`
