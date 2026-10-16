@@ -501,6 +501,32 @@ Backup, Security Policy, Allowlist Bypass, Exposed Metrics, Poison Null Byte):
 | `clnt` (105) | 2 | 2: Web3 Sandbox, Allowlist Bypass | the DOM XSS match was a sentence about a missing CSP "should an injection sink be reachable": out |
 | Union | 13 | 10 (12%): all read; all six solved challenges among them (old: four) | |
 
+Three passes of all 12 lanes on Juice Shop (2026-10-16, Opus `claude-opus-5-5`, max 80 turns, max 200
+requests, lanes in waves of 4 on one shop recreated before each wave, key of a Console organization
+**not** in the Cyber Verification Program). Snapshots: `tools/benchmark/juiceshop-2026-10-16-p{1,2,3}-<lane>.json`.
+Scored with `tools/juiceshop_score.py` against the 83 reachable; each pass is the union of its 12 lanes:
+
+| Pass | Conditions | Identified, of 83 (read / write / account) | Solved (Juice Shop's flags) | Cost (estimate) |
+|---|---|---|---|---|
+| 1 (jobs 106-117) | signed out, read-only, depth floor 60 (D-061) | 26 (31%): 21 / 4 / 1 | 12 | $14.45 |
+| 2 (jobs 118-130) | signed out, read-only, depth floor 120 | 26 (31%): 21 / 3 / 2 | 13 | $26.46 |
+| 3 (jobs 131-142) | own test accounts, lab write rule for POST, PUT, PATCH, DELETE (D-062), depth floor 120 | 27 (33%): 19 / 4 / 4 | 19 | $29.57 |
+| **Union of the three** | | **35 (42%): 24 / 6 / 5** | 20 | $70.48 |
+
+- Doubling the depth floor did not raise the count: the agents read the same surface longer.
+- Accounts helped (account 2/10 to 5/10, solved 13 to 19); the write rule was little used: 57 writes in
+  12 lanes (26 in `busl`, 14 in `idnt`, none in three lanes). `busl` stopped at the turn limit (90 of 120).
+- The authorization lane was declined by the model ("cyber") in passes 1 and 3; in pass 2 it ran.
+- In pass 2 the first `clnt` run failed on a connection error to the Claude API before any turn was
+  paid; it was run again alone, and that run is the one counted.
+- Pass 3 writes were approved by a rule, not by a person, and separation of duties was not met (one
+  operator made the rules and started the runs); its numbers are not comparable with passes 1 and 2.
+- The model knows Juice Shop from training, and its solutions are public: these numbers are recall on a
+  widely documented application, not a measure of performance on an unknown target. The agents' briefs
+  carry only the WSTG checklists, never the challenge list.
+
+Runs after the organization joins the Cyber Verification Program will be reported beside these.
+
 ## Agent run dry run against a stub Claude API (2026-10-12, fixed run)
 
 Not a measurement of the model: the Claude API was a local stub (`tools/agent_dryrun/claude_stub.py`) playing a fixed run, so the turns, tokens and cost are the stub's. It shows the path and the accounting end to end: the worker's SDK, the gateway's route, key swap and GW-1 body check, the budget, the tools, the evidence and this write-up.
