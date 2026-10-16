@@ -4,6 +4,8 @@ engagements/
 briefs/
 targets/
 *.tsv
+# The Juice Shop indicator table is source, not engagement data (D-060).
+!tools/juiceshop/challenge_map.tsv
 logs/
 *.log
 .env
