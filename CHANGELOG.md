@@ -15,6 +15,12 @@ before 1.0, minor versions may change the data model.
   below it is declined at most twice while turns and budget remain, with a result that says to keep
   exploring the host's surface; a run that still ends below it is flagged (`below_depth_floor`) in the
   job log and at the start of the reviewer's summary. `tools/agent_live.py --min-requests N`.
+- Juice Shop scores against a written-down denominator, `tools/juiceshop/reachable.tsv`: the 83
+  challenges this lab can reach offline, each with what it needs (read, write, account; solved only
+  in a browser) and the v20.2.0 source that decides it. The indicator table covers all 83, and the
+  scorer no longer counts sentences that say the issue is absent or only suppose it, files only
+  listed or refused, or one SQL injection as several challenges; several snapshots score together
+  as a union (D-060).
 
 ## [0.9.0] - 2026-10-14
 

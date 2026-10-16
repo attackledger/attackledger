@@ -438,18 +438,53 @@ items, and Juice Shop's challenge list before and after the run):
 | Count | Source |
 |---|---|
 | Challenges | Juice Shop's `/api/Challenges` (116 in 20.2.0; 18 disabled by Juice Shop itself in Docker), read from inside the stack: the front's container asks Juice Shop directly, so the reads are neither in the gateway's log nor in the front's access log |
-| Identified | a lead or agent evidence entry of the run whose text matches an indicator of `tools/juiceshop/challenge_map.tsv` for the challenge. Only `firm` indicators count (a file, path or artefact only that challenge is about, such as `/ftp/acquisitions.md` or `/support/logs`); `uncertain` ones (a class of issue that fits several challenges, such as SQL injection in the search) and any match in an entry that says it is absent ("no stack trace") are listed with the text, for a person to confirm or reject (`--review`) |
+| Reachable | the denominator, `tools/juiceshop/reachable.tsv`: the challenges enabled in Docker that this lab can reach offline, 83 of the 98. Not reachable: 4 need the chatbot's LLM, 2 a blockchain node (Sepolia), 7 an answer that exists only on the internet (a paste, a music video, social media, the malware binaries on GitHub), 2 what the lab's front refuses (the continue codes; the encrypted premium URL, which only the challenge list carries). Each row cites the file or route of Juice Shop's v20.2.0 source that decides it |
+| Needs | per reachable challenge, what observing its issue takes: `read` (signed out, GET/HEAD/OPTIONS, a crafted header or query included; 53), `write` (a state-changing request without a session of one's own: a sign-in, a registration, a feedback, a PUT, a GET that changes state; 20), `account` (a session of an ordinary user the tester registered; 10). A second column says what Juice Shop's own solved check takes, in the same terms, and 4 are solved only in a browser (Juice Shop marks them on a socket.io event its page sends while rendering: DOM XSS, the bonus payload, the deluxe page's decal, closing notifications) |
+| Identified | a lead or agent evidence entry of the run whose text matches an indicator of `tools/juiceshop/challenge_map.tsv` for the challenge, within one sentence. Every reachable challenge has an indicator (81 a firm one). Only `firm` indicators count: the issue's file, route, parameter, value or behaviour, such as `/ftp/acquisitions.md`, `/support/logs` or an allowlisted URL inside another host's redirect target; `uncertain` ones (a class of issue that fits several challenges, or a step towards one) are listed with the text, for a person to confirm or reject (`--review`). The rules below decide when a firm indicator does not count |
 | Solved | Juice Shop's own solved flag: unsolved before the run and solved after it. A run starts on a fresh shop (the script recreates it if a challenge is solved) |
-| Per category | both counts by Juice Shop's categories, with each category's challenges and how many are enabled |
+| Per category | both counts by Juice Shop's categories, with each category's challenges, how many are enabled and how many reachable |
+| Union | several snapshots on one command line (the lanes of one run): each scored, then their union, each challenge once, against the same denominator |
 
-What it is not: the table covers 74 of the 116 challenges; the others need a write, a signed-in
-user or an answer only a person would recognise, and count only when solved. Identification is the
-agent's claim checked against a table, not a proof; solved is Juice Shop's judgement. A read-only
-agent (GET, HEAD and OPTIONS, writes only through a D-041 approval) can identify far more than it
-can solve: most challenges need a sign-in, a registration, a review or an upload, and only a few are
-solved by a read (the confidential document, the metrics endpoint, a provoked error). Juice Shop's
-own score board is reachable by the agent like any other page, so an agent could name challenges by
-reading it; a lead that only repeats it would still have to match an indicator.
+The sentence rules, tested with the agents' own sentences (`server/tests/test_juiceshop.py`):
+
+- **Absent.** A clause that says the issue itself is absent ("no stack trace was shown", "no
+  server-side reflected XSS was observed", "There is no /metrics endpoint") makes the entry's match
+  uncertain. A negated protection is the issue, not its absence: "metrics with no authentication",
+  "without the current password" and "No Content-Security-Policy" stay firm, and so do a normative
+  "should not be web-accessible" and a negation inside the target's quoted error message.
+- **Speculative.** A sentence that only supposes the issue ("would", "could", "might", "may",
+  "possible", "should a sink be reachable", "if ... exists", "left open", "requires a browser",
+  "cannot be confirmed") never makes a firm match.
+- **Listed files.** A file behind the `/ftp` extension filter (the backups, the easter egg, the
+  SIEM file) counts only in a clause that shows it was obtained: a 2xx answer to a request for it, its
+  contents returned, the null-byte bypass. Only listed with other files, or refused (403, "blocked"),
+  it is uncertain. The confidential document counts from the listing: it is served as listed, so
+  seeing it is reaching it.
+- **One issue, one count.** SQL injection in `/rest/products/search` counts once, for User
+  Credentials, and is listed for Database Schema; SQL injection in the sign-in counts once, for Login
+  Admin. A challenge of the same group still counts on its own indicator: the schema or the users'
+  hashes extracted, a named user signed in.
+
+What it is not: identification is the agent's claim checked against a table, not a proof; solved is
+Juice Shop's judgement. A read-only agent (GET, HEAD and OPTIONS, writes only through a D-041
+approval) can identify far more than it can solve: of the 83 reachable, 53 can be observed with reads
+but only 33 solved by them, 4 of those only in a browser (a feedback naming a library, a sign-in, an
+upload, a checkout are writes). The lab's front answers 404 on Juice Shop's challenge list and hints (D-060), so an
+agent cannot name challenges by reading them; Juice Shop and its solutions are public, so a model may
+still know them.
+
+The first four Opus runs on Juice Shop (jobs 102-105, `tools/benchmark/juiceshop-2026-10-16-opus-*.json`),
+scored again with the reachable denominator, the full table and the rules above. They ran on one shop
+at the same time, so each snapshot holds the same six solved flags (Error Handling, Forgotten Sales
+Backup, Security Policy, Allowlist Bypass, Exposed Metrics, Poison Null Byte):
+
+| Lane (job) | Identified, old table and rules | Identified now, of 83 reachable | What changed |
+|---|---|---|---|
+| `info` (102) | 10 | 4: Score Board, Web3 Sandbox, Security Policy, Confidential Document | the backups, the easter egg, the SIEM file and the KeePass file were only listed; the CSAF feed was only named |
+| `conf` (103) | 6 | 4: Poison Null Byte, Forgotten Sales Backup, Error Handling, Exposed Metrics | metrics "with no authentication" now counts; the developer backup was refused (403), the SIEM and KeePass files only listed |
+| `inpv` (104) | 1 | 3: Error Handling, User Credentials, Allowlist Bypass | the allowlist bypass is named; the SQL injection in the search counts once (not for Database Schema too) |
+| `clnt` (105) | 2 | 2: Web3 Sandbox, Allowlist Bypass | the DOM XSS match was a sentence about a missing CSP "should an injection sink be reachable": out |
+| Union | 13 | 10 (12%): all read; all six solved challenges among them (old: four) | |
 
 ## Agent run dry run against a stub Claude API (2026-10-12, fixed run)
 

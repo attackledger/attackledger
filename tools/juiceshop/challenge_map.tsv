@@ -1,103 +1,187 @@
 # Which Juice Shop challenge an agent's lead or evidence names (tools/juiceshop_score.py, D-060).
 #
 # One row per indicator: the challenge key, its name in Juice Shop 20.2.0 (checked against the
-# catalogue, so a renamed or removed challenge fails loudly), a confidence, a Python regular
-# expression (case-insensitive) and why the indicator points at that challenge. Columns are
-# separated by one tab. A challenge may have several rows.
+# catalogue, so a renamed or removed challenge fails loudly), a confidence, a kind, a Python regular
+# expression (case-insensitive, matched within one sentence) and why the indicator points at that
+# challenge. Columns are separated by one tab. A challenge may have several rows. Every challenge this
+# lab can reach (tools/juiceshop/reachable.tsv) has at least one row.
 #
-#   firm       the text names something only this challenge is about: its file, its path, its
-#              artefact (e.g. /ftp/acquisitions.md, /support/logs, eastere.gg). Counted.
-#   uncertain  the text names a class of issue that fits this challenge and others, or that the
-#              agent could only suspect with read-only requests (e.g. "SQL injection in the
-#              search"). Listed for review, never counted unless a reviewer confirms it.
+# confidence
+#   firm       the text names the specific issue: its file, path, parameter, value or behaviour,
+#              something only this challenge is about (e.g. /ftp/acquisitions.md, /support/logs, an
+#              allowlisted URL inside another host's URL). Counted.
+#   uncertain  the text names a class of issue that fits this challenge and others, or only a step
+#              towards it (e.g. "SQL injection" with no route, the KeePass file without its password).
+#              Listed for review, never counted unless a reviewer confirms it.
+# kind
+#   issue      the default: a match counts as the confidence says, subject to the sentence rules below.
+#   obtained   a file the challenge is to get past a protection (the /ftp .md/.pdf filter): counted
+#              only in a clause that shows it was obtained (a 2xx answer to a request for it, its
+#              contents returned, retrieved, downloaded, the bypass), not one that only lists it with
+#              other files or says it was refused (403, blocked).
+#   group:NAME the indicator names one issue several challenges share (SQL injection in the search,
+#              SQL injection in the sign-in): it counts once, for the group's first challenge in this
+#              table; for the others it is listed as uncertain. Their own rows (data extracted, a
+#              named user) still count.
 #
-# A firm match is listed as uncertain when any sentence of the same lead or evidence entry that
-# matches has a negation ("no", "not", "without", ...): "no stack trace was shown" names the stack
-# trace and says it is absent.
-# Challenges without a row cannot be identified from text by this table (most need a write, a
-# signed-in user, or an answer only a person would recognise); they still count when solved.
+# Sentence rules, for every row (tools/juiceshop_score.py, tested with the agents' real sentences):
+#   absent       a clause that says the issue itself is absent ("no stack trace was shown", "no
+#                server-side reflected XSS was observed", "There is no /metrics endpoint") makes the
+#                entry's match uncertain. A negation of a protection is not that: "metrics with no
+#                authentication", "without the current password", "No Content-Security-Policy" name
+#                the issue and stay firm; so does a normative "should not be web-accessible".
+#   speculative  a sentence that only supposes the issue ("would", "could", "might", "may",
+#                "possible", "should a sink be reachable", "if ... exists", "left open", "requires a
+#                browser", "cannot be confirmed") never makes a firm match.
+# Challenges without a row cannot be identified from text by this table; they still count when solved.
 # Matching runs over the run's leads (title, detail, URL) and evidence (summary, URI) only.
 #
-# key	name	confidence	pattern	why
-directoryListingChallenge	Confidential Document	firm	/ftp/acquisitions\.md|\bacquisitions\.md\b	the confidential document itself
-directoryListingChallenge	Confidential Document	uncertain	/ftp\b.{0,80}(directory listing|listing enabled|index of)|(directory listing|index of).{0,80}/ftp\b	the /ftp listing that leads to it
-forgottenBackupChallenge	Forgotten Sales Backup	firm	coupons_2013\.md\.bak	the sales backup file
-forgottenDevBackupChallenge	Forgotten Developer Backup	firm	package\.json\.bak	the developer backup file
-misplacedSignatureFileChallenge	Misplaced Signature File	firm	suspicious_errors\.yml	the SIEM signature file
-loginSupportChallenge	Login Support Team	firm	incident-support\.kdbx|\.kdbx\b|keepass	the support team's KeePass file in /ftp
-easterEggLevelOneChallenge	Easter Egg	firm	eastere\.gg	the easter egg file
-easterEggLevelTwoChallenge	Nested Easter Egg	firm	/the/devs/are/so/funny	the decoded easter egg path
-nullByteChallenge	Poison Null Byte	firm	%2500|poison null byte	the null byte bypass of the /ftp extension check
-nullByteChallenge	Poison Null Byte	uncertain	null[- ]byte	a null byte named without the encoding
-accessLogDisclosureChallenge	Access Log	firm	/support/logs|access\.log\.\d	the exposed access logs
-exposedMetricsChallenge	Exposed Metrics	firm	/metrics\b|prometheus metrics	the Prometheus endpoint
-errorHandlingChallenge	Error Handling	firm	stack ?trace|SQLITE_ERROR|SequelizeDatabaseError|UnauthorizedError: No Authorization header	an error answered with its internals
-errorHandlingChallenge	Error Handling	uncertain	(verbose|detailed|unhandled|raw) (error|exception)|error page.{0,60}(express|node|sequelize)	an error page that may be this one
-scoreBoardChallenge	Score Board	firm	score-?board	the hidden score board route
-privacyPolicyChallenge	Privacy Policy	uncertain	privacy-?policy	reading the privacy policy is the whole challenge; naming it is not a finding
-privacyPolicyProofChallenge	Privacy Policy Inspection	firm	/we/may/also/instruct/you	the hidden URL in the privacy policy
-securityPolicyChallenge	Security Policy	firm	security\.txt	the security policy file
-csafChallenge	Security Advisory	firm	\bcsaf\b	the CSAF advisory feed under /.well-known
-adminSectionChallenge	Admin Section	firm	#/administration|/administration\b	the admin route named in the front end
-web3SandboxChallenge	Web3 Sandbox	firm	web3-sandbox	the code sandbox route named in the front end
-tokenSaleChallenge	Blockchain Hype	firm	tokensale|token-sale|token sale	the token sale route
-extraLanguageChallenge	Extra Language	firm	tlh_AA|klingon	the language file not in production
-dlpPastebinDataLeakChallenge	Leaked Unsafe Product	firm	hueteroneel|eurogium edule	the removed unsafe product
-retrieveBlueprintChallenge	Retrieve Blueprint	firm	JuiceShop\.stl|\.stl\b	the product blueprint file
-missingEncodingChallenge	Missing Encoding	firm	%23zatschi|#zatschi|melee combat	the cat photo whose URL needs encoding
-ephemeralAccountantChallenge	Ephemeral Accountant	firm	acc0unt4nt	the accountant user
-weakPasswordChallenge	Password Strength	firm	admin123	the administrator's password
-loginRapperChallenge	Login MC SafeSearch	firm	n00dles|mc safesearch	MC SafeSearch's password from his song
-exposedCredentialsChallenge	Exposed Credentials	firm	testing@juice-sh\.op|IamUsedForTesting|testingUsername	the testing account hard-coded in the front end
-exposedCredentialsChallenge	Exposed Credentials	uncertain	hard-?coded.{0,40}(credential|password)	hard-coded credentials in the client, not named
-leakedApiKeyChallenge	Leaked API Key	uncertain	(leaked|exposed|hard-?coded) api[ _-]?key	an API key in what the shop serves, not named
-passwordHashLeakChallenge	Password Hash Leak	firm	whoami.{0,80}(password|hash)|(password|hash).{0,80}whoami	the password hash from /rest/user/whoami
-passwordHashLeakChallenge	Password Hash Leak	uncertain	/api/Users.{0,80}(password|hash)	password hashes from the users API
-emailLeakChallenge	Email Leak	firm	whoami.{0,40}callback|callback.{0,40}whoami|\bjsonp\b	the JSONP callback on /rest/user/whoami
-redirectCryptoCurrencyChallenge	Outdated Allowlist	firm	redirect\?to=[^\s]*(blockchain\.info|dash\.org|etherscan)|outdated allow-?list	a crypto address still allowed by the redirect
-redirectChallenge	Allowlist Bypass	uncertain	open redirect|/redirect\?to=	the redirect endpoint, without the bypass
-knownVulnerableComponentChallenge	Vulnerable Library	firm	(sanitize-html|express-jwt|jsonwebtoken).{0,80}(vulnerab|CVE-)|(vulnerab|CVE-).{0,80}(sanitize-html|express-jwt|jsonwebtoken)	one of the known vulnerable libraries, named
-knownVulnerableComponentChallenge	Vulnerable Library	uncertain	(outdated|vulnerable) (library|component|dependency|package)	a vulnerable library, not named
-typosquattingNpmChallenge	Legacy Typosquatting	firm	epilogue-js	the typosquatted package
-typosquattingAngularChallenge	Frontend Typosquatting	firm	anuglar2-qrcode	the typosquatted front-end package
-supplyChainAttackChallenge	Supply Chain Attack	firm	eslint-scope	the compromised package
-weirdCryptoChallenge	Weird Crypto	firm	\bz85\b|base85|hashids	an algorithm the shop should not use that way
-weirdCryptoChallenge	Weird Crypto	uncertain	\bmd5\b|\bsha-?1\b|\brot13\b	a weak hash, which may be about something else
-forgedCouponChallenge	Forged Coupon	uncertain	coupon.{0,60}(z85|base85|forg|predictable)|(z85|base85).{0,60}coupon	coupon codes that can be made
-continueCodeChallenge	Imaginary Challenge	uncertain	continue-?code	the continue code built with hashids
-jwtUnsignedChallenge	Unsigned JWT	uncertain	alg"?\s*[:=]\s*"?none|\balg ?none\b|unsigned (jwt|token)	a token accepted unsigned: read-only, only suspected
-jwtForgedChallenge	Forged Signed JWT	uncertain	(rs256|hs256).{0,60}(confusion|public key)|key confusion	an RSA/HMAC key confusion: only suspected
-loginAdminChallenge	Login Admin	uncertain	(sql ?injection|sqli\b).{0,80}(login|sign[- ]in|/rest/user/login)|(login|sign[- ]in|/rest/user/login).{0,80}(sql ?injection|sqli\b)	SQL injection in the sign-in: needs a POST
-loginBenderChallenge	Login Bender	uncertain	bender@juice-sh\.op.{0,80}(sql|injection)	SQL injection as Bender
-loginJimChallenge	Login Jim	uncertain	jim@juice-sh\.op.{0,80}(sql|injection)	SQL injection as Jim
-unionSqlInjectionChallenge	User Credentials	uncertain	(sql ?injection|sqli\b|SQLITE_ERROR).{0,80}(/rest/products/search|search)|(/rest/products/search|search).{0,80}(sql ?injection|sqli\b|SQLITE_ERROR)	SQL injection in the product search
-dbSchemaChallenge	Database Schema	uncertain	(sql ?injection|sqli\b|SQLITE_ERROR).{0,80}(/rest/products/search|search)|(/rest/products/search|search).{0,80}(sql ?injection|sqli\b|SQLITE_ERROR)|sqlite_master	SQL injection in the product search, or the schema table
-christmasSpecialChallenge	Christmas Special	uncertain	christmas	the deleted Christmas offer
-noSqlReviewsChallenge	NoSQL Manipulation	uncertain	(nosql|\$ne\b|\$where).{0,80}review|review.{0,80}(nosql|\$ne\b|\$where)	NoSQL injection on reviews
-localXssChallenge	DOM XSS	firm	dom[- ]?(based )?xss|bypassSecurityTrustHtml	DOM XSS through the search
-localXssChallenge	DOM XSS	uncertain	xss.{0,60}search|search.{0,60}xss	XSS in the search, kind not said
-xssBonusChallenge	Bonus Payload	uncertain	soundcloud	the bonus payload
-reflectedXssChallenge	Reflected XSS	uncertain	reflected xss|track-?result.{0,60}xss	reflected XSS (disabled in Docker)
-csrfChallenge	CSRF	uncertain	csrf.{0,60}(profile|username)|(profile|username).{0,60}csrf	CSRF on the profile name
-ssrfChallenge	SSRF	uncertain	\bssrf\b|server-side request forgery	SSRF, only suspected
-basketAccessChallenge	View Basket	uncertain	basket.{0,80}(idor|another user|other user|any user)|(idor|another user|other user).{0,80}basket	another user's basket
-feedbackChallenge	Five-Star Feedback	uncertain	feedback.{0,60}(delet|remov)|(delet|remov).{0,60}feedback	deleting feedback
-forgedFeedbackChallenge	Forged Feedback	uncertain	feedback.{0,60}(userid|another user|forg|impersonat)	feedback in another user's name
-forgedReviewChallenge	Forged Review	uncertain	review.{0,60}(author|another user|forg|impersonat)	a review as another user
-dataExportChallenge	GDPR Data Theft	uncertain	data-?export.{0,60}(another|other|someone)	another user's data export
-registerAdminChallenge	Admin Registration	uncertain	mass[- ]assignment|(register|registration|/api/Users).{0,80}role	a role set at registration
-emptyUserRegistration	Empty User Registration	uncertain	regist.{0,60}empty (email|password)	registration without email or password
-passwordRepeatChallenge	Repetitive Registration	uncertain	password ?repeat|passwordRepeat	the repeated password not checked
-zeroStarsChallenge	Zero Stars	uncertain	zero[- ]star|rating.{0,20}\b0\b	a zero-star rating
-uploadSizeChallenge	Upload Size	uncertain	upload.{0,60}(size|100 ?kb)	the upload size checked in the client only
-uploadTypeChallenge	Upload Type	uncertain	upload.{0,60}(extension|file type)	the upload type checked in the client only
-captchaBypassChallenge	CAPTCHA Bypass	uncertain	captcha	the CAPTCHA answer in the API response, or its reuse
-negativeOrderChallenge	Payback Time	uncertain	negative (quantity|amount|price)|quantity.{0,30}negative	a negative quantity
-manipulateClockChallenge	Expired Coupon	uncertain	expired coupon|coupon.{0,60}(clock|expir)	the coupon expiry checked in the client
-freeDeluxeChallenge	Deluxe Fraud	uncertain	deluxe.{0,60}(free|without pay|paymentMode)	deluxe membership without paying
-resetPasswordJimChallenge	Reset Jim's Password	uncertain	security question	weak security questions
-resetPasswordBenderChallenge	Reset Bender's Password	uncertain	security question	weak security questions
-geoStalkingMetaChallenge	Meta Geo Stalking	uncertain	photo-?wall.{0,80}(exif|gps|metadata)|(exif|gps).{0,80}photo	location metadata in the photo wall
-oauthUserPasswordChallenge	Login Bjoern	uncertain	bjoern\.kimminich@gmail|oauth.{0,60}password.{0,60}(derived|reversed|base64|btoa)	the OAuth user's derived password
-timingAttackChallenge	Multiple Likes	uncertain	like.{0,40}(race|multiple times|same user)	liking a review more than once
-chatbotPromptInjectionChallenge	Chatbot Prompt Injection	uncertain	prompt injection	the chatbot (needs an LLM endpoint the lab does not have)
+# key	name	confidence	kind	pattern	why
+directoryListingChallenge	Confidential Document	firm	issue	/ftp/acquisitions\.md|\bacquisitions\.md\b	the confidential document, served as listed in /ftp: seeing it is reaching it
+directoryListingChallenge	Confidential Document	uncertain	issue	/ftp\b.{0,80}(directory listing|listing enabled|index of)|(directory listing|index of).{0,80}/ftp\b	the /ftp listing that leads to it
+forgottenBackupChallenge	Forgotten Sales Backup	firm	obtained	coupons_2013\.md\.bak	the sales backup file, behind the .md/.pdf filter: counted where it was obtained
+forgottenDevBackupChallenge	Forgotten Developer Backup	firm	obtained	\bpackage\.json\.bak	the developer backup file, behind the .md/.pdf filter: counted where it was obtained
+misplacedSignatureFileChallenge	Misplaced Signature File	firm	obtained	suspicious_errors\.yml	the SIEM signature file, behind the .md/.pdf filter: counted where it was obtained
+easterEggLevelOneChallenge	Easter Egg	firm	obtained	eastere\.gg	the easter egg file, behind the .md/.pdf filter: counted where it was obtained
+nullByteChallenge	Poison Null Byte	firm	obtained	%2500|%00\.(md|pdf)|poison null[- ]?byte|null[- ]?byte (extension )?bypass	the null byte bypass of the /ftp extension check, where it got a file
+nullByteChallenge	Poison Null Byte	uncertain	issue	null[- ]byte	a null byte named without the encoding
+loginSupportChallenge	Login Support Team	firm	issue	J6aVjTgOpRs|(opened|cracked|unlocked|decrypted)\w*.{0,40}(kdbx|keepass)	the support team's password, or the KeePass file opened
+loginSupportChallenge	Login Support Team	uncertain	issue	incident-support\.kdbx|\.kdbx\b|keepass	the KeePass file in /ftp: finding it is not the challenge
+easterEggLevelTwoChallenge	Nested Easter Egg	firm	issue	/the/devs/are/so/funny	the decoded easter egg path
+accessLogDisclosureChallenge	Access Log	firm	issue	/support/logs|access\.log\.\d	the exposed access logs
+misplacedIacFiles	Misplaced IaC Files	firm	issue	/infrastructure\b|\bterraform/\w+\.tf\b|\b(main|networking|outputs|variables)\.tf\b	the infrastructure files served under /infrastructure
+retrieveBlueprintChallenge	Retrieve Blueprint	firm	issue	JuiceShop\.stl|\.stl\b	the product blueprint file
+extraLanguageChallenge	Extra Language	firm	issue	tlh_AA|klingon	the language file not in production
+missingEncodingChallenge	Missing Encoding	firm	issue	%23zatschi|#zatschi|melee combat	the cat photo whose URL needs encoding
+securityPolicyChallenge	Security Policy	firm	issue	security\.txt	the security policy file
+csafChallenge	Security Advisory	firm	issue	juice-shop-sa-20200513-express-jwt|7e7ce7c65db3bf06	the express-jwt advisory marked known_affected, or its checksum
+csafChallenge	Security Advisory	uncertain	issue	\bcsaf\b	the CSAF feed named, not the advisory
+exposedMetricsChallenge	Exposed Metrics	firm	issue	/metrics\b|prometheus metrics	the Prometheus endpoint
+errorHandlingChallenge	Error Handling	firm	issue	stack ?trace|SQLITE_ERROR|SequelizeDatabaseError|UnauthorizedError: No Authorization header	an error answered with its internals
+errorHandlingChallenge	Error Handling	uncertain	issue	(verbose|detailed|unhandled|raw) (error|exception)|error page.{0,60}(express|node|sequelize)	an error page that may be this one
+scoreBoardChallenge	Score Board	firm	issue	score-?board	the hidden score board route
+adminSectionChallenge	Admin Section	firm	issue	#/administration|/administration\b	the admin route named in the front end
+adminSectionChallenge	Admin Section	uncertain	issue	\badministration\b	a word that may name the admin route
+web3SandboxChallenge	Web3 Sandbox	firm	issue	web3-sandbox	the code sandbox route named in the front end
+tokenSaleChallenge	Blockchain Hype	firm	issue	tokensale|token-sale|token sale	the token sale route
+privacyPolicyChallenge	Privacy Policy	uncertain	issue	privacy-?policy	reading the privacy policy is the whole challenge; naming it is not a finding
+privacyPolicyProofChallenge	Privacy Policy Inspection	firm	issue	/we/may/also/instruct/you	the hidden URL in the privacy policy
+svgInjectionChallenge	Cross-Site Imaging	firm	issue	testDecal|cataas\.com	the forgotten testDecal parameter of the deluxe page, or the cross-domain kittens
+closeNotificationsChallenge	Mass Dispel	uncertain	issue	(close|dismiss)\w* (all|multiple|several) .{0,40}notifications|shift.{0,20}click.{0,40}notification	closing several notifications at once (a UI feature)
+premiumPaywallChallenge	Premium Paywall	firm	issue	/this/page/is/hidden	the premium content URL
+dlpPastebinDataLeakChallenge	Leaked Unsafe Product	firm	issue	hueteroneel|eurogium edule	the dangerous ingredients of the removed product
+dlpPastebinDataLeakChallenge	Leaked Unsafe Product	uncertain	issue	rippertuer	the removed product, without its ingredients
+ephemeralAccountantChallenge	Ephemeral Accountant	firm	issue	acc0unt4nt	the accountant user
+weakPasswordChallenge	Password Strength	firm	issue	admin123	the administrator's password
+loginRapperChallenge	Login MC SafeSearch	firm	issue	n00dles|mc safesearch	MC SafeSearch's password from his song
+exposedCredentialsChallenge	Exposed Credentials	firm	issue	testing@juice-sh\.op|IamUsedForTesting|testingUsername	the testing account hard-coded in the front end
+exposedCredentialsChallenge	Exposed Credentials	uncertain	issue	hard-?coded.{0,40}(credential|password)	hard-coded credentials in the client, not named
+leakedApiKeyChallenge	Leaked API Key	firm	issue	6PPi37DBxP4lDwlriuaxP15HaDJpsUXY5TspVmie	the leaked API key
+leakedApiKeyChallenge	Leaked API Key	uncertain	issue	(leaked|exposed|hard-?coded) api[ _-]?key	an API key in what the shop serves, not named
+passwordHashLeakChallenge	Password Hash Leak	firm	issue	whoami\?fields=[^\s]*password|whoami.{0,80}(password|hash)|(password|hash).{0,80}whoami	the password hash from /rest/user/whoami
+passwordHashLeakChallenge	Password Hash Leak	uncertain	issue	/api/Users.{0,80}(password|hash)	password hashes from the users API
+emailLeakChallenge	Email Leak	firm	issue	whoami.{0,40}callback|callback.{0,40}whoami|\bjsonp\b	the JSONP callback on /rest/user/whoami
+geoStalkingMetaChallenge	Meta Geo Stalking	firm	issue	daniel boone|favorite-hiking-place.{0,80}(exif|gps|metadata|location)|(exif|gps|metadata).{0,80}favorite-hiking-place	John's security answer from his photo's metadata
+geoStalkingMetaChallenge	Meta Geo Stalking	uncertain	issue	photo-?wall.{0,80}(exif|gps|metadata)|(exif|gps).{0,80}photo	location metadata in the photo wall
+geoStalkingVisualChallenge	Visual Geo Stalking	firm	issue	\bITsec\b|IMG_4253.{0,80}(answer|security|emma)	Emma's security answer from her photo
+geoStalkingVisualChallenge	Visual Geo Stalking	uncertain	issue	IMG_4253|emma.{0,60}security question	Emma's photo, without the answer
+nftUnlockChallenge	NFT Takeover	firm	issue	purpose betray marriage|(seed phrase|mnemonic).{0,80}review|review.{0,80}(seed phrase|mnemonic)	the wallet's seed phrase posted in a product review
+nftUnlockChallenge	NFT Takeover	uncertain	issue	seed phrase|mnemonic|/rest/web3/submitKey	a seed phrase or the key check, not where it leaked
+hiddenImageChallenge	Steganography	firm	issue	pickle rick	the character hidden in an image
+hiddenImageChallenge	Steganography	uncertain	issue	steganograph	steganography, the character not named
+christmasSpecialChallenge	Christmas Special	firm	issue	christmas super-?surprise-?box|christmas.{0,40}2014	the deleted Christmas offer of 2014
+christmasSpecialChallenge	Christmas Special	uncertain	issue	christmas	a Christmas offer
+twoFactorAuthUnsafeSecretStorageChallenge	Two Factor Authentication	firm	issue	totpSecret|wurstbrot.{0,80}(2fa|totp|two[- ]factor|secret)	the TOTP secrets stored readable (wurstbrot's)
+twoFactorAuthUnsafeSecretStorageChallenge	Two Factor Authentication	uncertain	issue	wurstbrot|totp secret	the 2FA user or secret, not how it is read
+knownVulnerableComponentChallenge	Vulnerable Library	firm	issue	sanitize-html.{0,40}1\.4\.2|express-jwt.{0,40}0\.1\.3|(sanitize-html|express-jwt).{0,80}(vulnerab|CVE-)|(vulnerab|CVE-).{0,80}(sanitize-html|express-jwt)	one of the two known vulnerable libraries, named
+knownVulnerableComponentChallenge	Vulnerable Library	uncertain	issue	(outdated|vulnerable) (library|component|dependency|package)|jsonwebtoken.{0,80}(vulnerab|CVE-)	a vulnerable library, not one of the two
+typosquattingNpmChallenge	Legacy Typosquatting	firm	issue	epilogue-js	the typosquatted package
+typosquattingAngularChallenge	Frontend Typosquatting	firm	issue	ngy-cookie	the typosquatted front-end package (20.2.0 checks ngy-cookie)
+supplyChainAttackChallenge	Supply Chain Attack	firm	issue	eslint-scope/issues/39|npm:eslint-scope:20180712|eslint-scope.{0,80}(compromis|malicious|backdoor|hijack|npm token|3\.7\.2)	the compromised eslint-scope release
+supplyChainAttackChallenge	Supply Chain Attack	uncertain	issue	eslint-scope	the package named, not the compromise
+vulnerableDockerImageChallenge	Vulnerable Infrastructure	firm	issue	mongo:?\s*4\.4\.29|mongo\w*.{0,40}4\.4\.29	the end-of-life MongoDB image in the infrastructure files
+vulnerableDockerImageChallenge	Vulnerable Infrastructure	uncertain	issue	mongo.{0,40}(end[- ]of[- ]life|\beol\b|outdated|4\.4)	an old MongoDB, version not named
+weirdCryptoChallenge	Weird Crypto	firm	issue	\bz85\b|base85|hashids|\bmd5\b.{0,60}(password|hash)|(password|hash)\w*.{0,60}\bmd5\b	an algorithm the shop should not use that way
+weirdCryptoChallenge	Weird Crypto	uncertain	issue	\bmd5\b|\bsha-?1\b|\brot13\b|\bbase64\b	a weak or misused algorithm, which may be about something else
+forgedCouponChallenge	Forged Coupon	firm	issue	(forg|craft|generat|creat)\w* (an? )?(own |valid |new )?coupons?.{0,80}(z85|base85)|coupons?.{0,80}(z85|base85).{0,80}(forg|craft|generat)	a coupon made with the z85 encoding
+forgedCouponChallenge	Forged Coupon	uncertain	issue	coupon.{0,60}(z85|base85|forg|predictable)|(z85|base85).{0,60}coupon	coupon codes that can be made
+continueCodeChallenge	Imaginary Challenge	uncertain	issue	continue-?code	the continue code built with hashids
+jwtUnsignedChallenge	Unsigned JWT	firm	issue	jwtn3d@|(\"?alg\"?\s*[:=]\s*\"?none\"?|\balg ?none\b).{0,100}(accept|authenticated|signed in|logged in)	a token without signature accepted
+jwtUnsignedChallenge	Unsigned JWT	uncertain	issue	alg\"?\s*[:=]\s*\"?none|\balg ?none\b|unsigned (jwt|token)	a token accepted unsigned: only suspected
+jwtForgedChallenge	Forged Signed JWT	firm	issue	rsa_lord@|hs256.{0,80}(jwt\.pub|public key).{0,80}(accept|authenticated|signed in|logged in)	an HS256 token signed with the public key accepted
+jwtForgedChallenge	Forged Signed JWT	uncertain	issue	(rs256|hs256).{0,60}(confusion|public key)|key confusion	an RSA/HMAC key confusion: only suspected
+iacLeakedKeyChallenge	Login Cloud Admin	firm	issue	cloud-admin@|(rsa )?private key.{0,80}(/infrastructure|terraform|networking\.tf)|(/infrastructure|terraform|networking\.tf).{0,80}private key	the signing key in the served Terraform files
+redirectCryptoCurrencyChallenge	Outdated Allowlist	firm	issue	redirect\?to=[^\s]*(blockchain\.info|dash\.org|etherscan)|outdated allow-?list	a crypto address still allowed by the redirect
+redirectChallenge	Allowlist Bypass	firm	issue	allow-?list bypass|bypass\w* (the |its )?(redirect )?allow-?list|allow-?list.{0,80}(only checks|only verifies|contains|substring|includes)|redirect\?to=https?://(?!(www\.)?(github\.com/juice-shop|blockchain\.info|explorer\.dash\.org|etherscan\.io|shop\.spreadshirt|stickeryou\.com|leanpub\.com))[^\s\"']*(github\.com/juice-shop|blockchain\.info/address|explorer\.dash\.org|etherscan\.io/address|spreadshirt|stickeryou\.com|leanpub\.com)	the allowlist checked as a substring: another host with an allowed URL inside
+redirectChallenge	Allowlist Bypass	uncertain	issue	open redirect|/redirect\?to=	the redirect endpoint, without the bypass
+unionSqlInjectionChallenge	User Credentials	firm	group:search-sqli	(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable|injectable).{0,120}(/rest/products/search|product search)|(/rest/products/search|product search).{0,120}(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable|injectable|\bunion\b)	SQL injection in GET /rest/products/search: counted once for its group, here
+unionSqlInjectionChallenge	User Credentials	firm	issue	@juice-sh\.op.{0,60}\b[0-9a-f]{32}\b|\b[0-9a-f]{32}\b.{0,60}@juice-sh\.op|(dumped|extracted|retrieved|leaked|listed) (all )?(the )?(users'? )?(e-?mails? and )?(credentials|password hashes)	user credentials extracted through it
+dbSchemaChallenge	Database Schema	firm	group:search-sqli	(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable|injectable).{0,120}(/rest/products/search|product search)|(/rest/products/search|product search).{0,120}(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable|injectable|\bunion\b)	SQL injection in GET /rest/products/search: counted for User Credentials, listed here
+dbSchemaChallenge	Database Schema	firm	issue	CREATE TABLE\s*`?(Users|Products|Baskets|Feedbacks)|sqlite_master.{0,80}(returned|dumped|extracted|listed)	the schema extracted through it
+dbSchemaChallenge	Database Schema	uncertain	issue	sqlite_master	the schema table named, nothing extracted
+loginAdminChallenge	Login Admin	firm	group:login-sqli	(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable).{0,100}(/rest/user/login|login|sign[- ]in)|(/rest/user/login|login|sign[- ]in).{0,100}(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable)	SQL injection in POST /rest/user/login: counted once for its group, here
+loginAdminChallenge	Login Admin	firm	issue	admin@juice-sh\.op'\s*--|' ?or ?'?1'? ?= ?'?1.{0,80}(/rest/user/login|login)	signing in as the first user, the administrator, by SQL injection
+loginBenderChallenge	Login Bender	firm	group:login-sqli	(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable).{0,100}(/rest/user/login|login|sign[- ]in)|(/rest/user/login|login|sign[- ]in).{0,100}(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable)	SQL injection in the sign-in: counted for Login Admin, listed here
+loginBenderChallenge	Login Bender	firm	issue	bender@juice-sh\.op'?\s*--|bender@juice-sh\.op.{0,80}(sql ?injection|sqli\b)	SQL injection as Bender
+loginJimChallenge	Login Jim	firm	group:login-sqli	(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable).{0,100}(/rest/user/login|login|sign[- ]in)|(/rest/user/login|login|sign[- ]in).{0,100}(sql ?injection|sqli\b|SQLITE_ERROR|sql-injectable)	SQL injection in the sign-in: counted for Login Admin, listed here
+loginJimChallenge	Login Jim	firm	issue	jim@juice-sh\.op'?\s*--|jim@juice-sh\.op.{0,80}(sql ?injection|sqli\b)	SQL injection as Jim
+ghostLoginChallenge	GDPR Data Erasure	firm	issue	chris\.pike@.{0,80}(deleted|erased|log(ged)? ?in|sign(ed)? ?in)|(deleted|erased) (user|account).{0,80}(log(ged)? ?in|sign(ed)? ?in)	signing in as the erased user
+ghostLoginChallenge	GDPR Data Erasure	uncertain	issue	chris\.pike@	the erased user named
+noSqlReviewsChallenge	NoSQL Manipulation	firm	issue	(\$ne|\$gt|\$regex|\$where).{0,80}/rest/products/reviews|/rest/products/reviews.{0,100}(\$ne|\$gt|\$regex|\$where|multi)	an operator as review id updating many reviews
+noSqlReviewsChallenge	NoSQL Manipulation	uncertain	issue	(nosql|\$ne\b|\$where).{0,80}review|review.{0,80}(nosql|\$ne\b|\$where)	NoSQL injection on reviews
+localXssChallenge	DOM XSS	firm	issue	dom[- ]?(based )?xss.{0,80}(#/search|search\?q=|search (field|box|bar|page|results?|parameter))|(#/search|search\?q=|search (field|box|bar|page|results?|parameter)).{0,80}dom[- ]?(based )?xss|bypassSecurityTrustHtml|#/search\?q=[^\s]*(<iframe|%3Ciframe|javascript:)	DOM XSS through the search, named
+localXssChallenge	DOM XSS	uncertain	issue	dom[- ]?(based )?xss|xss.{0,60}search|search.{0,60}xss	XSS in the search or a DOM XSS, not both
+xssBonusChallenge	Bonus Payload	firm	issue	api\.soundcloud\.com/tracks/771984076|w\.soundcloud\.com/player	the bonus payload
+xssBonusChallenge	Bonus Payload	uncertain	issue	soundcloud	the bonus payload's host
+reflectedXssChallenge	Reflected XSS	uncertain	issue	reflected xss|track-?result.{0,60}xss	reflected XSS (disabled in Docker)
+csrfChallenge	CSRF	firm	issue	htmledit\.squarefree\.com|(csrf|cross-site request forgery).{0,80}(POST )?/profile\b|POST /profile\b.{0,80}(csrf|cross-site request forgery)	CSRF on POST /profile
+csrfChallenge	CSRF	uncertain	issue	csrf.{0,60}(profile|username)|(profile|username).{0,60}csrf	CSRF on the profile name
+ssrfChallenge	SSRF	uncertain	issue	\bssrf\b|server-side request forgery	SSRF, only suspected
+basketAccessChallenge	View Basket	firm	issue	/rest/basket/\d+.{0,100}(another|other users?|someone|idor|any basket)|(idor|another user'?s?|other users?'?).{0,80}/rest/basket/\d+	another user's basket through /rest/basket/:id
+basketAccessChallenge	View Basket	uncertain	issue	basket.{0,80}(idor|another user|other user|any user)|(idor|another user|other user).{0,80}basket	another user's basket
+basketManipulateChallenge	Manipulate Basket	firm	issue	BasketId.{0,80}(twice|two values|duplicate|second|pollut)|(duplicate|second|two) \"?BasketId	a second BasketId in /api/BasketItems
+basketManipulateChallenge	Manipulate Basket	uncertain	issue	(add|put)\w* .{0,40}(another|other) user'?s? basket|/api/BasketItems.{0,80}(another|other user)	an item in another user's basket
+feedbackChallenge	Five-Star Feedback	firm	issue	(delet|remov)\w*.{0,60}(5|five)[- ]star feedback	deleting the 5-star feedback
+feedbackChallenge	Five-Star Feedback	uncertain	issue	feedback.{0,60}(delet|remov)|(delet|remov).{0,60}feedback	deleting feedback
+forgedFeedbackChallenge	Forged Feedback	firm	issue	/api/Feedbacks.{0,100}\bUserId\b|\bUserId\b.{0,100}/api/Feedbacks|feedback.{0,60}(in another user'?s? name|as another user)	feedback with another UserId
+forgedFeedbackChallenge	Forged Feedback	uncertain	issue	feedback.{0,60}(userid|another user|forg|impersonat)	feedback in another user's name
+forgedReviewChallenge	Forged Review	firm	issue	/rest/products/[^\s/]+/reviews.{0,100}\bauthor\b|\bauthor\b.{0,80}/rest/products/[^\s/]+/reviews|review.{0,60}(as another user|in another user'?s? name|any author)	a review with any author
+forgedReviewChallenge	Forged Review	uncertain	issue	review.{0,60}(author|another user|forg|impersonat)	a review as another user
+dataExportChallenge	GDPR Data Theft	firm	issue	data-export.{0,100}(vowels|masked e-?mail)|(vowels|masked e-?mail).{0,100}data-export	the export matching orders by masked e-mail
+dataExportChallenge	GDPR Data Theft	uncertain	issue	data-?export.{0,60}(another|other|someone)	another user's data export
+changeProductChallenge	Product Tampering	firm	issue	(PUT|update|modif|tamper|chang)\w*.{0,40}/api/Products/\d+|/api/Products/\d+.{0,80}(PUT|without auth|no auth|unauthenticated|tamper)|owasp\.slack\.com|o-saft.{0,80}href	a product changed through PUT /api/Products/:id without authorization
+changeProductChallenge	Product Tampering	uncertain	issue	/api/Products.{0,80}(PUT|update)	write methods on the products API
+changePasswordBenderChallenge	Change Bender's Password	firm	issue	change-password\?(?![^\s]*current=)[^\s]*\bnew=|change-password.{0,80}(without|no|missing) (the )?current password|slurmCl4ssic	a password changed without the current one
+registerAdminChallenge	Admin Registration	firm	issue	\"?role\"?\s*[:=]\s*\"?admin\"?.{0,80}(/api/Users|regist)|(/api/Users|regist\w*).{0,80}\"?role\"?\s*[:=]\s*\"?admin	role admin sent at registration
+registerAdminChallenge	Admin Registration	uncertain	issue	mass[- ]assignment|(register|registration|/api/Users).{0,80}role	a role set at registration
+emptyUserRegistration	Empty User Registration	firm	issue	(empty|blank) e-?mail and (an? )?(empty|blank) password	a user registered with an empty e-mail and password
+emptyUserRegistration	Empty User Registration	uncertain	issue	regist.{0,60}empty (e-?mail|password)	registration without e-mail or password
+passwordRepeatChallenge	Repetitive Registration	firm	issue	passwordRepeat.{0,80}(not (compared|checked|validated|verified)|differ|mismatch|ignored)|(mismatch|different)\w*.{0,60}passwordRepeat	the repeated password not compared
+passwordRepeatChallenge	Repetitive Registration	uncertain	issue	password ?repeat|passwordRepeat	the repeated password
+zeroStarsChallenge	Zero Stars	firm	issue	rating\"?\s*[:=]\s*\"?0\b.{0,80}(feedback|/api/Feedbacks)|(/api/Feedbacks|feedback).{0,80}rating\"?\s*[:=]\s*\"?0\b|zero[- ]star feedback	a feedback with rating 0 accepted
+zeroStarsChallenge	Zero Stars	uncertain	issue	zero[- ]star|rating.{0,20}\b0\b	a zero-star rating
+uploadSizeChallenge	Upload Size	firm	issue	/file-upload.{0,100}(100 ?kb|size|larger)|(100 ?kb|size limit).{0,80}/file-upload	the upload size checked in the client only
+uploadSizeChallenge	Upload Size	uncertain	issue	upload.{0,60}(size|100 ?kb)	an upload size limit
+uploadTypeChallenge	Upload Type	firm	issue	/file-upload.{0,100}(extension|file type|\.pdf|\.zip)|(extension|file type).{0,80}/file-upload	the upload type checked in the client only
+uploadTypeChallenge	Upload Type	uncertain	issue	upload.{0,60}(extension|file type)	an upload type limit
+captchaBypassChallenge	CAPTCHA Bypass	firm	issue	/rest/captcha.{0,100}(answer|solution)|captcha.{0,40}(answer|solution).{0,60}(returned|exposed|response|included)	the CAPTCHA answer in the API response
+captchaBypassChallenge	CAPTCHA Bypass	uncertain	issue	captcha	the CAPTCHA answer in the API response, or its reuse
+negativeOrderChallenge	Payback Time	firm	issue	negative (quantity|quantities|amount).{0,80}(basket|order|checkout|BasketItems)|(BasketItems|basket).{0,80}negative (quantity|quantities)|\"?quantity\"?\s*[:=]\s*-\d	a negative quantity in the basket
+negativeOrderChallenge	Payback Time	uncertain	issue	negative (quantity|amount|price)|quantity.{0,30}negative	a negative quantity
+manipulateClockChallenge	Expired Coupon	firm	issue	(WMNSDY20\d\d|ORANGE20\d\d).{0,100}(expir|valid ?on|date|clock|client)|(expir|valid ?on|date|clock|client).{0,100}(WMNSDY20\d\d|ORANGE20\d\d)	a campaign coupon whose expiry the client decides
+manipulateClockChallenge	Expired Coupon	uncertain	issue	WMNSDY20\d\d|ORANGE20\d\d|expired coupon|coupon.{0,60}(clock|expir)	the coupon expiry checked in the client
+freeDeluxeChallenge	Deluxe Fraud	firm	issue	/rest/deluxe-membership.{0,100}(paymentMode|without pay|free)|paymentMode.{0,80}deluxe	deluxe membership with no payment mode
+freeDeluxeChallenge	Deluxe Fraud	uncertain	issue	deluxe.{0,60}(free|without pay|paymentMode)	deluxe membership without paying
+timingAttackChallenge	Multiple Likes	firm	issue	/rest/products/reviews.{0,100}(race|concurrent|parallel|more than once|multiple times)|like\w* .{0,40}(race|concurrent|parallel|more than once|three times)	liking a review more than once, by a race
+timingAttackChallenge	Multiple Likes	uncertain	issue	like.{0,40}(race|multiple times|same user)	liking a review more than once
+resetPasswordJimChallenge	Reset Jim's Password	firm	issue	jim.{0,80}\bsamuel\b|\bsamuel\b.{0,80}(jim|kirk|brother|security)	Jim's security answer
+resetPasswordJimChallenge	Reset Jim's Password	uncertain	issue	security question	weak security questions
+resetPasswordBenderChallenge	Reset Bender's Password	firm	issue	stop'?n'?drop	Bender's security answer
+resetPasswordBenderChallenge	Reset Bender's Password	uncertain	issue	security question	weak security questions
+resetPasswordMortyChallenge	Reset Morty's Password	firm	issue	5N0wb41L|snowball.{0,60}(morty|answer|security)|(morty|security answer).{0,60}snowball	Morty's obfuscated security answer
+resetPasswordMortyChallenge	Reset Morty's Password	uncertain	issue	morty.{0,60}(security question|reset)	Morty's reset, without the answer
+oauthUserPasswordChallenge	Login Bjoern	firm	issue	bW9jLmxpYW1nQGhjaW5pbW1pay5ucmVvamI=|btoa\(.{0,60}revers|(base64|btoa).{0,60}revers\w* e-?mail|revers\w* e-?mail.{0,60}(base64|btoa)	the OAuth user's password: base64 of the reversed e-mail
+oauthUserPasswordChallenge	Login Bjoern	uncertain	issue	bjoern\.kimminich@gmail|oauth.{0,60}password.{0,60}(derived|reversed|base64|btoa)	the OAuth user's derived password
+loginAmyChallenge	Login Amy	firm	issue	K1f\.{3,}|amy@juice-sh\.op.{0,80}\bkif\b	Amy's padded password
+loginAmyChallenge	Login Amy	uncertain	issue	amy@juice-sh\.op	Amy named, without the password
+chatbotPromptInjectionChallenge	Chatbot Prompt Injection	uncertain	issue	prompt injection	the chatbot (needs an LLM endpoint the lab does not have)
