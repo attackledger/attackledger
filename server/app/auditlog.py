@@ -63,6 +63,8 @@ ACTIONS = (
     "lane.receipt_voided", "lane.item_updated",
     "account.added", "account.replaced", "account.deleted", "engagement.writes",
     "write.approved", "write.delete_confirmed", "write.rejected", "write.sent",
+    # A lab write rule (D-062, labrules.py): made, ended, and each write it approved.
+    "lab_rule.created", "lab_rule.revoked", "write.rule_approved",
 )
 RECORD_FIELDS = ("seq", "at", "actor", "action", "engagement_id", "subject_id", "change")
 RECORD_VERSION = 2              # what append writes for an entry with free text; v1 entries stay as written
@@ -73,6 +75,7 @@ TEXT_FIELDS = {
     "write.approved": ("after.note",),
     "write.rejected": ("after.note",),
     "write.delete_confirmed": ("after.path",),
+    "lab_rule.created": ("after.note",),
     "account.added": ("after.role", "after.hosts", "after.header_names"),
     "account.replaced": ("before.role", "before.hosts", "before.header_names",
                          "after.role", "after.hosts", "after.header_names"),
@@ -581,6 +584,14 @@ def describe(rec: dict) -> str:
     if a == "engagement.writes":
         return ("Allowed agents to propose writes; each one waits for a person's approval" if after.get("allow_writes")
                 else "Stopped agents proposing writes: only read-only requests are sent")
+    if a == "lab_rule.created":
+        note = f" Note: {after['note']}." if after.get("note") else ""
+        return (f"Made lab write rule #{after.get('rule')}: agents' {', '.join(after.get('methods') or [])} on "
+                f"{', '.join(after.get('hosts') or [])} (paths {', '.join(after.get('paths') or [])}) are approved "
+                f"without a person reading each one, up to {after.get('max_writes')} writes, until "
+                f"{after.get('expires_at')}.{note}")
+    if a == "lab_rule.revoked":
+        return f"Ended lab write rule #{after.get('rule')} after {after.get('used')} write(s)"
     if a.startswith("write."):
         w = after
         req = f"write {w.get('proposal')} ({w.get('method')} on {w.get('host')}" + (
@@ -594,6 +605,11 @@ def describe(rec: dict) -> str:
             return f"Confirmed the DELETE of {req} by typing its path {w.get('path')}"
         if a == "write.rejected":
             return f"Rejected {req}{note}"
+        if a == "write.rule_approved":
+            return (f"Approved {req} by lab write rule #{w.get('rule')}, made in advance, not by a person reading "
+                    f"this request ({w.get('used')} of {w.get('max_writes')} writes the rule allows)"
+                    + ("" if w.get("separation_of_duties_met") else
+                       "; separation of duties not met: the rule's maker also started the run"))
         return f"Sent the approved {req}, once"
     person = _who(ch.get("person"))
     if a == "person.created":

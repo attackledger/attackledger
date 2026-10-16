@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, object_session
 from . import (agenttools, auth, authz, blobs, signing, timestamps, executors, gates, jobgates, ledger, migrate, modules, packs, report,
                scope, scopeimport, triage, urls)
 from . import auditlog, gatewayapi, importers, inbox, keylog, redact, seal, vault, workerapi
-from . import approvals, nulguard, orgs, orgscope, testaccounts
+from . import approvals, labrules, nulguard, orgs, orgscope, testaccounts
 from . import targets as targeting
 from .db import SessionLocal, get_session
 from .models import (ROLES, iso_utc, Asset, ChecklistItem, Endpoint, Engagement, Evidence, ImportBatch, InboxEntry,
@@ -71,6 +71,7 @@ app.include_router(gatewayapi.router)
 app.include_router(workerapi.router)
 app.include_router(testaccounts.router)
 app.include_router(approvals.router)
+app.include_router(labrules.router)
 COOKIE_SECURE = os.environ.get("ATTACKLEDGER_COOKIE_SECURE", "") == "1"   # set behind HTTPS
 
 

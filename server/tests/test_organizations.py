@@ -94,10 +94,10 @@ def orgs2(monkeypatch):
 def path_values(ids: dict) -> dict:
     return {"eng_id": ids["eng"], "lane_id": ids["lane"], "job_id": ids["recon_job"], "user_id": ids["reviewer"],
             "key_id": ids["key"], "entry_id": ids["entry"], "account_id": ids["account"], "pid": ids["proposal"],
-            "digest": ids["note_digest"], "idx": 1, "part": "request"}
+            "rid": ids["rule"], "digest": ids["note_digest"], "idx": 1, "part": "request"}
 
 
-ROW_PARAMS = {"eng_id", "lane_id", "job_id", "user_id", "key_id", "entry_id", "account_id", "pid", "digest"}
+ROW_PARAMS = {"eng_id", "lane_id", "job_id", "user_id", "key_id", "entry_id", "account_id", "pid", "rid", "digest"}
 NOT_A_ROW = {"idx", "part", "name"}         # an item's index, a part's name, a timestamp root's file name
 CHANNELS = ("public", "gateway", "worker", "job")   # tested in their own tests below
 
@@ -133,6 +133,7 @@ def body_for(method: str, path: str, ids: dict):
         ("POST", "/engagements/{eng_id}/test-accounts"): {"label": "Z", "role": "r", "hosts": [ids["host"]],
                                                           "kind": "cookie", "value": "a=b"},
         ("PUT", "/engagements/{eng_id}/test-accounts/{account_id}"): {"role": "other"},
+        ("POST", "/engagements/{eng_id}/lab-write-rules"): {"methods": ["POST"], "hosts": [f"lab.{ids['tag']}.test"]},
         ("POST", "/engagements/{eng_id}/approvals/{pid}/approve"): {"request_sha256": "0" * 64},
         ("POST", "/engagements/{eng_id}/approvals/{pid}/confirm-delete"): {"request_sha256": "0" * 64,
                                                                            "confirm_path": "/"},
@@ -532,6 +533,6 @@ def test_every_tenant_table_has_the_column_in_the_database():
     db.Base.metadata.create_all(eng)
     insp = sa_inspect(eng)
     direct = {m.local_table.name for m in db.Base.registry.mappers if issubclass(m.class_, OrgOwned)}
-    assert len(direct) == 17
+    assert len(direct) == 18
     for t in direct:
         assert "organization_id" in {c["name"] for c in insp.get_columns(t)}, t

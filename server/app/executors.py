@@ -39,7 +39,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import select
 
-from . import approvals, gates, packs, redact, surface, targets, testaccounts
+from . import approvals, gates, labrules, packs, redact, surface, targets, testaccounts
 from .models import Endpoint, Evidence, InboxEntry, Lane, Lead, Observation
 
 # Endpoints read per host to rank; a host with more (a large archive) is ranked on the
@@ -248,7 +248,12 @@ def lane_context(session, lane: Lane, limit: int = 200) -> dict:
         "writes": {"allowed": bool(eng.allow_writes), "approval_minutes": approvals.APPROVAL_MINUTES,
                    "note": ("writes are proposed with propose_write and wait for a person's approval; a DELETE "
                             "also needs their confirmation") if eng.allow_writes else
-                           "this engagement allows read-only requests only"},
+                           "this engagement allows read-only requests only",
+                   # D-062: a practice lab's owner approved these in advance; propose_write returns them approved.
+                   **({"lab_write_rules": rules, "lab_note": (
+                       "on this practice lab, writes matching a rule are approved at once: propose_write, then "
+                       "write_status to send it; each is still recorded as its own write")}
+                      if eng.allow_writes and (rules := labrules.for_agent(session, eng, host)) else {})},
         # Paths already seen answering on the host (D-059), so an agent need not guess them.
         "known_paths": known_paths(session, eng, host, eps, {e["shape"] for e in ranked["endpoints"]}),
         "items": [{"idx": i.idx, "key": i.item_key, "text": i.text, "state": i.state.value,

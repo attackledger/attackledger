@@ -1211,3 +1211,39 @@ options considered and who decided.
 Add a new `D-0NN` entry whenever a decision changes direction, scope, licensing or
 security behavior. Record who proposed the idea, who decided and what else was
 considered. Keep the entries factual.
+
+### D-062 · Lab write rules: writes approved in advance on a practice lab (2026-10-16, decided by Murat; amends D-041 for labs only)
+- **Problem:** D-041 has a person read and approve every write an agent proposes. On a practice
+  target built to be broken, measured on OWASP Juice Shop (D-060), that does not scale: of the 83
+  challenges the lab can reach, 20 can only be observed by writing and 10 need a signed-in account,
+  so the read-only ceiling is 53 (about 64%). Two read-only passes of 12 lanes each found 30 of the 83
+  together. A run that writes would ask a person for hundreds of approvals.
+- **Decision** (Murat, 2026-10-16: option (b), "a demo", DELETE included):
+  - An owner may make a **lab write rule** on an engagement: the methods (POST, PUT, PATCH, DELETE; a
+    DELETE only when listed), the hosts, the paths (shell patterns, default `/*`), a cap on the writes
+    it approves (default 300) and an end (default 24 hours, at most 7 days). It can be ended at once.
+  - Two gates, both off by default: the deployment's switch, `ATTACKLEDGER_LAB_WRITE_RULES=1` on the
+    API (without it no rule is made and none approves anything), and the rule itself.
+  - A rule is refused unless every host is in the engagement's scope **and** is a lab name, under
+    `.test` or `.localhost` (never delegated on the internet, RFC 6761). It is checked again at each
+    write, so a scope change or the switch turned off ends it at once.
+  - A matching write is approved when it is proposed. Everything else of D-041 stays: one proposal per
+    write, sealed and hashed; a single-use approval that expires; the gateway sends it under the same
+    scope, rate and identification rules; it becomes evidence. The evidence, the approval queue and
+    the audit log (`write.rule_approved`, and `lab_rule.created` / `lab_rule.revoked`) name the rule
+    and say it was approved in advance, not by a person reading that request.
+  - Separation of duties: met only when the rule's maker and the run's starter are two different
+    people. With the engagement's separation-of-duties setting on, a rule that does not meet it
+    approves nothing (a person decides, as before). With it off (a solo demo) the write is approved,
+    and every record of it says "separation of duties not met".
+  - `tools/agent_live.py --target juiceshop --lab-writes POST,PUT,PATCH,DELETE` makes a rule for the
+    run (the lab host, up to the run's request budget, two hours, ended when the run ends) on an
+    engagement of its own, and reports the writes sent by method and the separation-of-duties state.
+    `--own-accounts` registers two new Juice Shop accounts for the lane from inside the stack (as a
+    person would, D-040) and gives the agent their sessions as test accounts: never Juice Shop's own
+    or seeded accounts, which are its challenges. Benchmark sections and snapshots of such runs say so.
+- **Considered:** per-request approval (D-041 as is): hundreds of clicks a run on a lab, which
+  reviews nothing. No writes at all: caps the lab at its read-only ceiling. An approval by pattern
+  on any host: not for customers' targets, where D-041's per-request approval is the point.
+- **Proposed by:** Claude. **Decided by:** Murat Kabak. Built by Claude.
+

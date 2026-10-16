@@ -444,7 +444,9 @@ WRITE_TOOLS = [
             "sent now: it waits for a person to read and approve it, and a DELETE needs their extra "
             "confirmation. The approval is for exactly this request and is used once. Give the checklist item "
             "it tests and a plain reason. Returns a proposal_id; carry on with other items and check later "
-            "with write_status, which sends it once it is approved."),
+            "with write_status, which sends it once it is approved. On a practice lab whose owner approved a "
+            "class of writes in advance (the lane context's writes.lab_write_rules), it comes back approved: "
+            "call write_status at once to send it."),
         "strict": True,
         "input_schema": _schema({
             "method": {"type": "string", "enum": list(WRITE_METHODS)},
@@ -650,6 +652,10 @@ class Toolbox:
                                   item_idx=item.idx, reason=redact.text(w["reason"], rep))
         except ValueError as e:
             raise ToolError(str(e))
+        if p.status == "approved":           # a lab write rule approved it in advance (D-062)
+            return {"proposal_id": p.id, "status": "approved", "method": p.method, "url": p.url, "account": account,
+                    "note": f"approved by {p.decided_by_name}; nothing was sent yet: call write_status with this "
+                            "proposal_id now to send it, once"}
         return {"proposal_id": p.id, "status": "pending", "method": p.method, "url": p.url, "account": account,
                 "note": "nothing was sent; a person reads it in the approval queue. Carry on with other items and "
                         "check write_status later"}
@@ -713,18 +719,27 @@ class Toolbox:
         approval = {"id": p.id, "approved_by": p.decided_by_name, "approved_at": _iso(p.decided_at),
                     "delete_confirmed_at": _iso(p.delete_confirmed_at), "request_sha256": p.request_sha256,
                     "note": p.decision_note}
+        if p.rule_id:
+            approval.update(lab_write_rule=p.rule_id, separation_of_duties_met=bool(p.rule_sod_met))
         rec = self.record_exchange(method, req["url"], sent, status, resp_headers, body, at, view, account=account,
                                    approval=approval, request_body=request_body)
         x = self.exchanges[rec["exchange_id"]]
         item = next((i for i in self.lane.items if i.idx == p.item_idx), None)
-        who = f"{p.decided_by_name} approved it on {(_iso(p.decided_at) or '')[:16].replace('T', ' ')} UTC"
-        extra = "; the DELETE was confirmed by typing its path" if p.delete_confirmed_at else ""
-        note = f" Approval note: {p.decision_note}." if p.decision_note else ""
+        when = f"{(_iso(p.decided_at) or '')[:16].replace('T', ' ')} UTC"
+        if p.rule_id:           # D-062: approved in advance by a lab write rule, not by a person reading it
+            who = (f"{p.decided_by_name} approved it on {when}, not a person reading this request"
+                   + ("" if p.rule_sod_met else "; separation of duties not met: the rule's maker also started "
+                                                 "the run"))
+            extra = note = ""
+        else:
+            who = f"{p.decided_by_name} approved it on {when}"
+            extra = "; the DELETE was confirmed by typing its path" if p.delete_confirmed_at else ""
+            note = f" Approval note: {p.decision_note}." if p.decision_note else ""
         rep = redact.Report().update(x["redaction"])
         ev = ledger.append_evidence(
             self.session, self.lane, kind="response", sha256_hex=x["sha256"], uri=x["url"][:1000], source="agent",
-            summary=(f"{MARK}{method} {x['url'][:300]}{_as(account)} -> {status}. Sent once by the gateway after a "
-                     f"person approved it: {who}{extra} (write {p.id}, request SHA-256 {p.request_sha256[:12]}). "
+            summary=(f"{MARK}{method} {x['url'][:300]}{_as(account)} -> {status}. Sent once by the gateway after "
+                     f"{'a lab write rule' if p.rule_id else 'a person'} approved it: {who}{extra} (write {p.id}, request SHA-256 {p.request_sha256[:12]}). "
                      f"Agent's reason: {p.reason[:500]}.{note}{rep.suffix()}"),
             item_id=item.id if item else None, created_by=self.created_by, redaction=rep.as_dict())
         p.status, p.response_status, p.exchange_id, p.evidence_id = "sent", status, rec["exchange_id"], ev.id

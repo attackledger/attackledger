@@ -433,6 +433,15 @@ that was **not** in Anthropic's Cyber Verification Program, the same default a n
 `refused`. Runs made after an organization is enrolled are labelled as such, since the results may
 differ.
 
+Writes and accounts: runs with `--lab-writes METHODS` had their writes approved in advance by a lab
+write rule (D-062), not by a person reading each one, and runs with `--own-accounts` were signed in
+with two Juice Shop accounts the run registered for itself (never Juice Shop's own). Such runs use an
+engagement of their own (`Agent live run (Juice Shop, own test accounts, lab writes)`), their section
+has a "Writes (D-062)" row (writes sent by method, separation of duties) and their snapshot a `writes`
+entry; they are not comparable with the read-only, signed-out runs and are reported apart. Lanes run
+in parallel on one lab are measured apart too: each run's access-log rows are found by method, path
+and time, and a row no run's gateway rows explain fails the run.
+
 The same run on the second practice target, Juice Shop 20.2.0 (`bkimminich/juice-shop:v20.2.0`,
 pinned by digest), as `juice.lab.test`: scope `juice.lab.test` only, every lane signed out, the
 same research header. The rows above are the same, with `juice.lab.test` for the host and Juice

@@ -137,6 +137,11 @@ RULES: dict[tuple[str, str], tuple[str, str | None]] = {
     ("POST", "/engagements/{eng_id}/approvals/{pid}/approve"): ("tester", ENG),
     ("POST", "/engagements/{eng_id}/approvals/{pid}/confirm-delete"): ("tester", ENG),
     ("POST", "/engagements/{eng_id}/approvals/{pid}/reject"): ("tester", ENG),
+    # Lab write rules (D-062): an owner approves a class of writes on a practice lab in advance.
+    ("GET", "/engagements/{eng_id}/lab-write-rules"): ("tester", ENG),
+    ("POST", "/engagements/{eng_id}/lab-write-rules"): ("owner", ENG),
+    # Owners only, checked by the handler once the rule is found (another organization's is 404 first).
+    ("POST", "/engagements/{eng_id}/lab-write-rules/{rid}/revoke"): ("tester", ENG),
 
     ("POST", "/gateway/session"): ("gateway", None),
     ("POST", "/gateway/account"): ("gateway", None),

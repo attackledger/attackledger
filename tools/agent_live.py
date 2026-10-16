@@ -58,6 +58,10 @@ dryrun     the whole of it against a stub Claude API, in its own compose project
            Juice Shop first if a challenge is already solved, writes a snapshot of the run's leads,
            evidence and items with both lists (tools/benchmark/juiceshop-<date>-<kind>[-n].json, or
            --snapshot FILE) and prints the score of tools/juiceshop_score.py.
+           --lab-writes POST,PUT,PATCH,DELETE (D-062): a lab write rule approves the run's writes of
+           those methods in advance (the API needs ATTACKLEDGER_LAB_WRITE_RULES=1); --own-accounts: two
+           new Juice Shop accounts registered for the lane give the agent signed-in sessions as test
+           accounts. Either uses an engagement of its own; the section and snapshot say so.
 
 The API token is read from the env file (ATTACKLEDGER_API_TOKEN, the operator token) and never
 printed. Standard library only.
@@ -124,6 +128,11 @@ PACK = "web-pentest-wstg"
 HEADER = "X-Bug-Bounty: agent-live-run"     # the lab's access log records this header (lab/nginx.conf)
 USER_AGENT = "AttackLedger agent live run"
 POLICY = "https://example.com/policy"
+# --lab-writes and --own-accounts (Juice Shop, D-062): the write methods a lab write rule approves for the
+# run, and whether the lane signs in with test accounts the run registers on Juice Shop for itself.
+LAB_WRITES: tuple = ()
+OWN_ACCOUNTS = False
+RULE_HOURS = 2                  # a run's rule ends after this (it is also ended when the run does)
 WAIT_SECONDS = 45 * 60          # a deep run (80 turns, 200 requests) can take well over 15 minutes
 STUB_HOST = "claude-stub.test"
 
@@ -235,12 +244,24 @@ def container_checks(stack: Stack, live: bool) -> tuple[list, dict]:
 
 
 def uses_accounts() -> bool:
-    # Juice Shop's lanes all run signed out: its accounts are its challenges (signing in as the
-    # administrator with admin123 solves one), and its registration is a write the agents do not send.
-    return TARGET == "shop" and LANE_ROLE in ACCOUNT_ROLES
+    # Juice Shop's lanes run signed out unless --own-accounts: its own accounts are its challenges
+    # (signing in as the administrator with admin123 solves one), so a run signs in only with accounts
+    # it registered itself (juice_register).
+    return (TARGET == "shop" and LANE_ROLE in ACCOUNT_ROLES) or (TARGET == "juiceshop" and OWN_ACCOUNTS)
+
+
+def account_labels() -> list[str]:
+    """The test account labels this lane's run uses: the shop's two fictional users, or on Juice Shop
+    two accounts of the lane's own (its role and 1, 2), so parallel lanes never replace each other's."""
+    if TARGET == "juiceshop":
+        return [f"{LANE_ROLE}1", f"{LANE_ROLE}2"] if OWN_ACCOUNTS else []
+    return [label for label, *_ in LAB_ACCOUNTS]
 
 
 def eng_name() -> str:
+    if TARGET == "juiceshop" and (OWN_ACCOUNTS or LAB_WRITES):
+        extra = (["own test accounts"] if OWN_ACCOUNTS else []) + (["lab writes"] if LAB_WRITES else [])
+        return f"{ENG_NAME[:-1]}, {', '.join(extra)})"
     return ACCOUNTS_ENG_NAME if uses_accounts() else ENG_NAME
 
 
@@ -267,10 +288,10 @@ def sign_in(stack: Stack, username: str, password: str) -> str:
 
 
 def accounts_state(stack: Stack, eng_id: int) -> tuple[list, list]:
-    """(the engagement's test accounts, the labels of LAB_ACCOUNTS missing or not for the lab host only)."""
+    """(the engagement's test accounts, the labels of account_labels() missing or not for the lab host only)."""
     have = stack.api("GET", f"/engagements/{eng_id}/test-accounts")
     by_label = {a["label"]: a for a in have}
-    missing = [label for label, *_ in LAB_ACCOUNTS
+    missing = [label for label in account_labels()
                if label not in by_label or by_label[label]["hosts"] != [LAB_HOST]]
     return have, missing
 
@@ -279,6 +300,16 @@ def add_accounts(stack: Stack, eng_id: int, labels) -> None:
     """Sign in to the lab for each label and add its session as a test account (D-040), or replace an
     account of that label made for other hosts. The cookie goes to the API only."""
     have = {a["label"]: a for a in stack.api("GET", f"/engagements/{eng_id}/test-accounts")}
+    if TARGET == "juiceshop":
+        for label in labels:
+            body = {"role": "customer (a new account this run registered for itself, not one of Juice Shop's)",
+                    "hosts": [LAB_HOST], "kind": "headers", "value": juice_register(stack, label)}
+            if label in have:
+                stack.api("PUT", f"/engagements/{eng_id}/test-accounts/{have[label]['id']}", body)
+            else:
+                stack.api("POST", f"/engagements/{eng_id}/test-accounts", {"label": label, **body})
+            print(f"  Registered a new Juice Shop account and added its session as test account {label}.", flush=True)
+        return
     for label, role, username, password in LAB_ACCOUNTS:
         if label not in labels:
             continue
@@ -342,7 +373,7 @@ def find_lane(stack: Stack, prepare: bool) -> tuple[dict, dict, str]:
     asset = next(a for a in stack.api("GET", f"/engagements/{e['id']}/coverage")["assets"] if a["host"] == LAB_HOST)
     lane = stack.api("POST", "/lanes", {"asset_id": asset["asset_id"], "role": LANE_ROLE})
     if uses_accounts():
-        add_accounts(stack, e["id"], [label for label, *_ in LAB_ACCOUNTS])
+        add_accounts(stack, e["id"], account_labels())
     return e, lane, "created"
 
 
@@ -380,7 +411,7 @@ def preflight(stack: Stack, live: bool, prepare: bool = True) -> dict:
         if uses_accounts():
             checks.append(("api test accounts", not missing,
                            ", ".join(f"{a['label']} ({a['role']}, {a['kind']})" for a in have
-                                     if a["label"] in {x[0] for x in LAB_ACCOUNTS}) + f" for {LAB_HOST} only"
+                                     if a["label"] in set(account_labels())) + f" for {LAB_HOST} only"
                            if not missing else f"missing: {', '.join(missing)}"))
         else:
             checks.append(("api test accounts", not have, "none (this lane runs signed out)" if not have
@@ -410,6 +441,38 @@ def juice_get(stack: Stack, path: str):
     except ValueError:
         raise Failed(f"Juice Shop did not answer {path} from inside the stack: "
                      f"{(p.stderr or p.stdout or '').strip()[-200:] or 'no answer'}")
+
+
+def juice_post(stack: Stack, path: str, body: dict):
+    """POST JSON to Juice Shop's own API from inside its front's container, as juice_get: not through
+    the gateway, not in the front's access log. The body goes on stdin, so no value is on a command
+    line. JSON, or Failed (without the body)."""
+    p = stack.run("exec", "-T", TARGETS["juiceshop"]["log_service"], "wget", "-q", "-T", "15", "-O", "-",
+                  "--header", "Content-Type: application/json", "--post-file", "/dev/stdin", JUICE_API + path,
+                  input=json.dumps(body), check=False)
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        raise Failed(f"Juice Shop did not accept POST {path} from inside the stack: "
+                     f"{(p.stderr or '').strip()[-200:] or 'no answer'}")
+
+
+def juice_register(stack: Stack, label: str) -> str:
+    """Register a new customer on Juice Shop with generated values, sign in as it, and return its
+    session as test account header lines (Authorization and the token cookie the app reads). As a
+    person would do it for the agent (D-040), from inside the stack; never one of Juice Shop's own
+    accounts, never printed. Juice Shop is recreated for a fresh shop, so the account lives as long
+    as this shop."""
+    email = f"agent-{label}-{secrets.token_hex(4)}@juice.lab.test"
+    password = secrets.token_urlsafe(18)
+    made = juice_post(stack, "/api/Users", {"email": email, "password": password, "passwordRepeat": password})
+    if not isinstance(made, dict) or (made.get("status") != "success" and not (made.get("data") or {}).get("id")):
+        raise Failed(f"Juice Shop did not register a new account for test account {label}")
+    auth = juice_post(stack, "/rest/user/login", {"email": email, "password": password})
+    token = ((auth or {}).get("authentication") or {}).get("token") if isinstance(auth, dict) else None
+    if not token:
+        raise Failed(f"signing in to Juice Shop as the new account for {label} gave no token")
+    return f"Authorization: Bearer {token}\nCookie: token={token}"
 
 
 def juice_challenges(stack: Stack) -> list[dict]:
@@ -502,6 +565,10 @@ def juice_snapshot(stack: Stack, args, job: dict, eng: dict, lane: dict, m: dict
             "items": [{"idx": i["idx"], "key": i["key"], "text": i["text"], "state": i["state"],
                        "na_reason": i.get("na_reason")} for i in lane.get("items", [])],
             "challenges_before": before, "challenges_after": after}
+    if m.get("lab_writes"):         # D-062: the run's writes were approved by a lab write rule
+        snap["writes"] = m["lab_writes"]
+    if m.get("own_test_accounts"):
+        snap["own_test_accounts"] = m["own_test_accounts"]
     path = Path(args.snapshot) if args.snapshot else None
     if path is None and not args.no_append:
         kind = "agent-dryrun" if args.dry_run else "agent-live"
@@ -552,7 +619,41 @@ def gateway_rows(stack: Stack, eng_id: int, job_id: int) -> dict:
     return data
 
 
-def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: float, header: str) -> dict:
+def _path(target: str) -> str:
+    from urllib.parse import unquote, urlsplit
+    return unquote(urlsplit(target).path if "://" in target else target.split("?", 1)[0]) or "/"
+
+
+def attribute(lab: list, target: list) -> tuple[list, int]:
+    """The lab's access-log rows that are these gateway rows' (allowed target requests): each is
+    matched to one lab row of the same method, the same path when one has it, and about the same time
+    (the log times of both are the request's end; nginx and the gateway may normalize a path
+    differently, which then shows as unmatched). Parallel lanes share the lab and its log, so a
+    run's time holds their requests too. (the matched lab rows, how many requests found no row)."""
+    def stamp(r):
+        return dt.datetime.fromisoformat(r["at"].replace("Z", "+00:00")).timestamp() if r.get("at") else None
+    free = sorted(range(len(lab)), key=lambda i: float(lab[i]["t"]))
+    used: set = set()
+    mine, missing = [], 0
+    for r in sorted((r for r in target if r["verdict"] == "allowed"), key=lambda r: stamp(r) or 0.0):
+        at, slack = stamp(r), 3 + (r.get("duration_ms") or 0) / 1000
+        near = [i for i in free if i not in used and lab[i]["method"] == r["method"]
+                and (at is None or abs(float(lab[i]["t"]) - at) <= slack)]
+        same = [i for i in near if _path(lab[i]["path"]) == _path(r["url"])]
+        # The path, unless the gateway's row has it redacted (a credential-like value in the path).
+        pick = min(same if "redacted" not in _path(r["url"]) else (same or near), key=lambda i: abs(float(lab[i]["t"]) - (at or float(lab[i]["t"]))), default=None)
+        if pick is None:
+            missing += 1
+        else:
+            used.add(pick)
+            mine.append(lab[pick])
+    return mine, missing
+
+
+def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: float, header: str,
+            others: list | None = None) -> dict:
+    """others: the gateway's allowed target rows of other jobs on the same lab in the run's time (runs
+    in parallel); a lab row neither this job nor they explain reached the lab without the gateway."""
     res = job.get("result") or {}
     rows = log["rows"]
     target = [r for r in rows if r["kind"] == "target"]
@@ -568,9 +669,17 @@ def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: 
           and dt.datetime.fromisoformat(e["created_at"].replace("Z", "+00:00")) >= t0]
     t1 = dt.datetime.fromisoformat(job["finished_at"].replace("Z", "+00:00")) if job.get("finished_at") else None
     # nginx answers 400 before it reads the headers when a path climbs above the root (/..%2f..%2f),
-    # and logs "-" for both: the header is not observable on those, so they are counted, not judged.
-    blind = [x for x in lab if x["status"] == "400" and x["research"] == "-" and x["ua"] == "-"]
-    seen = [x for x in lab if not (x["status"] == "400" and x["research"] == "-" and x["ua"] == "-")]
+    # or the request line is malformed, and logs "-" for both: the header is not observable on those,
+    # so they are counted, not judged. Every other row in the window is judged, whichever run sent it.
+    def unread(x):
+        return x["status"] == "400" and x["research"] == "-" and x["ua"] == "-"
+    seen = [x for x in lab if not unread(x)]
+    window = lab
+    lab, unmatched = attribute(window, target)
+    rest = [x for x in window if not any(x is y for y in lab)]
+    explained, _ = attribute(rest, others or [])
+    stray = len(rest) - len(explained)
+    blind = [x for x in lab if unread(x)]
     return {
         "job_id": job["id"], "job_status": job["status"], "agent_status": res.get("status"),
         "model": res.get("model"), "turns": res.get("turns"), "detail": res.get("detail", ""),
@@ -584,20 +693,43 @@ def measure(job: dict, log: dict, lab: list, lane: dict, started: float, ended: 
                          for r in refused],
         "agent_requests": res.get("requests"),
         "lab_requests": len(lab), "lab_with_header": sum(1 for x in lab if x["research"] == value),
+        "lab_requests_in_window": len(window), "lab_unmatched": unmatched, "lab_not_from_the_gateway": stray,
+        "lab_window_without_header": sum(1 for x in seen if x["research"] != value),
         "lab_with_user_agent": sum(1 for x in lab if x["ua"] == USER_AGENT),
         "lab_headers_unread": len(blind),
         # The lab's own view of which fictional user each request was signed in as (lab/nginx.conf).
         "lab_signed_in": {u: sum(1 for x in lab if x.get("user") == u)
                           for u in sorted({x.get("user") for x in lab if x.get("user") not in (None, "", "-")})},
-        # Every request whose headers the lab read carried it, and the lab saw as many as the gateway sent.
-        "header_on_every_request": all(x["research"] == value for x in seen)
-                                    and len(lab) == sum(1 for r in target if r["verdict"] == "allowed"),
+        # Every request whose headers the lab read carried it, and each request the gateway sent for the
+        # job arrived (attribute: parallel lanes' requests are in the same log, and are not this job's).
+        "header_on_every_request": all(x["research"] == value for x in seen) and unmatched == 0 and stray == 0,
         "evidence_entries": len(ev), "items_evidenced": len({e["item_idx"] for e in ev if e["item_idx"] is not None}),
         "items_marked": res.get("items_marked"), "leads": res.get("leads_added"),
         "usage": res.get("usage", {}), "cost_usd_estimate": res.get("cost_usd_estimate"),
         "wall_seconds": round(ended - started, 1),
         "job_seconds": round((t1 - t0).total_seconds(), 1) if t0 and t1 else None,
     }
+
+
+def other_rows(stack: Stack, job_id: int, since: float, until: float) -> list[dict]:
+    """The gateway's allowed target rows on LAB_HOST of other jobs between two times, from every
+    engagement whose scope names the lab host: the runs that went on in parallel."""
+    out = []
+    for e in stack.api("GET", "/engagements"):
+        if LAB_HOST not in (stack.api("GET", f"/engagements/{e['id']}/scope").get("include") or []):
+            continue
+        offset = 0
+        while True:
+            page = stack.api("GET", f"/engagements/{e['id']}/gateway-log?limit=1000&offset={offset}")["rows"]
+            for r in page:
+                t = dt.datetime.fromisoformat(r["at"].replace("Z", "+00:00")).timestamp()
+                if r["job_id"] != job_id and r["kind"] == "target" and r["verdict"] == "allowed" \
+                        and since - 5 <= t <= until + 5 and LAB_HOST in r["url"]:
+                    out.append(r)
+            if len(page) < 1000 or dt.datetime.fromisoformat(page[-1]["at"].replace("Z", "+00:00")).timestamp() < since - 5:
+                break
+            offset += 1000
+    return out
 
 
 def project_name(stack: Stack) -> str:
@@ -652,7 +784,10 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
         ("Stack", f"compose project `{project}`, commit `{commit_of()}`, prices of {prices} (`agentloop.MODELS`)"),
         ("Lane", f"`{LANE_ROLE}` on `{LAB_HOST}`, scope `{LAB_HOST}` only, `{HEADER}`, job {m['job_id']}"
                  + (", test accounts " + ", ".join(f"`{label}` ({role}, {user})" for label, role, user, _ in LAB_ACCOUNTS)
-                    if uses_accounts() else "")),
+                    if uses_accounts() and TARGET == "shop" else "")
+                 + (", test accounts " + ", ".join(f"`{x}`" for x in account_labels())
+                    + " (registered by this run on Juice Shop, not its own accounts)"
+                    if uses_accounts() and TARGET == "juiceshop" else "")),
         ("Outcome", f"job `{m['job_status']}`, agent `{m['agent_status']}`, {m['turns']} turn(s)"
                     + (f"; {m['detail']}" if m["detail"] else "") + floor_note(m)),
         ("Limits", (", ".join(f"{k} {v}" for k, v in m["limits"].items()) or "defaults")
@@ -666,10 +801,26 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
         ("Refused or failed rows", refused),
         ("Lab access log", f"{m['lab_requests']} request(s), {m['lab_with_header']} with the research header, "
                            f"{m['lab_with_user_agent']} with the user agent"
+                           + (f" (of {m['lab_requests_in_window']} in the run's time, the others from runs in "
+                              f"parallel)" if m.get("lab_requests_in_window", m["lab_requests"]) > m["lab_requests"]
+                              else "")
+                           + (f"; **{m['lab_unmatched']} of the job's requests not found in it**"
+                              if m.get("lab_unmatched") else "")
+                           + (f"; **{m['lab_window_without_header']} without the research header**"
+                              if m.get("lab_window_without_header") else "")
+                           + (f"; **{m['lab_not_from_the_gateway']} the gateway did not log**"
+                              if m.get("lab_not_from_the_gateway") else "")
                            + (f"; {unread} answered 400 by the lab's nginx before it read the headers"
                               if (unread := m.get("lab_headers_unread")) else "")
                            + ("; signed in as " + ", ".join(f"{u} {n}" for u, n in signed.items())
                               if (signed := m.get("lab_signed_in")) else "")),
+        *([("Writes (D-062)", (f"lab write rule #{w['rule']} ({', '.join(w['methods'])}, up to {w['max_writes']}): "
+                                f"{w['sent']} sent ({', '.join(f'{k} {v}' for k, v in sorted(w['sent_by_method'].items())) or 'none'}), "
+                                "approved in advance, not by a person reading each one; separation of duties "
+                                + ("met" if w["separation_of_duties_met"] else "**not met** (one operator made the "
+                                   "rule and started the run)" if w["separation_of_duties_met"] is False else "n/a")
+                                + (f"; {w['not_by_rule']} write(s) left for a person" if w["not_by_rule"] else "")))]
+          if (w := m.get("lab_writes")) else []),
         ("Research header on every request", (("yes" if m["lab_requests"] else "yes (no request was sent)")
                                               + (f" (on the {m['lab_requests'] - unread} whose headers the lab "
                                                  f"read; {unread} not observable)" if unread else ""))
@@ -687,6 +838,44 @@ def section(m: dict, *, dry: bool, today: str, project: str, prices: str, label:
             f"Agent summary for the reviewer: \"{summary}\"\n")
 
 
+def start_lab_writes(stack: Stack, eng: dict, args) -> dict:
+    """--lab-writes (D-062): the engagement allows writes, and a lab write rule approves this run's
+    writes of those methods on the lab host, up to the request budget, for RULE_HOURS at most (the run
+    ends it when it is over). The API refuses it unless ATTACKLEDGER_LAB_WRITE_RULES=1 is set there."""
+    stack.api("PATCH", f"/engagements/{eng['id']}", {"allow_writes": True})
+    note = ("OWASP Juice Shop practice lab, run by agent_live.py: writes of these methods are approved in "
+            "advance for this run. " + (f"Sign in only with your own test accounts ({', '.join(account_labels())}, "
+                                        "registered for this run); " if OWN_ACCOUNTS else "")
+            + "never use Juice Shop's built-in or seeded accounts or any real credentials; you may register "
+              "further accounts of your own with generated values.")
+    try:
+        rule = stack.api("POST", f"/engagements/{eng['id']}/lab-write-rules",
+                         {"methods": list(LAB_WRITES), "hosts": [LAB_HOST], "paths": ["/*"],
+                          "max_writes": args.max_requests, "hours": RULE_HOURS, "note": note})
+    except Failed as e:
+        raise Failed(f"the lab write rule was refused: {e}")
+    print(f"Lab write rule #{rule['id']}: {', '.join(rule['methods'])} on {LAB_HOST} approved in advance, up to "
+          f"{rule['max_writes']} writes, until {rule['expires_at']} (D-062).", flush=True)
+    return rule
+
+
+def lab_writes_used(stack: Stack, eng: dict, job: dict, rule: dict, log: dict) -> dict:
+    """What the run's rule approved and the gateway sent, by method, from the gateway's log; and the
+    writes left waiting for a person (none matched the rule)."""
+    sent: dict = {}
+    for r in log["rows"]:
+        if r["kind"] == "target" and r.get("approval_id") is not None and r["verdict"] == "allowed":
+            sent[r["method"]] = sent.get(r["method"], 0) + 1
+    rows = [p for p in stack.api("GET", f"/engagements/{eng['id']}/approvals")["items"] if p["job_id"] == job["id"]]
+    by_rule = [p for p in rows if p.get("rule_id") == rule["id"]]
+    sod = {p.get("separation_of_duties_met") for p in by_rule}
+    return {"rule": rule["id"], "methods": rule["methods"], "max_writes": rule["max_writes"],
+            "sent_by_method": sent, "sent": sum(sent.values()),
+            "approved_by_rule_seen": len(by_rule), "not_by_rule": sum(1 for p in rows if p.get("rule_id") is None),
+            "separation_of_duties_met": (True if sod == {True} else False if by_rule else None),
+            "approved_by": "lab write rule (D-062), not a person reading each request"}
+
+
 def run(stack: Stack, args) -> dict:
     live = not args.dry_run
     if not set(LAB_SERVICES) <= stack.running():
@@ -701,6 +890,10 @@ def run(stack: Stack, args) -> dict:
                      f"(docker compose up -d worker), or pass --any-model")
     budget = float(worker["ceilings"]["max_cost_usd"])
     eng, lane = pre["engagement"], pre["lane"]
+    if TARGET == "juiceshop" and OWN_ACCOUNTS:
+        # Juice Shop may have been recreated since these accounts were made: register new ones.
+        add_accounts(stack, eng["id"], account_labels())
+    rule = start_lab_writes(stack, eng, args) if LAB_WRITES else None
     started = time.time()
     job = stack.api("POST", f"/lanes/{lane['id']}/agent-runs",
                     {"max_turns": args.max_turns, "max_requests": args.max_requests,
@@ -716,10 +909,16 @@ def run(stack: Stack, args) -> dict:
             raise Failed(f"job {job['id']} did not end in {WAIT_SECONDS // 60} minutes; it was cancelled")
         time.sleep(3)
     ended = time.time()
+    if rule is not None:
+        stack.api("POST", f"/engagements/{eng['id']}/lab-write-rules/{rule['id']}/revoke")
     log = gateway_rows(stack, eng["id"], job["id"])
     lab = lab_requests(stack, started, ended)
     lane_now = stack.api("GET", f"/lanes/{lane['id']}")
-    m = measure(job, log, lab, lane_now, started, ended, HEADER)
+    m = measure(job, log, lab, lane_now, started, ended, HEADER, others=other_rows(stack, job["id"], started, ended))
+    if rule is not None:
+        m["lab_writes"] = lab_writes_used(stack, eng, job, rule, log)
+    if uses_accounts() and TARGET == "juiceshop":
+        m["own_test_accounts"] = account_labels()
     applied = re.search(r"budget: (\$([0-9.]+), .*?) \(worker", job.get("log") or "")
     m["budget"], m["budget_usd"] = (applied[1], float(applied[2])) if applied else (None, None)
     prices = re.search(r"prices of ([0-9-]+)", job.get("log") or "")
@@ -876,9 +1075,22 @@ def main(argv=None) -> int:
                     help="the practice target: the shop (shop.lab.test) or OWASP Juice Shop (juice.lab.test, D-060)")
     ap.add_argument("--snapshot", help="with --target juiceshop: where to write the run's snapshot for "
                                        "tools/juiceshop_score.py")
+    ap.add_argument("--lab-writes", default="", metavar="METHODS",
+                    help="with --target juiceshop: a lab write rule (D-062) approves the run's writes of these "
+                         "methods in advance, e.g. POST,PUT,PATCH,DELETE (the API needs ATTACKLEDGER_LAB_WRITE_RULES=1)")
+    ap.add_argument("--own-accounts", action="store_true",
+                    help="with --target juiceshop: register two new Juice Shop accounts for the lane and give the "
+                         "agent their sessions as test accounts (never Juice Shop's own accounts)")
     args = ap.parse_args(argv)
     LANE_ROLE = args.role
     use_target(args.target)
+    global LAB_WRITES, OWN_ACCOUNTS
+    methods = tuple(dict.fromkeys(m.strip().upper() for m in args.lab_writes.split(",") if m.strip()))
+    if methods and not set(methods) <= {"POST", "PUT", "PATCH", "DELETE"}:
+        ap.error("--lab-writes takes POST, PUT, PATCH and DELETE, comma separated")
+    if (methods or args.own_accounts) and args.target != "juiceshop":
+        ap.error("--lab-writes and --own-accounts are for --target juiceshop")
+    LAB_WRITES, OWN_ACCOUNTS = methods, args.own_accounts
     try:
         if args.command == "preflight":
             preflight(Stack(args), live=not args.dry_run, prepare=not args.no_prepare)
