@@ -5,11 +5,11 @@
 # The newest release at least two weeks old (docs/SUPPLY_CHAIN.md). From 0.137, app.routes keeps
 # included routers apart; the tests walk them through server/tests/routewalk.py. 0.142 and later
 # also require opentelemetry-api.
-fastapi==0.141.1
+fastapi==0.142.2
 # Not used directly: pinned here because 0.41 to 1.3.0 have advisories (docs/security-review/SUPPLY_CHAIN.md).
 starlette==1.7.0
 uvicorn[standard]==0.54.0
-sqlalchemy==2.0.54
+sqlalchemy==2.1.3
 psycopg[binary]==3.3.6
 pydantic==2.13.5
 httpx==0.28.1
