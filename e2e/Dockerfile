@@ -3,7 +3,7 @@
 # pinned. It has Node and the Chromium and Firefox builds of this Playwright version, so nothing
 # is installed on the host and no browser is downloaded at test time.
 # mcr.microsoft.com/playwright:v1.63.0-noble (Ubuntu 24.04), pinned 2026-10-11.
-FROM mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+FROM mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d690f6c42fbc8e9e26ddfa95f8e6ef552558d9bbf
 WORKDIR /e2e
 COPY package.json package-lock.json ./
 # Exactly the lockfile, each package checked against its SHA-512 there; no install scripts
