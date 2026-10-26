@@ -257,7 +257,7 @@ services:
     profiles: ["lab"]
     # bkimminich/juice-shop v20.2.0 (released 2026-08-10), pinned by its multi-arch index digest
     # (linux/amd64 and linux/arm64) on 2026-10-16.
-    image: bkimminich/juice-shop:v20.2.0@sha256:8739101ade29358abb5469ee66ae78e582c97ed0a5543a4ad102e5fa5193526b
+    image: bkimminich/juice-shop:v20.3.0@sha256:cea5a4af4aacee498c491491af0408934ec81d004035c0a02ef3e54395e3bf27
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     # Not read-only, the one exception to the hardening above: at every start Juice Shop
